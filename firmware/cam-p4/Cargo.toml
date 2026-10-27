@@ -1,0 +1,35 @@
+[package]
+name         = "cam-p4"
+description  = "espion ESP32-P4 firmware: OV9281 capture, blob detection, XVS trigger, LED strobe"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+[dependencies]
+p4-c5-link = { path = "../p4-c5-link" }
+
+esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32p4", "log-04"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32p4", "panic-handler", "println"] }
+esp-println = { version = "0.18.0", features = ["esp32p4", "log-04"] }
+# Register access for the in-repo MIPI CSI / ISP-bypass driver that esp-hal lacks
+# (docs/architecture.md). Same major as esp-hal 1.2.2 uses, so peripheral types match.
+esp32p4 = { version = "0.3.0", features = ["critical-section"] }
+
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-time     = { version = "0.5.1", features = ["log"] }
+log              = "0.4.34"
+static_cell      = "2.1.1"
+
+[profile.dev]
+# The default debug profile is too slow and too big for the vision loop.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug         = 2
+lto           = "fat"
+opt-level     = 3

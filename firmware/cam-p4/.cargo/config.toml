@@ -1,0 +1,12 @@
+# Compilation settings. User/runtime settings live in esp-config.toml.
+include = ["esp-config.toml"]
+
+[target.riscv32imafc-unknown-none-elf]
+runner = "espflash flash --monitor --chip esp32p4"
+
+[build]
+target = "riscv32imafc-unknown-none-elf"
+rustflags = [
+  # Required for backtraces (esp-backtrace). May cost some performance.
+  "-C", "force-frame-pointers",
+]

@@ -1,0 +1,17 @@
+[package]
+name         = "espion-viewer"
+description  = "espion live viewer (egui): per-camera blobs, 3D markers, sync health"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+publish.workspace      = true
+
+[dependencies]
+anyhow.workspace = true
+eframe.workspace = true
+espion-proto     = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

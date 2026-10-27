@@ -1,0 +1,64 @@
+[package]
+name         = "radio-c5"
+description  = "espion ESP32-C5 firmware: Wi-Fi, UDP to the host, FTM clock sync, PPS to the P4"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+[dependencies]
+espion-proto = { path = "../../crates/espion-proto" }
+p4-c5-link   = { path = "../p4-c5-link" }
+
+esp-hal = { version = "~1.2.2", features = ["esp32c5", "log-04", "unstable"] }
+esp-rtos = { version = "0.4.0", features = [
+  "embassy",
+  "esp-alloc",
+  "esp-radio",
+  "esp32c5",
+  "log-04",
+] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c5", "log-04"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32c5", "panic-handler", "println"] }
+esp-println = { version = "0.18.0", features = ["esp32c5", "log-04"] }
+# The Wi-Fi blobs need a heap; keep it out of the per-frame path.
+esp-alloc = { version = "0.11.0", features = ["esp32c5"] }
+# 1.0.0-beta.2 is yanked; beta.1 is what esp-generate 1.4.0 and esp-wifi-sync use.
+esp-radio = { version = "=1.0.0-beta.1", features = [
+  "esp-alloc",
+  "esp32c5",
+  "log-04",
+  "unstable",
+  "wifi",
+] }
+# Raw driver bindings for FTM and the SoftAP FTM responder (esp-radio keeps its own private).
+# Patched below with the FTM-fixed Wi-Fi libraries.
+esp-wifi-sys-esp32c5 = "0.3.0"
+
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-net = { version = "0.9.1", features = ["dhcpv4", "log", "medium-ethernet", "udp"] }
+embassy-time = { version = "0.5.1", features = ["log"] }
+smoltcp = { version = "0.14.0", default-features = false, features = [
+  "log",
+  "medium-ethernet",
+  "proto-dhcpv4",
+  "proto-ipv4",
+  "socket-udp",
+] }
+critical-section = "1.2.0"
+log              = "0.4.34"
+static_cell      = "2.1.1"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug         = 2
+lto           = "fat"
+opt-level     = "s"
+
+[patch.crates-io]
+# esp32-wifi-lib 9e91edc FTM fix; see ../vendor/esp-wifi-sys-esp32c5/VENDORED.md.
+esp-wifi-sys-esp32c5 = { path = "../vendor/esp-wifi-sys-esp32c5" }

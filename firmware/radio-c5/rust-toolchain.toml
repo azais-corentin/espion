@@ -1,0 +1,5 @@
+# Same channel as the root rust-toolchain.toml (the Nix dev shell uses that one).
+[toolchain]
+channel    = "1.99.1"
+components = ["rust-src", "rustfmt", "clippy"]
+targets    = ["riscv32imac-unknown-none-elf"]

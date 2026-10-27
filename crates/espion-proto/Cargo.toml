@@ -1,0 +1,21 @@
+[package]
+name         = "espion-proto"
+description  = "espion UDP wire format (no_std): header, message types, versioning"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+publish.workspace      = true
+
+[features]
+default = []
+# Host side: std error types and postcard's Vec/std helpers.
+std = ["postcard/use-std", "serde/std"]
+
+[dependencies]
+postcard.workspace = true
+serde.workspace    = true
+
+[lints]
+workspace = true

@@ -1,0 +1,18 @@
+[package]
+name         = "espion-calib"
+description  = "espion camera calibration: intrinsics per camera, extrinsics for the rig"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+publish.workspace      = true
+
+[dependencies]
+anyhow.workspace   = true
+clap.workspace     = true
+espion-proto       = { workspace = true, features = ["std"] }
+nalgebra.workspace = true
+
+[lints]
+workspace = true

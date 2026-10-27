@@ -1,0 +1,21 @@
+[package]
+name         = "espion-server"
+description  = "espion tracking server: receives camera centroids over UDP and triangulates markers"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+publish.workspace      = true
+
+[dependencies]
+anyhow.workspace             = true
+clap.workspace               = true
+espion-proto                 = { workspace = true, features = ["std"] }
+nalgebra.workspace           = true
+tokio.workspace              = true
+tracing.workspace            = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

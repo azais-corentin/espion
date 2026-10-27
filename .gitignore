@@ -1,0 +1,31 @@
+# Rust build outputs (host workspace and each firmware crate)
+target/
+
+# Nix / direnv
+.direnv/
+result
+result-*
+
+# Local secrets and build settings (see .envrc.local.example)
+.envrc.local
+
+# KiCad: backups, caches, lock files, per-user project state, fabrication outputs
+*-backups/
+_autosave-*
+*.kicad_prl
+*.lck
+~*.lck
+fp-info-cache
+*.bak
+hardware/**/fab/
+hardware/**/gerbers/
+hardware/**/production/
+
+# Editors / OS
+.vscode/
+.idea/
+.zed/
+.helix/
+*.swp
+**/*.rs.bk
+.DS_Store
