@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "kicad": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["kicad-mcp-pro@4.4.0"],
+      "env": {
+        "KICAD_MCP_PROJECT_DIR": "hardware/espion-cam",
+        "KICAD_MCP_WORKSPACE_ROOT": "hardware",
+        "KICAD_MCP_PROFILE": "default",
+        "KICAD_MCP_OPERATING_MODE": "readonly"
+      },
+      "timeout": 120000
+    }
+  }
+}
