@@ -4,9 +4,10 @@
 change to the format bumps the protocol version and updates this document and the
 changelog at the end of it in the same commit.
 
-> **Status: draft.** No implementation exists yet. The message fields below are the
-> intended v1 content and may change until the first implementation lands. The header and
-> the versioning rules are fixed.
+> **Status: draft.** No implementation exists yet. Decided: the header, the versioning
+> rules (exact version match), boards identified by their C5 MAC, and Q11.5 blob
+> coordinates. The other message fields are the intended v1 content and may change until
+> the first implementation lands.
 
 ## Transport
 
@@ -18,7 +19,7 @@ changelog at the end of it in the same commit.
   | Port | Direction | Traffic |
   |---|---|---|
   | 5005 (`HOST_PORT`) | board → host, unicast | Centroids, Status |
-  | 5006 | master board → all, broadcast | Announce (same port as esp-wifi-sync) |
+  | 5006 | every C5 → all, broadcast | Announce (master election and FTM discovery; same port as esp-wifi-sync) |
   | 5007 | host → board, unicast | Config, FrameEpoch |
 
 - No retransmission. Lost centroid packets are lost frames; the host tolerates gaps.
@@ -61,12 +62,12 @@ and are never decoded.
 |---|---|---|---|
 | `0x01` | Centroids | board → host | Once per frame (120 Hz), split if needed |
 | `0x02` | Status | board → host | 1 Hz |
-| `0x03` | Announce | master C5 → broadcast | 1 Hz |
+| `0x03` | Announce | every C5 → broadcast | 1 Hz |
 | `0x10` | Config | host → board | On change |
 | `0x11` | FrameEpoch | host → board | On change |
 
-Times on the wire are **network time**: nanoseconds on the master C5's clock (see
-[timing.md](timing.md)), as `u64`.
+Times on the wire are **network time**: nanoseconds on the current timescale, served by
+the master C5 (see [timing.md](timing.md)), as `u64`.
 
 ### `0x01` Centroids
 
@@ -75,29 +76,40 @@ Times on the wire are **network time**: nanoseconds on the master C5's clock (se
 | board | `[u8; 6]` | Station MAC of the board's C5 |
 | frame | `u64` | Frame number `k` since the frame epoch (same `k` on every board for the same instant) |
 | capture_time | `u64` | Network time (ns) of the middle of the exposure |
-| sync | `SyncState` | Locked / acquiring / free-running, plus the estimated error (ns) |
+| sync | `SyncState` | Locked / acquiring / free-running, plus the estimated error (ns) and the `timescale` id |
+| flags | `u8` | Bit 0: dark frame (LEDs off, ambient IR only) |
 | part, parts | `u8`, `u8` | This datagram's index and the datagram count for this frame |
 | blobs | `[Blob]` | Centroids found in the frame (this part) |
 
-`Blob`: `x`, `y` as `u16` fixed point in 1/64 pixel (Q10.6, enough for the 640 × 400
-binned mode), `area` as `u16` pixels and `peak` as `u8` intensity.
+`Blob`: `x`, `y` as `u16` fixed point in 1/32 pixel (Q11.5: up to 2048 px, enough for
+the full 1280 × 800 mode as well as 640 × 400 binned), `area` as `u16` pixels and `peak`
+as `u8` intensity.
 
 ### `0x02` Status
 
-Firmware versions of both chips, uptime, sync role (master/slave), FTM statistics
-(session RTT, fit residual), PPS lock state on the P4, dropped-frame and dropped-packet
-counters.
+Firmware versions of both chips, uptime, sync role (master/slave/candidate), FTM
+statistics (session RTT, fit residual), SYNC lock state on the P4, dropped-frame and
+dropped-packet counters.
 
 ### `0x03` Announce
 
-Sent by the master C5 (from esp-wifi-sync): `boot_nonce: u32` (random per master boot; a
-change means the network clock restarted), master SoftAP MAC (the FTM responder),
-`master_time: u64` (ns) at send time. Slaves use it to find the responder and to unwrap
-FTM timestamps.
+Sent by every C5. It drives the automatic master election
+([timing.md](timing.md#master-election-automatic-with-failover)) and FTM discovery
+(extends esp-wifi-sync's master-only Announce):
+
+| Field | Type | Meaning |
+|---|---|---|
+| board | `[u8; 6]` | Station MAC of the sender |
+| role | `Role` | Master / slave / candidate |
+| timescale | `u32` | Random id of the timescale the sender serves or follows; a change means network time restarted |
+| locked | `bool` | Whether the sender is locked to the timescale |
+| responder | `Option<[u8; 6]>` | Master only: SoftAP MAC of the FTM responder |
+| time | `u64` | Sender's network time estimate (ns) at send time. Slaves use the master's to unwrap FTM timestamps |
 
 ### `0x10` Config
 
-Exposure (µs), threshold, minimum and maximum blob area, LED enable, frame-rate divider.
+Exposure (µs, default 500), threshold, minimum and maximum blob area, dark frame interval
+N (one LED-off frame every N frames), frame-rate divider.
 
 ### `0x11` FrameEpoch
 

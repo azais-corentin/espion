@@ -1,6 +1,6 @@
 [package]
 name         = "radio-c5"
-description  = "espion ESP32-C5 firmware: Wi-Fi, UDP to the host, FTM clock sync, PPS to the P4"
+description  = "espion ESP32-C5 firmware: Wi-Fi, UDP to the host, master election, FTM clock sync, SYNC to the P4"
 version      = "0.1.0"
 edition      = "2024"
 rust-version = "1.99"

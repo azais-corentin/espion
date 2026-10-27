@@ -8,15 +8,16 @@ license      = "MIT OR Apache-2.0"
 publish      = false
 
 [dependencies]
-p4-c5-link = { path = "../p4-c5-link" }
+esp32p4-csi = { path = "../esp32p4-csi" }
+p4-c5-link  = { path = "../p4-c5-link" }
 
 esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32p4", "log-04"] }
 esp-backtrace = { version = "0.20.0", features = ["esp32p4", "panic-handler", "println"] }
 esp-println = { version = "0.18.0", features = ["esp32p4", "log-04"] }
-# Register access for the in-repo MIPI CSI / ISP-bypass driver that esp-hal lacks
-# (docs/architecture.md). Same major as esp-hal 1.2.2 uses, so peripheral types match.
+# Register access for PAC-level drivers esp-hal lacks (ETM SYNC capture; MIPI CSI lives in
+# ../esp32p4-csi). Same major as esp-hal 1.2.2 uses, so peripheral types match.
 esp32p4 = { version = "0.3.0", features = ["critical-section"] }
 
 embassy-executor = { version = "0.10.0", features = ["log"] }

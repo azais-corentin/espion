@@ -6,7 +6,7 @@
 [workspace]
 resolver = "3"
 members  = ["crates/*", "host/*", "firmware/p4-c5-link"]
-exclude  = ["firmware/cam-p4", "firmware/radio-c5", "firmware/vendor"]
+exclude  = ["firmware/cam-p4", "firmware/esp32p4-csi", "firmware/radio-c5", "firmware/vendor"]
 
 [workspace.package]
 edition      = "2024"

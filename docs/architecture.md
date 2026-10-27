@@ -14,10 +14,10 @@ flowchart LR
     P4 -- "LED_EN / LED_FORCE" --> G
     G --> L[850 nm LED ring]
     P4 -- "SPI (P4 master)" --> C5[ESP32-C5<br/>Wi-Fi, UDP, FTM sync]
-    C5 -- "DATA_READY, PPS" --> P4
+    C5 -- "DATA_READY, SYNC (10 Hz)" --> P4
   end
   C5 -- "UDP: espion-proto" --> AP[(Wi-Fi AP)]
-  C5 <-. "FTM (802.11mc)" .-> M[master board's C5<br/>FTM responder]
+  C5 <-. "FTM (802.11mc), Announce" .-> M[elected master C5<br/>FTM responder]
   AP --> H[host:<br/>espion-server, viewer,<br/>calib, sync]
 ```
 
@@ -25,10 +25,11 @@ flowchart LR
 
 | Part | Role |
 |---|---|
-| ESP32-P4 (silicon **rev v3.0 or later**: esp-hal does not support older revisions) | Sensor control, MIPI CSI capture, blob detection, XVS trigger, LED gating, SPI master |
+| ESP32-P4 with in-package PSRAM (silicon **rev v3.0 or later**: esp-hal does not support older revisions) | Sensor control, MIPI CSI capture, blob detection, XVS trigger, LED gating, SPI master |
 | OV9281 | 1 MP monochrome global-shutter sensor, MIPI CSI-2 2-lane. Mode: 640×400 2×2 binned, RAW8, 120 fps, external trigger on XVS, STROBE output |
-| ESP32-C5 | Wi-Fi co-processor (dual-band, Wi-Fi 6): UDP to the host, FTM clock sync, PPS to the P4, SPI slave |
-| 850 nm LED ring + driver | Illumination, on only while `(STROBE ∧ LED_EN) ∨ LED_FORCE` |
+| ESP32-C5 module (WROOM/MINI class, certified, integrated antenna) | Wi-Fi co-processor (Wi-Fi 6, used on 5 GHz): UDP to the host, FTM clock sync and master election, SYNC to the P4, SPI slave |
+| 850 nm LED ring + driver | Lights passive retroreflective markers at 2–5 m (room scale). On only while `(STROBE ∧ LED_EN) ∨ LED_FORCE` |
+| USB 2.0 hub IC | Exposes both chips' USB Serial/JTAG on the single USB-C port, so each chip can be flashed and debugged independently (espflash / probe-rs) |
 | USB-C | 5 V power, flashing and logs |
 
 ### Board signals
@@ -42,11 +43,13 @@ flowchart LR
 | LED_EN, LED_FORCE | P4 → LED gate | Enable strobed LEDs / force them on (bring-up, focus) |
 | SPI (SCLK, MOSI, MISO, CS) | P4 (master) ↔ C5 (slave) | `p4-c5-link` messages |
 | DATA_READY | C5 → P4 | C5 has a message queued for the P4 |
-| PPS | C5 → P4 | Pulse at whole seconds of network time ([timing.md](timing.md)) |
+| SYNC | C5 → P4 | 10 Hz pulse, edges at network-time multiples of 100 ms ([timing.md](timing.md)) |
+| USB D+/D− | USB-C → hub → P4, C5 | Flashing, logs, JTAG for both chips |
 
-Open hardware questions (to settle in the KiCad project):
-- How the C5 gets flashed on a board with a single USB-C port (USB hub to both chips' USB Serial/JTAG, test pads, or P4 pass-through).
-- The LED gate implementation and the eye-safety limits of the 850 nm ring (IEC 62471 exposure at the expected distance and duty cycle).
+Hardware tasks for the KiCad project:
+- LED gate circuit, plus the LED driver sized for 2–5 m with passive markers.
+- Eye-safety check of the 850 nm ring (IEC 62471) at that range, 500 µs exposure, 6 %
+  duty cycle, and the worst case with `LED_FORCE` on continuously.
 
 ## Data flow per frame
 
@@ -70,15 +73,18 @@ sequenceDiagram
   time ([timing.md](timing.md)).
 - **Vision budget**: 1/120 s = 8.3 ms per frame, end to end on the P4 (capture DMA runs in
   parallel with processing of the previous frame).
-- **Frame buffers**: 640 × 400 × 1 byte = 250 KiB per frame. Two buffers fit in the P4's
-  internal L2 memory; PSRAM is the fallback. No heap on the P4.
+- **Frame buffers**: 640 × 400 × 1 byte = 250 KiB per frame. Two buffers plus the ambient
+  mask from dark frames live in the P4's internal L2 memory. The in-package PSRAM holds
+  everything that isn't per-frame (debug frame captures, calibration snapshots). No heap on
+  the P4.
 
 ## Firmware
 
 | Crate | Chip / target | Runs |
 |---|---|---|
-| `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo, the SPI link and the LED gate |
-| `firmware/radio-c5` | ESP32-C5, `riscv32imac-unknown-none-elf` | Embassy tasks: Wi-Fi station and UDP (embassy-net), FTM sync (initiator, or responder on the elected master), PPS output (RMT edge schedule), SPI slave. Heap only for the Wi-Fi stack |
+| `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the SYNC servo (ETM capture), the SPI link and the LED gate |
+| `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, in esp-hal style. Used by `cam-p4` |
+| `firmware/radio-c5` | ESP32-C5, `riscv32imac-unknown-none-elf` | Embassy tasks: Wi-Fi station and UDP (embassy-net), master election, FTM sync (initiator, or responder on the master), SYNC output (RMT edge schedule), SPI slave. Heap only for the Wi-Fi stack |
 | `firmware/p4-c5-link` | both (no_std) | SPI message types and framing. Reuses `espion-proto` types |
 
 Both firmware crates are built with `esp-hal` + `esp-rtos` (embassy executor). Time sync
@@ -93,7 +99,7 @@ reuses the approach and code from the private
 | `espion-server` | CLI. Receives UDP packets, groups centroids by frame number, triangulates with the current calibration |
 | `espion-viewer` | egui live view: per-camera blobs, 3D markers, sync health |
 | `espion-calib` | Per-camera intrinsics (lens model) and rig extrinsics |
-| `espion-sync` | Time-sync coordinator. The network clock lives on the elected master C5, not on the host. espion-sync selects the master, sets the frame epoch `T0`, maps network time to host time and reports per-board sync health |
+| `espion-sync` | Time-sync observer and coordinator. The network clock lives on the master C5, which the boards elect themselves. espion-sync sets the frame epoch `T0`, maps network time to host time and reports the current master, timescale and per-board sync health |
 
 `crates/espion-proto` is the single source of truth for the UDP wire format
 ([protocol.md](protocol.md)).
@@ -125,17 +131,16 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 
 | Need | esp-hal 1.2.2 | Plan |
 |---|---|---|
-| MIPI CSI-2 receiver | ❌ | In-repo driver on the `esp32p4` PAC. Write it like an esp-hal driver (`Config`, typed pins, DMA buffers, blocking and async APIs, HIL-testable) without planning to upstream it. Planned as its own crate under `firmware/` |
+| MIPI CSI-2 receiver | ❌ | `firmware/esp32p4-csi`: driver on the `esp32p4` PAC. Write it like an esp-hal driver (`Config`, typed pins, DMA buffers, blocking and async APIs, HIL-testable) without planning to upstream it |
 | ISP | ❌ | Bypass: RAW8 goes straight to memory. Blob detection does not need demosaicing (mono sensor). Check the CSI → memory path that skips the ISP against the TRM |
 | DMA for CSI | ⚒ (DMA partial) | Confirm which DMA engine the CSI bridge uses on the P4 and whether esp-hal drives it; otherwise part of the CSI driver |
 | I2C master (SCCB) | ✔ | — |
 | SPI master | ✔ | P4 side of the link |
 | RMT | ⚒ | XVS edge schedule, as in esp-wifi-sync `wave.rs` |
-| GPIO interrupts | ✔ | PPS edge timestamping (interrupt latency adds jitter) |
-| ETM | ❌ | Would allow hardware PPS capture (GPIO event → timer capture task). PAC-level fallback if interrupt jitter is too high |
+| ETM | ❌ | Needed from the start: the SYNC edge (GPIO event) triggers a timer capture task. PAC-level code in `cam-p4`. Which timer has the capture task is still to confirm against the TRM |
 | MCPWM / PCNT / LEDC | ❌ | Not needed: STROBE gates the LEDs |
 | SYSTIMER, TIMG | ⚒ | Local timebase, embassy time driver |
-| PSRAM | ⚒ | Fallback for frame buffers |
+| PSRAM | ⚒ | In-package PSRAM for non-per-frame data |
 | USB Serial/JTAG | ⚒ | Flashing and logs |
 | Chip revision | v3.0+ only | The PCB must use rev v3.x silicon |
 
@@ -146,11 +151,11 @@ template and the esp-hal 1.2.2 examples.
 
 | Need | esp-hal / esp-radio | Plan |
 |---|---|---|
-| Wi-Fi station, 2.4/5 GHz | ⚒ (esp-radio 1.0.0-beta.1) | — |
+| Wi-Fi station, 5 GHz | ⚒ (esp-radio 1.0.0-beta.1) | Non-DFS channels preferred (SoftAP restrictions, [timing.md](timing.md#band)) |
 | SoftAP FTM responder | Not exposed: esp-radio hard-codes `ftm_responder = false` and leaves FTM out of `g_wifi_feature_caps` | Set both through `esp-wifi-sys-esp32c5` bindings, as esp-wifi-sync does |
 | FTM initiator | Libraries on crates.io (esp32-wifi-lib `7cd4d7b`) lack the t2/t3 validation fix that made C3↔C3 FTM work | Vendored `9e91edc` libraries |
 | FTM timestamps vs SYSTIMER | On the C3 the MAC clock is SYSTIMER µs. **Unverified on the C5** | Measure before relying on it |
 | SPI slave | ⚒ (SPI2 only) | C5 side of the link |
-| RMT | ⚒ | PPS edge schedule |
+| RMT | ⚒ | SYNC edge schedule |
 | ETM / MCPWM / LEDC | ❌ | Not needed |
 | UDP (embassy-net / smoltcp) | ✔ (crate level) | — |

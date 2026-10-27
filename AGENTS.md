@@ -8,8 +8,9 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 |---|---|---|
 | `crates/espion-proto/` | no_std UDP wire format (serde + postcard), shared | `cargo test -p espion-proto` (root) |
 | `firmware/p4-c5-link/` | no_std P4↔C5 SPI protocol; host workspace member for tests | `cargo test -p p4-c5-link` (root); also built by both firmware crates |
-| `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs) | `cargo build --release` in that directory |
-| `firmware/radio-c5/` | ESP32-C5 firmware (Wi-Fi, UDP, FTM sync, PPS) | `cargo build --release` in that directory |
+| `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, SYNC capture via ETM) | `cargo build --release` in that directory |
+| `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |
+| `firmware/radio-c5/` | ESP32-C5 firmware (Wi-Fi, UDP, master election, FTM sync, SYNC) | `cargo build --release` in that directory |
 | `firmware/vendor/` | Patched `esp-wifi-sys-esp32c5` (see its `VENDORED.md`) | Built through `radio-c5` |
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
 | `hardware/espion-cam/` | KiCad project | KiCad only |
@@ -30,7 +31,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
   the Wi-Fi stack. Per-frame data uses static buffers (`static_cell`, `heapless`).
 - The vision loop has an **8.3 ms budget per frame** (120 fps): capture to centroids sent
   over SPI. Keep per-pixel work branch-light and measure it on hardware when you change it.
-- Timing-critical edges (PPS, XVS) come from RMT edge schedules, never from software
+- Timing-critical edges (SYNC, XVS) come from RMT edge schedules, never from software
   delays ([docs/timing.md](docs/timing.md)).
 
 ## Wire format

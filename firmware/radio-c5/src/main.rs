@@ -1,5 +1,6 @@
-//! espion ESP32-C5 firmware: Wi-Fi station, UDP to the host, FTM clock sync (responder on
-//! the elected master, initiator elsewhere), PPS output to the P4, SPI slave for the P4 link.
+//! espion ESP32-C5 firmware: Wi-Fi station (5 GHz), UDP to the host, master election, FTM
+//! clock sync (responder on the master, initiator elsewhere), 10 Hz SYNC output to the P4,
+//! SPI slave for the P4 link.
 //!
 //! Stub: boots esp-hal, the heap and the embassy executor, then idles. Wi-Fi is not started.
 

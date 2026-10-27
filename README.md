@@ -10,12 +10,14 @@ started.
 
 ## Hardware
 
-A custom KiCad board with three main parts. An ESP32-P4 does the vision: it captures an
-OV9281 (1 MP monochrome global shutter, MIPI CSI-2, 640×400 binned at 120 fps) triggered on
-its XVS pin, and runs blob detection. An 850 nm LED ring is gated by the sensor's STROBE
-output, with P4 enable/force lines. An ESP32-C5 is the Wi-Fi co-processor on SPI: it sends
-UDP to the host and keeps the boards' clocks in sync over Wi-Fi FTM (target: about 1 µs).
-One board's C5 is the elected network clock. The board is powered by USB-C at 5 V.
+A custom KiCad board with three main parts. An ESP32-P4 (with in-package PSRAM) does the
+vision: it captures an OV9281 (1 MP monochrome global shutter, MIPI CSI-2, 640×400 binned at
+120 fps) triggered on its XVS pin, and runs blob detection. An 850 nm LED ring lights
+passive retroreflective markers at room scale (2–5 m). It is gated by the sensor's STROBE
+output, with P4 enable/force lines. An ESP32-C5 module is the Wi-Fi co-processor (5 GHz) on
+SPI: it sends UDP to the host and keeps the boards' clocks in sync over Wi-Fi FTM (target:
+about 1 µs). The boards elect one C5 as the network clock, with automatic failover. The board
+is powered by USB-C at 5 V; a USB hub exposes both chips for flashing and debugging.
 
 ## Layout
 
@@ -23,7 +25,8 @@ One board's C5 is the elected network clock. The board is powered by USB-C at 5 
 |---|---|
 | `crates/espion-proto/` | no_std UDP wire format shared by firmware and host |
 | `firmware/cam-p4/` | ESP32-P4: camera, blob detection, XVS trigger, LED gating |
-| `firmware/radio-c5/` | ESP32-C5: Wi-Fi, UDP, FTM clock sync, PPS to the P4 |
+| `firmware/radio-c5/` | ESP32-C5: Wi-Fi, UDP, master election, FTM clock sync, SYNC pulse to the P4 |
+| `firmware/esp32p4-csi/` | no_std MIPI CSI-2 receiver driver for the P4 (esp-hal lacks one) |
 | `firmware/p4-c5-link/` | no_std SPI protocol between the two chips |
 | `firmware/vendor/` | Patched `esp-wifi-sys-esp32c5` (FTM-fixed Wi-Fi libraries) |
 | `host/espion-server/` | UDP receive + triangulation (CLI) |
@@ -60,12 +63,13 @@ cargo run -p espion-sync     # TODO: stub
 Firmware (each crate has its own target, runner and lockfile; run from its directory):
 
 ```sh
-cd firmware/cam-p4   && cargo build --release
+cd firmware/cam-p4   && cargo build --release   # also builds firmware/esp32p4-csi
 cd firmware/radio-c5 && cargo build --release
 
-# TODO: untested (no board yet). Flashes over USB with espflash and opens the monitor:
-cd firmware/cam-p4   && cargo run --release
-cd firmware/radio-c5 && cargo run --release   # TODO: how the C5 is reached on the board is open
+# TODO: untested (no board yet). Both chips appear as separate USB Serial/JTAG ports behind
+# the board's USB hub; pick one with ESPFLASH_PORT. Flashes and opens the monitor:
+cd firmware/cam-p4   && ESPFLASH_PORT=/dev/ttyACM0 cargo run --release
+cd firmware/radio-c5 && ESPFLASH_PORT=/dev/ttyACM1 cargo run --release
 ```
 
 Hardware:

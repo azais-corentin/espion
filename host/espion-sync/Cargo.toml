@@ -1,6 +1,6 @@
 [package]
 name         = "espion-sync"
-description  = "espion time-sync coordinator: master selection, frame epoch, network-to-host time mapping, sync health"
+description  = "espion time-sync observer: frame epoch, network-to-host time mapping, master and sync health reporting"
 version      = "0.1.0"
 edition.workspace      = true
 rust-version.workspace = true

@@ -1,5 +1,6 @@
-//! espion ESP32-P4 firmware: OV9281 capture over MIPI CSI, blob detection with subpixel
-//! centroids, XVS frame trigger and LED strobe gating, centroid batches to the C5 over SPI.
+//! espion ESP32-P4 firmware: OV9281 capture over MIPI CSI (`esp32p4-csi`), blob detection
+//! with subpixel centroids, XVS frame trigger, LED gating with periodic dark frames, SYNC
+//! edge capture through ETM, centroid batches to the C5 over SPI.
 //!
 //! Stub: boots esp-hal and the embassy executor, then idles.
 

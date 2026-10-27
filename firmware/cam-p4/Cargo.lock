@@ -118,6 +118,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp32p4",
+ "esp32p4-csi",
  "log",
  "p4-c5-link",
  "static_cell",
@@ -955,6 +956,14 @@ checksum = "4c4b1a8cb0d4831d710437f72a73246682919c16ef37a99788f1e26d9f49fe20"
 dependencies = [
  "critical-section",
  "vcell",
+]
+
+[[package]]
+name = "esp32p4-csi"
+version = "0.1.0"
+dependencies = [
+ "esp-hal",
+ "esp32p4",
 ]
 
 [[package]]
