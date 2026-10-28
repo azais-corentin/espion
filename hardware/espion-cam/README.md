@@ -13,8 +13,9 @@ module. Not started yet. Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   (MIPI CSI-2, 2 lanes). XVS and STROBE come from pads on the module over a JST-SH 4-pin
   pigtail; STROBE goes to the LED gate
 - 850 nm LED ring for passive retroreflective markers at 2–5 m: 12 × Amicc
-  A-SC880IR3C-P03-1T (90°) in one string, boost driver at a fixed 1 A, gated by
-  `STROBE ∧ LED_EN`. No continuous-on mode
+  A-SC880IR3C-P03-1T (90°) in one string. TPS61170 boost to 32 V (enabled by
+  `LED_PWR_EN`) into a storage capacitor, op-amp + MOSFET sink at a fixed 1 A, gated by
+  `STROBE ∧ LED_EN` with a ≈ 1 ms hardware timeout per pulse. No continuous-on mode
 - IP101GRI Ethernet PHY on RMII (25 MHz crystal, PHY supplies the 50 MHz REF_CLK), HanRun
   HR871150C MagJack with both centre taps and the spare pairs brought out, PPS test point
 - Power: SDAPO DP1435-5V IEEE 802.3af PoE PD module (isolated 5.15 V, LCSC C5380097)

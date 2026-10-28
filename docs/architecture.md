@@ -33,7 +33,7 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | [SDAPO DP1435-5V](https://www.lcsc.com/product-detail/C5380097.html) (LCSC C5380097) | IEEE 802.3af PoE PD module: bridge rectifiers, isolated flyback (1.5 kV), 5.15 V out. Class 0 (no class pin brought out). Through-hole SIP-6 |
 | 5 V OR-ing (TI TPS2116) | PoE 5 V and USB-C VBUS, either one powers the board, PoE has priority, no back-feed into USB |
 | 3.3 V buck (TI TLV62569) | 5 V → ESP_3V3 for the module, the PHY and the camera module |
-| 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`. See [LED ring](#led-ring) |
+| 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver (TI TPS61170 boost to 32 V, 1 A op-amp current sink) | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`, for at most ≈ 1 ms per pulse. See [LED ring](#led-ring) |
 | USB-C | 5 V on the bench; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub) |
 
 ### Board signals
@@ -45,6 +45,7 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | XVS | P4 → OV9281 | Frame trigger, one edge per frame at a scheduled network time |
 | STROBE | OV9281 → LED gate | High during exposure |
 | LED_EN | P4 → LED gate | Enables the strobed LEDs; low for dark frames |
+| LED_PWR_EN | P4 → TPS61170 CTRL | Enables the 32 V LED rail. Pulled low: the rail stays off until firmware enables it |
 | RMII (REF_CLK, CRS_DV, RXD0–1, TX_EN, TXD0–1) | P4 ↔ IP101GRI | Ethernet frames |
 | MDC, MDIO | P4 → IP101GRI | PHY management |
 | PHY_RST | P4 → IP101GRI | PHY reset, active low |
@@ -83,14 +84,34 @@ Sizing:
 - **Placement:** close around the lens holder and evenly spaced. Retroreflectors send
   the light back in a narrow cone around its source.
 
-Driver (part not selected yet):
-- One string: 23 V typ, 27.6 V max at 1 A. A 5 V → ≈ 30 V boost charges a storage
-  capacitor, and a constant-current sink gated by `STROBE ∧ LED_EN` draws each pulse from
-  it. One pulse takes 0.5 mC (1 A × 500 µs), so ≈ 170 µF for 3 V of droop.
-- 23 W peak during a pulse, 1.4 W average at 6 % duty (≈ 1.65 W at the boost input).
-  The PoE PD supplies only the average.
+Driver (parts and LCSC numbers: `hardware/espion-cam/BOM.md`):
+- **Rail.** One string: 23 V typ, 27.6 V max at 1 A. A TI TPS61170 boost (40 V switch,
+  0.96 A minimum current limit, 10 µH) takes 5 V to 32 V and charges 2 × 220 µF/50 V
+  electrolytics. 32 V covers the max-V_F string plus 0.1 V on the shunt, ≈ 1 V for the
+  MOSFET and ≈ 3 V of droop. One pulse takes 0.5 mC (1 A × 500 µs): ≈ 1.1 V of droop on
+  440 µF, plus ESR. Two capacitors also share the ≈ 0.24 A RMS ripple current (each is
+  rated 230 mA at 120 Hz).
+- **Boost limits.** Worst case (minimum current limit, 85 %) the boost delivers ≈ 100 mA
+  at 32 V. 500 µs pulses at 120 fps average 60 mA, so it can sustain ≈ 0.8 ms of light per
+  frame. Refilling the capacitors at power-up takes ≈ 70 ms (0.23 J).
+- **Enable.** `LED_PWR_EN` drives the TPS61170's CTRL pin, with a pull-down: the rail is
+  off through PoE start-up and boot, and firmware can drop it on a fault.
+- **Current sink.** A TLV9061 op-amp on 5 V drives an IRLR024N MOSFET (55 V, planar, for
+  its linear-mode SOA) so that 1 A flows through a 0.1 Ω shunt. Its 100 mV reference is a
+  divider from the gate output, so the gate turns the sink on and off. The MOSFET drops
+  32 V − V_F, ≈ 9 V typ (up to ≈ 13 V with low-V_F parts): 9–13 W during a pulse,
+  ≤ 0.8 W average at 6 % duty, so it needs DPAK copper.
+- **Gate and timeout.** An SN74LVC1G97 is wired as a 2-input AND with Schmitt inputs (A
+  tied low, Y = B·C). B is `LED_EN`. C is STROBE through an RC high-pass and a 10 kΩ
+  series resistor: C falls below the threshold ≈ 1 ms after STROBE rises (τ ≈ 0.9 ms), so
+  the LEDs are on for min(STROBE, ≈ 1 ms). The series resistor limits the input clamp
+  current when STROBE falls, and the node recovers well within the 8.3 ms frame. A STROBE
+  stuck high lights one ≈ 1 ms pulse and then nothing.
+- **Power.** 60 mA from the 32 V rail is 1.9 W, ≈ 2.3 W at the boost input; the PoE PD
+  supplies only this average. The 23 W pulses come from the capacitors.
 - Fixed current. Near markers (≈ 40× brighter at 2 m than at 5 m) are handled by the
-  exposure time, which Config already sets.
+  exposure time, which Config already sets. Exposures over ≈ 1 ms are lit only for their
+  first ≈ 1 ms.
 - No continuous mode: bring-up and focusing use the strobed light too, so the LEDs always
   run at the exposure's duty cycle.
 
@@ -143,18 +164,17 @@ Hardware tasks for the KiCad project:
   (P9/P10 → VB1/VB2), so the PD takes power from Alternative A and B PSEs. The Bob-Smith
   termination is inside the jack.
 - Power budget against 802.3af: 12.95 W at the PD × 84 % peak efficiency gives at most
-  ≈ 10.9 W out. Budget ≈ 10.5 W (≈ 2 A at 5.15 V). The LED ring takes ≈ 1.65 W of it on
-  average; its 23 W pulses come from the driver's storage capacitor. The datasheet's
+  ≈ 10.9 W out. Budget ≈ 10.5 W (≈ 2 A at 5.15 V). The LED ring takes ≈ 2.3 W of it on
+  average; its 23 W pulses come from the driver's storage capacitors. The datasheet's
   12.4 W rating is more than 802.3af delivers.
 - IP101GRI straps (PHY address, REF_CLK output mode). Keep RMII traces short; REF_CLK is
   50 MHz.
-- LED driver (boost, storage capacitor, current sink) and the `STROBE ∧ LED_EN` gate, per
-  [LED ring](#led-ring).
+- LED driver: TPS61170 feedback divider (32 V) and compensation, op-amp loop
+  compensation (MOSFET gate capacitance), and the timeout RC. Tune τ on the first boards
+  against the '1G97's Schmitt thresholds. The gate needs STROBE at 3.3 V logic (V_T+ is up
+  to ≈ 2 V at a 3.3 V supply); if the module's STROBE is 1.8 V, add a level shifter.
 - Eye-safety check of the ring (IEC 62471) at 500 µs exposure and 6 % duty cycle. Rough
   estimate: exempt group (average IR irradiance ≈ 7 W/m² at 20 cm, limit 100 W/m²).
-- Decide whether the gate needs a hardware limit on on-time: a STROBE stuck high (a
-  misconfigured sensor) would run the ring continuously, outside the eye-safety and power
-  budgets.
 - OV9281 module: the listing's reviews report an interface that doesn't match the
   Raspberry Pi pinout. Check the FPC pinout on a real module before powering it from the
   board, and measure the XVS and STROBE logic levels.

@@ -116,6 +116,10 @@ To verify in statime: changing clockClass and priority2 at runtime (rules 2 and 
 - There is no continuous-on mode. Bring-up and focusing use the strobed light, so the LEDs
   always run at the exposure's duty cycle.
 - Default exposure: **500 µs**, a 6 % LED duty cycle at 120 Hz.
+- A hardware timeout in the gate ends each pulse ≈ 1 ms after STROBE rises, whatever
+  STROBE does. Exposures longer than ≈ 1 ms are lit only for their first ≈ 1 ms, and the
+  boost can sustain only ≈ 0.8 ms of light per frame at 120 fps
+  ([architecture.md](architecture.md#led-ring)).
 
 ## 5. Startup sequence
 
