@@ -7,7 +7,8 @@ module. Not started yet. Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 
 - Waveshare ESP32-P4-Core, 16 MB flash (SKU 36096): ESP32-P4NRW32X (rev v3.x, as esp-hal
   requires), 32 MB in-package PSRAM, 40 MHz and 32.768 kHz crystals. 76 stamp holes,
-  1 mm pitch, 24 × 20 mm. Symbol and footprint go in `../lib/`
+  1 mm pitch, 24 × 20 mm. Symbol `MCU_Module_Waveshare:ESP32-P4-Core`, footprint
+  `Module_Waveshare:Waveshare_ESP32-P4-Core` (`../lib/`)
 - OV9281 global-shutter mono sensor on MIPI CSI-2 (2 lanes), external trigger on XVS,
   STROBE output to the LED gate
 - 850 nm LED ring with driver for passive retroreflective markers at 2–5 m, gated by

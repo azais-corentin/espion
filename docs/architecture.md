@@ -85,8 +85,8 @@ From the module's documentation and its schematic (16 MB version):
 - Power: 3.3 V on ESP_3V3 (pins 75/76). VBAT (pin 74) ties to 3.3 V (no RTC battery).
 
 Hardware tasks for the KiCad project:
-- Module symbol and stamp-hole footprint in `hardware/lib/` (24 × 20 mm, 1 mm pitch). Check
-  pad positions against the Waveshare package drawing.
+- Measure the castellated pads on a real module and confirm the provisional land pattern of
+  `Module_Waveshare:Waveshare_ESP32-P4-Core` (`hardware/lib/README.md`).
 - PoE PD: an integrated module (Ag9905M class) or a discrete controller with a flyback.
   Keep the 1500 V isolation between the cable side and the board.
 - Power budget against 802.3af (12.95 W at the PD), including the LED ring's peak current.
