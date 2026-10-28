@@ -16,7 +16,7 @@ local to each section; KiCad's annotation assigns the board-wide ones.
 
 | Topic | Decision |
 |---|---|
-| Sheets | Hierarchical, one sheet per block. Signals cross sheets only through hierarchical pins, so ERC checks every crossing; rails use global power symbols |
+| Sheets | Hierarchical, one sheet per block. Signals cross sheets only through hierarchical pins, so ERC checks every crossing; rails use global power symbols. Multi-signal interfaces cross as buses ([Buses](#buses)) |
 | Mechanics | OV9281 module on the back of the board, lens through a cutout. The 12 LEDs sit on the front, close around the cutout. One PCB, no ring connector |
 | Camera logic levels | XVS and STROBE on the OV9281 module are 1.8 V. STROBE goes up through an SN74LV1T34 on +3V3; XVS goes down through a 1.5 kΩ / 1.8 kΩ divider |
 | STROBE to the P4 | Yes, on a GPIO with ETM capture: firmware timestamps every exposure (trigger latency L, missed triggers) |
@@ -45,13 +45,13 @@ local to each section; KiCad's annotation assigns the board-wide ones.
 
 ```mermaid
 flowchart LR
-  ETH[ethernet] -->|"POE_VA1, POE_VA2, POE_VB1, POE_VB2"| PWR[power]
+  ETH[ethernet] -->|"{POE}"| PWR[power]
   PWR -->|PWR_SRC| MCU[mcu]
-  ETH <-->|"RMII ×7, MDC, MDIO, PHY_RST_N"| MCU
-  MCU <-->|"CSI ×6, SCCB_SDA, SCCB_SCL, CAM_EN, XVS"| CAM[camera]
+  ETH <-->|"{PHY}"| MCU
+  MCU <-->|"{CSI}, {CAMCTL}"| CAM[camera]
   CAM -->|STROBE| MCU
   CAM -->|STROBE| LED[led_driver]
-  MCU -->|"LED_EN, LED_PWR_EN, BST_EN"| LED
+  MCU -->|"{LEDCTL}"| LED
   LED -->|"VLED_SENSE, NTC_SENSE"| MCU
   LED -->|LED_K| RING[led_ring]
 ```
@@ -78,30 +78,51 @@ The power sheet carries `GND`, `VBUS`, `+5V_POE_F`, `+3V3` and the four `POE_*` 
 led_driver sheet `+32V`; the ethernet sheet `PHY_3V3`. No other sheet adds flags on those
 nets.
 
+### Buses
+
+Each multi-signal interface crosses sheets as one bus. Every sheet that uses a bus, the root
+included, defines a KiCad bus alias with the members below, in this order. The sheet's
+hierarchical label and the root sheet pin are named `{ALIAS}` (an unnamed alias group), so
+the members keep their bare net names (`/Ethernet/RMII_TXD0`, not `PHY.RMII_TXD0`) and the
+net classes match them by name. On the root sheet, buses run directly between the sheet pins.
+
+| Bus | Members | Sheets | Label shape |
+|---|---|---|---|
+| `{POE}` | `POE_VA1`, `POE_VA2`, `POE_VB1`, `POE_VB2` | ethernet ↔ power | passive |
+| `{PHY}` | `RMII_TX_EN`, `RMII_TXD0`, `RMII_TXD1`, `RMII_REF_CLK`, `RMII_CRS_DV`, `RMII_RXD0`, `RMII_RXD1`, `MDC`, `MDIO`, `PHY_RST_N` | ethernet ↔ mcu | bidirectional |
+| `{CSI}` | `CSI_CLK_P`, `CSI_CLK_N`, `CSI_D0_P`, `CSI_D0_N`, `CSI_D1_P`, `CSI_D1_N` | mcu ↔ camera | passive |
+| `{CAMCTL}` | `SCCB_SDA`, `SCCB_SCL`, `CAM_EN`, `XVS` | mcu ↔ camera | bidirectional |
+| `{LEDCTL}` | `LED_PWR_EN`, `BST_EN`, `LED_EN` | mcu ↔ led_driver | bidirectional |
+
+`STROBE`, `PWR_SRC`, `VLED_SENSE`, `NTC_SENSE` and `LED_K` stay single hierarchical pins.
+Within a sheet, a bus that has to reach members on two sides of a part is split into pieces
+joined by a local bus label of the same `{ALIAS}` name (mcu sheet: `{LEDCTL}` reaches
+`BST_EN` on GPIO53 this way); each sheet has exactly one hierarchical label per bus.
+
 ### Hierarchical pins
 
 3.3 V logic unless stated. Directions are from the source sheet.
 
-| Pin | From → to | Level / type | Notes |
-|---|---|---|---|
-| `RMII_REF_CLK` | ethernet → mcu | 50 MHz | PHY pin 14 → GPIO50; also looped to PHY pin 10 on the ethernet sheet |
-| `RMII_CRS_DV`, `RMII_RXD0`, `RMII_RXD1` | ethernet → mcu | | GPIO28, 29, 30. 22 Ω at the PHY |
-| `RMII_TX_EN`, `RMII_TXD0`, `RMII_TXD1` | mcu → ethernet | | GPIO49, 34, 35. TXD1 is the BOOT strap |
-| `MDC` | mcu → ethernet | | GPIO31 |
-| `MDIO` | bidirectional | open/tri-state | GPIO52. 1.5 kΩ pull-up on the ethernet sheet |
-| `PHY_RST_N` | mcu → ethernet | active low | GPIO51. 10 kΩ pull-down on the ethernet sheet |
-| `CSI_D0_P/N`, `CSI_D1_P/N`, `CSI_CLK_P/N` | camera ↔ mcu | MIPI D-PHY | Module pins 28–33. 100 Ω differential |
-| `SCCB_SDA`, `SCCB_SCL` | mcu ↔ camera | open drain | 1.8 kΩ pull-ups on the camera sheet |
-| `CAM_EN` | mcu → camera | | 47 kΩ pull-down on the camera sheet |
-| `XVS` | mcu → camera | 3.3 V before the divider | RMT output |
-| `STROBE` | camera → mcu, led_driver | 3.3 V (SN74LV1T34 output) | ETM capture on the P4; gate and timeout on the led_driver sheet |
-| `LED_EN` | mcu → led_driver | | Gate enable. 100 kΩ pull-down |
-| `LED_PWR_EN` | mcu → led_driver | | TPS22918 ON. 100 kΩ pull-down |
-| `BST_EN` | mcu → led_driver | | TPS61170 CTRL. 100 kΩ pull-down |
-| `VLED_SENSE` | led_driver → mcu | analog 0–1.51 V | +32V × 10/265, ADC1 |
-| `NTC_SENSE` | led_driver → mcu | analog | NTC divider, ADC1 |
-| `PWR_SRC` | power → mcu | open drain | TPS2116 ST; 10 kΩ pull-up on the mcu sheet. High = PoE |
-| `LED_K` | led_driver ↔ led_ring | 8–32 V, 1 A pulsed | String cathode → MOSFET drain |
+| Signal | Bus | From → to | Level / type | Notes |
+|---|---|---|---|---|
+| `RMII_REF_CLK` | `{PHY}` | ethernet → mcu | 50 MHz | PHY pin 14 → GPIO50; also looped to PHY pin 10 on the ethernet sheet |
+| `RMII_CRS_DV`, `RMII_RXD0`, `RMII_RXD1` | `{PHY}` | ethernet → mcu | | GPIO28, 29, 30. 22 Ω at the PHY |
+| `RMII_TX_EN`, `RMII_TXD0`, `RMII_TXD1` | `{PHY}` | mcu → ethernet | | GPIO49, 34, 35. TXD1 is the BOOT strap |
+| `MDC` | `{PHY}` | mcu → ethernet | | GPIO31 |
+| `MDIO` | `{PHY}` | bidirectional | open/tri-state | GPIO52. 1.5 kΩ pull-up on the ethernet sheet |
+| `PHY_RST_N` | `{PHY}` | mcu → ethernet | active low | GPIO51. 10 kΩ pull-down on the ethernet sheet |
+| `CSI_D0_P/N`, `CSI_D1_P/N`, `CSI_CLK_P/N` | `{CSI}` | camera ↔ mcu | MIPI D-PHY | Module pins 28–33. 100 Ω differential |
+| `SCCB_SDA`, `SCCB_SCL` | `{CAMCTL}` | mcu ↔ camera | open drain | 1.8 kΩ pull-ups on the camera sheet |
+| `CAM_EN` | `{CAMCTL}` | mcu → camera | | 47 kΩ pull-down on the camera sheet |
+| `XVS` | `{CAMCTL}` | mcu → camera | 3.3 V before the divider | RMT output |
+| `STROBE` | — | camera → mcu, led_driver | 3.3 V (SN74LV1T34 output) | ETM capture on the P4; gate and timeout on the led_driver sheet |
+| `LED_EN` | `{LEDCTL}` | mcu → led_driver | | Gate enable. 100 kΩ pull-down |
+| `LED_PWR_EN` | `{LEDCTL}` | mcu → led_driver | | TPS22918 ON. 100 kΩ pull-down |
+| `BST_EN` | `{LEDCTL}` | mcu → led_driver | | TPS61170 CTRL. 100 kΩ pull-down |
+| `VLED_SENSE` | — | led_driver → mcu | analog 0–1.51 V | +32V × 10/265, ADC1 |
+| `NTC_SENSE` | — | led_driver → mcu | analog | NTC divider, ADC1 |
+| `PWR_SRC` | — | power → mcu | open drain | TPS2116 ST; 10 kΩ pull-up on the mcu sheet. High = PoE |
+| `LED_K` | — | led_driver ↔ led_ring | 8–32 V, 1 A pulsed | String cathode → MOSFET drain |
 
 ### GPIO groups
 
@@ -163,6 +184,8 @@ The hardware relies on these; `cam-p4` must follow them.
 Takes PoE from the MagJack's centre taps and spare pairs through the isolated DP1435-5V PD module (5.15 V), filters it with a damped LC, and ORs it with USB-C VBUS in a TPS2116 power mux. PoE (VIN1) has priority; USB (VIN2) takes over only when PoE is below the PR1 threshold. Neither source can back-feed the other. The mux output is the global `+5V` rail, which feeds the LED boost (led_driver sheet) and a TLV62569 buck that makes `+3V3`. The TPS2116 ST output leaves as `PWR_SRC`. The sheet also holds the `+5V`/`+3V3`/`GND` test points and the ERC power flags.
 
 ### Hierarchical pins
+
+Sheet labels: `{POE}` (bus, passive) and `PWR_SRC`. The four `POE_*` rows are the `{POE}` members.
 
 | Name | Direction (from this sheet) | Level | Goes to |
 |---|---|---|---|
@@ -429,7 +452,7 @@ Sources cited:
 
 ### Hierarchical pins
 
-Directions are as seen from the mcu sheet. All signals are 3.3 V logic unless the table says otherwise.
+Directions are as seen from the mcu sheet. All signals are 3.3 V logic unless the table says otherwise. Sheet labels: the buses `{PHY}` (RMII, `MDC`, `MDIO`, `PHY_RST_N`), `{CSI}`, `{CAMCTL}` (`SCCB_*`, `CAM_EN`, `XVS`) and `{LEDCTL}` (`LED_EN`, `LED_PWR_EN`, `BST_EN`), and the single pins `STROBE`, `VLED_SENSE`, `NTC_SENSE` and `PWR_SRC`. `{LEDCTL}` is drawn in two pieces joined by a local `{LEDCTL}` bus label, because `BST_EN` (GPIO53) is on the other pin column.
 
 | Name | Dir | Level | Goes to | Module pin / GPIO |
 |---|---|---|---|---|
@@ -837,6 +860,8 @@ Sources used below:
 
 ### Hierarchical pins
 
+Sheet labels: `{PHY}` (bus, bidirectional) and `{POE}` (bus, passive). The rows are their members.
+
 | Name | Direction (this sheet) | Level | Goes to | Notes |
 |---|---|---|---|---|
 | `RMII_REF_CLK` | output | 3.3 V CMOS, 50 MHz | mcu, GPIO50 (module pin 68) | From PHY pin 14 through a series R. Also looped to PHY pin 10 on this sheet |
@@ -1117,6 +1142,8 @@ The sheet also holds the parts the module needs on the host side:
 
 ### Hierarchical pins
 
+Sheet labels: `{CSI}` (bus, passive), `{CAMCTL}` (bus, bidirectional: `SCCB_*`, `CAM_EN`, `XVS`) and `STROBE`. `XVS` reaches its bus entry through a pair of local `XVS` labels, since its divider sits below the `{CSI}` bus.
+
 | Name | Direction (this sheet) | Level | Goes to |
 |---|---|---|---|
 | `CSI_D0_P`, `CSI_D0_N` | bidirectional | MIPI D-PHY | mcu: module pins 29 / 28 |
@@ -1178,7 +1205,7 @@ keep the stock symbol's pin numbers equal to the footprint's pad numbers.
 | 7 | 9 | CAM1_CP | CON_CSI_CLKP | `CAM_CLK_P` → 0 Ω → `CSI_CLK_P` | |
 | 6 | 10 | GND | GND | `GND` | |
 | 5 | 11 | CAM_GPIO (Pi 3 B+: CAM_GPIO0) | ENABLE (drives the module's regulator EN pins) | `CAM_EN`, 47 kΩ to GND at the pad | Module power enable |
-| 4 | 12 | NC on Pi 4 (Pi 3 B+: CAM_GPIO1) | NC on V2.1 | `CAM_IO1`: no-connect flag, plus a DNP 0 Ω to `CAM_EN` | See the mitigation below |
+| 4 | 12 | NC on Pi 4 (Pi 3 B+: CAM_GPIO1) | NC on V2.1 | `CAM_IO1`: DNP 0 Ω (R36) to `CAM_EN`. No no-connect flag: R36 keeps the pad on a net | See the mitigation below |
 | 3 | 13 | SCL0 | SCL (3.3 V side of the DMG1024UV shifter) | `SCCB_SCL`, 1.8 kΩ to +3V3 | |
 | 2 | 14 | SDA0 | SDA | `SCCB_SDA`, 1.8 kΩ to +3V3 | |
 | 1 | 15 | 3V3 | 3V3 (C1 1 µF on the module) | `CAM_3V3` (0 Ω link from `+3V3`), 10 µF + 100 nF | |
@@ -1417,6 +1444,8 @@ Drives the 850 nm ring at a fixed ≈ 1 A while `STROBE ∧ LED_EN`. Each pulse 
 | SLVSD76C | TI TPS22918 datasheet |
 
 ### Hierarchical pins
+
+Sheet labels: `{LEDCTL}` (bus, bidirectional: `LED_EN`, `LED_PWR_EN`, `BST_EN`) and the single pins `STROBE`, `VLED_SENSE`, `NTC_SENSE` and `LED_K`.
 
 | Name | Direction | Level | Goes to |
 |---|---|---|---|
