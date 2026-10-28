@@ -18,14 +18,14 @@ local to each section; KiCad's annotation assigns the board-wide ones.
 |---|---|
 | Sheets | Hierarchical, one sheet per block. Signals cross sheets only through hierarchical pins, so ERC checks every crossing; rails use global power symbols |
 | Mechanics | OV9281 module on the back of the board, lens through a cutout. The 12 LEDs sit on the front, close around the cutout. One PCB, no ring connector |
-| Camera logic levels | XVS and STROBE on the OV9281 module are 1.8 V. STROBE goes up through an SN74LV1T34 on +3V3; XVS goes down through a 1.00 kΩ / 1.20 kΩ divider |
+| Camera logic levels | XVS and STROBE on the OV9281 module are 1.8 V. STROBE goes up through an SN74LV1T34 on +3V3; XVS goes down through a 1.5 kΩ / 1.8 kΩ divider |
 | STROBE to the P4 | Yes, on a GPIO with ETM capture: firmware timestamps every exposure (trigger latency L, missed triggers) |
 | Camera enable | FPC CAM_IO0 (the module's regulator enable) from a P4 GPIO, pulled down: the sensor stays off until firmware enables it and can be power-cycled |
 | Camera FPC connector | Single-contact, so an FFC inserted face-flipped makes no contact (a mirrored cable would put +3V3 on the module's GND). See [Camera FPC connector](#camera-fpc-connector) |
 | PPS | EMAC PTP PPS through the GPIO matrix (signal `EMAC_PTP_PPS_PAD_OUT_IDX` = 243) on one GPIO with a test point, looped back through a 0 Ω resistor into a second GPIO for ETM capture. Remove the resistor if ETM sees the output pad directly |
 | PHY crystal | Epson X1E0000210139 (TSX-3225, 25 MHz, ESR ≤ 40 Ω, as the IP101G requires; the earlier C9006 is 50 Ω). See [PHY crystal](#phy-crystal) |
 | Power source | TPS2116 ST to a P4 GPIO (`PWR_SRC`, high = PoE). Firmware keeps the LED rail off on USB-only power |
-| LED boost input | A TPS22918 load switch with a ≈ 10 ms ramp, on `LED_PWR_EN`, feeds the boost. Without it, the boost's inductor-diode path charges the 440 µF storage at every power-up (≈ 1.6 A inrush, over the USB limit). The boost has its own enable, `BST_EN`, which firmware raises only after the switch has ramped |
+| LED boost input | A TPS22918 load switch with a ≈ 27 ms ramp, on `LED_PWR_EN`, feeds the boost. Without it, the boost's inductor-diode path charges the 440 µF storage at every power-up (≈ 1.6 A inrush, over the USB limit). The boost has its own enable, `BST_EN`, which firmware raises only after the switch has ramped |
 | RJ45 shield | To GND through 1 nF/2 kV ∥ 1 MΩ |
 | Indicators | One addressable RGB status LED (WS2812B-2020-V6 on +3V3) on a P4 GPIO. The MagJack's LEDs are not used; the PHY's LED pins are straps only |
 | Debug and sense | Test points on XVS, STROBE, gate output, LED_EN, PPS, the LED current shunt (`ISNS`), +5V, +3V3, +32V and GND. +32V sense divider and an NTC at the sink MOSFET, both into ADC1 pins. No UART header, no JTAG pads |
@@ -98,7 +98,7 @@ nets.
 | `LED_EN` | mcu → led_driver | | Gate enable. 100 kΩ pull-down |
 | `LED_PWR_EN` | mcu → led_driver | | TPS22918 ON. 100 kΩ pull-down |
 | `BST_EN` | mcu → led_driver | | TPS61170 CTRL. 100 kΩ pull-down |
-| `VLED_SENSE` | led_driver → mcu | analog 0–3.08 V | +32V × 10/130, ADC1 |
+| `VLED_SENSE` | led_driver → mcu | analog 0–1.51 V | +32V × 10/265, ADC1 |
 | `NTC_SENSE` | led_driver → mcu | analog | NTC divider, ADC1 |
 | `PWR_SRC` | power → mcu | open drain | TPS2116 ST; 10 kΩ pull-up on the mcu sheet. High = PoE |
 | `LED_K` | led_driver ↔ led_ring | 8–32 V, 1 A pulsed | String cathode → MOSFET drain |
@@ -131,7 +131,7 @@ The hardware relies on these; `cam-p4` must follow them.
 3. **PHY reset:** hold `PHY_RST_N` low ≥ 11 ms after power-up, release it, wait ≥ 12.5 ms
    for the 50 MHz REF_CLK, then initialise the EMAC. The first MDIO frame carries
    ≥ 32 preamble bits.
-4. **LED power:** only on PoE (`PWR_SRC` high). On: `LED_PWR_EN` high, wait ≥ 20 ms,
+4. **LED power:** only on PoE (`PWR_SRC` high). On: `LED_PWR_EN` high, wait ≥ 50 ms,
    then `BST_EN` high (the rail takes 50–120 ms to charge). Off: `BST_EN` low, then
    `LED_PWR_EN` low. Never PWM `BST_EN` (TPS61170 CTRL decodes PWM/EasyScale). +32V
    stays charged for tens of seconds after the boost stops; `LED_EN` low is what turns
@@ -184,21 +184,21 @@ Global power symbols used: `GND`, `VBUS` (in, from mcu sheet), `+5V` (out), `+3V
 | C | LC filter output, low ESR | 330 µF 16 V polymer, SVZ1CM331E09E00RAXXX (AISHI) | C3291468 (3,055, $0.093, BOM.md) | `Device:C_Polarized` | `Capacitor_SMD_AISHI:CP_Elec_6.3x9` |
 | C | LC filter damping (ESR = damping R) | 330 µF 16 V electrolytic, JVE16V330M8X10 (JIERR) | C48615108 (1,935, $0.057, BOM.md) | `Device:C_Polarized` | `Capacitor_SMD_JIERR:CP_Elec_8x10.5` (use the library prefix: the stock part has the same name and a different land) |
 | C | LC filter output HF cap at TPS2116 VIN1 (= VIN1 input cap) | 10 µF 25 V X5R 0805, CL21A106KAYNNNE | C15850 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
-| R | PR1 divider, top (VIN1 → PR1) | 100 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | PR1 divider, bottom (PR1 → GND) | 36 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | PR1 divider, top (VIN1 → PR1) | 100 kΩ 1 % 0402, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | PR1 divider, bottom (PR1 → GND) | 36 kΩ 1 % 0402, HWA CHN HRC0402F3602DNTO | C54920666 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | U | 5 V power mux, priority mode | TPS2116DRLR (TI) | C3235557 (54,819, $0.19, BOM.md) | `Power_Management:TPS2116DRL` (stock) | `Package_TO_SOT_SMD:SOT-583-8` (stock, the symbol's default) |
 | D | VBUS TVS (the USBLC6 on the mcu sheet no longer clamps VBUS) | SMBJ5.0A (R+O), unidirectional, VRWM 5 V, VBR 7 V, VC 9.2 V, 600 W 10/1000 µs | C19077558 (67,830, $0.023, 2026-10-28) | `Device:D_Zener` (K = pin 1; stock KiCad has no generic unidirectional TVS symbol) | `Diode_SMD:D_SMB` |
-| C | VBUS input cap at TPS2116 VIN2 | 4.7 µF 16 V X5R 0805 | generic | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
+| C | VBUS input cap at TPS2116 VIN2 | 4.7 µF 25 V X5R 0805, CL21A475KAQNNNE (Samsung) | C1779 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
 | C | `+5V` bulk at TPS2116 VOUT ×2 | 47 µF 10 V X5R 1206, CL31A476MPHNNNE (Samsung) | C96123 (176,750, $0.0853, 2026-10-28) | `Device:C` | `Capacitor_SMD:C_1206_3216Metric` |
-| C | `+5V` HF decoupling at VOUT | 100 nF 16 V X7R 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| C | `+5V` HF decoupling at VOUT | 100 nF 50 V X7R 0402, CL05B104KB54PNC (Samsung) | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
 | U | 3.3 V buck, 2 A | TLV62569DBVR (TI) | C141836 (16,700, $0.038, BOM.md) | `Regulator_Switching:TLV62569DBV` (stock; extends TLV62568DBV) | `Package_TO_SOT_SMD:SOT-23-5` (stock) |
-| L | Buck inductor | 2.2 µH, FNR3015S2R2MT (cjiang) | C167747 (57,660, $0.0359, 2026-10-28) | `Device:L` | `Inductor_SMD:L_Changjiang_FNR3015S` (stock) |
-| C | Buck input | 10 µF 25 V X5R 0805 (CL21A106KAYNNNE) + 100 nF 0402 | C15850 / generic | `Device:C` | `C_0805_2012Metric` / `C_0402_1005Metric` |
-| C | Buck output | 22 µF 10 V X5R 0805 + 100 nF 0402 | generic | `Device:C` | `C_0805_2012Metric` / `C_0402_1005Metric` |
-| R | FB divider, top (+3V3 → FB) | 453 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | FB divider, bottom (FB → GND) | 100 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C | Feed-forward across the top FB resistor | 6.8 pF C0G 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| TP | Test points `+5V`, `+3V3`, `GND` ×2 | — | — | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D1.5mm` (rails), `TestPoint:TestPoint_Loop_D2.50mm_Drill1.0mm` (GND) |
+| L | Buck inductor (same part as the LC filter inductor) | 2.2 µH, FXL0630-2R2-M (cjiang) | C167218 (70,485, $0.0827, 2026-10-28) | `Device:L` | `Inductor_SMD:L_Changjiang_FXL0630` (stock) |
+| C | Buck input | 10 µF 25 V X5R 0805 (CL21A106KAYNNNE) + 100 nF 50 V X7R 0402 (CL05B104KB54PNC) | C15850 / C307331 | `Device:C` | `C_0805_2012Metric` / `C_0402_1005Metric` |
+| C | Buck output | 10 µF 25 V X5R 0805 (CL21A106KAYNNNE) + 100 nF 50 V X7R 0402 (CL05B104KB54PNC) | C15850 / C307331 | `Device:C` | `C_0805_2012Metric` / `C_0402_1005Metric` |
+| R | FB divider, top (+3V3 → FB) | 453 kΩ 1 % 0402, GiantOhm GR0402F453KTAG00 | C49653416 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | FB divider, bottom (FB → GND) | 100 kΩ 1 % 0402, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C | Feed-forward across the top FB resistor | 6.8 pF C0G 0402, 0402CG6R8C500NT | C1576 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| TP | Test points `+5V`, `+3V3` (bare pads), `GND` ×2 (ronghe RH-5002 loop, Keystone 5002 clone, 1.0 mm hole) | — / RH-5002 | — / C5199802 | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D1.5mm` (rails), `TestPoint:TestPoint_Loop_D2.50mm_Drill1.0mm` (GND) |
 | #FLG | ERC power flags | — | — | `power:PWR_FLAG` | — |
 
 Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `kicad-footprints-25a0b01dd7`). Every symbol and footprint above exists there or in `hardware/lib`; none is missing.
@@ -234,12 +234,12 @@ Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `ki
 |---|---|---|---|
 | 1 | EN | `+5V` | Tied to VIN as in TI's Fig. 5. It must not float (§7.4.1), abs max 6 V (§6.1), so +5V ≤ 5.5 V is safe. No RC needed: the chip soft-starts (t_SS 0.8 ms, DBV) and the P4 has its own EN RC on the mcu sheet |
 | 2 | GND | `GND` | |
-| 3 | SW | `SW_3V3` → L (FNR3015S2R2MT) → `+3V3` | |
+| 3 | SW | `SW_3V3` → L (FXL0630-2R2-M) → `+3V3` | |
 | 4 | VIN | `+5V` | 10 µF + 100 nF between pins 4 and 2, as close as possible |
 | 5 | FB | `FB_3V3` | 453 kΩ to `+3V3` (6.8 pF across it), 100 kΩ to `GND` |
 | — | PG | — | There is no PG on the DBV package (PG only on TLV62569P DDC/DRL, SLVSDG1C §5). No power-good signal reaches the P4 |
 
-`+3V3` output: 22 µF + 100 nF at the inductor/IC side; the loads' local decoupling is on their own sheets.
+`+3V3` output: 10 µF + 100 nF at the inductor/IC side; the loads' local decoupling is on their own sheets.
 
 **Test points**: TP on `+5V` (at TPS2116 VOUT), on `+3V3` (at buck Cout), and 2 × `GND` (one near the buck, one near the PD output).
 
@@ -257,8 +257,8 @@ Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `ki
 - DP1435: SDAPO DP1435 datasheet (LCSC PDF 7fde6577…): p.1 features, p.2 pins, p.4 typical application, p.5 LC filter and electrical specifications, p.6 module photo.
 - TPS2116: TI SLVSFG1A (May 2021).
 - TLV62569: TI SLVSDG1C (Oct 2017).
-- FXL0630: cjiang catalog (LCSC PDF 40dfb6cb…), FXL0630 table.
-- FNR3015S: cjiang FNR catalog (LCSC PDF a0b12ba9…), p.5 FNR3015S table.
+- FXL0630: cjiang catalog (LCSC PDF 40dfb6cb…), FXL0630 table. Used for both the LC filter and the buck inductor.
+- FNR3015S: cjiang FNR catalog (LCSC PDF a0b12ba9…), p.5 FNR3015S table (the buck's earlier inductor, quoted below for comparison).
 - AISHI VZ ratings table (LCSC PDF aabe05a1…), JIERR JVE table (LCSC PDF 3ad662ff…).
 - ESP32-P4 datasheet v0.7: Tables 5-2 and 5-7.
 - IP101G datasheet IP101G-DS-R01: Table 1, Table 11.
@@ -293,8 +293,8 @@ Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `ki
   - max 1.08 × (1 + 101/35.64) = **4.14 V**
 - **Upper bound** (PoE must never be rejected): worst DP1435 output 4.64 V (both 5 % bands), minus 0.2 V step dip and 0.03 V DCR, leaves 4.41 V. That is 0.27 V above 4.14 V.
   - This matters: in priority mode with VIN1 below threshold and no VBUS, the output turns off (truth table §7.3.1 selects VIN2) [INFERENCE that it then has no supply].
-- **Lower bound**: the buck must still regulate when VIN1 sags to the threshold. V_IN(min) = V_OUT + I·(R_DS(on),HS + DCR) = 3.3 + 0.77 × (0.100 + 0.078) = 3.44 V (SLVSDG1C §7.3.2 Eq. 1; R_DS(on) EC table; DCR from the FNR table).
-  - At the 3.43 V extreme, +3V3 ≈ 3.29 V, still ≥ the IP101G minimum of 3.135 V (Table 11).
+- **Lower bound**: the buck must still regulate when VIN1 sags to the threshold. V_IN(min) = V_OUT + I·(R_DS(on),HS + DCR) = 3.3 + 0.77 × (0.100 + 0.015) = 3.39 V (SLVSDG1C §7.3.2 Eq. 1; R_DS(on) EC table; DCR 15 mΩ from the FXL0630 table).
+  - The 3.43 V threshold minimum is above that, so +3V3 stays in regulation down to the threshold. (With the earlier FNR3015S, DCR 78 mΩ, V_IN(min) was 3.44 V and +3V3 sagged to ≈ 3.29 V at the 3.43 V extreme, still ≥ the IP101G minimum of 3.135 V, Table 11.)
 - The divider also acts as a PoE UVLO: +5V stays off until VIN1 > V_th. Divider current: 5.15 V / 136 kΩ = 38 µA.
 - **MODE = VIN1** (§7.6.1). On USB-only power, VIN1 = 0 V so MODE ≤ 0.35 V and PR1 is low, and the truth table passes the higher supply, VIN2. ST is low.
 - **Both sources present**: VIN1 is used regardless of VIN2 (truth table). Switchover is break-before-make, t_SW = 8 µs at 5 V (§6.6). If VOUT > the new VIN, the channel waits until VOUT drops to VIN + V_RCB (§7.6.1).
@@ -325,16 +325,18 @@ Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `ki
 - C_FF = 6.8 pF, as recommended for R2 = 100 kΩ (§8.2.2.2).
 
 **TLV62569 L / C_OUT**
-- Table 4: for V_OUT ≥ 1.8 V with L = 2.2 µH, C_OUT is 10 µF (standard), 22 µF or 2 × 22 µF. 22 µF/10 V 0805 is ≈ 13 µF at 3.3 V, inside the table's +20 %/−50 % assumption.
+- Table 4: for V_OUT ≥ 1.8 V with L = 2.2 µH, C_OUT = 10 µF is the standard ("++") combination; 22 µF and 2 × 22 µF are also checked. The table's note (2) anticipates +20 %/−50 % for tolerance and bias derating, and §8.2.2.5 gives 10–47 µF.
+  - 10 µF/25 V X5R 0805 (CL21A106KAYNNNE) is ≈ 7–8 µF at 3.3 V [INFERENCE, interpolated from ≈ 6 µF at 5 V below], above the 5 µF the −50 % note allows.
+  - Ripple: ΔI_L/(8·f_SW·C) = 0.36 A/(8 × 1.5 MHz × 7.5 µF) ≈ **4 mV**. The loads keep their own local 10 µF (P4, PHY, camera).
 - C_IN: 4.7 µF "sufficient" (§8.2.2.5); 10 µF/25 V is used, ≈ 6 µF at 5 V.
 
 **Inductor current**
 - ΔI_L = V_OUT(1 − V_OUT/V_IN)/(L f_SW) = 3.3 × (1 − 3.3/5.15)/(2.2 µH × 1.5 MHz) = 0.36 A (0.45 A at L − 20 %).
 - At the 0.77 A budget, I_L,max = 0.77 + 0.22 = 0.99 A (§8.2.2.4 Eq. 3).
-- FNR3015S 2.2 µH: I_sat 1.60 A (column "Max.") / 2.00 A typ, I_rms 1.60 / 2.00 A, DCR 0.078 Ω max (FNR3015S table, row FNR3015S2R2NT). LCSC lists the M (±20 %) variant at I_sat 2 A, DCR 78 mΩ.
-- 1.60 / 0.99 = 1.6×, above TI's recommended 1.2–1.3×.
-- **This inductor caps the usable buck output at ≈ 1.6/1.25 − 0.22 ≈ 1.05 A, not the IC's 2 A.**
-- I_LIM (DBV) = 3 A min (EC). Under a short, the inductor saturates before the limit trips → To verify.
+- FXL0630-2R2-M: DCR 15 mΩ max, I_sat 10.5 A, I_rms 8.5 A (catalog table; LCSC lists 9.5 A). 10.5/0.99 ≈ 10×, far above TI's recommended 1.2–1.3×.
+- The inductor no longer limits the buck: the usable output is the IC's 2 A. (The earlier FNR3015S, I_sat 1.60 A, capped it at ≈ 1.05 A.)
+- I_LIM (DBV) = 3 A min (EC), well below I_sat: under a +3V3 short the current limit trips before the inductor saturates.
+- DCR loss at 0.77 A: 0.77² × 0.015 Ω ≈ 9 mW.
 
 **`+3V3` load budget** (design allowances):
 | Load | Allowance | Source |
@@ -344,7 +346,7 @@ Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `ki
 | OV9281 module | 150 mA | Sensor 156 mW active (OV9281 PB v1.4). From 3.3 V through the module's LDOs: worst case all at the 1.2 V rail is 130 mA; 150 mA allowance [INFERENCE] |
 | RGB status LED (WS2812B-2020-V6) | 60 mA | Allowance; 37 mA at full white ([RGB status LED](#rgb-status-led)) |
 | SN74LV1T34, '1G97, pull-ups, dividers, ADC dividers | 10 mA | [INFERENCE] |
-| **Total** | **≈ 0.77 A** | 38 % of the TLV62569's 2 A, 73 % of the inductor-limited ≈ 1.05 A |
+| **Total** | **≈ 0.77 A** | 38 % of the TLV62569's 2 A (the FXL0630 does not limit it) |
 
 Buck loss at ≈ 90 % efficiency [INFERENCE, not on a TI curve for 3.3 V out] is ≈ 0.28 W × R_θJA 188.2 °C/W (DBV, §6.4) = +53 °C worst case. Give it copper (Layout).
 
@@ -384,7 +386,7 @@ Buck loss at ≈ 90 % efficiency [INFERENCE, not on a TI curve for 3.3 V out] is
 - **Net class `PWR_5V`** (`+5V_POE`, `+5V_POE_F`, `+5V`, `VBUS`): ≥ 1.0 mm or pours for 2 A peak [INFERENCE, IPC-2152 1 oz external ≈ 10 °C rise].
 - **Net class `PWR_3V3`**: ≥ 0.5 mm.
 - **TLV62569** (SLVSDG1C §10):
-  - C_IN at pins 4/2 on the same layer, then L; the SW node as small as possible.
+  - C_IN at pins 4/2 on the same layer, then L; the SW node as small as possible. The FXL0630 (6.45 × 6.6 × 2.8 mm) has larger pads than a 3 × 3 mm part, so keep the `SW_3V3` copper to the pad itself.
   - The FB divider and C_FF next to pin 5, away from SW.
   - C_OUT ground returns to the C_IN ground.
   - Copper on GND/pin 2 for heat.
@@ -403,7 +405,7 @@ Buck loss at ≈ 90 % efficiency [INFERENCE, not on a TI curve for 3.3 V out] is
 3. **DP1435 maximum capacitive load** isn't specified. Total on VOUT: 10 + 330 + 330 + 10 µF directly, plus +5V via soft start. Check it starts reliably (no OCP hiccup) at 37 V and 57 V input.
 4. **DP1435 load-step response** (unspecified) on top of the ≈ 0.2 V filter dip. The PR1 threshold max of 4.14 V keeps ≈ 0.27 V margin against the worst stacked 4.64 V output. Measure the dip at boost start.
 5. **TPS2116 PR1 has no specified hysteresis**. Check for chatter with PoE overloaded near threshold. If seen, add a resistor from PR1 to ST (positive feedback).
-6. **FNR3015S2R2MT**: the datasheet table only lists the 2R2**N**T (±30 %) row (I_sat 1.60 A / 2.00 A). LCSC gives 2 A / 78 mΩ for the MT. Also confirm the inductor survives a +3V3 short (I_LIM 3 A min > I_sat).
+6. **Buck inductor FXL0630-2R2-M** (shared with the LC filter): the catalog gives no core loss at the buck's 1.5 MHz. Check its temperature at full `+3V3` load on the first boards. Saturation is no longer a concern: I_sat 10.5 A is far above I_LIM 3 A min.
 7. **ESP32-P4-Core real draw** (camera + Ethernet + PSRAM traffic). The 0.5 A allowance is Espressif's supply-capability spec, not a measurement. It also sets the USB-only budget vs a 500 mA USB 2.0 port.
 8. **OV9281 module 3V3 current**: the module's regulators are unknown (LDO assumed).
 9. **TPS2116 pins 2 and 7** are both `power_out` on `+5V`. Check that KiCad ERC doesn't flag power_out↔power_out; if it does, use an ERC exclusion.
@@ -467,20 +469,20 @@ Global power symbols used: `+3V3`, `VBUS`, `GND`. Local nets: `ESP_EN`, `BOOT_SW
 | U2 | USB ESD array | ST USBLC6-2SC6 | C7519: 39,365 in stock, $0.0931 | `Power_Protection:USBLC6-2SC6` | `Package_TO_SOT_SMD:SOT-23-6` |
 | SW1 | RESET button | XKB TS-1187A-B-A-B | C318884: 887,620 in stock, $0.0112 | `Switch:SW_Push` | `Button_Switch_SMD:SW_Push_1P1T_XKB_TS-1187A` (stock; pads 1,1,2,2) |
 | SW2 | BOOT button | XKB TS-1187A-B-A-B | C318884 (same as SW1) | `Switch:SW_Push` | `Button_Switch_SMD:SW_Push_1P1T_XKB_TS-1187A` |
-| R1 | ESP_EN pull-up | 10 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C1 | ESP_EN delay | 1 µF X5R 10 V 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R2 | GPIO35 strap pull-up | 10 kΩ 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R3 | BOOT button series | 1 kΩ 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R1 | ESP_EN pull-up | 10.0 kΩ 1 % 0402, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C1 | ESP_EN delay | 1 µF 50 V X7R 0805, CL21B105KBFNNNE (Samsung) | C28323 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
+| R2 | GPIO35 strap pull-up | 10.0 kΩ 1 % 0402, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R3 | BOOT button series | 1.00 kΩ 1 % 0402, 0402WGF1001TCE | C11702 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | R4, R5 | CC1/CC2 Rd | 5.1 kΩ 1 % 0402 (UNI-ROYAL 0402WGF5101TCE) | C25905: 1,102,600 in stock, $0.0012 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R6, R7 | USB D+/D− series | 22 Ω 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R8 | VBUS bleeder | 100 kΩ 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R9 | PWR_SRC pull-up | 10 kΩ 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R10 | PPS → PPS_IN loop-back | 0 Ω 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C2 | ESP_3V3 bulk | 10 µF X5R 10 V 0805 | generic | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
-| C3 | ESP_3V3 HF | 100 nF X7R 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| C4 | USBLC6 rail cap | 100 nF X7R 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R6, R7 | USB D+/D− series | 22 Ω 1 % 0402, 0402WGF220JTCE | C25092 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R8 | VBUS bleeder | 100 kΩ 1 % 0402, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R9 | PWR_SRC pull-up | 10.0 kΩ 1 % 0402, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R10 | PPS → PPS_IN loop-back | 0 Ω 0805 jumper, 0805W8F0000T5E | C17477 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` |
+| C2 | ESP_3V3 bulk | 10 µF 25 V X5R 0805, CL21A106KAYNNNE (Samsung) | C15850 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
+| C3 | ESP_3V3 HF | 100 nF 50 V X7R 0402, CL05B104KB54PNC (Samsung) | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| C4 | USBLC6 rail cap | 100 nF 50 V X7R 0402, CL05B104KB54PNC (Samsung) | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
 | TP1 | PPS test point | — | — | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D1.0mm` |
-| TP2 | GND test point next to TP1 (scope ground clip) | — | — | `Connector:TestPoint` | `TestPoint:TestPoint_Loop_D2.50mm_Drill1.0mm` |
+| TP2 | GND test point next to TP1 (scope ground clip) | ronghe RH-5002 loop (Keystone 5002 clone, 1.0 mm hole) | C5199802 | `Connector:TestPoint` | `TestPoint:TestPoint_Loop_D2.50mm_Drill1.0mm` |
 | D1 | RGB status LED | see [RGB status LED](#rgb-status-led) | — | — | — |
 
 Stock symbol and footprint names were checked in the nix-store KiCad libraries (`kicad-symbols-1b2b42d49b`, `kicad-footprints-098da23b91`). Stock `USBLC6-2SC6` extends `USBLC6-2P6` and pins 1–6 are I/O1, GND, I/O2, I/O2, VBUS, I/O1.
@@ -614,7 +616,7 @@ Exposed GPIOs available in the 3.3 V domains (module schematic: VDD_LP pin 9, VD
 | PHY_RST_N | 10 kΩ pull-down (ethernet) |
 | STATUS_LED | 10 kΩ pull-down on the LED's DIN (RGB status LED): a floating data line could latch noise |
 
-- With LED_PWR_EN and BST_EN low the boost is off. +32V can still hold its charge after a reset (τ ≈ 38 s), but the gate also needs STROBE, which its 10 kΩ pull-down holds low until firmware configures the sensor. A glitch on LED_EN alone cannot light the ring.
+- With LED_PWR_EN and BST_EN low the boost is off. +32V can still hold its charge after a reset (τ ≈ 58 s), but the gate also needs STROBE, which its 10 kΩ pull-down holds low until firmware configures the sensor. A glitch on LED_EN alone cannot light the ring.
 - Firmware should write each output's level before enabling its driver.
 - No 3.3 V pull-ups are added to RMII inputs, so nothing back-powers the PHY.
 
@@ -635,9 +637,9 @@ Flashing normally needs neither button: the USB Serial/JTAG can force Joint Down
 
 ### Values and derivations
 
-**ESP_EN (R1 10 kΩ, C1 1 µF).**
+**ESP_EN (R1 10 kΩ, C1 1 µF 50 V X7R 0805).**
 - These are the values [HDG-SC] recommends ("Chip Power-up and Reset Timing").
-- τ = 10 ms. The chip leaves reset at V_IH_nRST = 0.75 × VDD_BAT (DS Table 5-4), at t = τ·ln 4 = 13.9 ms after +3V3 settles. That is far above t_STBL ≥ 50 µs (DS Table 2-14).
+- τ = 10 ms. A 50 V X7R 0805 keeps nearly its full capacitance at ≤ 3.3 V [INFERENCE: typical DC-bias curves], so C1 ±10 % and R1 ±1 % give τ = 8.9–11.1 ms. The chip leaves reset at V_IH_nRST = 0.75 × VDD_BAT (DS Table 5-4), at t = τ·ln 4 = 12.3–15.4 ms (13.9 ms nominal) after +3V3 settles. That is far above t_STBL ≥ 50 µs (DS Table 2-14).
 - SW1 discharges C1 below V_IL_nRST = 0.25 × VDD_BAT. A press lasts far longer than t_RST ≥ 1 ms.
 - The +3V3 rise comes from the TLV62569's soft start (power sheet). If a slow ramp ever causes failed boots, [HDG-SC] suggests a supervisor at about 3.0 V instead.
 
@@ -701,7 +703,7 @@ Flashing normally needs neither button: the USB Serial/JTAG can force Joint Down
 
 ### RGB status LED
 
-One addressable RGB LED shows the board's status (power source, link, PTP lock, errors). A P4 RMT TX channel drives it with the one-wire NRZ protocol. Recommended part: **Worldsemi WS2812B-2020-V6** (LCSC C52917434) on **`+3V3`**. Its DIN threshold is 0.55·VDD = 1.82 V, so the P4 drives it directly: no level shifter and no `+5V` dependency. The circuit is the LED, 100 nF, a 100 Ω series resistor and a 10 kΩ pull-down. Second source: **WS2812C-2020-V6** (LCSC C55109522). It is pin- and footprint-identical and has the same 3.3–5.3 V range, at 5 mA/colour instead of 12 mA. No schematic change is needed to swap it.
+One addressable RGB LED shows the board's status (power source, link, PTP lock, errors). A P4 RMT TX channel drives it with the one-wire NRZ protocol. Recommended part: **Worldsemi WS2812B-2020-V6** (LCSC C52917434) on **`+3V3`**. Its DIN threshold is 0.55·VDD = 1.82 V, so the P4 drives it directly: no level shifter and no `+5V` dependency. The circuit is the LED, 100 nF, a 220 Ω series resistor and a 10 kΩ pull-down. Second source: **WS2812C-2020-V6** (LCSC C55109522). It is pin- and footprint-identical and has the same 3.3–5.3 V range, at 5 mA/colour instead of 12 mA. No schematic change is needed to swap it.
 
 Data checked 2026-10-28. LCSC stock and prices come from the `__NEXT_DATA__` JSON of each LCSC product page. Datasheets are the LCSC PDFs linked from those pages.
 
@@ -754,9 +756,9 @@ Level-shifter cost (rows 3 and 5–8): SN74LV1T34DCKR, LCSC **C78541**, 24,495 i
 | Ref | Function | Value / MPN | LCSC | KiCad symbol | KiCad footprint |
 |---|---|---|---|---|---|
 | D1 | Addressable RGB status LED | WS2812B-2020-V6 (alt. WS2812C-2020-V6) | C52917434 (alt. C55109522) | `LED:WS2812B-2020`. Override the `Datasheet` field with the V6 PDF: the stock field points to Adafruit's V1.3 | `LED_SMD:LED_WS2812B-2020_PLCC4_2.0x2.0mm` |
-| C | LED VDD decoupling | 100 nF X7R 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R | DIN series resistor (source end) | 100 Ω 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | DIN pull-down (holds LED in reset while the GPIO is high-Z) | 10 kΩ 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C | LED VDD decoupling | 100 nF 50 V X7R 0402, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R | DIN series resistor (source end) | 220 Ω 1 % 0402, 0402WGF2200TCE | C25091 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | DIN pull-down (holds LED in reset while the GPIO is high-Z) | 10.0 kΩ 1 % 0402, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 
 #### Connections
 
@@ -784,7 +786,7 @@ Level-shifter cost (rows 3 and 5–8): SN74LV1T34DCKR, LCSC **C78541**, 24,495 i
   - V_IL ≤ 0.7 V (DS p.3); P4 V_OL ≤ 0.1·VDD = 0.33 V, so the margin is 0.37 V.
   - Note that the DS characterises these at VDD = 5 V only (see To verify).
 - **Decoupling 100 nF:** "Cn … typically set to 100 nF" (DS p.6, Typical Application Circuit). Place it next to pin 4.
-- **Series resistor 100 Ω:** source termination and EMI damping, placed at the GPIO. The edge time constant is τ = 100 Ω × (C_I 15 pF (DS p.4) + ~5 pF trace) ≈ 2 ns. That is negligible against T0H = 220–380 ns (DS p.5), so it costs no timing margin. It also limits fault current into DIN.
+- **Series resistor 220 Ω** (the value the led_driver sheet already uses for R_ISO): source termination and EMI damping, placed at the GPIO. The edge time constant is τ = 220 Ω × (C_I 15 pF (DS p.4) + ~5 pF trace) ≈ 4.4 ns (10–90 % ≈ 10 ns). That is ≈ 2 % of T0H min 220 ns (DS p.5), and the threshold asymmetry skews the pulse width by < 1 ns, so it costs no timing margin. With the 10 kΩ pull-down, DIN high is 3.3 × 10/10.22 = 3.23 V (2.58 V at the P4's V_OH min of 2.64 V), above V_IH 1.82 V. It also limits fault current into DIN: a shorted DIN draws ≈ 3.3 V/(220 + ≈ 30 Ω) ≈ 13 mA [INFERENCE: ≈ 30 Ω P4 output resistance].
 - **Pull-down 10 kΩ:** the LED's reset code is low ≥ 280 µs (DS p.5), so a held-low DIN cannot clock in data while the P4 pin is high-Z (GPIO6–13 have no reset pull). Steady-state load on a high GPIO is 3.3 V / 10 kΩ = 0.33 mA, negligible against I_OH. DIN input current is ≤ ±1 µA (DS p.3).
 - **Current budget, full white:** 3 × 12 mA = **36 mA**; the DS colour-mix test runs at 36 mA (DS p.4). Add the IC's own current, which the V6 DS does not give (XINGLIGHT equivalents state 0.5–0.7 mA) [INFERENCE]: about 37 mA, or **≈ 0.12 W from `+3V3`**. Quiescent current ≤ 1 µA with channels off (DS p.3). The WS2812C-2020-V6 draws 3 × 5 mA = 15 mA. Firmware should cap brightness (e.g. ≤ 25 %) for a status indicator; worst-case design load is still 37 mA on the TLV62569 (2 A part).
 - **Protocol / RMT timing:**
@@ -864,16 +866,16 @@ LCSC stock and lowest-break unit price were read from the product pages on 2026-
 | J | RJ45 MagJack | HR871150C (HanRun) | C19724786 (306, $1.1594) | `Connector_HanRun:HR871150C` (project) | `Connector_RJ_HanRun:RJ45_HanRun_HR871150C_Horizontal` (project) |
 | Y | 25 MHz crystal | Epson X1E0000210139 (TSX-3225, CL 12 pF, ESR ≤ 40 Ω). Second source SCTF SX3B25.000F1210F30 | C91750 (18,690, $0.1274); alt. C2901685 (8,455, $0.0457) | `Device:Crystal_GND24` | `Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm` |
 | C ×2 | Crystal load | 18 pF C0G 50 V, 0402 (0402CG180J500NT) | C1549 (876,100, $0.0012) | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R | ISET | 6.19 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C ×3 | AVDD33, VDDIO, REGOUT HF decoupling | 100 nF X7R 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| C ×3 | AVDD33, VDDIO, REGOUT bulk | 10 µF X5R 10 V 0603 | generic | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` |
-| R | `+3V3` → `PHY_3V3` link (ferrite option) | 0 Ω 0603 | generic | `Device:R` | `Resistor_SMD:R_0603_1608Metric` |
-| R ×2 | Straps: COL/RMII pull-up, LED0/PHY_AD0 pull-up | 5.1 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | Strap: LED3/PHY_AD3 pull-down | 5.1 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | MDIO pull-up | 1.5 kΩ 1 % 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | PHY_RST_N pull-down | 10 kΩ 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R ×4 | Source series termination: REF_CLK, CRS_DV, RXD0, RXD1 | 22 Ω 0402 | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C | Chip-side centre tap (P3) to GND | 100 nF X7R 50 V 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R | ISET | 6.19 kΩ 1 % 0402, FH RC-02K6191FT | C324848 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C ×3 | AVDD33, VDDIO, REGOUT HF decoupling | 100 nF 50 V X7R 0402, CL05B104KB54PNC (Samsung) | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| C ×3 | AVDD33, VDDIO, REGOUT bulk | 10 µF 25 V X5R 0805, CL21A106KAYNNNE (Samsung) | C15850 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
+| R | `+3V3` → `PHY_3V3` link (ferrite option) | 0 Ω 0805 jumper, 0805W8F0000T5E | C17477 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` |
+| R ×2 | Straps: COL/RMII pull-up, LED0/PHY_AD0 pull-up | 5.1 kΩ 1 % 0402, 0402WGF5101TCE | C25905 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | Strap: LED3/PHY_AD3 pull-down | 5.1 kΩ 1 % 0402, 0402WGF5101TCE | C25905 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | MDIO pull-up | 1.5 kΩ 1 % 0402, 0402WGF1501TCE | C25867 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | PHY_RST_N pull-down | 10.0 kΩ 1 % 0402, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R ×4 | Source series termination: REF_CLK, CRS_DV, RXD0, RXD1 | 22 Ω 1 % 0402, 0402WGF220JTCE | C25092 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C | Chip-side centre tap (P3) to GND | 100 nF 50 V X7R 0402, CL05B104KB54PNC (Samsung) | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
 | C | Shield → GND | 1 nF 2 kV X7R 1206, FH 1206B102K202NT | C9196 (545,280, $0.0124) | `Device:C` | `Capacitor_SMD:C_1206_3216Metric` |
 | R ×2 (series) | Shield → GND bleeder, 998 kΩ total | 499 kΩ 1 % 1206 high-voltage, YAGEO RV1206FR-07499KL | C309667 (9,200, $0.0086) | `Device:R` | `Resistor_SMD:R_1206_3216Metric` |
 
@@ -956,7 +958,7 @@ The TD/RD mapping follows the MDI convention (PHY transmits on 1/2, receives on 
 
 #### Passive network summary
 
-- `+3V3` → 0 Ω (0603) → `PHY_3V3`. `PHY_3V3` feeds U pins 13 and 31, the COL and AD0 straps and the MDIO pull-up.
+- `+3V3` → 0 Ω (0805) → `PHY_3V3`. `PHY_3V3` feeds U pins 13 and 31, the COL and AD0 straps and the MDIO pull-up.
 - `RMII_REF_CLK` net: U pin 14 → 22 Ω → star point. From the star point, one branch goes to the hier pin (GPIO50) and one to U pin 10. The two branches must have equal length (see layout).
 - `PHY_RST_N`: hier pin → U pin 32, plus 10 kΩ to GND.
 
@@ -972,9 +974,9 @@ The TD/RD mapping follows the MDI convention (PHY transmits on 1/2, receives on 
   - VDDIO: 3.135–3.465 V for a 3.3 V MAC. It must match the MAC I/O voltage, and the P4's RMII pins are on 3.3 V VDD_IO_4 and VDD_IO_6 per `docs/architecture.md` (Ethernet pin map).
   - REGOUT: 1.07–1.18 V, internal.
   - AVDD33 and VDDIO must be up within 30 ms of each other (Tdiff, [DS] Table 15). Both come from the same `PHY_3V3`.
-  - Decoupling per pin is 10 µF + 100 nF: REGOUT per [DS] p.18; AVDD33 and VDDIO as in [WS] (C71/C72, C114/C115) and [EV] (C112/C114, C109/C108).
+  - Decoupling per pin is 10 µF + 100 nF: REGOUT per [DS] p.18; AVDD33 and VDDIO as in [WS] (C71/C72, C114/C115) and [EV] (C112/C114, C109/C108). The 10 µF is the board's common 10 µF 25 V 0805 part: ≈ 7–8 µF at 3.3 V and nearly 10 µF at REGOUT's 1.1 V [INFERENCE: typical X5R DC-bias curves].
   - Power is about 150 mW ([DS] Table 1), roughly 45 mA at 3.3 V.
-- **Ferrite on AVDD33: none.** [DS] asks only that AVDD33 be "decoupled carefully" (p.18). Neither reference design has a ferrite: [EV] R213 and [WS] R71 are 0 Ω links ESP_3V3 → PHY_3V3. This sheet keeps one 0603 0 Ω link in the same place. It allows a current measurement, and a ferrite can be fitted if EMI testing calls for one.
+- **Ferrite on AVDD33: none.** [DS] asks only that AVDD33 be "decoupled carefully" (p.18). Neither reference design has a ferrite: [EV] R213 and [WS] R71 are 0 Ω links ESP_3V3 → PHY_3V3. This sheet keeps one 0805 0 Ω link in the same place (the same jumper part as the camera link; 0805 is easy to lift for rework). It allows a current measurement, and an 0805 ferrite can be fitted if EMI testing calls for one.
 - **Straps.** All straps latch at the rising edge of RESET_N. Setup is 10 µs and hold is 2.63 ms ([DS] Table 15). [DS] Table 13 gives 5.1 kΩ as the latch resistor.
   - COL/RMII with 5.1 kΩ up against the internal 104 kΩ PD gives 3.3 · 104/109.1 = 3.15 V. That is above V_IH min = 0.8·VDDIO = 2.64 V ([DS] Table 12).
   - The straps match [EV] ("PHY MODE CONFIG": R149 COL pull-up, R141 AD0 pull-up, R140 AD3 pull-down, all 5.1 kΩ) and [WS] (R49, R65, R63).
@@ -1136,16 +1138,16 @@ Power: `+3V3` and `GND` (global). Local nets: `CAM_3V3` (after the 0 Ω link), `
 | J (AUX) | XVS/STROBE pigtail header, JST-SH 4-pin | SM04B-SRSS-TB(LF)(SN) | C160404 (60,495 in stock, $0.1255; 2026-10-28) | `Connector_Generic_MountingPin:Conn_01x04_MountingPin` | `Connector_JST:JST_SH_SM04B-SRSS-TB_1x04-1MP_P1.00mm_Horizontal` (stock) |
 | — | Pigtail (not a schematic part) | DEALON LNN100-157128-200-4P, 200 mm | C2999003 (1,740 in stock, $0.057; 2026-10-28) | — | — |
 | U | STROBE level shifter, 1.8 V → 3.3 V | TI SN74LV1T34DBVR | **C100024** (30,240 in stock, from $0.2029; 2026-10-28) | `Logic_LevelTranslator:SN74LV1T34DBV` (stock, exact part) | `Package_TO_SOT_SMD:SOT-23-5` (symbol default) |
-| C | U VCC decoupling | 100 nF X7R 0402 | — | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R | STROBE_1V8 pull-down | 10 kΩ 0402 | — | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R ×2 | XVS divider top / bottom | 1.00 kΩ 1 % / 1.20 kΩ 1 %, 0402 | — | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R ×2 | SCCB pull-ups to +3V3 | 1.8 kΩ 0402 | — | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | CAM_EN pull-down | 47 kΩ 0402 | — | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | CAM_IO1 → CAM_EN option, **DNP** | 0 Ω 0402 | — | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R | Camera 3.3 V link (pinout mitigation) | 0 Ω 0805 (≥ 2 A jumper) | — | `Device:R` | `Resistor_SMD:R_0805_2012Metric` |
-| C | CAM_3V3 bulk | 10 µF X5R 10 V 0805 | — | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
-| C | CAM_3V3 HF | 100 nF X7R 0402 | — | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R ×6 | CSI series options (Espressif HDG), fitted | 0 Ω 0201 | — | `Device:R` | `Resistor_SMD:R_0201_0603Metric` |
+| C | U VCC decoupling | 100 nF 50 V X7R 0402, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R | STROBE_1V8 pull-down | 10.0 kΩ 1 % 0402, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R ×2 | XVS divider top / bottom | 1.5 kΩ 1 % (0402WGF1501TCE) / 1.8 kΩ 1 % (0402WGF1801TCE), 0402 | C25867 / C25871 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R ×2 | SCCB pull-ups to +3V3 | 1.8 kΩ 1 % 0402, 0402WGF1801TCE | C25871 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | CAM_EN pull-down | 47 kΩ 1 % 0402, 0402WGF4702TCE | C25792 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R | CAM_IO1 → CAM_EN option, **DNP** | 0 Ω 0805 jumper, 0805W8F0000T5E | C17477 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` |
+| R | Camera 3.3 V link (pinout mitigation) | 0 Ω 0805 (≥ 2 A jumper), 0805W8F0000T5E | C17477 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` |
+| C | CAM_3V3 bulk | 10 µF 25 V X5R 0805, CL21A106KAYNNNE | C15850 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
+| C | CAM_3V3 HF | 100 nF 50 V X7R 0402, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R ×6 | CSI series options (Espressif HDG), fitted | 0 Ω 0201 jumper (0.5 A), FOJAN FRC0201P000 TS | C7467269 | `Device:R` | `Resistor_SMD:R_0201_0603Metric` |
 | TP ×3 | Test points: `XVS_1V8`, `STROBE` (3.3 V), `CAM_3V3` | — | — | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D1.0mm` |
 
 All symbols and footprints exist: stock KiCad 10 libraries (checked in the dev shell's `KICAD10_SYMBOL_DIR` / `KICAD10_FOOTPRINT_DIR`), or `hardware/lib` for the FPC footprint. The FPC footprint's two mounting pads are numbered `MP`, the same number as the symbol's `MountPin`.
@@ -1202,7 +1204,7 @@ keep the stock symbol's pin numbers equal to the footprint's pad numbers.
 | 4 | Y | `STROBE` (hierarchical pin), TP `STROBE` |
 | 5 | VCC | `+3V3`, 100 nF to GND at the pin |
 
-**XVS divider:** `XVS` (hierarchical pin, 3.3 V) → 1.00 kΩ → `XVS_1V8` → 1.20 kΩ → GND. `XVS_1V8` goes to J AUX pin 1 and TP `XVS_1V8`.
+**XVS divider:** `XVS` (hierarchical pin, 3.3 V) → 1.5 kΩ → `XVS_1V8` → 1.8 kΩ → GND. `XVS_1V8` goes to J AUX pin 1 and TP `XVS_1V8`.
 
 **Camera power:** `+3V3` → 0 Ω 0805 → `CAM_3V3` → J FPC pad 1 (camera pin 15), with 10 µF and 100 nF at that pad and TP `CAM_3V3`.
 
@@ -1215,24 +1217,25 @@ keep the stock symbol's pin numbers equal to the footprint's pad numbers.
 
 ### Values and derivations
 
-**XVS divider (1.00 kΩ / 1.20 kΩ, 1 %)**
-- **High level, nominal:** V = 3.3 × 1.2 / 2.2 = **1.80 V**.
-- **Drive:** the P4 GPIO default drive strength is 20 mA (ESP32-P4 datasheet v0.7, Table 2-1 note 3). The divider draws 3.3 V / 2.2 kΩ = 1.5 mA, so the output drop is negligible. [INFERENCE] output resistance is ≈ 30 Ω at the default drive, derived from I_OH = 40 mA at V_OH ≥ 2.64 V at PAD_DRIVER = 3, Table 5-4.
-- **High level, worst case low:** P4 V_OH ≥ 0.8 × VDD = 2.64 V (Table 5-4, at a high-impedance load). With R tolerance this gives XVS_1V8 ≥ 2.59 × 1.188 / 2.198 ≈ **1.40 V**. That is above the OV9281 V_IH of **1.26 V min** (OV9281 datasheet v1.01 PRELIMINARY, Table 8-3, DOVDD = 1.8 V).
-- **High level, worst case high:** (3.3 V + 3 %) × 1.212 / 2.202 ≈ **1.87 V**.
+**XVS divider (1.5 kΩ / 1.8 kΩ, 1 %)**
+- The values reuse the MDIO pull-up (1.5 kΩ) and the SCCB pull-ups (1.8 kΩ). Their ratio, 1.8/3.3 = 0.545, sets every level below.
+- **High level, nominal:** V = 3.3 × 1.8 / 3.3 = **1.80 V**.
+- **Drive:** the P4 GPIO default drive strength is 20 mA (ESP32-P4 datasheet v0.7, Table 2-1 note 3). The divider draws 3.3 V / 3.3 kΩ = 1.0 mA, so the output drop is negligible. [INFERENCE] output resistance is ≈ 30 Ω at the default drive, derived from I_OH = 40 mA at V_OH ≥ 2.64 V at PAD_DRIVER = 3, Table 5-4.
+- **High level, worst case low:** P4 V_OH ≥ 0.8 × VDD = 2.64 V (Table 5-4, at a high-impedance load). With R tolerance this gives XVS_1V8 ≥ 2.59 × 1.782 / 3.297 ≈ **1.40 V**. That is above the OV9281 V_IH of **1.26 V min** (OV9281 datasheet v1.01 PRELIMINARY, Table 8-3, DOVDD = 1.8 V).
+- **High level, worst case high:** (3.3 V + 3 %) × 1.818 / 3.303 ≈ **1.87 V**.
   - Under the absolute maximum of VDD-IO + 1 V = 2.8 V (Table 8-1).
   - Only 70 mV above DOVDD, so the input clamp does not conduct.
 - **Low level:** P4 V_OL ≤ 0.1 × VDD = 0.33 V gives ≤ 0.18 V, under V_IL of **0.54 V max** (Table 8-3).
 - **Edge time:**
-  - Thevenin resistance is 1.0 k ∥ 1.2 k = 545 Ω.
+  - Thevenin resistance is 1.5 k ∥ 1.8 k = 818 Ω.
   - Load ≈ 25 pF [INFERENCE]: FSIN C_IN 10 pF (Table 8-3), plus about 10 pF for the 200 mm pigtail wire against its neighbouring GND wire (≈ 50 pF/m), plus about 5 pF of pads, traces and the test point.
-  - τ ≈ 14 ns, so the 10–90 % edge is ≈ 30 ns.
-  - The cable's one-way delay is ≈ 1 ns, far shorter than the edge, so the line is lumped. The 545 Ω source is above the wire's Z₀ (≈ 100–200 Ω), so the line cannot ring.
-  - The edge is constant and repeatable, and ≈ 30× shorter than the 1 µs board-to-board sync target (timing.md, goal line at the top).
+  - τ ≈ 20 ns, so the 10–90 % edge is ≈ 45 ns.
+  - The cable's one-way delay is ≈ 1 ns, far shorter than the edge, so the line is lumped. The 818 Ω source is above the wire's Z₀ (≈ 100–200 Ω), so the line cannot ring.
+  - The edge is constant and repeatable, and ≈ 22× shorter than the 1 µs board-to-board sync target (timing.md, goal line at the top).
 - **Pulse width:** the sensor needs t_FSIN_High ≥ 5 XVCLK cycles (datasheet §4.8.3). XVCLK can be as low as 6 MHz (Table 8-4), which needs ≥ 0.83 µs. Firmware: make the RMT high pulse ≥ 10 µs.
-- **In reset:** the P4 pin floats. The 1.2 kΩ holds `XVS_1V8` at 0 V, so there is no spurious trigger. A pin with a reset weak pull-up (45 kΩ, Table 5-4) would still give only 3.3 × 1.2 / 46 ≈ 0.09 V.
-- **If FSIN is misconfigured as an output** (VSYNC, register 0x3006 bit 1, §2 pin table): the sensor and the divider fight through 545 Ω, ≤ 3.3 mA. That is harmless.
-- **Back-powering:** with CAM_EN low, DOVDD is ≈ 0 V and the input limit becomes 0 V + 1 V (Table 8-1). XVS high then injects (1.8 − 0.6) / 545 ≈ 2.2 mA into the sensor's I/O clamp. That is under the ±200 mA I/O current limit (Table 8-1) but outside the voltage rating, and it back-feeds DOVDD.
+- **In reset:** the P4 pin floats. The 1.8 kΩ holds `XVS_1V8` at 0 V, so there is no spurious trigger. A pin with a reset weak pull-up (45 kΩ, Table 5-4) would still give only 3.3 × 1.8 / 48.3 ≈ 0.12 V.
+- **If FSIN is misconfigured as an output** (VSYNC, register 0x3006 bit 1, §2 pin table): the sensor and the divider fight through 818 Ω, ≤ 2.2 mA. That is harmless.
+- **Back-powering:** with CAM_EN low, DOVDD is ≈ 0 V and the input limit becomes 0 V + 1 V (Table 8-1). XVS high then injects (1.8 − 0.6) / 818 ≈ 1.5 mA into the sensor's I/O clamp. That is under the ±200 mA I/O current limit (Table 8-1) but outside the voltage rating, and it back-feeds DOVDD.
   - **Firmware rule:** XVS stays low whenever CAM_EN is low. Drive XVS low before CAM_EN falls. Start XVS edges only after CAM_EN is high and the sensor's power-up sequence has finished (datasheet §2.5.1).
 
 **STROBE buffer (SN74LV1T34, SCLS743E)**
@@ -1397,7 +1400,7 @@ net-to-pad assignment changes, not the PCB.
 
 ## LED driver (`led_driver.kicad_sch`)
 
-Drives the 850 nm ring at a fixed ≈ 1 A while `STROBE ∧ LED_EN`. Each pulse lasts at most ≈ 1 ms. A TPS22918 load switch (`LED_PWR_EN`) feeds the boost input with a ≈ 10 ms ramp; a TPS61170 boost (`BST_EN`) takes it to +32V (32.6 V nominal) and charges 2 × 220 µF. A SN74LVC1G97 wired as a Schmitt AND gates STROBE with `LED_EN`; an RC high-pass on its STROBE input sets the ≈ 1 ms timeout. The gate output, divided down to ≈ 103 mV, is the set point of a TLV9061 + IRLR024N low-side sink with a 0.1 Ω shunt. An NTC near the DPAK and a +32V divider go to two P4 ADC pins. Topology: `docs/architecture.md` (LED ring, driver bullets). Parts: `hardware/espion-cam/BOM.md`. Datasheets used:
+Drives the 850 nm ring at a fixed ≈ 1 A while `STROBE ∧ LED_EN`. Each pulse lasts at most ≈ 1 ms. A TPS22918 load switch (`LED_PWR_EN`) feeds the boost input with a ≈ 27 ms ramp; a TPS61170 boost (`BST_EN`) takes it to +32V (32.6 V nominal) and charges 2 × 220 µF. A SN74LVC1G97 wired as a Schmitt AND gates STROBE with `LED_EN`; an RC high-pass on its STROBE input sets the ≈ 1 ms timeout. The gate output, divided down to ≈ 102 mV, is the set point of a TLV9061 + IRLR024N low-side sink with a 0.1 Ω shunt. An NTC near the DPAK and a +32V divider go to two P4 ADC pins. Topology: `docs/architecture.md` (LED ring, driver bullets). Parts: `hardware/espion-cam/BOM.md`. Datasheets used:
 
 | Short name | Document |
 |---|---|
@@ -1421,7 +1424,7 @@ Drives the 850 nm ring at a fixed ≈ 1 A while `STROBE ∧ LED_EN`. Each pulse 
 | `LED_EN` | input | 3.3 V | mcu GPIO |
 | `LED_PWR_EN` | input | 3.3 V | mcu GPIO: U4 load switch ON |
 | `BST_EN` | input | 3.3 V | mcu GPIO: U1 CTRL |
-| `VLED_SENSE` | output | analog 0–3.08 V (0–40 V rail) | mcu ADC1 pin (GPIO20–23) |
+| `VLED_SENSE` | output | analog 0–1.51 V (0–40 V rail) | mcu ADC1 pin (GPIO20–23) |
 | `NTC_SENSE` | output | analog 0.17–2.44 V (125…0 °C) | mcu ADC1 pin (GPIO20–23) |
 | `LED_K` | passive | 8–32 V, 1 A pulsed | led_ring (cathode end of the string) |
 
@@ -1437,44 +1440,44 @@ Prices and stock come from the LCSC product pages, checked **2026-10-28** (lowes
 | L1 | Boost inductor | 10 µH, FNR4030S100MT (1.6 A rated, I_sat 2.4 A, DCR 130 mΩ) | C167879 (146,690, $0.0386) | `Device:L` | `Inductor_SMD:L_Changjiang_FNR4030S` (stock) |
 | D1 | Boost rectifier | SS16 (60 V, 1 A, V_F 0.70 V @ 1 A) | C2481 (256,200, $0.0097) | `Device:D_Schottky` | `Diode_SMD:D_SMA` |
 | U4 | Boost-input load switch, slew-controlled | TPS22918DBVR | C131941 (46,210, $0.1297) | `Power_Management:TPS22917DBV` (same DBV pinout; set Value `TPS22918DBV`) | `Package_TO_SOT_SMD:SOT-23-6` |
-| C16 | U4 VIN | 1 µF/16 V X7R 0402 | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| C17 | U4 CT (slew) | 4.7 nF/25 V X7R | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R18 | U4 ON pull-down | 100 kΩ | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C16 | U4 VIN | 1 µF/50 V X7R 0805, CL21B105KBFNNNE | C28323 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
+| C17 | U4 CT (slew) | 10 nF C0G ±5 % 50 V 0603, 0603CG103J500NT (same part as C7, C10) | C82282 | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` |
+| R18 | U4 ON pull-down | 100 kΩ 1 %, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | C1 | Boost VIN bulk | 10 µF/25 V X5R 0805, CL21A106KAYNNNE | C15850 (1,903,000, $0.0256) | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
-| C2 | Boost VIN HF | 100 nF/25 V | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| C2 | Boost VIN HF | 100 nF/50 V X7R, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
 | C3, C4 | Storage | 220 µF/50 V, RVT1H221M1010 (10 × 10.2) | C72499 (101,025, $0.0606) | `Device:C_Polarized` | `Capacitor_SMD:CP_Elec_10x10` (stock) |
-| C5, C6 | Boost output ceramic | 1 µF/50 V X7R 0805 | generic | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
-| R1 | FB top | 255 kΩ 1 % 0603 | generic | `Device:R` | `Resistor_SMD:R_0603_1608Metric` |
-| R2 | FB bottom | 10.0 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R3 | COMP series R | 100 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C7 | COMP series C | 22 nF X7R | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| C8 | COMP HF pole | 470 pF C0G | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R4 | CTRL pull-down | 100 kΩ | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R5 | LED_EN pull-down | 100 kΩ | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C5, C6 | Boost output ceramic | 1 µF/50 V X7R 0805, CL21B105KBFNNNE | C28323 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
+| R1 | FB top | 255 kΩ 1 % 0603, 0603WAF2553T5E | C23354 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` |
+| R2 | FB bottom | 10.0 kΩ 1 %, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R3 | COMP series R | 100 kΩ 1 %, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C7 | COMP series C | 10 nF C0G ±5 % 50 V 0603, 0603CG103J500NT | C82282 | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` |
+| C8 | COMP HF pole | 220 pF C0G, 0402CG221J500NT (same part as C13) | C39122 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R4 | CTRL pull-down | 100 kΩ 1 %, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R5 | LED_EN pull-down | 100 kΩ 1 %, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | U2 | Gate, Schmitt AND | SN74LVC1G97DBVR | C128411 (21,555, $0.0639) | `74xGxx_TI:SN74LVC1G97DBV` | `Package_TO_SOT_SMD:SOT-23-6` |
-| C9 | U2 decoupling | 100 nF | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| C10 | Timeout series C | 10 nF C0G ±5 % 0603 (50 V) | generic | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` |
-| R6 | Timeout R | 91 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R7 | Clamp-current limiter | 10 kΩ | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R8 | Set-point divider top | 63.4 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R9 | Set-point divider bottom | 2.05 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C11 | Set-point edge filter | 1 nF C0G | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| C9 | U2 decoupling | 100 nF/50 V X7R, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| C10 | Timeout series C | 10 nF C0G ±5 % 50 V 0603, 0603CG103J500NT | C82282 | `Device:C` | `Capacitor_SMD:C_0603_1608Metric` |
+| R6 | Timeout R | 91 kΩ 1 %, HWA CHN HRC0402F9102DNTO | C54920709 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R7 | Clamp-current limiter | 10.0 kΩ 1 %, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R8 | Set-point divider top | 47 kΩ 1 %, 0402WGF4702TCE (same part as the camera's CAM_EN pull-down) | C25792 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R9 | Set-point divider bottom | 1.5 kΩ 1 %, 0402WGF1501TCE (same part as the MDIO pull-up) | C25867 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C11 | Set-point edge filter | 1 nF C0G, 0402CG102J500NT | C53547 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
 | U3 | Sink op-amp | TLV9061IDBVR | C398358 (265,160, $0.0478) | `Amplifier_Operational:TLV9061xDBV` (stock) | `Package_TO_SOT_SMD:SOT-23-5` |
-| C12 | U3 decoupling | 100 nF | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R10 | Gate isolation R_ISO | 220 Ω | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R11 | DC feedback R_F | 1.00 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C13 | HF feedback C_F | 220 pF C0G | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R12 | Off-state offset injection | 1.00 MΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| R13 | Gate pull-down | 100 kΩ | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C12 | U3 decoupling | 100 nF/50 V X7R, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R10 | Gate isolation R_ISO | 220 Ω 1 %, 0402WGF2200TCE | C25091 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R11 | DC feedback R_F | 1.00 kΩ 1 %, 0402WGF1001TCE | C11702 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C13 | HF feedback C_F | 220 pF C0G, 0402CG221J500NT | C39122 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R12 | Off-state offset injection | 1.00 MΩ 1 %, 0402WGF1004TCE | C26083 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R13 | Gate pull-down | 100 kΩ 1 %, 0402WGF1003TCE | C25741 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | Q1 | Sink MOSFET | IRLR024NTRPBF | C3007 (30,000, $0.1154) | `Transistor_FET_Infineon:IRLR024N` | `Package_TO_SOT_SMD:TO-252-2` |
 | R14 | Shunt | 0.1 Ω 1 % 250 mW 1206, 1206W4F100LT5E | C25334 (529,750, $0.0039) | `Device:R` | `Resistor_SMD:R_1206_3216Metric` |
 | NT1 | Kelvin tap `ISNS`→`ISNS_K` | net tie | — | `Device:NetTie_2` | `NetTie:NetTie-2_SMD_Pad0.5mm` |
 | TH1 | DPAK temperature | NCP15XH103F03RC (10 kΩ ±1 %, B25/50 3380 K, B25/85 3434 K, B25/100 3455 K) | C77131 (291,950, $0.011) | `Device:Thermistor_NTC` | `Resistor_SMD:R_0402_1005Metric` |
-| R15 | NTC divider top | 10.0 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C14 | NTC filter | 100 nF | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
-| R16 | VLED divider top | 120 kΩ 1 % 0603 | generic | `Device:R` | `Resistor_SMD:R_0603_1608Metric` |
-| R17 | VLED divider bottom | 10.0 kΩ 1 % | generic | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
-| C15 | VLED filter | 100 nF | generic | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R15 | NTC divider top | 10.0 kΩ 1 %, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C14 | NTC filter | 100 nF/50 V X7R, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+| R16 | VLED divider top | 255 kΩ 1 % 0603, 0603WAF2553T5E (same part as R1) | C23354 | `Device:R` | `Resistor_SMD:R_0603_1608Metric` |
+| R17 | VLED divider bottom | 10.0 kΩ 1 %, 0402WGF1002TCE | C25744 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C15 | VLED filter | 100 nF/50 V X7R, CL05B104KB54PNC | C307331 | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
 | TP1, TP2, TP4 | Test points `LED_ON`, `LED_EN`, `ISNS` (LED current, 100 mV/A) | — | — | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D1.0mm` |
 | TP3 | Test point `+32V` | — | — | `Connector:TestPoint` | `TestPoint:TestPoint_Pad_D1.5mm` |
 | — | `PWR_FLAG` on `+32V` | — | — | `power:PWR_FLAG` | — |
@@ -1489,7 +1492,7 @@ All symbols and footprints exist: in the stock KiCad libraries (the nix store `k
 | Pin | Name | Net / part |
 |---|---|---|
 | 1 | FB | `BST_FB`: R1 (255 kΩ) to `+32V`, R2 (10.0 kΩ) to GND. Both close to the pin |
-| 2 | COMP | `BST_COMP`: R3 100 kΩ in series with C7 22 nF to GND, and C8 470 pF straight to GND |
+| 2 | COMP | `BST_COMP`: R3 100 kΩ in series with C7 10 nF to GND, and C8 220 pF straight to GND |
 | 3 | GND | GND (power ground at C1/C5 returns) |
 | 4 | SW | `BST_SW`: L1 pin 2 and D1 anode |
 | 5 | CTRL | `BST_EN`, R4 100 kΩ to GND |
@@ -1508,7 +1511,7 @@ All symbols and footprints exist: in the stock KiCad libraries (the nix store `k
 | 1 | VIN | `+5V`, C16 1 µF to GND |
 | 2 | GND | GND |
 | 3 | ON | `LED_PWR_EN`, R18 100 kΩ to GND |
-| 4 | CT | C17 4.7 nF to GND |
+| 4 | CT | C17 10 nF to GND |
 | 5 | QOD | NC (no output discharge: +32V holds its charge behind D1 anyway) |
 | 6 | VOUT | `+5V_BST` → U1 VIN, L1 pin 1, C1, C2 |
 
@@ -1524,7 +1527,7 @@ All symbols and footprints exist: in the stock KiCad libraries (the nix store `k
 | 6 | IN2 | `STROBE_TO` (C): R7 10 kΩ from `STROBE_HP` |
 
 - Timeout network: `STROBE` → C10 10 nF → `STROBE_HP`; R6 91 kΩ from `STROBE_HP` to GND; R7 10 kΩ from `STROBE_HP` to `STROBE_TO`.
-- Set point: R8 63.4 kΩ from `LED_ON` to `ISET`; R9 2.05 kΩ and C11 1 nF from `ISET` to GND.
+- Set point: R8 47 kΩ from `LED_ON` to `ISET`; R9 1.5 kΩ and C11 1 nF from `ISET` to GND.
 
 **U3 TLV9061** (SBOS839N Table 5-1, SOT-23-5: 1 OUT, 2 V−, 3 IN+, 4 IN−, 5 V+; the stock `TLV9061xDBV` extends `MCP6L91T-EOT` and has the same pin numbers):
 
@@ -1546,7 +1549,7 @@ All symbols and footprints exist: in the stock KiCad libraries (the nix store `k
 
 - R14 pin 2 → GND. NT1 pin 2 → `ISNS_K` → R11.
 - TH1: between `NTC_SENSE` and GND. R15 10.0 kΩ from `+3V3` to `NTC_SENSE`; C14 100 nF from `NTC_SENSE` to GND.
-- R16 120 kΩ from `+32V` to `VLED_SENSE`; R17 10.0 kΩ and C15 100 nF from `VLED_SENSE` to GND.
+- R16 255 kΩ from `+32V` to `VLED_SENSE`; R17 10.0 kΩ and C15 100 nF from `VLED_SENSE` to GND.
 
 No pin is left unconnected on U1, U2, U3 or Q1.
 
@@ -1581,15 +1584,18 @@ No pin is left unconnected on U1, U2, U3 or Q1.
   - a current-loop sampling double pole at f_S/2 `[INFERENCE: standard Ridley model, not in SLVS789D]`
 - The datasheet default (R3 10 k, C3 680 pF, §9.2.2.6) assumes 1–10 µF ceramics (§7.3: C_O 1–10 µF; "other values … should be fully tested"). With 440 µF it gives a modelled worst-case phase margin of only **15°**.
 - The chosen values set three corners:
-  - f_Z = 1/(2π·100 k·22 n) = 72 Hz
-  - f_P(C8) = 1/(2π·100 k·470 p) = 3.4 kHz (cancels the ESR zero, so the loop gain keeps falling through the RHPZ region)
-  - f_P1 = 1/(2π·6 MΩ·22 n) = 1.2 Hz
+  - f_Z = 1/(2π·100 k·10 n) = 159 Hz
+  - f_P(C8) = 1/(2π·100 k·220 p) = 7.2 kHz (above the 2.4 kHz ESR zero; it rolls the loop gain off again before the RHPZ region)
+  - f_P1 = 1/(2π·6 MΩ·10 n) = 2.7 Hz
+- C7 and C8 share their parts with C10/C17 (10 nF C0G) and C13 (220 pF C0G). The first version used 22 nF X7R and 470 pF C0G (f_Z 72 Hz, f_P 3.4 kHz); the same model gives PM ≥ 79°, GM ≥ 32 dB and crossover ≈ 390–1320 Hz for those.
 - Modelled result over G_EA 240–400 µS, ESR 0.075–0.3 Ω, C 352–528 µF, load 1–100 mA, V_IN 4.75–5.25 V:
-  - crossover 400–1400 Hz (690 Hz nominal)
-  - phase margin ≥ 79° (89° nominal)
-  - gain margin ≥ 32 dB
+  - crossover 410–1450 Hz (680 Hz nominal)
+  - phase margin ≥ 72° (88° nominal)
+  - gain margin ≥ 26 dB (39 dB nominal)
+  - one 0 dB crossing at every corner
 - Without C8 the loop gain sits flat near 0 dB above the ESR zero, and some corners cross 0 dB more than once.
-- COMP slews at 100 µA (I_source/sink, §7.5) / 22.5 nF = 4.4 V/ms, so after each pulse the loop reaches current limit within ≈ 0.3 ms.
+- COMP slews at 100 µA (I_source/sink, §7.5) / 10.2 nF = 9.8 V/ms, so after each pulse the loop reaches current limit within ≈ 0.13 ms.
+- C8's higher pole lets ≈ 2× more switching ripple onto COMP than 470 pF did (|Z| 603 Ω vs 282 Ω at 1.2 MHz). TI's default network has no HF cap at all, so this is not expected to matter `[INFERENCE]`.
 
 **CTRL / `BST_EN`.**
 - Static high = enable at full reference: "When the CTRL pin is constantly high, the FB voltage is regulated to 1.229 V" (§8.4.2). High ≥ 1.2 V, low ≤ 0.4 V (§7.5). The P4 drives 3.3 V.
@@ -1600,16 +1606,21 @@ No pin is left unconnected on U1, U2, U3 or Q1.
 **Load switch (U4) and start-up sequence.**
 - Why: without U4 the L1/D1 path pre-charges 440 µF whenever +5V rises, ≈ 1.3–1.6 A for ≈ 2 ms through the TPS2116 soft start: over the USB 2.0 inrush limit on USB power and a large start-up load on the DP1435.
 - U4 is off while `LED_PWR_EN` is low (R18), so `+5V_BST` and +32V stay at 0 V at power-up.
-- Rise time: SLVSD76C Eq. 3, SR = 0.55·CT + 30 µs/V with CT in pF: 4.7 nF → ≈ 2.6 ms/V, so t_R (10–90 %) ≈ 10.5 ms at 5 V and the full ramp ≈ 13 ms (cross-check: §6.6 gives t_R = 2.54 ms at CT = 1 nF). Inrush through U4: 440 µF × 4 V/10.5 ms ≈ **0.17 A** (the caps follow through L1/D1). The slew is controlled only when VIN is up before ON (§10), which holds: the P4 driving ON runs from the same +5V.
+- Rise time: SLVSD76C Table 2 (typical, 25 V X7R on CT) gives t_R (10–90 %) = **26.55 ms** at VIN = 5 V for CT = 10 nF. Eq. 3, SR = 0.55·CT + 30 µs/V with CT in pF, gives 5.53 ms/V and t_R = VIN·SR = 27.7 ms (Eq. 3 already gives the 10–90 % time). The full 0–100 % ramp is ≈ 33 ms. C17 is C0G, which keeps its full capacitance where the table's X7R loses some, so expect up to ≈ 30 ms `[INFERENCE]`.
+  - The earlier 4.7 nF X7R gave 12.05 ms (Table 2). The 10.5 ms first written here applied 0.8·VIN to Eq. 3, which already gives the 10–90 % time.
+  - Turn-on delay t_D is 690 µs at CT = 1 nF (§6.6); ≈ 7 ms at 10 nF if it scales with CT `[INFERENCE]`.
+- CT rating: Table 3 asks ≥ 20 V for VIN 4–5.5 V. C17 is 50 V C0G.
+- Inrush through U4 (Eq. 9, I = C·ΔV/Δt over the 4 V from 10 % to 90 %): ≈ 447 µF (440 µF + C1 ≈ 6 µF + C5/C6 ≈ 1 µF effective) × 4 V/26.55 ms ≈ **0.067 A** (the caps follow through L1/D1). Peak U4 dissipation at the start of the ramp is ≈ 0.067 A × 5 V = 0.34 W. The charging energy, ½CV² ≈ 5.6 mJ, does not depend on the ramp time.
+- The slew is controlled only when VIN is up before ON (§10), which holds: the P4 driving ON runs from the same +5V.
 - **Sequence (firmware):**
   1. Only on PoE (`PWR_SRC` high).
-  2. `LED_PWR_EN` high; wait ≥ 20 ms so `+5V_BST` is settled.
+  2. `LED_PWR_EN` high; wait ≥ 50 ms so `+5V_BST` is settled (t_D ≈ 7 ms + ramp up to ≈ 33 ms + margin).
   3. `BST_EN` high. V_REF ramps in 32 × 213 µs = 6.8 ms, with the switch current limit halved (≤ 0.7 A typ) for the first 5 ms (§8.3.1). 440 µF cannot follow the ramp (that would take 1.8 A), so the converter runs at cycle-by-cycle current limit (§8.3.2) until V_OUT reaches its set point: 12.5 mC at 0.1–0.25 A out, **≈ 50–120 ms**, drawing **0.8–1.3 A** from +5V through U4: inside its 2 A continuous rating; R_ON 52 mΩ typ, ≤ 71 mΩ at 5 V (SLVSD76C §6.1, §6.5) gives ≤ 0.12 W, +22 °C at R_θJA 183 °C/W.
   4. Off: `BST_EN` low (shutdown after > 2.5 ms, §8.3.5), then `LED_PWR_EN` low.
 - Keeping CTRL low until U4 has finished its ramp keeps the boost's current out of U4 while U4 is still in its linear region.
-- *After `BST_EN` low.* D1 blocks the discharge path, so +32V stays charged. It decays only through R1+R2 ∥ R16+R17 = 87 kΩ: τ = 87 kΩ × 440 µF ≈ **38 s**. Firmware drops `LED_EN` too if it wants the light off.
+- *After `BST_EN` low.* D1 blocks the discharge path, so +32V stays charged. It decays only through R1+R2 ∥ R16+R17 = 265 kΩ ∥ 265 kΩ = 132.5 kΩ: τ = 132.5 kΩ × 440 µF ≈ **58 s**. Firmware drops `LED_EN` too if it wants the light off.
 - *USB-only.* Firmware holds `LED_PWR_EN` and `BST_EN` low (TPS2116 ST → `PWR_SRC`). On a PoE → USB switchover (no soft start, SLVSFG1A §7.3.2) the boost keeps drawing up to 1.44 A until firmware reacts to `PWR_SRC`.
-- COMP wind-up overshoot at the end of the charge ≈ 0.1 A × 0.25 ms/440 µF ≈ 0.06 V (negligible).
+- COMP wind-up overshoot at the end of the charge ≈ 0.1 A × 0.13 ms/440 µF ≈ 0.03 V (negligible).
 
 **Gate (U2).**
 - SCES416N Table 1: Y = In2·In0 + /In2·In1. With In1 = L this is **Y = In2·In0** (Figure 4, "2-input AND gate").
@@ -1629,12 +1640,13 @@ No pin is left unconnected on U1, U2, U3 or Q1.
 - In0 (`LED_EN`) has R5 100 kΩ to GND. I_I is ±5 µA max (§6.5), × 100 kΩ = 0.5 V < V_T+ min 1.5 V, so a floating P4 pin reads low.
 
 **Set point (R8, R9, C11) and sink accuracy.**
-- `ISET` = 3.3 V × 2.05/(63.4 + 2.05) = **103.4 mV**.
-- The divider loads Y with 50 µA. V_OH ≥ V_CC − 0.1 V at I_OH = −100 µA (§6.5); the typical drop is ≈ mV `[INFERENCE]`.
-- C11 sets τ = (63.4 k ∥ 2.05 k) × 1 nF = 2.0 µs: a soft current edge.
+- `ISET` = 3.3 V × 1.5/(47 + 1.5) = **102.1 mV**.
+- R8/R9 reuse values already on the board: 47 kΩ (camera `CAM_EN` pull-down) and 1.5 kΩ (MDIO pull-up).
+- The divider loads Y with 68 µA. V_OH ≥ V_CC − 0.1 V at I_OH = −100 µA (§6.5); the typical drop is ≈ mV `[INFERENCE]`.
+- C11 sets τ = (47 k ∥ 1.5 k) × 1 nF = 1.45 µs: a soft current edge. The op-amp turn-on below is dominated by C_F slewing (≈ 5.7 µs), so the edge filter changes little; the ≤ 8 % overshoot figure was modelled with the earlier 2.0 µs edge (To verify #4).
 - R12 injects 5 V × 1.00 k/1.001 M ≈ 4.9 mV into IN− (it is needed for the off state, see the op-amp item below).
-- I_LED = (103.4 − 4.9) mV/0.1 Ω = **0.985 A**. R8 = 63.4 kΩ (rather than 61.9 kΩ for 1.009 A) keeps the worst-case top end near the LED's 1 A continuous rating.
-- Worst-case stack: R8/R9 ratio ±1.94 %, `+3V3` ±3 % (TLV62569 V_FB ±2 %, SLVSDG1C §7.5, plus its divider), V_OH 0…−0.1 V, V_OS ±2 mV over temperature (SBOS839N §6.10), injection ±0.35 mV, shunt ±1 %. Result: **≈ 0.87–1.07 A**; RSS (V_OH at typ) ±4.4 %.
+- I_LED = (102.1 − 4.9) mV/0.1 Ω = **0.972 A**. That keeps the worst-case top end near the LED's 1 A continuous rating. The earlier 63.4 k / 2.05 k gave 0.985 A; the light is 1.4 % lower.
+- Worst-case stack: R8/R9 ratio ±1.94 %, `+3V3` ±3 % (TLV62569 V_FB ±2 %, SLVSDG1C §7.5, plus its divider), V_OH 0…−0.1 V, V_OS ±2 mV over temperature (SBOS839N §6.10), injection ±0.35 mV, shunt ±1 %. Result: **≈ 0.86–1.06 A**; RSS (V_OH at typ) ±4.4 %.
 
 **Op-amp loop (U3, Q1, R10–R13, C13).**
 - Circuit: SBOA327A's single-supply V-I converter with dual feedback: R_ISO in series with the gate, C_F from OUT to IN−, R_F from the shunt to IN−. The input must include GND (SBOS839N: V_CM (V−) − 0.1 V…(V+) + 0.1 V; `ISET` sits in the high-CMRR region < (V+) − 1.4 V). R_F × I_B = 1 kΩ × 0.5 pA, negligible (SBOA327A note 4).
@@ -1683,14 +1695,14 @@ No pin is left unconnected on U1, U2, U3 or Q1.
 - Filter: τ = 5 kΩ × 100 nF = 0.5 ms.
 
 **`VLED_SENSE` (R16, R17, C15).**
-- Ratio 10/130:
-  - 32.57 V → 2.51 V
-  - 33.88 V → 2.61 V
-  - **40 V (SW abs max) → 3.08 V**, within ATTEN3's 0–3.3 V
-  - 50 V would give 3.85 V, with < 0.4 mA clamp current through 120 kΩ
-- Resolution: 0.81 mV × 13 = 10.5 mV/LSB. Accuracy: ±0.2 V (ADC) and ±0.6 V (1 % resistors).
-- Standby: 32.6 V/130 kΩ = 251 µA (8.2 mW); 33 µA with the boost off. R16 is 0603 for its working-voltage margin `[INFERENCE: 0402 thick film is typically rated 50 V]`.
-- Filter τ = 9.2 kΩ × 100 nF = 0.92 ms. It averages the ≈ 1.1 V per-pulse droop, which still shows over a frame. Use: sample just after an enabled pulse; no droop means an open string or no current. Sample before the next XVS to read the recovered rail.
+- Ratio 10/265 (R16 is the same 255 kΩ 0603 part as R1):
+  - 32.57 V → 1.229 V
+  - 33.88 V → 1.279 V
+  - **40 V (SW abs max) → 1.51 V**, within ATTEN3's 0–3.3 V
+  - 50 V would give 1.89 V, still inside the ADC range
+- Resolution: 0.81 mV × 26.5 = 21.5 mV/LSB. Accuracy: ±0.4 V (ADC, ±15 mV × 26.5) and ±0.65 V (1 % resistors). The droop and recovery readings are differences on the same divider and ADC, so the offset and gain errors cancel; the ≈ 1.1 V droop is ≈ 51 LSB.
+- Standby: 32.6 V/265 kΩ = 123 µA (4.0 mW); ≈ 16 µA with the boost off. R16 is 0603 for its working-voltage margin `[INFERENCE: 0402 thick film is typically rated 50 V]`.
+- Filter τ = (255 k ∥ 10 k = 9.6 kΩ) × 100 nF = 0.96 ms. It averages the ≈ 1.1 V per-pulse droop, which still shows over a frame. Use: sample just after an enabled pulse; no droop means an open string or no current. Sample before the next XVS to read the recovered rail.
 
 **Storage caps.**
 - Each RVT is rated 500 mA RMS at 100 kHz/105 °C, × 0.80 at 120 Hz = 400 mA (RVT DS ripple table and frequency factor); LCSC lists 230 mA at 120 Hz.
@@ -1721,10 +1733,10 @@ No pin is left unconnected on U1, U2, U3 or Q1.
 
 ### To verify
 
-1. **C_O outside the TPS61170's tested range** (SLVS789D §7.3: 1–10 µF). R3/C7/C8 rest on a model. On the first boards, check stability with a Bode injection at R1, or a load step on +32V, cold and hot.
+1. **C_O outside the TPS61170's tested range** (SLVS789D §7.3: 1–10 µF). R3/C7/C8 (100 kΩ, 10 nF, 220 pF) rest on a model. On the first boards, check stability with a Bode injection at R1, or a load step on +32V, cold and hot.
 2. **'1G97 thresholds at 3.3 V are interpolated.** Measure the timeout on the first boards (target 0.8–1.2 ms) and adjust R6.
-3. **Current tolerance**: ≈ 0.87–1.07 A worst case; the top end is ≈ 7 % over the LED's 1 A continuous rating at ≤ 16 % duty `[INFERENCE: acceptable]`. Measure on `ISNS`.
-4. **Op-amp loop and timing values come from models.** Verify on the board at TP `ISNS`: current pulse shape (overshoot, ringing, 8–10 µs rise), and the gate-on delay versus exposure.
+3. **Current tolerance**: ≈ 0.86–1.06 A worst case; the top end is ≈ 6 % over the LED's 1 A continuous rating at ≤ 16 % duty `[INFERENCE: acceptable]`. Measure on `ISNS`.
+4. **Op-amp loop and timing values come from models.** Verify on the board at TP `ISNS`: current pulse shape (overshoot, ringing, 8–10 µs rise), and the gate-on delay versus exposure. The overshoot model used a 2.0 µs set-point edge; the board has 1.45 µs (R8/R9 = 47 k/1.5 k).
 5. **Average Q1 power with long exposures** reaches ≈ 1.5–2.1 W if every exposure reaches the timeout. Firmware should cap exposure (≤ 0.8 ms keeps it within the boost's sustained output, timing.md §4) and derate on `NTC_SENSE`.
 6. **NTC current** reaches 313 µA at 125 °C against LCSC's 310 µA max (Murata datasheet not read). The dissipation constant is unverified.
 7. **No OVP on the boost.** An open R1/FB, or a broken FB solder joint, drives SW past 40 V. The open-string case is safe: feedback is from V_OUT, not the LED current. An optional clamp (e.g. a Zener from +32V to FB) is not fitted.

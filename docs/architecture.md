@@ -50,7 +50,7 @@ The schematic's sheets, nets, pin-level connections and component values are in
 | XVS | P4 → OV9281 | Frame trigger, one edge per frame at a scheduled network time. 1.8 V at the sensor (resistor divider) |
 | STROBE | OV9281 → LED gate, P4 | High during exposure. 1.8 V at the sensor, buffered to 3.3 V (SN74LV1T34). The P4 timestamps it with ETM |
 | LED_EN | P4 → LED gate | Enables the strobed LEDs; low for dark frames |
-| LED_PWR_EN | P4 → TPS22918 ON | Connects +5V to the LED boost through a ≈ 10 ms ramp. Pulled low |
+| LED_PWR_EN | P4 → TPS22918 ON | Connects +5V to the LED boost through a ≈ 27 ms ramp. Pulled low |
 | BST_EN | P4 → TPS61170 CTRL | Starts the 32 V LED boost after the load switch has ramped. Pulled low: the rail stays off until firmware enables it |
 | CAM_EN | P4 → OV9281 module | Enables the module's regulators (FPC pin 11). Pulled low |
 | PWR_SRC | TPS2116 → P4 | High when PoE powers the board; firmware keeps the LED rail off on USB |
@@ -104,11 +104,11 @@ Driver (parts and LCSC numbers: `hardware/espion-cam/BOM.md`):
 - **Boost limits.** Worst case (minimum current limit, 85 %) the boost delivers ≈ 100 mA
   at 32 V. 500 µs pulses at 120 fps average 60 mA, so it can sustain ≈ 0.8 ms of light per
   frame. Refilling the capacitors at power-up takes ≈ 70 ms (0.23 J).
-- **Enable.** A TPS22918 load switch on `LED_PWR_EN` feeds the boost input with a ≈ 10 ms
-  ramp; without it, the boost's inductor and diode would charge the 440 µF storage from
-  +5V at every power-up (≈ 1.6 A inrush, over the USB limit). `BST_EN` then drives the
-  TPS61170's CTRL pin. Both have pull-downs: the rail is off through PoE start-up and boot,
-  and firmware can drop it on a fault.
+- **Enable.** A TPS22918 load switch on `LED_PWR_EN` feeds the boost input with a ≈ 27 ms
+  ramp (≈ 70 mA inrush); without it, the boost's inductor and diode would charge the
+  440 µF storage from +5V at every power-up (≈ 1.6 A inrush, over the USB limit).
+  `BST_EN` then drives the TPS61170's CTRL pin. Both have pull-downs: the rail is off
+  through PoE start-up and boot, and firmware can drop it on a fault.
 - **Current sink.** A TLV9061 op-amp on 5 V drives an IRLR024N MOSFET (55 V, planar, for
   its linear-mode SOA) so that 1 A flows through a 0.1 Ω shunt. Its 100 mV reference is a
   divider from the gate output, so the gate turns the sink on and off. The MOSFET drops

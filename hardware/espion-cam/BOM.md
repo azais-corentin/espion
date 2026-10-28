@@ -28,8 +28,7 @@ and compensation, the LED timeout RC) are not listed here; their values are in
 | Crystal load caps, 18 pF C0G | 2 | 0402CG180J500NT | FH | C1549 | 0402 | 876,700 | $0.0012 |
 | 5 V OR-ing (power mux) | 1 | TPS2116DRLR | TI | C3235557 | SOT-583 | 54,819 | $0.19 |
 | 3.3 V buck | 1 | TLV62569DBVR | TI | C141836 | SOT-23-5 | 16,700 | $0.038 |
-| Buck inductor, 2.2 µH | 1 | FNR3015S2R2MT | cjiang | C167747 | 3×3 | 57,660 | $0.036 |
-| PoE LC filter inductor, 2.2 µH | 1 | FXL0630-2R2-M | cjiang | C167218 | 7×6.6 | 70,530 | $0.083 |
+| PoE LC filter and 3.3 V buck inductors, 2.2 µH | 2 | FXL0630-2R2-M | cjiang | C167218 | 7×6.6 | 70,530 | $0.083 |
 | PoE LC filter, 330 µF/16 V polymer | 1 | SVZ1CM331E09E00RAXXX | AISHI | C3291468 | SMD 6.3×9 | 3,055 | $0.093 |
 | PoE LC filter, 330 µF/16 V electrolytic (damping) | 1 | JVE16V330M8X10 | JIERR | C48615108 | SMD 8×10.5 | 1,935 | $0.057 |
 | PoE LC filter, 10 µF/25 V X5R | 1 | CL21A106KAYNNNE | Samsung | C15850 | 0805 | 1,905,660 | $0.026 |
@@ -91,7 +90,7 @@ and compensation, the LED timeout RC) are not listed here; their values are in
   The TPS61170's WSON-6 has an exposed pad: solder it with paste and hot air.
 - **LED load switch**: the TPS61170's inductor and diode would charge the 2 × 220 µF from
   +5V at every power-up (≈ 1.6 A inrush, over the USB limit). The TPS22918 keeps the boost
-  input off until firmware enables it, then ramps it in ≈ 10 ms.
+  input off until firmware enables it, then ramps it in ≈ 27 ms (10 nF C0G on CT).
 - **RGB LED**: the only in-stock addressable LED rated for 3.3 V, so the P4 drives it
   without a level shifter. Second source: WS2812C-2020-V6 (C55109522, same footprint,
   5 mA per colour instead of 12 mA). MSL 5a: bake before reflow if the bag was opened.
