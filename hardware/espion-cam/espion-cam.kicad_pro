@@ -389,7 +389,45 @@
       "sort_asc": true,
       "sort_field": "Reference"
     },
-    "bus_aliases": {},
+    "bus_aliases": {
+      "CAMCTL": [
+        "SCCB_SDA",
+        "SCCB_SCL",
+        "CAM_EN",
+        "XVS"
+      ],
+      "CSI": [
+        "CSI_CLK_P",
+        "CSI_CLK_N",
+        "CSI_D0_P",
+        "CSI_D0_N",
+        "CSI_D1_P",
+        "CSI_D1_N"
+      ],
+      "LEDCTL": [
+        "LED_PWR_EN",
+        "BST_EN",
+        "LED_EN"
+      ],
+      "PHY": [
+        "RMII_TX_EN",
+        "RMII_TXD0",
+        "RMII_TXD1",
+        "RMII_REF_CLK",
+        "RMII_CRS_DV",
+        "RMII_RXD0",
+        "RMII_RXD1",
+        "MDC",
+        "MDIO",
+        "PHY_RST_N"
+      ],
+      "POE": [
+        "POE_VA1",
+        "POE_VA2",
+        "POE_VB1",
+        "POE_VB2"
+      ]
+    },
     "connection_grid_size": 50.0,
     "drawing": {
       "dashed_lines_dash_length_ratio": 12.0,

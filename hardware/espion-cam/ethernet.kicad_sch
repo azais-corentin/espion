@@ -3232,6 +3232,12 @@
 			(embedded_fonts no)
 		)
 	)
+	(bus_alias "PHY"
+		(members "RMII_TX_EN" "RMII_TXD0" "RMII_TXD1" "RMII_REF_CLK" "RMII_CRS_DV" "RMII_RXD0" "RMII_RXD1" "MDC" "MDIO" "PHY_RST_N")
+	)
+	(bus_alias "POE"
+		(members "POE_VA1" "POE_VA2" "POE_VB1" "POE_VB2")
+	)
 	(symbol
 		(lib_id "Device:Crystal_GND24")
 		(at 102.87 104.14 0)
@@ -6389,7 +6395,7 @@
 	)
 	(wire
 		(pts
-			(xy 71.12 53.34) (xy 73.66 53.34)
+			(xy 71.12 53.34) (xy 83.82 53.34)
 		)
 		(stroke
 			(width 0)
@@ -6397,20 +6403,9 @@
 		)
 		(uuid "388bb9cb-1ef5-4d17-b2e5-2e771538ddff")
 	)
-	(hierarchical_label "POE_VA1"
-		(shape passive)
-		(at 73.66 53.34 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "270b21e3-45cb-4548-bfa3-0418c0dd2a09")
-	)
 	(wire
 		(pts
-			(xy 71.12 55.88) (xy 73.66 55.88)
+			(xy 71.12 55.88) (xy 83.82 55.88)
 		)
 		(stroke
 			(width 0)
@@ -6418,20 +6413,9 @@
 		)
 		(uuid "97f37ded-68e1-488b-a169-47548ca21fb0")
 	)
-	(hierarchical_label "POE_VA2"
-		(shape passive)
-		(at 73.66 55.88 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "158d5e87-b1ce-45b4-a36f-8653ddb10f8f")
-	)
 	(wire
 		(pts
-			(xy 71.12 58.42) (xy 73.66 58.42)
+			(xy 71.12 58.42) (xy 83.82 58.42)
 		)
 		(stroke
 			(width 0)
@@ -6439,37 +6423,15 @@
 		)
 		(uuid "4979a734-2c09-491d-82b5-5481e1a3c8c8")
 	)
-	(hierarchical_label "POE_VB1"
-		(shape passive)
-		(at 73.66 58.42 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "47f33ea7-c65e-40a9-9f78-ed5eae2b735f")
-	)
 	(wire
 		(pts
-			(xy 71.12 60.96) (xy 73.66 60.96)
+			(xy 71.12 60.96) (xy 83.82 60.96)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "f606a0da-7018-499d-a841-23d33fbd76bc")
-	)
-	(hierarchical_label "POE_VB2"
-		(shape passive)
-		(at 73.66 60.96 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "e7d6d475-72a8-4750-aafb-707509155627")
 	)
 	(no_connect
 		(at 20.32 30.48)
@@ -7947,24 +7909,13 @@
 	)
 	(wire
 		(pts
-			(xy 170.18 68.58) (xy 262.89 68.58)
+			(xy 170.18 68.58) (xy 265.43 68.58)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "07d3de45-c76c-48ce-b07f-bdbc8b29f034")
-	)
-	(hierarchical_label "RMII_TX_EN"
-		(shape input)
-		(at 262.89 68.58 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "ea143db6-0bce-4fa7-8f14-5e4a2c00dbfb")
 	)
 	(wire
 		(pts
@@ -8056,7 +8007,7 @@
 	)
 	(wire
 		(pts
-			(xy 170.18 73.66) (xy 262.89 73.66)
+			(xy 170.18 73.66) (xy 265.43 73.66)
 		)
 		(stroke
 			(width 0)
@@ -8064,37 +8015,15 @@
 		)
 		(uuid "eb1e76b9-6b1a-4347-85e6-223b95fce95b")
 	)
-	(hierarchical_label "RMII_TXD0"
-		(shape input)
-		(at 262.89 73.66 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "6c141a45-5d60-44d1-8405-66f27a4dba58")
-	)
 	(wire
 		(pts
-			(xy 170.18 76.2) (xy 262.89 76.2)
+			(xy 170.18 76.2) (xy 265.43 76.2)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "77268c6d-5ffa-44ba-8b2d-3e7691e033dd")
-	)
-	(hierarchical_label "RMII_TXD1"
-		(shape input)
-		(at 262.89 76.2 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "be24b784-bb7d-44ae-b049-81c84d85e2f8")
 	)
 	(wire
 		(pts
@@ -8226,24 +8155,13 @@
 	)
 	(wire
 		(pts
-			(xy 185.42 86.36) (xy 262.89 86.36)
+			(xy 185.42 86.36) (xy 265.43 86.36)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "4574f3f7-fbf5-4e65-9ab8-2c2d8ff01ed5")
-	)
-	(hierarchical_label "RMII_REF_CLK"
-		(shape output)
-		(at 262.89 86.36 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "8ad19ace-a754-49e9-8691-a3950078d446")
 	)
 	(wire
 		(pts
@@ -8257,24 +8175,13 @@
 	)
 	(wire
 		(pts
-			(xy 200.66 88.9) (xy 262.89 88.9)
+			(xy 200.66 88.9) (xy 265.43 88.9)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "fd4a52b6-e556-4a7c-be65-610156f5a83d")
-	)
-	(hierarchical_label "RMII_CRS_DV"
-		(shape output)
-		(at 262.89 88.9 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "12eff186-4e6b-446b-b814-4147c7c881d3")
 	)
 	(wire
 		(pts
@@ -8288,24 +8195,13 @@
 	)
 	(wire
 		(pts
-			(xy 185.42 93.98) (xy 262.89 93.98)
+			(xy 185.42 93.98) (xy 265.43 93.98)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "831662cc-2442-495c-abe7-757a83c37070")
-	)
-	(hierarchical_label "RMII_RXD0"
-		(shape output)
-		(at 262.89 93.98 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "65444218-b419-4781-98db-b9d37d15f5d4")
 	)
 	(wire
 		(pts
@@ -8319,24 +8215,13 @@
 	)
 	(wire
 		(pts
-			(xy 200.66 96.52) (xy 262.89 96.52)
+			(xy 200.66 96.52) (xy 265.43 96.52)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "eb1e6e33-cf92-4ca2-8682-c04add999afd")
-	)
-	(hierarchical_label "RMII_RXD1"
-		(shape output)
-		(at 262.89 96.52 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "ccda7951-145c-450e-943c-27ad8edf0d98")
 	)
 	(no_connect
 		(at 170.18 91.44)
@@ -8364,17 +8249,6 @@
 		)
 		(uuid "3df0d0f2-fac7-44dc-8f92-ba98ae676902")
 	)
-	(hierarchical_label "MDC"
-		(shape input)
-		(at 262.89 101.6 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "9293d413-98e8-4699-a7cc-66f32f27701d")
-	)
 	(wire
 		(pts
 			(xy 170.18 114.3) (xy 215.9 114.3)
@@ -8387,24 +8261,13 @@
 	)
 	(wire
 		(pts
-			(xy 215.9 114.3) (xy 262.89 114.3)
+			(xy 215.9 114.3) (xy 265.43 114.3)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "0c6f696c-5e28-4942-a6da-5636b6ae0d98")
-	)
-	(hierarchical_label "MDIO"
-		(shape bidirectional)
-		(at 262.89 114.3 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "1f599397-4fae-4f65-a278-01951ea37e3a")
 	)
 	(wire
 		(pts
@@ -8438,24 +8301,13 @@
 	)
 	(wire
 		(pts
-			(xy 180.34 119.38) (xy 262.89 119.38)
+			(xy 180.34 119.38) (xy 265.43 119.38)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "da8062b8-1e1c-4233-bfde-9f1de260f029")
-	)
-	(hierarchical_label "PHY_RST_N"
-		(shape input)
-		(at 262.89 119.38 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "4fc730b7-dbfa-42df-a804-5d1ea2cbda28")
 	)
 	(wire
 		(pts
@@ -8677,12 +8529,360 @@
 	)
 	(wire
 		(pts
-			(xy 208.28 101.6) (xy 262.89 101.6)
+			(xy 208.28 101.6) (xy 265.43 101.6)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "4a2f781f-94cc-4163-9c9e-d66abb31b224")
+	)
+	(label "RMII_TX_EN"
+		(at 246.38 68.58 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "176e8a9e-52da-4138-a0ad-6b10e81799c8")
+	)
+	(bus_entry
+		(at 265.43 68.58)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "017e8299-7abb-48d2-b0ed-cf41b9057e80")
+	)
+	(label "RMII_TXD0"
+		(at 246.38 73.66 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "c3174e75-9c43-4d83-abc6-3a68b4704f1e")
+	)
+	(bus_entry
+		(at 265.43 73.66)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "330b35f4-3732-47d3-a6c1-27758a08bfd5")
+	)
+	(label "RMII_TXD1"
+		(at 246.38 76.2 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "246f39b7-dcda-4103-bfd2-3a402e54fcd4")
+	)
+	(bus_entry
+		(at 265.43 76.2)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "35098f78-e802-4608-af99-7bf9560bb55f")
+	)
+	(label "RMII_REF_CLK"
+		(at 246.38 86.36 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "92a539bd-e25f-4324-9519-f7a85fa1f117")
+	)
+	(bus_entry
+		(at 265.43 86.36)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "61bd1e93-b171-4bab-9ed1-40f1dd61ff79")
+	)
+	(label "RMII_CRS_DV"
+		(at 246.38 88.9 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "db4ce7d2-5794-4963-a601-670e77ff80a8")
+	)
+	(bus_entry
+		(at 265.43 88.9)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "590a46ff-84df-46ab-a098-f4645495088c")
+	)
+	(label "RMII_RXD0"
+		(at 246.38 93.98 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "c3143467-5397-430a-bb2c-750ed2922f17")
+	)
+	(bus_entry
+		(at 265.43 93.98)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e07f5b9f-1482-4469-b5ce-9d8c9d7771fc")
+	)
+	(label "RMII_RXD1"
+		(at 246.38 96.52 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "25d7a965-5623-45c0-88be-9756b881418d")
+	)
+	(bus_entry
+		(at 265.43 96.52)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8f7d6705-4459-4fd1-a767-98680a6f650d")
+	)
+	(label "MDC"
+		(at 246.38 101.6 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "554dd30a-83e2-41e5-84d4-7ff72ce9f8c8")
+	)
+	(bus_entry
+		(at 265.43 101.6)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "db0deea1-1223-4bed-bf50-ae57cab67553")
+	)
+	(label "MDIO"
+		(at 246.38 114.3 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "792c66b3-e23d-49e3-9375-82c7d128c61c")
+	)
+	(bus_entry
+		(at 265.43 114.3)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b60df758-a91d-498c-9f13-8414cfa30c67")
+	)
+	(label "PHY_RST_N"
+		(at 246.38 119.38 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "afeef988-7974-48d9-92d6-bf4c6002936b")
+	)
+	(bus_entry
+		(at 265.43 119.38)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7cb4c995-c087-4d77-8daa-a41872392709")
+	)
+	(bus
+		(pts
+			(xy 267.97 71.12) (xy 267.97 121.92)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5aca7497-c9f9-4d96-ac8f-188fc9cd9482")
+	)
+	(bus
+		(pts
+			(xy 267.97 121.92) (xy 273.05 121.92)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "71791240-c33f-4745-aa58-03f57929c94f")
+	)
+	(hierarchical_label "{PHY}"
+		(shape bidirectional)
+		(at 273.05 121.92 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "5e8c18db-8fe2-437c-a1a1-56d5ece63b8d")
+	)
+	(label "POE_VA1"
+		(at 72.39 53.34 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "c74497c8-6faa-443d-89a5-f803f39fa091")
+	)
+	(bus_entry
+		(at 83.82 53.34)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6e9ecb15-0028-48aa-a997-d167d2117443")
+	)
+	(label "POE_VA2"
+		(at 72.39 55.88 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "0cc7e319-0a4f-4a0e-b5d9-037ff49df56a")
+	)
+	(bus_entry
+		(at 83.82 55.88)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ab219d0f-dee7-4ada-b828-432fdc9afe7d")
+	)
+	(label "POE_VB1"
+		(at 72.39 58.42 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "476a3088-6b70-4262-8987-49cc89d09484")
+	)
+	(bus_entry
+		(at 83.82 58.42)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e4d21fca-60c0-4f5a-9f1e-3322e87dcea5")
+	)
+	(label "POE_VB2"
+		(at 72.39 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "9750ed74-8f66-4380-a9c6-0b09d44c12c5")
+	)
+	(bus_entry
+		(at 83.82 60.96)
+		(size 2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9516c962-446e-411c-b8b2-a56d943fe0b7")
+	)
+	(bus
+		(pts
+			(xy 86.36 55.88) (xy 86.36 68.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "33efb464-ac8a-4fd8-b900-19ac55563e25")
+	)
+	(bus
+		(pts
+			(xy 86.36 68.58) (xy 63.5 68.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b89329fa-5ffb-4d43-8f5f-993ae7e35f3c")
+	)
+	(bus
+		(pts
+			(xy 63.5 68.58) (xy 63.5 99.06)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "11368aa0-b8db-411e-be40-f397ba09e8d1")
+	)
+	(bus
+		(pts
+			(xy 63.5 99.06) (xy 22.86 99.06)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f9f582ee-d0ff-4eab-b187-8d5e2a755efa")
+	)
+	(hierarchical_label "{POE}"
+		(shape passive)
+		(at 22.86 99.06 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "abae8bcc-e7aa-4160-912f-e02b032aa5a3")
 	)
 )

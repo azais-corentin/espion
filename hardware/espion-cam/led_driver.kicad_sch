@@ -3132,6 +3132,9 @@
 			(embedded_fonts no)
 		)
 	)
+	(bus_alias "LEDCTL"
+		(members "LED_PWR_EN" "BST_EN" "LED_EN")
+	)
 	(symbol
 		(lib_id "Power_Management:TPS22917DBV")
 		(at 66.04 38.1 0)
@@ -8510,24 +8513,13 @@
 	)
 	(wire
 		(pts
-			(xy 53.34 68.58) (xy 27.94 68.58)
+			(xy 53.34 68.58) (xy 35.56 68.58)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "edb0c523-b25c-4a3d-b7c4-338411a177a5")
-	)
-	(hierarchical_label "LED_PWR_EN"
-		(shape input)
-		(at 27.94 68.58 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "5934489f-bd50-4917-a45e-d0e0a0163f41")
 	)
 	(wire
 		(pts
@@ -9075,24 +9067,13 @@
 	)
 	(wire
 		(pts
-			(xy 119.38 88.9) (xy 27.94 88.9)
+			(xy 119.38 88.9) (xy 35.56 88.9)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "a769f179-ab22-4076-88dd-7007b394e720")
-	)
-	(hierarchical_label "BST_EN"
-		(shape input)
-		(at 27.94 88.9 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "cfa72523-0748-41cf-bfa7-08a68a3dd6c4")
 	)
 	(wire
 		(pts
@@ -10237,24 +10218,13 @@
 	)
 	(wire
 		(pts
-			(xy 60.96 99.06) (xy 27.94 99.06)
+			(xy 60.96 99.06) (xy 35.56 99.06)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "5d1ae453-9f5f-4e3a-8fa3-a7aa065c1d2f")
-	)
-	(hierarchical_label "LED_EN"
-		(shape input)
-		(at 27.94 99.06 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "c90b4080-50dc-4efe-b8c2-da1ecc7b0045")
 	)
 	(wire
 		(pts
@@ -12334,5 +12304,93 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "d4361dd4-7151-4635-9f47-74578a790afc")
+	)
+	(bus_entry
+		(at 35.56 68.58)
+		(size -2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "23d6e2f7-ade4-45c6-bacf-b64a4ce45be4")
+	)
+	(bus_entry
+		(at 35.56 88.9)
+		(size -2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a69ecbe0-b01b-43b5-a1d9-824c5ff53f06")
+	)
+	(bus_entry
+		(at 35.56 99.06)
+		(size -2.54 2.54)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b5d6225f-0342-4c5c-816f-f19dccb82052")
+	)
+	(label "LED_PWR_EN"
+		(at 36.83 68.58 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "4017b23a-f54b-4df9-857e-177771ec9dd1")
+	)
+	(label "BST_EN"
+		(at 38.1 88.9 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "a96bcc98-590f-4e97-bfa8-05c842bda765")
+	)
+	(label "LED_EN"
+		(at 50.8 99.06 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "2d86a3d3-8933-4058-a215-71f75fe5ae3c")
+	)
+	(bus
+		(pts
+			(xy 33.02 71.12) (xy 33.02 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2051dc1d-1ab2-45c2-9fb4-6981a5ef8b40")
+	)
+	(bus
+		(pts
+			(xy 33.02 104.14) (xy 27.94 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "0fe2b42b-4f1b-4e84-a6fb-1d9fd91053e4")
+	)
+	(hierarchical_label "{LEDCTL}"
+		(shape bidirectional)
+		(at 27.94 104.14 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "64ac039a-1975-48d1-aa24-2faec35c56b5")
 	)
 )
