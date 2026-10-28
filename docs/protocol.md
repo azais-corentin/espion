@@ -5,22 +5,25 @@ change to the format bumps the protocol version and updates this document and th
 changelog at the end of it in the same commit.
 
 > **Status: draft.** No implementation exists yet. Decided: the header, the versioning
-> rules (exact version match), boards identified by their C5 MAC, and Q11.5 blob
+> rules (exact version match), boards identified by their Ethernet MAC, and Q11.5 blob
 > coordinates. The other message fields are the intended v1 content and may change until
 > the first implementation lands.
 
 ## Transport
 
-- UDP over IPv4 on the Wi-Fi network shared by the boards and the host.
+- UDP over IPv4 on the wired Ethernet network (100 Mbit/s per board) shared by the boards
+  and the host. Boards get their address by DHCP; the network needs a DHCP server.
 - One message per datagram. A datagram is at most **1472 bytes** (1500-byte MTU minus the IPv4
   and UDP headers), so IP fragmentation never happens.
+- The host is whoever sent the board its last Config or FrameEpoch. Until then a board
+  broadcasts Status to port 5005 and sends no Centroids.
 - Ports (defaults, configurable):
 
   | Port | Direction | Traffic |
   |---|---|---|
-  | 5005 (`HOST_PORT`) | board → host, unicast | Centroids, Status |
-  | 5006 | every C5 → all, broadcast | Announce (master election and FTM discovery; same port as esp-wifi-sync) |
-  | 5007 | host → board, unicast | Config, FrameEpoch |
+  | 5005 (`HOST_PORT`) | board → host, unicast (Status: broadcast until the host is known) | Centroids, Status |
+  | 5007 | host → board, unicast or broadcast | Config, FrameEpoch |
+  | 319, 320 | multicast 224.0.1.129 | PTP event and general messages (IEEE 1588, not espion-proto; see [timing.md](timing.md)) |
 
 - No retransmission. Lost centroid packets are lost frames; the host tolerates gaps.
 
@@ -62,21 +65,21 @@ and are never decoded.
 |---|---|---|---|
 | `0x01` | Centroids | board → host | Once per frame (120 Hz), split if needed |
 | `0x02` | Status | board → host | 1 Hz |
-| `0x03` | Announce | every C5 → broadcast | 1 Hz |
+| `0x03` | — | — | Reserved: was Announce in an earlier draft. PTP now does election and discovery |
 | `0x10` | Config | host → board | On change |
 | `0x11` | FrameEpoch | host → board | On change |
 
-Times on the wire are **network time**: nanoseconds on the current timescale, served by
-the master C5 (see [timing.md](timing.md)), as `u64`.
+Times on the wire are **network time**: nanoseconds of PTP time on the current
+grandmaster's clock (see [timing.md](timing.md)), as `u64`.
 
 ### `0x01` Centroids
 
 | Field | Type | Meaning |
 |---|---|---|
-| board | `[u8; 6]` | Station MAC of the board's C5 |
+| board | `[u8; 6]` | Ethernet MAC of the board |
 | frame | `u64` | Frame number `k` since the frame epoch (same `k` on every board for the same instant) |
 | capture_time | `u64` | Network time (ns) of the middle of the exposure |
-| sync | `SyncState` | Locked / acquiring / free-running, plus the estimated error (ns) and the `timescale` id |
+| sync | `SyncState` | Locked / acquiring / free-running, plus the estimated error (ns) and the grandmaster's clockIdentity (`[u8; 8]`) |
 | flags | `u8` | Bit 0: dark frame (LEDs off, ambient IR only) |
 | part, parts | `u8`, `u8` | This datagram's index and the datagram count for this frame |
 | blobs | `[Blob]` | Centroids found in the frame (this part) |
@@ -87,24 +90,9 @@ as `u8` intensity.
 
 ### `0x02` Status
 
-Firmware versions of both chips, uptime, sync role (master/slave/candidate), FTM
-statistics (session RTT, fit residual), SYNC lock state on the P4, dropped-frame and
-dropped-packet counters.
-
-### `0x03` Announce
-
-Sent by every C5. It drives the automatic master election
-([timing.md](timing.md#master-election-automatic-with-failover)) and FTM discovery
-(extends esp-wifi-sync's master-only Announce):
-
-| Field | Type | Meaning |
-|---|---|---|
-| board | `[u8; 6]` | Station MAC of the sender |
-| role | `Role` | Master / slave / candidate |
-| timescale | `u32` | Random id of the timescale the sender serves or follows; a change means network time restarted |
-| locked | `bool` | Whether the sender is locked to the timescale |
-| responder | `Option<[u8; 6]>` | Master only: SoftAP MAC of the FTM responder |
-| time | `u64` | Sender's network time estimate (ns) at send time. Slaves use the master's to unwrap FTM timestamps |
+Firmware version, uptime, link state (speed, duplex), PTP port state
+(master/slave/listening/passive), grandmaster clockIdentity, PTP statistics (offset from
+master, mean path delay), PPS servo lock state, dropped-frame and dropped-packet counters.
 
 ### `0x10` Config
 
@@ -120,4 +108,4 @@ N (one LED-off frame every N frames), frame-rate divider.
 
 | Version | Change |
 |---|---|
-| 1 | Initial draft (not implemented) |
+| 1 | Initial draft (not implemented). Revised before implementation for Ethernet + PTP: Announce (`0x03`) dropped, boards identified by their Ethernet MAC, `SyncState` carries the grandmaster clockIdentity instead of a timescale id |

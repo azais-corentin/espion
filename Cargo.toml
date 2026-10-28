@@ -1,12 +1,11 @@
 # Host workspace. Builds for the host target only.
 #
-# firmware/p4-c5-link is a member so its host-side unit tests run with `cargo test`; the
-# firmware binaries (cam-p4, radio-c5) are excluded: they have their own targets, runners
-# and lockfiles, and are built from their own directories.
+# The firmware crates (cam-p4, esp32p4-csi) are excluded: they have their own target,
+# runner and lockfile, and are built from their own directories.
 [workspace]
 resolver = "3"
-members  = ["crates/*", "host/*", "firmware/p4-c5-link"]
-exclude  = ["firmware/cam-p4", "firmware/esp32p4-csi", "firmware/radio-c5", "firmware/vendor"]
+members  = ["crates/*", "host/*"]
+exclude  = ["firmware/cam-p4", "firmware/esp32p4-csi"]
 
 [workspace.package]
 edition      = "2024"
@@ -18,7 +17,6 @@ publish      = false
 [workspace.dependencies]
 # Shared, no_std
 espion-proto = { path = "crates/espion-proto" }
-p4-c5-link   = { path = "firmware/p4-c5-link" }
 postcard     = { version = "1.1.3", default-features = false }
 serde        = { version = "1.0.229", default-features = false, features = ["derive"] }
 

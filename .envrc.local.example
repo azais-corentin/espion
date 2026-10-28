@@ -1,9 +1,0 @@
-# Copy to .envrc.local (git-ignored) and run `direnv allow`.
-# Read at build time by firmware/radio-c5 (not used by the stubs yet).
-export WIFI_SSID="MyNetwork"
-export WIFI_PASS="secret"
-# Host running espion-server / espion-sync, and the UDP port it listens on.
-export HOST_IP="192.168.1.66"
-export HOST_PORT="5005"
-# Optional: lock all boards to one physical AP.
-# export WIFI_BSSID="00:00:00:00:00:00"

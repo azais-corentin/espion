@@ -1,5 +1,5 @@
 {
-  description = "espion: multi-camera IR marker tracking (ESP32-P4/C5 firmware, Rust host, KiCad hardware)";
+  description = "espion: multi-camera IR marker tracking (ESP32-P4 firmware, Rust host, KiCad hardware)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -32,7 +32,7 @@
       devShells = forAllSystems (
         pkgs:
         let
-          # Host + riscv32imafc (ESP32-P4) + riscv32imac (ESP32-C5), pinned in one place.
+          # Host + riscv32imafc (ESP32-P4), pinned in one place.
           rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
           # Loaded at runtime by eframe/winit (espion-viewer).

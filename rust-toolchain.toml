@@ -1,7 +1,7 @@
 # Single toolchain for the whole repo. flake.nix builds the dev shell from this file
-# (rust-overlay), so the host, the ESP32-P4 (riscv32imafc) and the ESP32-C5 (riscv32imac)
-# all use the same compiler. Keep firmware/*/rust-toolchain.toml on the same channel.
+# (rust-overlay), so the host and the ESP32-P4 (riscv32imafc) use the same compiler.
+# Keep firmware/*/rust-toolchain.toml on the same channel.
 [toolchain]
 channel    = "1.99.1"
 components = ["rust-src", "rustfmt", "clippy", "rust-analyzer"]
-targets    = ["riscv32imafc-unknown-none-elf", "riscv32imac-unknown-none-elf"]
+targets    = ["riscv32imafc-unknown-none-elf"]

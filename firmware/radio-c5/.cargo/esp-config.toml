@@ -1,3 +1,0 @@
-# esp-config values (see each esp-* crate's "Additional configuration" docs).
-[env]
-ESP_LOG = "info"

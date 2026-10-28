@@ -1,22 +1,24 @@
 # espion-cam
 
-KiCad project for the espion camera board. Not started yet. Licensed under
-CERN-OHL-P-2.0 (`../LICENSE`).
+KiCad project for the espion camera board: a baseboard for the Waveshare ESP32-P4-Core
+module. Not started yet. Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 
 ## Board
 
-- ESP32-P4 with in-package PSRAM (silicon rev v3.0 or later; esp-hal does not support older
-  revisions)
+- Waveshare ESP32-P4-Core, 16 MB flash (SKU 36096): ESP32-P4NRW32X (rev v3.x, as esp-hal
+  requires), 32 MB in-package PSRAM, 40 MHz and 32.768 kHz crystals. 76 stamp holes,
+  1 mm pitch, 24 × 20 mm. Symbol and footprint go in `../lib/`
 - OV9281 global-shutter mono sensor on MIPI CSI-2 (2 lanes), external trigger on XVS,
   STROBE output to the LED gate
 - 850 nm LED ring with driver for passive retroreflective markers at 2–5 m, gated by
   `(STROBE ∧ LED_EN) ∨ LED_FORCE`
-- ESP32-C5 module (certified, integrated antenna; 5 GHz): SPI slave to the P4, plus
-  `DATA_READY` and 10 Hz `SYNC` lines to the P4
-- USB-C, 5 V, through a USB 2.0 hub to both chips' USB Serial/JTAG
+- IP101GRI Ethernet PHY on RMII (25 MHz crystal, PHY supplies the 50 MHz REF_CLK), RJ45
+  MagJack with PoE-rated centre taps, PPS test point
+- Power: IEEE 802.3af PoE PD (isolated 5 V) OR-ed with USB-C 5 V
+- USB-C straight to the P4's USB Serial/JTAG (no hub)
 
-Signal list and hardware tasks (LED driver sizing, IEC 62471 eye-safety check): see
-`../../docs/architecture.md`. Timing requirements for XVS, STROBE and SYNC: see
+Signal list, module pin notes, Ethernet pin map and hardware tasks: see
+`../../docs/architecture.md`. Timing requirements for XVS, STROBE and PPS: see
 `../../docs/timing.md`.
 
 ## Conventions
