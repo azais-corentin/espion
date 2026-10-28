@@ -2980,7 +2980,7 @@
 	)
 	(symbol
 		(lib_id "Device:Crystal_GND24")
-		(at 116.84 118.11 0)
+		(at 102.87 104.14 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -2991,7 +2991,7 @@
 		(fields_autoplaced yes)
 		(uuid "5e3a0358-7fb2-4275-9e85-f9ea7071a3e6")
 		(property "Reference" "Y1"
-			(at 116.84 109.22 0)
+			(at 102.87 96.139 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3001,7 +3001,7 @@
 			)
 		)
 		(property "Value" "25MHz"
-			(at 116.84 111.76 0)
+			(at 102.87 98.679 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3011,7 +3011,7 @@
 			)
 		)
 		(property "Footprint" "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
-			(at 116.84 118.11 0)
+			(at 102.87 104.14 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3022,7 +3022,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 116.84 118.11 0)
+			(at 102.87 104.14 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3033,7 +3033,7 @@
 			)
 		)
 		(property "Description" "Four pin crystal, GND on pins 2 and 4"
-			(at 116.84 118.11 0)
+			(at 102.87 104.14 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3044,7 +3044,7 @@
 			)
 		)
 		(property private "KLC_S3.3" "The rectangle is not a symbol body but a graphical element"
-			(at 116.84 130.81 0)
+			(at 102.87 104.14 0)
 			(hide yes)
 			(show_name yes)
 			(do_not_autoplace no)
@@ -3055,7 +3055,7 @@
 			)
 		)
 		(property private "KLC_S4.1" "Some pins are on 50mil grid to make the symbol small"
-			(at 116.84 133.35 0)
+			(at 102.87 104.14 0)
 			(hide yes)
 			(show_name yes)
 			(do_not_autoplace no)
@@ -3066,7 +3066,7 @@
 			)
 		)
 		(property "MPN" "X1E0000210139"
-			(at 116.84 118.11 0)
+			(at 102.87 104.14 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3077,7 +3077,7 @@
 			)
 		)
 		(property "LCSC" "C91750"
-			(at 116.84 118.11 0)
+			(at 102.87 104.14 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3110,7 +3110,8 @@
 	)
 	(symbol
 		(lib_id "Connector_HanRun:HR871150C")
-		(at 82.55 64.77 0)
+		(at 45.72 45.72 0)
+		(mirror y)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3121,7 +3122,7 @@
 		(fields_autoplaced yes)
 		(uuid "8823bdd5-f080-4d32-8790-1bd42205a396")
 		(property "Reference" "J2"
-			(at 82.55 41.91 0)
+			(at 45.72 23.495 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3131,7 +3132,7 @@
 			)
 		)
 		(property "Value" "HR871150C"
-			(at 82.55 44.45 0)
+			(at 45.72 26.035 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3141,7 +3142,7 @@
 			)
 		)
 		(property "Footprint" "Connector_RJ_HanRun:RJ45_HanRun_HR871150C_Horizontal"
-			(at 82.55 43.18 0)
+			(at 45.72 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3152,7 +3153,7 @@
 			)
 		)
 		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/bae28869af3176e6a10bdf4859b444a5.pdf"
-			(at 82.55 40.64 0)
+			(at 45.72 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3163,7 +3164,7 @@
 			)
 		)
 		(property "Description" "RJ45 10/100Base-T jack with magnetics, 1CT:1CT, PoE centre taps and spare pairs brought out (VC1/VC2), Bob-Smith termination, yellow/green LEDs, shielded, THT right angle"
-			(at 82.55 64.77 0)
+			(at 45.72 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3174,7 +3175,7 @@
 			)
 		)
 		(property "MPN" "HR871150C"
-			(at 82.55 64.77 0)
+			(at 45.72 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3185,7 +3186,7 @@
 			)
 		)
 		(property "LCSC" "C19724786"
-			(at 82.55 64.77 0)
+			(at 45.72 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3248,7 +3249,8 @@
 	)
 	(symbol
 		(lib_id "Interface_Ethernet_ICPlus:IP101GRI")
-		(at 186.69 68.58 0)
+		(at 149.86 93.98 0)
+		(mirror y)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3259,29 +3261,29 @@
 		(fields_autoplaced yes)
 		(uuid "cf3f407c-892c-4b76-9880-354e79dd444f")
 		(property "Reference" "U6"
-			(at 188.8333 99.06 0)
+			(at 153.67 126.365 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Value" "IP101GRI"
-			(at 188.8333 101.6 0)
+			(at 153.67 128.905 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm_ThermalVias"
-			(at 186.69 68.58 0)
+			(at 149.86 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3292,7 +3294,7 @@
 			)
 		)
 		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/14f15850d1faf0804f05f4a04b553bc6.pdf"
-			(at 186.69 68.58 0)
+			(at 149.86 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3303,7 +3305,7 @@
 			)
 		)
 		(property "Description" "10/100 Mbps Ethernet PHY, MII/RMII, 25 MHz crystal or 50 MHz RMII clock, 3.3 V, 2.5/3.3 V I/O, -40 to +85 °C, QFN-32"
-			(at 186.69 68.58 0)
+			(at 149.86 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3314,7 +3316,7 @@
 			)
 		)
 		(property "MPN" "IP101GRI"
-			(at 186.69 68.58 0)
+			(at 149.86 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3325,7 +3327,7 @@
 			)
 		)
 		(property "LCSC" "C703537"
-			(at 186.69 68.58 0)
+			(at 149.86 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3445,7 +3447,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 127 120.65 0)
+		(at 93.98 107.95 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3456,29 +3458,29 @@
 		(fields_autoplaced yes)
 		(uuid "543ed504-f7d1-41d8-a8cf-e33aab3f84fb")
 		(property "Reference" "C3"
-			(at 130.81 119.38 0)
+			(at 90.17 106.68 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Value" "18pF C0G"
-			(at 130.81 121.92 0)
+			(at 90.17 109.22 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 127.9652 124.46 0)
+			(at 93.98 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3489,7 +3491,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 127 120.65 0)
+			(at 93.98 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3500,7 +3502,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 127 120.65 0)
+			(at 93.98 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3511,7 +3513,7 @@
 			)
 		)
 		(property "MPN" "0402CG180J500NT"
-			(at 127 120.65 0)
+			(at 93.98 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3522,7 +3524,7 @@
 			)
 		)
 		(property "LCSC" "C1549"
-			(at 127 120.65 0)
+			(at 93.98 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3549,7 +3551,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 116.84 130.81 0)
+		(at 111.76 107.95 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3560,7 +3562,7 @@
 		(fields_autoplaced yes)
 		(uuid "6e37b357-0b84-41a9-a143-44a6d6a53caa")
 		(property "Reference" "C4"
-			(at 120.65 129.54 0)
+			(at 115.57 106.68 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3571,7 +3573,7 @@
 			)
 		)
 		(property "Value" "18pF C0G"
-			(at 120.65 132.08 0)
+			(at 115.57 109.22 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3582,7 +3584,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 117.8052 134.62 0)
+			(at 111.76 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3593,7 +3595,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 116.84 130.81 0)
+			(at 111.76 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3604,7 +3606,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 116.84 130.81 0)
+			(at 111.76 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3615,7 +3617,7 @@
 			)
 		)
 		(property "MPN" "0402CG180J500NT"
-			(at 116.84 130.81 0)
+			(at 111.76 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3626,7 +3628,7 @@
 			)
 		)
 		(property "LCSC" "C1549"
-			(at 116.84 130.81 0)
+			(at 111.76 107.95 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3653,7 +3655,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 212.09 68.58 0)
+		(at 71.12 82.55 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3664,7 +3666,7 @@
 		(fields_autoplaced yes)
 		(uuid "de307995-8d37-4fad-aa3c-e0d346ef0d86")
 		(property "Reference" "R4"
-			(at 214.63 67.31 0)
+			(at 73.66 81.28 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3675,7 +3677,7 @@
 			)
 		)
 		(property "Value" "6.19k 1%"
-			(at 214.63 69.85 0)
+			(at 73.66 83.82 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3686,7 +3688,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 210.312 68.58 90)
+			(at 71.12 82.55 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3697,7 +3699,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 212.09 68.58 0)
+			(at 71.12 82.55 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3708,7 +3710,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 212.09 68.58 0)
+			(at 71.12 82.55 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3719,7 +3721,7 @@
 			)
 		)
 		(property "MPN" "RC-02K6191FT"
-			(at 212.09 68.58 0)
+			(at 71.12 82.55 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3730,7 +3732,7 @@
 			)
 		)
 		(property "LCSC" "C324848"
-			(at 212.09 68.58 0)
+			(at 71.12 82.55 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3757,7 +3759,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 212.09 58.42 0)
+		(at 152.4 49.53 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3768,7 +3770,7 @@
 		(fields_autoplaced yes)
 		(uuid "a201954d-0da0-4796-892d-1824189febf9")
 		(property "Reference" "C5"
-			(at 215.9 57.15 0)
+			(at 156.21 48.26 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3779,7 +3781,7 @@
 			)
 		)
 		(property "Value" "100nF 50V"
-			(at 215.9 59.69 0)
+			(at 156.21 50.8 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3790,7 +3792,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 213.0552 62.23 0)
+			(at 152.4 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3801,7 +3803,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 212.09 58.42 0)
+			(at 152.4 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3812,7 +3814,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 212.09 58.42 0)
+			(at 152.4 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3823,7 +3825,7 @@
 			)
 		)
 		(property "MPN" "CL05B104KB54PNC"
-			(at 212.09 58.42 0)
+			(at 152.4 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3834,7 +3836,7 @@
 			)
 		)
 		(property "LCSC" "C307331"
-			(at 212.09 58.42 0)
+			(at 152.4 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3861,7 +3863,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 212.09 78.74 0)
+		(at 124.46 123.19 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3872,29 +3874,29 @@
 		(fields_autoplaced yes)
 		(uuid "b9cdcbe2-826e-4383-9ab1-dc5faef90b08")
 		(property "Reference" "C6"
-			(at 215.9 77.47 0)
+			(at 120.65 121.92 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Value" "100nF 50V"
-			(at 215.9 80.01 0)
+			(at 120.65 124.46 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 213.0552 82.55 0)
+			(at 124.46 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3905,7 +3907,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 212.09 78.74 0)
+			(at 124.46 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3916,7 +3918,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 212.09 78.74 0)
+			(at 124.46 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3927,7 +3929,7 @@
 			)
 		)
 		(property "MPN" "CL05B104KB54PNC"
-			(at 212.09 78.74 0)
+			(at 124.46 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3938,7 +3940,7 @@
 			)
 		)
 		(property "LCSC" "C307331"
-			(at 212.09 78.74 0)
+			(at 124.46 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3965,7 +3967,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 212.09 48.26 0)
+		(at 171.45 49.53 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3976,7 +3978,7 @@
 		(fields_autoplaced yes)
 		(uuid "5306aca9-c36c-4e5f-8dda-7132b357119f")
 		(property "Reference" "C7"
-			(at 215.9 46.99 0)
+			(at 175.26 48.26 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3987,7 +3989,7 @@
 			)
 		)
 		(property "Value" "100nF 50V"
-			(at 215.9 49.53 0)
+			(at 175.26 50.8 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3998,7 +4000,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 213.0552 52.07 0)
+			(at 171.45 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4009,7 +4011,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 212.09 48.26 0)
+			(at 171.45 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4020,7 +4022,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 212.09 48.26 0)
+			(at 171.45 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4031,7 +4033,7 @@
 			)
 		)
 		(property "MPN" "CL05B104KB54PNC"
-			(at 212.09 48.26 0)
+			(at 171.45 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4042,7 +4044,7 @@
 			)
 		)
 		(property "LCSC" "C307331"
-			(at 212.09 48.26 0)
+			(at 171.45 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4069,7 +4071,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 212.09 88.9 0)
+		(at 104.14 123.19 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4080,29 +4082,29 @@
 		(fields_autoplaced yes)
 		(uuid "47bf8e3c-d687-4fd5-bd45-33135294f59a")
 		(property "Reference" "C8"
-			(at 215.9 87.63 0)
+			(at 100.33 121.92 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Value" "10uF 25V"
-			(at 215.9 90.17 0)
+			(at 100.33 124.46 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
-			(at 213.0552 92.71 0)
+			(at 104.14 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4113,7 +4115,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 212.09 88.9 0)
+			(at 104.14 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4124,7 +4126,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 212.09 88.9 0)
+			(at 104.14 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4135,7 +4137,7 @@
 			)
 		)
 		(property "MPN" "CL21A106KAYNNNE"
-			(at 212.09 88.9 0)
+			(at 104.14 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4146,7 +4148,7 @@
 			)
 		)
 		(property "LCSC" "C15850"
-			(at 212.09 88.9 0)
+			(at 104.14 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4173,7 +4175,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 148.59 68.58 0)
+		(at 190.5 49.53 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4184,7 +4186,7 @@
 		(fields_autoplaced yes)
 		(uuid "fc53162e-8504-4d0f-8b77-912154ba99d3")
 		(property "Reference" "C9"
-			(at 152.4 67.31 0)
+			(at 194.31 48.26 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4195,7 +4197,7 @@
 			)
 		)
 		(property "Value" "10uF 25V"
-			(at 152.4 69.85 0)
+			(at 194.31 50.8 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4206,7 +4208,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
-			(at 149.5552 72.39 0)
+			(at 190.5 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4217,7 +4219,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 148.59 68.58 0)
+			(at 190.5 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4228,7 +4230,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 148.59 68.58 0)
+			(at 190.5 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4239,7 +4241,7 @@
 			)
 		)
 		(property "MPN" "CL21A106KAYNNNE"
-			(at 148.59 68.58 0)
+			(at 190.5 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4250,7 +4252,7 @@
 			)
 		)
 		(property "LCSC" "C15850"
-			(at 148.59 68.58 0)
+			(at 190.5 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4277,7 +4279,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 148.59 58.42 0)
+		(at 209.55 49.53 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4288,7 +4290,7 @@
 		(fields_autoplaced yes)
 		(uuid "949a9dcc-8e18-4a99-9b8a-884fdb405d54")
 		(property "Reference" "C10"
-			(at 152.4 57.15 0)
+			(at 213.36 48.26 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4299,7 +4301,7 @@
 			)
 		)
 		(property "Value" "10uF 25V"
-			(at 152.4 59.69 0)
+			(at 213.36 50.8 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4310,7 +4312,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
-			(at 149.5552 62.23 0)
+			(at 209.55 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4321,7 +4323,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 148.59 58.42 0)
+			(at 209.55 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4332,7 +4334,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 148.59 58.42 0)
+			(at 209.55 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4343,7 +4345,7 @@
 			)
 		)
 		(property "MPN" "CL21A106KAYNNNE"
-			(at 148.59 58.42 0)
+			(at 209.55 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4354,7 +4356,7 @@
 			)
 		)
 		(property "LCSC" "C15850"
-			(at 148.59 58.42 0)
+			(at 209.55 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4381,7 +4383,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 158.75 78.74 0)
+		(at 132.08 45.72 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4392,7 +4394,7 @@
 		(fields_autoplaced yes)
 		(uuid "674f2205-c8fe-4768-abab-5b0494747296")
 		(property "Reference" "R5"
-			(at 161.29 77.47 0)
+			(at 131.44 48.26 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4403,18 +4405,18 @@
 			)
 		)
 		(property "Value" "0"
-			(at 161.29 80.01 0)
+			(at 132.72 48.26 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0805_2012Metric"
-			(at 156.972 78.74 90)
+			(at 132.08 45.72 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4425,7 +4427,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 158.75 78.74 0)
+			(at 132.08 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4436,7 +4438,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 158.75 78.74 0)
+			(at 132.08 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4447,7 +4449,7 @@
 			)
 		)
 		(property "MPN" "0805W8F0000T5E"
-			(at 158.75 78.74 0)
+			(at 132.08 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4458,7 +4460,7 @@
 			)
 		)
 		(property "LCSC" "C17477"
-			(at 158.75 78.74 0)
+			(at 132.08 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4485,7 +4487,7 @@
 	)
 	(symbol
 		(lib_id "power:PWR_FLAG")
-		(at 158.75 53.34 0)
+		(at 139.7 45.72 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4496,7 +4498,7 @@
 		(fields_autoplaced yes)
 		(uuid "edd45f78-2fb3-40b0-95c0-4f48e2b6d1eb")
 		(property "Reference" "#FLG01"
-			(at 158.75 51.435 0)
+			(at 139.7 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4507,7 +4509,7 @@
 			)
 		)
 		(property "Value" "PWR_FLAG"
-			(at 158.75 49.53 0)
+			(at 139.7 41.275 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4517,7 +4519,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 158.75 53.34 0)
+			(at 139.7 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4528,7 +4530,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 158.75 53.34 0)
+			(at 139.7 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4539,7 +4541,7 @@
 			)
 		)
 		(property "Description" "Special symbol for telling ERC where power comes from"
-			(at 158.75 53.34 0)
+			(at 139.7 45.72 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4563,7 +4565,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 232.41 60.96 0)
+		(at 118.11 83.82 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4574,7 +4576,7 @@
 		(fields_autoplaced yes)
 		(uuid "cbecce6c-fe28-448f-8151-546272ddc72e")
 		(property "Reference" "R6"
-			(at 234.95 59.69 0)
+			(at 117.47 81.28 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4585,18 +4587,18 @@
 			)
 		)
 		(property "Value" "5.1k 1%"
-			(at 234.95 62.23 0)
+			(at 118.75 81.28 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 230.632 60.96 90)
+			(at 118.11 83.82 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4607,7 +4609,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 232.41 60.96 0)
+			(at 118.11 83.82 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4618,7 +4620,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 232.41 60.96 0)
+			(at 118.11 83.82 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4629,7 +4631,7 @@
 			)
 		)
 		(property "MPN" "0402WGF5101TCE"
-			(at 232.41 60.96 0)
+			(at 118.11 83.82 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4640,7 +4642,7 @@
 			)
 		)
 		(property "LCSC" "C25905"
-			(at 232.41 60.96 0)
+			(at 118.11 83.82 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4667,7 +4669,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 232.41 78.74 0)
+		(at 86.36 90.17 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4678,29 +4680,29 @@
 		(fields_autoplaced yes)
 		(uuid "5b0d5038-198e-4640-8b6d-94ba90612278")
 		(property "Reference" "R7"
-			(at 234.95 77.47 0)
+			(at 83.82 88.9 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Value" "5.1k 1%"
-			(at 234.95 80.01 0)
+			(at 83.82 91.44 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 230.632 78.74 90)
+			(at 86.36 90.17 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4711,7 +4713,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 232.41 78.74 0)
+			(at 86.36 90.17 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4722,7 +4724,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 232.41 78.74 0)
+			(at 86.36 90.17 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4733,7 +4735,7 @@
 			)
 		)
 		(property "MPN" "0402WGF5101TCE"
-			(at 232.41 78.74 0)
+			(at 86.36 90.17 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4744,7 +4746,7 @@
 			)
 		)
 		(property "LCSC" "C25905"
-			(at 232.41 78.74 0)
+			(at 86.36 90.17 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4771,7 +4773,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 151.13 88.9 0)
+		(at 181.61 106.68 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4782,7 +4784,7 @@
 		(fields_autoplaced yes)
 		(uuid "1258f7fe-e6a9-4558-ba34-be6ad1e2ffe4")
 		(property "Reference" "R8"
-			(at 153.67 87.63 0)
+			(at 180.97 104.14 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4793,18 +4795,18 @@
 			)
 		)
 		(property "Value" "5.1k 1%"
-			(at 153.67 90.17 0)
+			(at 182.25 104.14 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 149.352 88.9 90)
+			(at 181.61 106.68 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4815,7 +4817,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 151.13 88.9 0)
+			(at 181.61 106.68 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4826,7 +4828,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 151.13 88.9 0)
+			(at 181.61 106.68 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4837,7 +4839,7 @@
 			)
 		)
 		(property "MPN" "0402WGF5101TCE"
-			(at 151.13 88.9 0)
+			(at 181.61 106.68 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4848,7 +4850,7 @@
 			)
 		)
 		(property "LCSC" "C25905"
-			(at 151.13 88.9 0)
+			(at 181.61 106.68 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4875,7 +4877,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 212.09 38.1 0)
+		(at 215.9 110.49 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4886,7 +4888,7 @@
 		(fields_autoplaced yes)
 		(uuid "a4769b1b-217b-483c-8841-1b3afd0c8b64")
 		(property "Reference" "R9"
-			(at 214.63 36.83 0)
+			(at 218.44 109.22 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4897,7 +4899,7 @@
 			)
 		)
 		(property "Value" "1.5k 1%"
-			(at 214.63 39.37 0)
+			(at 218.44 111.76 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4908,7 +4910,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 210.312 38.1 90)
+			(at 215.9 110.49 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4919,7 +4921,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 212.09 38.1 0)
+			(at 215.9 110.49 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4930,7 +4932,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 212.09 38.1 0)
+			(at 215.9 110.49 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4941,7 +4943,7 @@
 			)
 		)
 		(property "MPN" "0402WGF1501TCE"
-			(at 212.09 38.1 0)
+			(at 215.9 110.49 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4952,7 +4954,7 @@
 			)
 		)
 		(property "LCSC" "C25867"
-			(at 212.09 38.1 0)
+			(at 215.9 110.49 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4979,7 +4981,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 140.97 78.74 0)
+		(at 180.34 123.19 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4990,7 +4992,7 @@
 		(fields_autoplaced yes)
 		(uuid "f162a1e0-6f43-4ce9-8474-bf9a19e3ce8b")
 		(property "Reference" "R10"
-			(at 143.51 77.47 0)
+			(at 182.88 121.92 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5001,7 +5003,7 @@
 			)
 		)
 		(property "Value" "10.0k 1%"
-			(at 143.51 80.01 0)
+			(at 182.88 124.46 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5012,7 +5014,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 139.192 78.74 90)
+			(at 180.34 123.19 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5023,7 +5025,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 140.97 78.74 0)
+			(at 180.34 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5034,7 +5036,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 140.97 78.74 0)
+			(at 180.34 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5045,7 +5047,7 @@
 			)
 		)
 		(property "MPN" "0402WGF1002TCE"
-			(at 140.97 78.74 0)
+			(at 180.34 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5056,7 +5058,7 @@
 			)
 		)
 		(property "LCSC" "C25744"
-			(at 140.97 78.74 0)
+			(at 180.34 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5083,7 +5085,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 212.09 99.06 0)
+		(at 181.61 86.36 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5094,7 +5096,7 @@
 		(fields_autoplaced yes)
 		(uuid "659e8882-786b-4be0-bd80-5c1e89c9c3f5")
 		(property "Reference" "R11"
-			(at 214.63 97.79 0)
+			(at 180.97 83.82 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5105,18 +5107,18 @@
 			)
 		)
 		(property "Value" "22 1%"
-			(at 214.63 100.33 0)
+			(at 182.25 83.82 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 210.312 99.06 90)
+			(at 181.61 86.36 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5127,7 +5129,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 212.09 99.06 0)
+			(at 181.61 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5138,7 +5140,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 212.09 99.06 0)
+			(at 181.61 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5149,7 +5151,7 @@
 			)
 		)
 		(property "MPN" "0402WGF220JTCE"
-			(at 212.09 99.06 0)
+			(at 181.61 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5160,7 +5162,7 @@
 			)
 		)
 		(property "LCSC" "C25092"
-			(at 212.09 99.06 0)
+			(at 181.61 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5187,7 +5189,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 184.15 106.68 0)
+		(at 196.85 88.9 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5198,7 +5200,7 @@
 		(fields_autoplaced yes)
 		(uuid "3e581c0f-bfe1-4f04-bd0f-16da62ecb8ae")
 		(property "Reference" "R12"
-			(at 186.69 105.41 0)
+			(at 196.21 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5209,18 +5211,18 @@
 			)
 		)
 		(property "Value" "22 1%"
-			(at 186.69 107.95 0)
+			(at 197.49 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 182.372 106.68 90)
+			(at 196.85 88.9 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5231,7 +5233,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 184.15 106.68 0)
+			(at 196.85 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5242,7 +5244,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 184.15 106.68 0)
+			(at 196.85 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5253,7 +5255,7 @@
 			)
 		)
 		(property "MPN" "0402WGF220JTCE"
-			(at 184.15 106.68 0)
+			(at 196.85 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5264,7 +5266,7 @@
 			)
 		)
 		(property "LCSC" "C25092"
-			(at 184.15 106.68 0)
+			(at 196.85 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5291,7 +5293,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 156.21 40.64 0)
+		(at 181.61 93.98 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5302,7 +5304,7 @@
 		(fields_autoplaced yes)
 		(uuid "a46d3319-654d-46ea-80f6-a9943b4dd970")
 		(property "Reference" "R13"
-			(at 158.75 39.37 0)
+			(at 180.97 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5313,18 +5315,18 @@
 			)
 		)
 		(property "Value" "22 1%"
-			(at 158.75 41.91 0)
+			(at 182.25 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 154.432 40.64 90)
+			(at 181.61 93.98 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5335,7 +5337,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 156.21 40.64 0)
+			(at 181.61 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5346,7 +5348,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 156.21 40.64 0)
+			(at 181.61 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5357,7 +5359,7 @@
 			)
 		)
 		(property "MPN" "0402WGF220JTCE"
-			(at 156.21 40.64 0)
+			(at 181.61 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5368,7 +5370,7 @@
 			)
 		)
 		(property "LCSC" "C25092"
-			(at 156.21 40.64 0)
+			(at 181.61 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5395,7 +5397,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 232.41 50.8 0)
+		(at 196.85 96.52 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5406,7 +5408,7 @@
 		(fields_autoplaced yes)
 		(uuid "7f519985-37ea-4682-b974-d34dc820fc9a")
 		(property "Reference" "R14"
-			(at 234.95 49.53 0)
+			(at 196.21 99.06 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5417,18 +5419,18 @@
 			)
 		)
 		(property "Value" "22 1%"
-			(at 234.95 52.07 0)
+			(at 197.49 99.06 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify left)
+				(justify right)
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 230.632 50.8 90)
+			(at 196.85 96.52 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5439,7 +5441,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 232.41 50.8 0)
+			(at 196.85 96.52 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5450,7 +5452,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 232.41 50.8 0)
+			(at 196.85 96.52 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5461,7 +5463,7 @@
 			)
 		)
 		(property "MPN" "0402WGF220JTCE"
-			(at 232.41 50.8 0)
+			(at 196.85 96.52 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5472,7 +5474,7 @@
 			)
 		)
 		(property "LCSC" "C25092"
-			(at 232.41 50.8 0)
+			(at 196.85 96.52 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5499,7 +5501,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 113.03 64.77 0)
+		(at 101.6 41.91 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5510,7 +5512,7 @@
 		(fields_autoplaced yes)
 		(uuid "e2e2677e-05c9-4e21-96a1-a56ae164b307")
 		(property "Reference" "C11"
-			(at 116.84 63.5 0)
+			(at 105.41 40.64 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5521,7 +5523,7 @@
 			)
 		)
 		(property "Value" "100nF 50V"
-			(at 116.84 66.04 0)
+			(at 105.41 43.18 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5532,7 +5534,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 113.9952 68.58 0)
+			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5543,7 +5545,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 113.03 64.77 0)
+			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5554,7 +5556,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 113.03 64.77 0)
+			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5565,7 +5567,7 @@
 			)
 		)
 		(property "MPN" "CL05B104KB54PNC"
-			(at 113.03 64.77 0)
+			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5576,7 +5578,7 @@
 			)
 		)
 		(property "LCSC" "C307331"
-			(at 113.03 64.77 0)
+			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5603,7 +5605,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 95.25 39.37 0)
+		(at 45.72 73.66 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5614,7 +5616,7 @@
 		(fields_autoplaced yes)
 		(uuid "4a13eb4d-f256-4d6d-ac7a-488bcc9f9972")
 		(property "Reference" "C12"
-			(at 99.06 38.1 0)
+			(at 49.53 72.39 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5625,7 +5627,7 @@
 			)
 		)
 		(property "Value" "1nF 2kV"
-			(at 99.06 40.64 0)
+			(at 49.53 74.93 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5636,7 +5638,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_1206_3216Metric"
-			(at 96.2152 43.18 0)
+			(at 45.72 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5647,7 +5649,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 95.25 39.37 0)
+			(at 45.72 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5658,7 +5660,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 95.25 39.37 0)
+			(at 45.72 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5669,7 +5671,7 @@
 			)
 		)
 		(property "MPN" "1206B102K202NT"
-			(at 95.25 39.37 0)
+			(at 45.72 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5680,7 +5682,7 @@
 			)
 		)
 		(property "LCSC" "C9196"
-			(at 95.25 39.37 0)
+			(at 45.72 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5707,7 +5709,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 69.85 39.37 0)
+		(at 33.02 73.66 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5718,7 +5720,7 @@
 		(fields_autoplaced yes)
 		(uuid "53c50f67-f869-4e45-8d52-853a85ae4168")
 		(property "Reference" "R15"
-			(at 72.39 38.1 0)
+			(at 35.56 72.39 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5729,7 +5731,7 @@
 			)
 		)
 		(property "Value" "499k"
-			(at 72.39 40.64 0)
+			(at 35.56 74.93 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5740,7 +5742,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_1206_3216Metric"
-			(at 68.072 39.37 90)
+			(at 33.02 73.66 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5751,7 +5753,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 69.85 39.37 0)
+			(at 33.02 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5762,7 +5764,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 69.85 39.37 0)
+			(at 33.02 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5773,7 +5775,7 @@
 			)
 		)
 		(property "MPN" "RV1206FR-07499KL"
-			(at 69.85 39.37 0)
+			(at 33.02 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5784,7 +5786,7 @@
 			)
 		)
 		(property "LCSC" "C309667"
-			(at 69.85 39.37 0)
+			(at 33.02 73.66 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5811,7 +5813,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 82.55 92.71 0)
+		(at 33.02 85.09 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5822,7 +5824,7 @@
 		(fields_autoplaced yes)
 		(uuid "30c828f8-92a5-4c0d-9588-cf3234d5e4d8")
 		(property "Reference" "R16"
-			(at 85.09 91.44 0)
+			(at 35.56 83.82 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5833,7 +5835,7 @@
 			)
 		)
 		(property "Value" "499k"
-			(at 85.09 93.98 0)
+			(at 35.56 86.36 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5844,7 +5846,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_1206_3216Metric"
-			(at 80.772 92.71 90)
+			(at 33.02 85.09 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5855,7 +5857,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 82.55 92.71 0)
+			(at 33.02 85.09 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5866,7 +5868,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 82.55 92.71 0)
+			(at 33.02 85.09 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5877,7 +5879,7 @@
 			)
 		)
 		(property "MPN" "RV1206FR-07499KL"
-			(at 82.55 92.71 0)
+			(at 33.02 85.09 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5888,7 +5890,7 @@
 			)
 		)
 		(property "LCSC" "C309667"
-			(at 82.55 92.71 0)
+			(at 33.02 85.09 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)

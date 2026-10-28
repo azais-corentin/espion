@@ -209,7 +209,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 59.69 69.85 0)
+		(at 45.72 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -220,7 +220,7 @@
 		(fields_autoplaced yes)
 		(uuid "52032b9b-f8f8-4a15-a22c-ed2e967b7745")
 		(property "Reference" "D4"
-			(at 59.69 64.135 0)
+			(at 46.101 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -230,7 +230,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 59.69 66.675 0)
+			(at 46.101 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -240,7 +240,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 59.69 69.85 0)
+			(at 45.72 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -251,7 +251,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 59.69 69.85 0)
+			(at 45.72 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -262,7 +262,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 59.69 69.85 0)
+			(at 45.72 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -273,7 +273,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 59.69 69.85 0)
+			(at 45.72 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -284,7 +284,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 59.69 69.85 0)
+			(at 45.72 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -295,7 +295,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 59.69 69.85 0)
+			(at 45.72 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -322,7 +322,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 90.17 69.85 0)
+		(at 63.5 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -333,7 +333,7 @@
 		(fields_autoplaced yes)
 		(uuid "c0de60fd-eb90-444a-bc03-c5f46f66e92c")
 		(property "Reference" "D5"
-			(at 90.17 64.135 0)
+			(at 63.881 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -343,7 +343,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 90.17 66.675 0)
+			(at 63.881 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -353,7 +353,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 90.17 69.85 0)
+			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -364,7 +364,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 90.17 69.85 0)
+			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -375,7 +375,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 90.17 69.85 0)
+			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -386,7 +386,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 90.17 69.85 0)
+			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -397,7 +397,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 90.17 69.85 0)
+			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -408,7 +408,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 90.17 69.85 0)
+			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -435,7 +435,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 119.38 69.85 0)
+		(at 81.28 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -446,7 +446,7 @@
 		(fields_autoplaced yes)
 		(uuid "d6949808-35fe-4804-b694-d11378c267eb")
 		(property "Reference" "D6"
-			(at 119.38 64.135 0)
+			(at 81.661 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -456,7 +456,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 119.38 66.675 0)
+			(at 81.661 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -466,7 +466,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 119.38 69.85 0)
+			(at 81.28 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -477,7 +477,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 119.38 69.85 0)
+			(at 81.28 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -488,7 +488,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 119.38 69.85 0)
+			(at 81.28 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -499,7 +499,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 119.38 69.85 0)
+			(at 81.28 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -510,7 +510,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 119.38 69.85 0)
+			(at 81.28 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -521,7 +521,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 119.38 69.85 0)
+			(at 81.28 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -548,7 +548,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 149.86 69.85 0)
+		(at 99.06 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -559,7 +559,7 @@
 		(fields_autoplaced yes)
 		(uuid "213fec19-8bc5-4269-935f-c779168c8944")
 		(property "Reference" "D7"
-			(at 149.86 64.135 0)
+			(at 99.441 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -569,7 +569,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 149.86 66.675 0)
+			(at 99.441 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -579,7 +579,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 149.86 69.85 0)
+			(at 99.06 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -590,7 +590,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 149.86 69.85 0)
+			(at 99.06 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -601,7 +601,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 149.86 69.85 0)
+			(at 99.06 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -612,7 +612,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 149.86 69.85 0)
+			(at 99.06 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -623,7 +623,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 149.86 69.85 0)
+			(at 99.06 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -634,7 +634,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 149.86 69.85 0)
+			(at 99.06 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -661,7 +661,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 180.34 69.85 0)
+		(at 116.84 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -672,7 +672,7 @@
 		(fields_autoplaced yes)
 		(uuid "008773c4-b036-47bc-8f97-5f4cd3b25458")
 		(property "Reference" "D8"
-			(at 180.34 64.135 0)
+			(at 117.221 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -682,7 +682,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 180.34 66.675 0)
+			(at 117.221 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -692,7 +692,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 180.34 69.85 0)
+			(at 116.84 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -703,7 +703,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 180.34 69.85 0)
+			(at 116.84 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -714,7 +714,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 180.34 69.85 0)
+			(at 116.84 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -725,7 +725,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 180.34 69.85 0)
+			(at 116.84 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -736,7 +736,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 180.34 69.85 0)
+			(at 116.84 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -747,7 +747,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 180.34 69.85 0)
+			(at 116.84 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -774,7 +774,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 209.55 69.85 0)
+		(at 134.62 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -785,7 +785,7 @@
 		(fields_autoplaced yes)
 		(uuid "9441ceb7-3e13-4879-ad2e-9fdaec30756a")
 		(property "Reference" "D9"
-			(at 209.55 64.135 0)
+			(at 135.001 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -795,7 +795,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 209.55 66.675 0)
+			(at 135.001 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -805,7 +805,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 209.55 69.85 0)
+			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -816,7 +816,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 209.55 69.85 0)
+			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -827,7 +827,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 209.55 69.85 0)
+			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -838,7 +838,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 209.55 69.85 0)
+			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -849,7 +849,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 209.55 69.85 0)
+			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -860,7 +860,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 209.55 69.85 0)
+			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -887,7 +887,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 59.69 110.49 0)
+		(at 152.4 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -898,7 +898,7 @@
 		(fields_autoplaced yes)
 		(uuid "1be5e631-370c-4f75-8301-63aba2c923cf")
 		(property "Reference" "D10"
-			(at 59.69 104.775 0)
+			(at 152.781 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -908,7 +908,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 59.69 107.315 0)
+			(at 152.781 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -918,7 +918,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 59.69 110.49 0)
+			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -929,7 +929,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 59.69 110.49 0)
+			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -940,7 +940,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 59.69 110.49 0)
+			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -951,7 +951,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 59.69 110.49 0)
+			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -962,7 +962,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 59.69 110.49 0)
+			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -973,7 +973,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 59.69 110.49 0)
+			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1000,7 +1000,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 90.17 110.49 0)
+		(at 170.18 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -1011,7 +1011,7 @@
 		(fields_autoplaced yes)
 		(uuid "8782ccef-8a82-410b-904f-6d26c40efa59")
 		(property "Reference" "D11"
-			(at 90.17 104.775 0)
+			(at 170.561 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1021,7 +1021,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 90.17 107.315 0)
+			(at 170.561 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1031,7 +1031,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 90.17 110.49 0)
+			(at 170.18 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1042,7 +1042,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 90.17 110.49 0)
+			(at 170.18 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1053,7 +1053,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 90.17 110.49 0)
+			(at 170.18 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1064,7 +1064,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 90.17 110.49 0)
+			(at 170.18 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1075,7 +1075,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 90.17 110.49 0)
+			(at 170.18 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1086,7 +1086,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 90.17 110.49 0)
+			(at 170.18 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1113,7 +1113,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 119.38 110.49 0)
+		(at 187.96 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -1124,7 +1124,7 @@
 		(fields_autoplaced yes)
 		(uuid "e055ebdc-2284-4630-b396-22ab22522baf")
 		(property "Reference" "D12"
-			(at 119.38 104.775 0)
+			(at 188.341 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1134,7 +1134,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 119.38 107.315 0)
+			(at 188.341 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1144,7 +1144,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 119.38 110.49 0)
+			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1155,7 +1155,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 119.38 110.49 0)
+			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1166,7 +1166,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 119.38 110.49 0)
+			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1177,7 +1177,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 119.38 110.49 0)
+			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1188,7 +1188,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 119.38 110.49 0)
+			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1199,7 +1199,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 119.38 110.49 0)
+			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1226,7 +1226,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 149.86 110.49 0)
+		(at 205.74 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -1237,7 +1237,7 @@
 		(fields_autoplaced yes)
 		(uuid "6d15f3d3-afed-4d20-bdad-0e7f24175c10")
 		(property "Reference" "D13"
-			(at 149.86 104.775 0)
+			(at 206.121 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1247,7 +1247,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 149.86 107.315 0)
+			(at 206.121 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1257,7 +1257,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 149.86 110.49 0)
+			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1268,7 +1268,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 149.86 110.49 0)
+			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1279,7 +1279,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 149.86 110.49 0)
+			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1290,7 +1290,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 149.86 110.49 0)
+			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1301,7 +1301,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 149.86 110.49 0)
+			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1312,7 +1312,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 149.86 110.49 0)
+			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1339,7 +1339,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 180.34 110.49 0)
+		(at 223.52 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -1350,7 +1350,7 @@
 		(fields_autoplaced yes)
 		(uuid "b058e930-7dcc-4a84-aab6-6fa267a9d9a1")
 		(property "Reference" "D14"
-			(at 180.34 104.775 0)
+			(at 223.901 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1360,7 +1360,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 180.34 107.315 0)
+			(at 223.901 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1370,7 +1370,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 180.34 110.49 0)
+			(at 223.52 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1381,7 +1381,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 180.34 110.49 0)
+			(at 223.52 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1392,7 +1392,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 180.34 110.49 0)
+			(at 223.52 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1403,7 +1403,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 180.34 110.49 0)
+			(at 223.52 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1414,7 +1414,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 180.34 110.49 0)
+			(at 223.52 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1425,7 +1425,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 180.34 110.49 0)
+			(at 223.52 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1452,7 +1452,7 @@
 	)
 	(symbol
 		(lib_id "Device:LED")
-		(at 209.55 110.49 0)
+		(at 241.3 60.96 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -1463,7 +1463,7 @@
 		(fields_autoplaced yes)
 		(uuid "347733de-6ce7-4627-84e7-7f507e21f3f9")
 		(property "Reference" "D15"
-			(at 209.55 104.775 0)
+			(at 241.681 54.229 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1473,7 +1473,7 @@
 			)
 		)
 		(property "Value" "A-SC880IR3C"
-			(at 209.55 107.315 0)
+			(at 241.681 56.769 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -1483,7 +1483,7 @@
 			)
 		)
 		(property "Footprint" "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm"
-			(at 209.55 110.49 0)
+			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1494,7 +1494,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 209.55 110.49 0)
+			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1505,7 +1505,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 209.55 110.49 0)
+			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1516,7 +1516,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 209.55 110.49 0)
+			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1527,7 +1527,7 @@
 			)
 		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
-			(at 209.55 110.49 0)
+			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1538,7 +1538,7 @@
 			)
 		)
 		(property "LCSC" "C5355470"
-			(at 209.55 110.49 0)
+			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
