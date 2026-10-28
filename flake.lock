@@ -19,7 +19,8 @@
     "root": {
       "inputs": {
         "nixpkgs": "nixpkgs",
-        "rust-overlay": "rust-overlay"
+        "rust-overlay": "rust-overlay",
+        "solidcraft": "solidcraft"
       }
     },
     "rust-overlay": {
@@ -39,6 +40,27 @@
       "original": {
         "owner": "oxalica",
         "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "solidcraft": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793149110,
+        "narHash": "sha256-+Uqg547kZy+G5zXEq7fmWcdNTDJbb/mE1liHFSF3gWw=",
+        "owner": "tangency-labs",
+        "repo": "solidcraft",
+        "rev": "37a586dd61d4873842604c2036c05a2890e7d773",
+        "type": "github"
+      },
+      "original": {
+        "owner": "tangency-labs",
+        "ref": "v0.25.1",
+        "repo": "solidcraft",
         "type": "github"
       }
     }

@@ -7,10 +7,20 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # SolidCraft CAD; its MCP server (solidcraft-cli mcp) builds the 3D models in hardware/lib.
+    solidcraft = {
+      url = "github:tangency-labs/solidcraft/v0.25.1";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { nixpkgs, rust-overlay, ... }:
+    {
+      nixpkgs,
+      rust-overlay,
+      solidcraft,
+      ...
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -54,6 +64,7 @@
               pkgs.espflash
               pkgs.probe-rs-tools
               pkgs.kicad
+              solidcraft.packages.${pkgs.stdenv.hostPlatform.system}.solidcraft
               pkgs.pkg-config
             ];
 

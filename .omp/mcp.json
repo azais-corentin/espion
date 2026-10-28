@@ -12,6 +12,12 @@
         "KICAD_MCP_OPERATING_MODE": "readonly"
       },
       "timeout": 120000
+    },
+    "solidcraft": {
+      "type": "stdio",
+      "command": "nix",
+      "args": ["develop", "--command", "solidcraft-cli", "mcp", "--param-check", "warn", "--allow-path", "hardware/lib"],
+      "timeout": 120000
     }
   }
 }
