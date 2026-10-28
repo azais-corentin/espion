@@ -11,8 +11,8 @@ flowchart LR
     S[OV9281<br/>global shutter, mono] -- "MIPI CSI-2<br/>2 lanes, RAW8" --> P4[ESP32-P4-Core module<br/>capture, blob detection,<br/>UDP, PTP]
     P4 -- "XVS trigger" --> S
     S -- STROBE --> G{{LED gate}}
-    P4 -- "LED_EN / LED_FORCE" --> G
-    G --> L[850 nm LED ring]
+    P4 -- LED_EN --> G
+    G --> L[850 nm LED ring<br/>12 × Amicc A-SC880IR3C]
     P4 -- RMII --> PHY[IP101GRI PHY]
     PHY --> J[RJ45 + PoE PD]
   end
@@ -27,12 +27,13 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | Part | Role |
 |---|---|
 | [Waveshare ESP32-P4-Core](https://docs.waveshare.com/ESP32-P4-Core), 16 MB flash (SKU 36096) | ESP32-P4NRW32X (silicon **rev v3.x**: esp-hal does not support older revisions), 32 MB in-package PSRAM, 16 MB NOR flash, 40 MHz and 32.768 kHz crystals, VDD_HP DC-DC on the module. Sensor control, MIPI CSI capture, blob detection, XVS trigger, LED gating, Ethernet MAC with IEEE 1588 clock |
-| OV9281 | 1 MP monochrome global-shutter sensor, MIPI CSI-2 2-lane. Mode: 640×400 2×2 binned, RAW8, 120 fps, external trigger on XVS, STROBE output |
+| OV9281 camera module ([AliExpress](https://fr.aliexpress.com/item/1005012566040263.html)) | 1 MP monochrome global-shutter sensor, MIPI CSI-2 2-lane. Mode: 640×400 2×2 binned, RAW8, 120 fps, external trigger on XVS, STROBE output. 15-pin 1.0 mm Raspberry Pi camera FPC to the board; XVS and STROBE come from pads on the module's back over a JST-SH 4-pin pigtail |
 | IP101GRI | 10/100 Ethernet PHY on RMII, 25 MHz crystal. Drives the 50 MHz RMII reference clock into the P4. The PHY of Espressif's and Waveshare's P4 Ethernet boards |
-| RJ45 MagJack | Integrated magnetics. Brings out both centre taps and the spare pairs (4/5, 7/8) for the PoE PD |
+| RJ45 MagJack (HanRun HR871150C) | Integrated magnetics and Bob-Smith termination. Brings out both centre taps and the spare pairs (4/5, 7/8) for the PoE PD |
 | [SDAPO DP1435-5V](https://www.lcsc.com/product-detail/C5380097.html) (LCSC C5380097) | IEEE 802.3af PoE PD module: bridge rectifiers, isolated flyback (1.5 kV), 5.15 V out. Class 0 (no class pin brought out). Through-hole SIP-6 |
-| 5 V OR-ing | PoE 5 V and USB-C VBUS, either one powers the board, no back-feed into USB |
-| 850 nm LED ring + driver | Lights passive retroreflective markers at 2–5 m (room scale). On only while `(STROBE ∧ LED_EN) ∨ LED_FORCE` |
+| 5 V OR-ing (TI TPS2116) | PoE 5 V and USB-C VBUS, either one powers the board, PoE has priority, no back-feed into USB |
+| 3.3 V buck (TI TLV62569) | 5 V → ESP_3V3 for the module, the PHY and the camera module |
+| 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`. See [LED ring](#led-ring) |
 | USB-C | 5 V on the bench; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub) |
 
 ### Board signals
@@ -43,12 +44,55 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | SCCB (I2C) | P4 → OV9281 | Sensor registers |
 | XVS | P4 → OV9281 | Frame trigger, one edge per frame at a scheduled network time |
 | STROBE | OV9281 → LED gate | High during exposure |
-| LED_EN, LED_FORCE | P4 → LED gate | Enable strobed LEDs / force them on (bring-up, focus) |
+| LED_EN | P4 → LED gate | Enables the strobed LEDs; low for dark frames |
 | RMII (REF_CLK, CRS_DV, RXD0–1, TX_EN, TXD0–1) | P4 ↔ IP101GRI | Ethernet frames |
 | MDC, MDIO | P4 → IP101GRI | PHY management |
 | PHY_RST | P4 → IP101GRI | PHY reset, active low |
 | PPS | P4 (EMAC) → test point, and ETM capture in the P4 | Pulses from the PTP clock ([timing.md](timing.md)) |
 | USB D+/D− | USB-C → P4 (USB1P1, GPIO24/25) | Flashing, logs, JTAG |
+
+### LED ring
+
+Twelve Amicc A-SC880IR3C-P03-1T around the lens, in one series string on a boosted rail,
+driven at a fixed 1 A while `STROBE ∧ LED_EN`. The lens gets an 850 nm bandpass filter,
+wide enough for the LED's 25 nm band plus its drift with temperature.
+
+| Parameter (datasheet, 25 °C) | Value |
+|---|---|
+| Wavelength | 850 nm centroid, 855 nm peak, 25 nm FWHM |
+| Beam | 90° (2θ½) |
+| Radiant intensity at 1 A | 380 mW/sr typ, 285 mW/sr min |
+| V_F at 1 A | 1.95 V typ, 2.3 V max |
+| Current | 1 A continuous; 1.2 A pulsed (≤ 100 µs, ≤ 1 % duty) |
+| Thermal resistance, junction to case | 18 K/W |
+| Package | SMD, 3.85 × 3.85 × 2.3 mm, 35 mil chip |
+| Moisture | 168 h floor life after opening the bag, else bake 60 °C / 24 h |
+
+Sizing:
+- **Target ≥ 2.3 W/sr on axis.** At that level a 14 mm sphere at 5 m, in the image corner
+  of the 79° lens, gives about 1 ke⁻ per pixel in a 500 µs exposure. The estimate assumes
+  OV9281 QE 25 % at 850 nm (OmniVision publishes no figure), an f/2.0 lens, sphere
+  retroreflection of 150 cd/(lx·m²) (about half of flat 3M 7610), and 17 % of the on-axis
+  signal left in the corner (LED beam, lens falloff, observation angle, marker wear).
+- **12 LEDs give 4.6 W/sr** typ, 3.4 W/sr with minimum-bin parts: about 2× margin over
+  the target. To measure on the first boards.
+- **Beam:** the image corner is 40–44° off axis, which a 90° beam covers at about half
+  intensity. 120° parts waste light outside the image; 60° parts leave the corners dark.
+- **Thermal:** 1 A pulsed at 6 % duty stays within the 1 A continuous rating. The average
+  is 60 mA, about 0.12 W per LED, so FR4 without a metal core is enough.
+- **Placement:** close around the lens holder and evenly spaced. Retroreflectors send
+  the light back in a narrow cone around its source.
+
+Driver (part not selected yet):
+- One string: 23 V typ, 27.6 V max at 1 A. A 5 V → ≈ 30 V boost charges a storage
+  capacitor, and a constant-current sink gated by `STROBE ∧ LED_EN` draws each pulse from
+  it. One pulse takes 0.5 mC (1 A × 500 µs), so ≈ 170 µF for 3 V of droop.
+- 23 W peak during a pulse, 1.4 W average at 6 % duty (≈ 1.65 W at the boost input).
+  The PoE PD supplies only the average.
+- Fixed current. Near markers (≈ 40× brighter at 2 m than at 5 m) are handled by the
+  exposure time, which Config already sets.
+- No continuous mode: bring-up and focusing use the strobed light too, so the LEDs always
+  run at the exposure's duty cycle.
 
 ### Ethernet pin map
 
@@ -95,17 +139,25 @@ Hardware tasks for the KiCad project:
   has no symbol or footprint for it.
 - LC filter on the PoE 5 V before the OR-ing, per the datasheet: 0.33–3.3 µH, then
   330 µF/16 V and 10 µF/16 V. The module alone has 200 mVp-p ripple.
-- MagJack: brings out both centre taps and pins 4/5 and 7/8, so the PD takes power from
-  Alternative A and B PSEs. The Bob-Smith termination (datasheet: 4 × 75 Ω and
-  4 × 10 nF/100 V into 1 nF/2 kV) sits inside the jack or on the board.
+- MagJack: HR871150C brings out both centre taps (P7/P8 → VA1/VA2) and pins 4/5 and 7/8
+  (P9/P10 → VB1/VB2), so the PD takes power from Alternative A and B PSEs. The Bob-Smith
+  termination is inside the jack.
 - Power budget against 802.3af: 12.95 W at the PD × 84 % peak efficiency gives at most
-  ≈ 10.9 W out. Budget ≈ 10.5 W (≈ 2 A at 5.15 V), including the LED ring's peak current.
-  The datasheet's 12.4 W rating is more than 802.3af delivers.
+  ≈ 10.9 W out. Budget ≈ 10.5 W (≈ 2 A at 5.15 V). The LED ring takes ≈ 1.65 W of it on
+  average; its 23 W pulses come from the driver's storage capacitor. The datasheet's
+  12.4 W rating is more than 802.3af delivers.
 - IP101GRI straps (PHY address, REF_CLK output mode). Keep RMII traces short; REF_CLK is
   50 MHz.
-- LED gate circuit, plus the LED driver sized for 2–5 m with passive markers.
-- Eye-safety check of the 850 nm ring (IEC 62471) at that range, 500 µs exposure, 6 %
-  duty cycle, and the worst case with `LED_FORCE` on continuously.
+- LED driver (boost, storage capacitor, current sink) and the `STROBE ∧ LED_EN` gate, per
+  [LED ring](#led-ring).
+- Eye-safety check of the ring (IEC 62471) at 500 µs exposure and 6 % duty cycle. Rough
+  estimate: exempt group (average IR irradiance ≈ 7 W/m² at 20 cm, limit 100 W/m²).
+- Decide whether the gate needs a hardware limit on on-time: a STROBE stuck high (a
+  misconfigured sensor) would run the ring continuously, outside the eye-safety and power
+  budgets.
+- OV9281 module: the listing's reviews report an interface that doesn't match the
+  Raspberry Pi pinout. Check the FPC pinout on a real module before powering it from the
+  board, and measure the XVS and STROBE logic levels.
 
 ## Data flow per frame
 

@@ -107,14 +107,14 @@ To verify in statime: changing clockClass and priority2 at runtime (rules 2 and 
 
 - Markers are passive retroreflectors, lit by the ring around the lens. The working range
   is a room (2–5 m).
-- The LED ring is on only while `(STROBE ∧ LED_EN) ∨ LED_FORCE`:
+- The LED ring is on only while `STROBE ∧ LED_EN`:
   - **STROBE** (OV9281 output) is high during exposure, so light matches exposure exactly
     on every board without firmware timing.
   - **LED_EN** (P4) is low for one **dark frame every N frames** (N from Config). Dark
     frames show ambient IR sources (sun, lamps, reflections); the P4 builds a mask from
     them, and their packets carry a `dark` flag.
-  - **LED_FORCE** (P4) forces the LEDs on for bring-up and focusing. Never in normal
-    operation.
+- There is no continuous-on mode. Bring-up and focusing use the strobed light, so the LEDs
+  always run at the exposure's duty cycle.
 - Default exposure: **500 µs**, a 6 % LED duty cycle at 120 Hz.
 
 ## 5. Startup sequence
