@@ -14,6 +14,7 @@ result-*
 # KiCad: backups, caches, lock files, per-user project state, fabrication outputs
 *-backups/
 _autosave-*
+.history/
 *.kicad_prl
 *.lck
 ~*.lck
