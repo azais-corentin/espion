@@ -11,6 +11,7 @@ flowchart LR
     S[OV9281<br/>global shutter, mono] -- "MIPI CSI-2<br/>2 lanes, RAW8" --> P4[ESP32-P4-Core module<br/>capture, blob detection,<br/>UDP, PTP]
     P4 -- "XVS trigger" --> S
     S -- STROBE --> G{{LED gate}}
+    S -- "STROBE (ETM capture)" --> P4
     P4 -- LED_EN --> G
     G --> L[850 nm LED ring<br/>12 × Amicc A-SC880IR3C]
     P4 -- RMII --> PHY[IP101GRI PHY]
@@ -33,8 +34,12 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | [SDAPO DP1435-5V](https://www.lcsc.com/product-detail/C5380097.html) (LCSC C5380097) | IEEE 802.3af PoE PD module: bridge rectifiers, isolated flyback (1.5 kV), 5.15 V out. Class 0 (no class pin brought out). Through-hole SIP-6 |
 | 5 V OR-ing (TI TPS2116) | PoE 5 V and USB-C VBUS, either one powers the board, PoE has priority, no back-feed into USB |
 | 3.3 V buck (TI TLV62569) | 5 V → ESP_3V3 for the module, the PHY and the camera module |
-| 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver (TI TPS61170 boost to 32 V, 1 A op-amp current sink) | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`, for at most ≈ 1 ms per pulse. See [LED ring](#led-ring) |
+| 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver (TI TPS22918 load switch, TPS61170 boost to 32 V, 1 A op-amp current sink) | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`, for at most ≈ 1 ms per pulse. See [LED ring](#led-ring) |
 | USB-C | 5 V on the bench; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub) |
+| WS2812B-2020-V6 RGB LED | Status, on +3V3, driven by an RMT channel |
+
+The schematic's sheets, nets, pin-level connections and component values are in
+[`hardware/espion-cam/SCHEMATIC.md`](../hardware/espion-cam/SCHEMATIC.md).
 
 ### Board signals
 
@@ -42,14 +47,19 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 |---|---|---|
 | MIPI CSI-2 (CLK + 2 data lanes) | OV9281 → P4 | Pixel data |
 | SCCB (I2C) | P4 → OV9281 | Sensor registers |
-| XVS | P4 → OV9281 | Frame trigger, one edge per frame at a scheduled network time |
-| STROBE | OV9281 → LED gate | High during exposure |
+| XVS | P4 → OV9281 | Frame trigger, one edge per frame at a scheduled network time. 1.8 V at the sensor (resistor divider) |
+| STROBE | OV9281 → LED gate, P4 | High during exposure. 1.8 V at the sensor, buffered to 3.3 V (SN74LV1T34). The P4 timestamps it with ETM |
 | LED_EN | P4 → LED gate | Enables the strobed LEDs; low for dark frames |
-| LED_PWR_EN | P4 → TPS61170 CTRL | Enables the 32 V LED rail. Pulled low: the rail stays off until firmware enables it |
+| LED_PWR_EN | P4 → TPS22918 ON | Connects +5V to the LED boost through a ≈ 10 ms ramp. Pulled low |
+| BST_EN | P4 → TPS61170 CTRL | Starts the 32 V LED boost after the load switch has ramped. Pulled low: the rail stays off until firmware enables it |
+| CAM_EN | P4 → OV9281 module | Enables the module's regulators (FPC pin 11). Pulled low |
+| PWR_SRC | TPS2116 → P4 | High when PoE powers the board; firmware keeps the LED rail off on USB |
+| VLED_SENSE, NTC_SENSE | LED driver → P4 ADC1 | +32V rail and sink-MOSFET temperature |
+| STATUS_LED | P4 → RGB LED | One-wire status LED data (RMT) |
 | RMII (REF_CLK, CRS_DV, RXD0–1, TX_EN, TXD0–1) | P4 ↔ IP101GRI | Ethernet frames |
 | MDC, MDIO | P4 → IP101GRI | PHY management |
 | PHY_RST | P4 → IP101GRI | PHY reset, active low |
-| PPS | P4 (EMAC) → test point, and ETM capture in the P4 | Pulses from the PTP clock ([timing.md](timing.md)) |
+| PPS | P4 (EMAC) → test point, and through a 0 Ω loop-back into a second GPIO for ETM capture | Pulses from the PTP clock ([timing.md](timing.md)) |
 | USB D+/D− | USB-C → P4 (USB1P1, GPIO24/25) | Flashing, logs, JTAG |
 
 ### LED ring
@@ -94,8 +104,11 @@ Driver (parts and LCSC numbers: `hardware/espion-cam/BOM.md`):
 - **Boost limits.** Worst case (minimum current limit, 85 %) the boost delivers ≈ 100 mA
   at 32 V. 500 µs pulses at 120 fps average 60 mA, so it can sustain ≈ 0.8 ms of light per
   frame. Refilling the capacitors at power-up takes ≈ 70 ms (0.23 J).
-- **Enable.** `LED_PWR_EN` drives the TPS61170's CTRL pin, with a pull-down: the rail is
-  off through PoE start-up and boot, and firmware can drop it on a fault.
+- **Enable.** A TPS22918 load switch on `LED_PWR_EN` feeds the boost input with a ≈ 10 ms
+  ramp; without it, the boost's inductor and diode would charge the 440 µF storage from
+  +5V at every power-up (≈ 1.6 A inrush, over the USB limit). `BST_EN` then drives the
+  TPS61170's CTRL pin. Both have pull-downs: the rail is off through PoE start-up and boot,
+  and firmware can drop it on a fault.
 - **Current sink.** A TLV9061 op-amp on 5 V drives an IRLR024N MOSFET (55 V, planar, for
   its linear-mode SOA) so that 1 A flows through a 0.1 Ω shunt. Its 100 mV reference is a
   divider from the gate output, so the gate turns the sink on and off. The MOSFET drops
@@ -167,17 +180,19 @@ Hardware tasks for the KiCad project:
   ≈ 10.9 W out. Budget ≈ 10.5 W (≈ 2 A at 5.15 V). The LED ring takes ≈ 2.3 W of it on
   average; its 23 W pulses come from the driver's storage capacitors. The datasheet's
   12.4 W rating is more than 802.3af delivers.
-- IP101GRI straps (PHY address, REF_CLK output mode). Keep RMII traces short; REF_CLK is
-  50 MHz.
-- LED driver: TPS61170 feedback divider (32 V) and compensation, op-amp loop
-  compensation (MOSFET gate capacitance), and the timeout RC. Tune τ on the first boards
-  against the '1G97's Schmitt thresholds. The gate needs STROBE at 3.3 V logic (V_T+ is up
-  to ≈ 2 V at a 3.3 V supply); if the module's STROBE is 1.8 V, add a level shifter.
+- IP101GRI straps (PHY address 1, RMII with the PHY driving REF_CLK) and the RMII series
+  resistors: chosen in `hardware/espion-cam/SCHEMATIC.md`. Keep RMII traces short; REF_CLK
+  is 50 MHz.
+- LED driver: boost divider and compensation, op-amp loop compensation and the timeout RC
+  are derived in `hardware/espion-cam/SCHEMATIC.md` from models. On the first boards, check
+  the boost loop (440 µF is outside the TPS61170's tested range), the current pulse at the
+  `ISNS` test point, and τ against the '1G97's Schmitt thresholds (interpolated at 3.3 V).
 - Eye-safety check of the ring (IEC 62471) at 500 µs exposure and 6 % duty cycle. Rough
   estimate: exempt group (average IR irradiance ≈ 7 W/m² at 20 cm, limit 100 W/m²).
 - OV9281 module: the listing's reviews report an interface that doesn't match the
   Raspberry Pi pinout. Check the FPC pinout on a real module before powering it from the
-  board, and measure the XVS and STROBE logic levels.
+  board (the camera's 3.3 V goes through a 0 Ω link for that first check), and confirm
+  that XVS and STROBE are 1.8 V, as the schematic assumes.
 
 ## Data flow per frame
 
@@ -282,15 +297,15 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 
 | Need | esp-hal 1.2.2 | Plan |
 |---|---|---|
-| MIPI CSI-2 receiver | ❌ | `firmware/esp32p4-csi`: driver on the `esp32p4` PAC. Write it like an esp-hal driver (`Config`, typed pins, DMA buffers, blocking and async APIs, HIL-testable) without planning to upstream it |
+| MIPI CSI-2 receiver | ❌ | `firmware/esp32p4-csi`: driver on the `esp32p4` PAC. Write it like an esp-hal driver (`Config`, typed pins, DMA buffers, blocking and async APIs, HIL-testable) without planning to upstream it. On the ESP32-P4-Core the MIPI PHY is powered from `ESP_LDO_VO3` (0 V by default): the driver sets it to 2.5 V before starting the CSI host |
 | ISP | ❌ | Bypass: RAW8 goes straight to memory. Blob detection does not need demosaicing (mono sensor). Check the CSI → memory path that skips the ISP against the TRM |
 | DMA for CSI | ⚒ (DMA partial) | Confirm which DMA engine the CSI bridge uses on the P4 and whether esp-hal drives it; otherwise part of the CSI driver. It writes frames into PSRAM; the driver does the cache invalidation (esp-hal has no cache maintenance for this path). Also check whether it can interrupt per block of lines (strip fallback, see [Memory](#memory)) |
 | I2C master (SCCB) | ✔ | — |
 | Ethernet (EMAC, RMII) | ⚒ `unstable` ([esp-hal#5556](https://github.com/esp-rs/esp-hal/pull/5556), "basic") | `esp_hal::ethernet::Ethernet` with an `RmiiPinBundle`, `ExternalRefClock` on GPIO50 and the generic PHY driver; embassy-net driver included. New in 1.2: review flagged P4 RX-buffer cache maintenance as unverified, so soak-test RX on hardware |
 | EMAC IEEE 1588 (PTP clock, timestamps, PPS) | ❌ | The clock (sub-second increment, addend, time update) and PPS are registers in the EMAC MAC block: PAC-level code in `cam-p4`. The per-frame RX/TX timestamps live in the DMA descriptors that esp-hal's driver owns (it leaves descriptor words 4–7 unread), so they need a change to esp-hal: carry it as a `[patch.crates-io]` fork and upstream it |
 | Per-packet timestamps to statime | n/a | embassy-net sockets carry no per-packet metadata. The driver pairs PTP event frames (UDP 319) with their descriptor timestamps by message type and `sequenceId` and hands them to statime |
-| RMT | ⚒ | XVS edge schedule, as in esp-wifi-sync `wave.rs` |
-| ETM | ❌ | Needed from the start: the PPS edge (GPIO event) triggers a timer capture task. PAC-level code in `cam-p4`. Which timer has the capture task is still to confirm against the TRM, and so is whether a GPIO event fires on a pad that the EMAC PPS drives as an output |
+| RMT | ⚒ | XVS edge schedule, as in esp-wifi-sync `wave.rs` (TX channel 0), and the WS2812 status LED (channel 2 or 3) |
+| ETM | ❌ | Needed from the start: the PPS edge and the STROBE edge (GPIO events) trigger timer capture tasks. PAC-level code in `cam-p4`. Which timer has the capture task is still to confirm against the TRM, and so is whether a GPIO event fires on a pad that the EMAC PPS drives as an output (the board loops PPS into a second GPIO through a 0 Ω resistor, so either way works) |
 | MCPWM / PCNT / LEDC | ❌ | Not needed: STROBE gates the LEDs |
 | SYSTIMER, TIMG | ⚒ | Local timebase, embassy time driver |
 | PSRAM | ⚒ | Frame buffers (CSI DMA target) and non-per-frame data; see [Memory](#memory) |

@@ -96,8 +96,10 @@ To verify in statime: changing clockClass and priority2 at runtime (rules 2 and 
   (a linear edge schedule in SYSTIMER time, refreshed on every fit update, as in
   esp-wifi-sync's `wave.rs`).
 - The OV9281 runs in external trigger mode: each XVS edge starts one exposure. The sensor's
-  trigger-to-exposure latency `L` is constant and gets measured once per sensor
-  configuration (scope on XVS and STROBE).
+  trigger-to-exposure latency `L` is constant per sensor configuration. The P4 measures it:
+  STROBE also reaches a P4 GPIO, and ETM timestamps its rising edge in local time like the
+  PPS edges, which also flags any XVS edge that produced no exposure. A scope on XVS and STROBE
+  cross-checks it.
 - **Capture time** in each packet is the network time of the middle of the exposure:
   `T(k) + L + exposure / 2`.
 - Until the board's PTP clock is locked and its PPS servo too, packets carry
