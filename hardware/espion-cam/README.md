@@ -14,8 +14,9 @@ module. Not started yet. Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - 850 nm LED ring with driver for passive retroreflective markers at 2–5 m, gated by
   `(STROBE ∧ LED_EN) ∨ LED_FORCE`
 - IP101GRI Ethernet PHY on RMII (25 MHz crystal, PHY supplies the 50 MHz REF_CLK), RJ45
-  MagJack with PoE-rated centre taps, PPS test point
-- Power: IEEE 802.3af PoE PD (isolated 5 V) OR-ed with USB-C 5 V
+  MagJack with both centre taps and the spare pairs brought out, PPS test point
+- Power: SDAPO DP1435-5V IEEE 802.3af PoE PD module (isolated 5.15 V, LCSC C5380097)
+  through an LC filter, OR-ed with USB-C 5 V
 - USB-C straight to the P4's USB Serial/JTAG (no hub)
 
 Signal list, module pin notes, Ethernet pin map and hardware tasks: see

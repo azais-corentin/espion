@@ -29,8 +29,8 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | [Waveshare ESP32-P4-Core](https://docs.waveshare.com/ESP32-P4-Core), 16 MB flash (SKU 36096) | ESP32-P4NRW32X (silicon **rev v3.x**: esp-hal does not support older revisions), 32 MB in-package PSRAM, 16 MB NOR flash, 40 MHz and 32.768 kHz crystals, VDD_HP DC-DC on the module. Sensor control, MIPI CSI capture, blob detection, XVS trigger, LED gating, Ethernet MAC with IEEE 1588 clock |
 | OV9281 | 1 MP monochrome global-shutter sensor, MIPI CSI-2 2-lane. Mode: 640×400 2×2 binned, RAW8, 120 fps, external trigger on XVS, STROBE output |
 | IP101GRI | 10/100 Ethernet PHY on RMII, 25 MHz crystal. Drives the 50 MHz RMII reference clock into the P4. The PHY of Espressif's and Waveshare's P4 Ethernet boards |
-| RJ45 MagJack | Integrated magnetics with PoE-rated centre taps |
-| IEEE 802.3af PoE PD | Isolated 5 V from the Ethernet cable |
+| RJ45 MagJack | Integrated magnetics. Brings out both centre taps and the spare pairs (4/5, 7/8) for the PoE PD |
+| [SDAPO DP1435-5V](https://www.lcsc.com/product-detail/C5380097.html) (LCSC C5380097) | IEEE 802.3af PoE PD module: bridge rectifiers, isolated flyback (1.5 kV), 5.15 V out. Class 0 (no class pin brought out). Through-hole SIP-6 |
 | 5 V OR-ing | PoE 5 V and USB-C VBUS, either one powers the board, no back-feed into USB |
 | 850 nm LED ring + driver | Lights passive retroreflective markers at 2–5 m (room scale). On only while `(STROBE ∧ LED_EN) ∨ LED_FORCE` |
 | USB-C | 5 V on the bench; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub) |
@@ -87,9 +87,20 @@ From the module's documentation and its schematic (16 MB version):
 Hardware tasks for the KiCad project:
 - Measure the castellated pads on a real module and confirm the provisional land pattern of
   `Module_Waveshare:Waveshare_ESP32-P4-Core` (`hardware/lib/README.md`).
-- PoE PD: an integrated module (Ag9905M class) or a discrete controller with a flyback.
-  Keep the 1500 V isolation between the cable side and the board.
-- Power budget against 802.3af (12.95 W at the PD), including the LED ring's peak current.
+- PoE PD: SDAPO DP1435-5V ([datasheet](https://www.lcsc.com/datasheet/C5380097.pdf)). Pins:
+  1 VA1 and 2 VA2 (centre taps of RJ45 pairs 1/2 and 3/6), 3 VB1 and 4 VB2 (spare pairs
+  4/5 and 7/8), 5 GND, 6 VOUT. The inputs are not polarity sensitive. 2.54 mm pitch, pin 5
+  sits 22.86 mm after pin 4. The module stands vertically: 35.6 × 16.2 mm on the board,
+  14 mm tall. Keep the 1.5 kV isolation between the cable side and the board. Stock KiCad
+  has no symbol or footprint for it.
+- LC filter on the PoE 5 V before the OR-ing, per the datasheet: 0.33–3.3 µH, then
+  330 µF/16 V and 10 µF/16 V. The module alone has 200 mVp-p ripple.
+- MagJack: brings out both centre taps and pins 4/5 and 7/8, so the PD takes power from
+  Alternative A and B PSEs. The Bob-Smith termination (datasheet: 4 × 75 Ω and
+  4 × 10 nF/100 V into 1 nF/2 kV) sits inside the jack or on the board.
+- Power budget against 802.3af: 12.95 W at the PD × 84 % peak efficiency gives at most
+  ≈ 10.9 W out. Budget ≈ 10.5 W (≈ 2 A at 5.15 V), including the LED ring's peak current.
+  The datasheet's 12.4 W rating is more than 802.3af delivers.
 - IP101GRI straps (PHY address, REF_CLK output mode). Keep RMII traces short; REF_CLK is
   50 MHz.
 - LED gate circuit, plus the LED driver sized for 2–5 m with passive markers.
