@@ -35,3 +35,6 @@ hardware/**/.kicad-mcp-cache/
 *.swp
 **/*.rs.bk
 .DS_Store
+
+# Personal notes
+/TODO.md
