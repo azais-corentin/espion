@@ -8,7 +8,7 @@
 	(property "Reference" "REF**"
 		(at 0 -11.75 0)
 		(layer "F.SilkS")
-		(uuid "c3af7ca8-e89d-4f8b-b619-fad12372bc29")
+		(uuid "4df8d861-bb4c-40b8-a878-859a29a27e78")
 		(effects
 			(font
 				(size 1 1)
@@ -19,7 +19,7 @@
 	(property "Value" "Waveshare_ESP32-P4-Core"
 		(at 0 11.75 0)
 		(layer "F.Fab")
-		(uuid "28a4c7bf-c05d-4949-aa30-62e379f4ec5a")
+		(uuid "7002b900-c5c1-476b-bc6f-cfef551d94fe")
 		(effects
 			(font
 				(size 1 1)
@@ -31,7 +31,7 @@
 		(at 0 0 0)
 		(layer "F.Fab")
 		(hide yes)
-		(uuid "7b56308b-e5f1-4a69-ae6c-d1da60df16bb")
+		(uuid "d35eec69-ba76-43cf-90a5-f3d4294e733c")
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -42,7 +42,7 @@
 		(at 0 0 0)
 		(layer "F.Fab")
 		(hide yes)
-		(uuid "fbbab084-f2f8-4c38-9293-0d81e698c2bc")
+		(uuid "ec2ab579-37cb-4a3b-b669-15a50dccac2c")
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -824,7 +824,7 @@
 		(uuid "83ec34eb-b3ab-4d60-9c3b-2abe60505129")
 	)
 	(embedded_fonts no)
-	(model "${KICAD10_3DMODEL_DIR}/Module_Waveshare.3dshapes/Waveshare_ESP32-P4-Core.step"
+	(model "${KIPRJMOD}/../lib/Module_Waveshare.3dshapes/Waveshare_ESP32-P4-Core.step"
 		(offset
 			(xyz 0 0 0)
 		)
