@@ -1,4 +1,12 @@
 (fp_lib_table
 	(version 7)
 	(lib (name "Module_Waveshare") (type "KiCad") (uri "${KIPRJMOD}/../lib/Module_Waveshare.pretty") (options "") (descr "Waveshare modules (espion project library)"))
+	(lib (name "Capacitor_SMD_AISHI") (type "KiCad") (uri "${KIPRJMOD}/../lib/Capacitor_SMD_AISHI.pretty") (options "") (descr "AISHI SMD capacitors (espion project library)"))
+	(lib (name "Capacitor_SMD_JIERR") (type "KiCad") (uri "${KIPRJMOD}/../lib/Capacitor_SMD_JIERR.pretty") (options "") (descr "JIERR SMD capacitors (espion project library)"))
+	(lib (name "Connector_FFC-FPC_XFCN") (type "KiCad") (uri "${KIPRJMOD}/../lib/Connector_FFC-FPC_XFCN.pretty") (options "") (descr "XFCN FFC/FPC connectors (espion project library)"))
+	(lib (name "Connector_RJ_HanRun") (type "KiCad") (uri "${KIPRJMOD}/../lib/Connector_RJ_HanRun.pretty") (options "") (descr "HanRun RJ45 jacks (espion project library)"))
+	(lib (name "Connector_USB_HRO") (type "KiCad") (uri "${KIPRJMOD}/../lib/Connector_USB_HRO.pretty") (options "") (descr "Korean Hroparts USB connectors (espion project library)"))
+	(lib (name "Converter_DCDC_SDAPO") (type "KiCad") (uri "${KIPRJMOD}/../lib/Converter_DCDC_SDAPO.pretty") (options "") (descr "SDAPO DC/DC and PoE PD modules (espion project library)"))
+	(lib (name "LED_SMD_Amicc") (type "KiCad") (uri "${KIPRJMOD}/../lib/LED_SMD_Amicc.pretty") (options "") (descr "Amicc SMD LEDs (espion project library)"))
+	(lib (name "Package_SON_TI") (type "KiCad") (uri "${KIPRJMOD}/../lib/Package_SON_TI.pretty") (options "") (descr "TI SON packages with TI land patterns (espion project library)"))
 )

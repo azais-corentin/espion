@@ -1,0 +1,1077 @@
+{
+ "commands": [
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "B",
+    "expression": "16 mm",
+    "comment": "body width, datasheet B = 16.00"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "A",
+    "expression": "21.2 mm",
+    "comment": "body depth (rear to mouth face), datasheet A = 21.20"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "C",
+    "expression": "13.3 mm",
+    "comment": "body height above PCB, datasheet C = 13.30"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "Dpin",
+    "expression": "3.5 mm",
+    "comment": "pin length below PCB, datasheet D = 3.50 +/-0.30"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "Htab",
+    "expression": "1.2 mm",
+    "comment": "top panel-ground finger height above body, datasheet 14.50 - 13.30"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "Wtab",
+    "expression": "1.175 mm",
+    "comment": "side panel-ground finger reach per side, datasheet (18.35 - 16.00) / 2"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "xc",
+    "expression": "5.715 mm",
+    "comment": "body centre X from pin 1, (11.43)/2: body symmetric about the pin field centre line (p.3)"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "yb",
+    "expression": "1.51 mm",
+    "comment": "rear face Y (3D) = 1.51 mm behind pin 1 row: 10.80 + 10.40 = 21.20 with mouth face 19.69 in front of pin 1"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "t",
+    "expression": "0.3 mm",
+    "comment": "shield sheet thickness (not dimensioned; typical)"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "posd",
+    "expression": "3.15 mm",
+    "comment": "plastic locating post diameter (hole 3.25, p.3)"
+   }
+  },
+  {
+   "command": "parameters.add",
+   "params": {
+    "name": "posl",
+    "expression": "3.1 mm",
+    "comment": "plastic locating post length below PCB (side view, approx.)"
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "ShieldBlock",
+    "body_name": "Shield",
+    "length": "B",
+    "width": "A",
+    "height": "C",
+    "corner": [
+     "xc - B/2",
+     "yb - A",
+     0
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "ShieldHollow",
+    "operation": "cut",
+    "targets": [
+     "Shield"
+    ],
+    "length": "B - 2*t",
+    "width": "A - t + 1",
+    "height": "C - t + 1",
+    "corner": [
+     "xc - B/2 + t",
+     "yb - A - 1",
+     -1
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "HousingBlock",
+    "body_name": "Housing",
+    "length": "B - 2*t",
+    "width": "A - t",
+    "height": "C - t",
+    "corner": [
+     "xc - B/2 + t",
+     "yb - A",
+     0
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "MouthUpper",
+    "operation": "cut",
+    "targets": [
+     "Housing"
+    ],
+    "length": 12.9,
+    "width": 16,
+    "height": 5.5,
+    "corner": [
+     "xc - 6.45",
+     "yb - A - 1",
+     5.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "MouthLower",
+    "operation": "cut",
+    "targets": [
+     "Housing"
+    ],
+    "length": 6.2,
+    "width": 16,
+    "height": 3.5,
+    "corner": [
+     "xc - 3.1",
+     "yb - A - 1",
+     2.1
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "LatchSlot",
+    "operation": "cut",
+    "targets": [
+     "Housing"
+    ],
+    "length": 4.3,
+    "width": 16,
+    "height": 1.8,
+    "corner": [
+     "xc - 2.15",
+     "yb - A - 1",
+     0.4
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "LedYellowWindow",
+    "operation": "cut",
+    "targets": [
+     "Housing"
+    ],
+    "length": 3.0,
+    "width": 2.0,
+    "height": 1.75,
+    "corner": [
+     "xc - 6.45",
+     "yb - A - 1",
+     1.15
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "LedYellowLens",
+    "body_name": "LedYellow",
+    "length": 3.0,
+    "width": 1.0,
+    "height": 1.75,
+    "corner": [
+     "xc - 6.45",
+     "yb - A",
+     1.15
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "LedGreenWindow",
+    "operation": "cut",
+    "targets": [
+     "Housing"
+    ],
+    "length": 3.0,
+    "width": 2.0,
+    "height": 1.75,
+    "corner": [
+     "xc + 3.45",
+     "yb - A - 1",
+     1.15
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "LedGreenLens",
+    "body_name": "LedGreen",
+    "length": 3.0,
+    "width": 1.0,
+    "height": 1.75,
+    "corner": [
+     "xc + 3.45",
+     "yb - A",
+     1.15
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact1",
+    "body_name": "Contact1",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + -3.77",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact2",
+    "body_name": "Contact2",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + -2.75",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact3",
+    "body_name": "Contact3",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + -1.73",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact4",
+    "body_name": "Contact4",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + -0.71",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact5",
+    "body_name": "Contact5",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + 0.31",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact6",
+    "body_name": "Contact6",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + 1.33",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact7",
+    "body_name": "Contact7",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + 2.35",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Contact8",
+    "body_name": "Contact8",
+    "length": 0.4,
+    "width": 10,
+    "height": 0.5,
+    "corner": [
+     "xc + 3.37",
+     "yb - A + 4",
+     10.5
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin1",
+    "body_name": "Pin1",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     -0.25,
+     -0.25,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin2",
+    "body_name": "Pin2",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     1.02,
+     -2.79,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin3",
+    "body_name": "Pin3",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     2.29,
+     -0.25,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin4",
+    "body_name": "Pin4",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     3.56,
+     -2.79,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin5",
+    "body_name": "Pin5",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     4.83,
+     -0.25,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin7",
+    "body_name": "Pin7",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     7.37,
+     -0.25,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin8",
+    "body_name": "Pin8",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     8.64,
+     -2.79,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin9",
+    "body_name": "Pin9",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     9.91,
+     -0.25,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin10",
+    "body_name": "Pin10",
+    "length": 0.5,
+    "width": 0.5,
+    "height": "Dpin",
+    "corner": [
+     11.18,
+     -2.79,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin11",
+    "body_name": "Pin11",
+    "length": 0.6,
+    "width": 0.6,
+    "height": "Dpin",
+    "corner": [
+     -1.21,
+     -13.27,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin12",
+    "body_name": "Pin12",
+    "length": 0.6,
+    "width": 0.6,
+    "height": "Dpin",
+    "corner": [
+     1.33,
+     -13.27,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin13",
+    "body_name": "Pin13",
+    "length": 0.6,
+    "width": 0.6,
+    "height": "Dpin",
+    "corner": [
+     9.5,
+     -13.27,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "Pin14",
+    "body_name": "Pin14",
+    "length": 0.6,
+    "width": 0.6,
+    "height": "Dpin",
+    "corner": [
+     12.04,
+     -13.27,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "ShieldPinL",
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ],
+    "length": 0.3,
+    "width": 1.2,
+    "height": "Dpin + 0.5",
+    "corner": [
+     -2.18,
+     -6.4399999999999995,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "name": "ShieldPinR",
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ],
+    "length": 0.3,
+    "width": 1.2,
+    "height": "Dpin + 0.5",
+    "corner": [
+     13.31,
+     -6.4399999999999995,
+     "-Dpin"
+    ]
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "name": "PostL",
+    "operation": "join",
+    "targets": [
+     "Housing"
+    ],
+    "diameter": "posd",
+    "height": "posl + 0.5",
+    "base": [
+     0,
+     -8.89,
+     "-posl"
+    ]
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "name": "PostR",
+    "operation": "join",
+    "targets": [
+     "Housing"
+    ],
+    "diameter": "posd",
+    "height": "posl + 0.5",
+    "base": [
+     11.43,
+     -8.89,
+     "-posl"
+    ]
+   }
+  },
+  {
+   "command": "solid.chamfer",
+   "params": {
+    "name": "PostTips",
+    "edges": [
+     [
+      1.575,
+      -8.89,
+      -3.1
+     ],
+     [
+      13.004999999999999,
+      -8.89,
+      -3.1
+     ]
+    ],
+    "distance": 0.5
+   }
+  },
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "YZ",
+    "offset": "xc - 3.55",
+    "name": "TabTopLSk"
+   }
+  },
+  {
+   "command": "sketch.line",
+   "params": {
+    "closed": true,
+    "points": [
+     [
+      "yb - A + 1.5",
+      "C - 0.2"
+     ],
+     [
+      "yb - A + 4.25",
+      "C + Htab"
+     ],
+     [
+      "yb - A + 7",
+      "C - 0.2"
+     ],
+     [
+      "yb - A + 7 - 0.45",
+      "C - 0.2"
+     ],
+     [
+      "yb - A + 4.25",
+      "C + Htab - 0.35"
+     ],
+     [
+      "yb - A + 1.5 + 0.45",
+      "C - 0.2"
+     ]
+    ]
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "name": "TabTopL",
+    "sketch": "TabTopLSk",
+    "distance": 1.6,
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ]
+   }
+  },
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "YZ",
+    "offset": "xc + 1.95",
+    "name": "TabTopRSk"
+   }
+  },
+  {
+   "command": "sketch.line",
+   "params": {
+    "closed": true,
+    "points": [
+     [
+      "yb - A + 1.5",
+      "C - 0.2"
+     ],
+     [
+      "yb - A + 4.25",
+      "C + Htab"
+     ],
+     [
+      "yb - A + 7",
+      "C - 0.2"
+     ],
+     [
+      "yb - A + 7 - 0.45",
+      "C - 0.2"
+     ],
+     [
+      "yb - A + 4.25",
+      "C + Htab - 0.35"
+     ],
+     [
+      "yb - A + 1.5 + 0.45",
+      "C - 0.2"
+     ]
+    ]
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "name": "TabTopR",
+    "sketch": "TabTopRSk",
+    "distance": 1.6,
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ]
+   }
+  },
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "XY",
+    "offset": 2.9,
+    "name": "TabSideL1Sk"
+   }
+  },
+  {
+   "command": "sketch.line",
+   "params": {
+    "closed": true,
+    "points": [
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 1.5"
+     ],
+     [
+      "xc - B/2 - Wtab",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 7"
+     ],
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 7 - 0.45"
+     ],
+     [
+      "xc - B/2 - (Wtab - 0.35)",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 1.5 + 0.45"
+     ]
+    ]
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "name": "TabSideL1",
+    "sketch": "TabSideL1Sk",
+    "distance": 1.7,
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ]
+   }
+  },
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "XY",
+    "offset": 7.8,
+    "name": "TabSideL2Sk"
+   }
+  },
+  {
+   "command": "sketch.line",
+   "params": {
+    "closed": true,
+    "points": [
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 1.5"
+     ],
+     [
+      "xc - B/2 - Wtab",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 7"
+     ],
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 7 - 0.45"
+     ],
+     [
+      "xc - B/2 - (Wtab - 0.35)",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc - B/2 + 0.2",
+      "yb - A + 1.5 + 0.45"
+     ]
+    ]
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "name": "TabSideL2",
+    "sketch": "TabSideL2Sk",
+    "distance": 1.7,
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ]
+   }
+  },
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "XY",
+    "offset": 2.9,
+    "name": "TabSideR1Sk"
+   }
+  },
+  {
+   "command": "sketch.line",
+   "params": {
+    "closed": true,
+    "points": [
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 1.5"
+     ],
+     [
+      "xc + B/2 + Wtab",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 7"
+     ],
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 7 - 0.45"
+     ],
+     [
+      "xc + B/2 + (Wtab - 0.35)",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 1.5 + 0.45"
+     ]
+    ]
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "name": "TabSideR1",
+    "sketch": "TabSideR1Sk",
+    "distance": 1.7,
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ]
+   }
+  },
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "XY",
+    "offset": 7.8,
+    "name": "TabSideR2Sk"
+   }
+  },
+  {
+   "command": "sketch.line",
+   "params": {
+    "closed": true,
+    "points": [
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 1.5"
+     ],
+     [
+      "xc + B/2 + Wtab",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 7"
+     ],
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 7 - 0.45"
+     ],
+     [
+      "xc + B/2 + (Wtab - 0.35)",
+      "yb - A + 4.25"
+     ],
+     [
+      "xc + B/2 - 0.2",
+      "yb - A + 1.5 + 0.45"
+     ]
+    ]
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "name": "TabSideR2",
+    "sketch": "TabSideR2Sk",
+    "distance": 1.7,
+    "operation": "join",
+    "targets": [
+     "Shield"
+    ]
+   }
+  },
+  {
+   "command": "appearance.assign",
+   "params": {
+    "bodies": [
+     "Shield"
+    ],
+    "color": "#c8c8c8",
+    "pbr": {
+     "metallic": 1.0,
+     "roughness": 0.35,
+     "dielectric_ior": 1.5
+    }
+   }
+  },
+  {
+   "command": "appearance.assign",
+   "params": {
+    "bodies": [
+     "Housing"
+    ],
+    "color": "#1e1e1e"
+   }
+  },
+  {
+   "command": "appearance.assign",
+   "params": {
+    "bodies": [
+     "LedYellow"
+    ],
+    "color": "#ffd700",
+    "opacity": 1
+   }
+  },
+  {
+   "command": "appearance.assign",
+   "params": {
+    "bodies": [
+     "LedGreen"
+    ],
+    "color": "#20d020",
+    "opacity": 1
+   }
+  },
+  {
+   "command": "appearance.assign",
+   "params": {
+    "bodies": [
+     "Contact1",
+     "Contact2",
+     "Contact3",
+     "Contact4",
+     "Contact5",
+     "Contact6",
+     "Contact7",
+     "Contact8",
+     "Pin1",
+     "Pin2",
+     "Pin3",
+     "Pin4",
+     "Pin5",
+     "Pin7",
+     "Pin8",
+     "Pin9",
+     "Pin10",
+     "Pin11",
+     "Pin12",
+     "Pin13",
+     "Pin14"
+    ],
+    "color": "#d4af37",
+    "pbr": {
+     "metallic": 1.0,
+     "roughness": 0.3,
+     "dielectric_ior": 1.5
+    }
+   }
+  }
+ ]
+}

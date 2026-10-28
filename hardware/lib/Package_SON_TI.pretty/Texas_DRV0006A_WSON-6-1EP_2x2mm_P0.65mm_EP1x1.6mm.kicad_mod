@@ -1,0 +1,307 @@
+(footprint "Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Texas Instruments DRV0006A (also DRV0006D) WSON, 6 Pin, 2x2mm body, 0.65mm pitch, exposed pad 1x1.6mm, TI land pattern (pads 0.45x0.3mm, rows 1.95mm) and stencil (https://www.ti.com/lit/ds/symlink/tps61170.pdf#page=35)")
+	(tags "Texas DRV0006A DRV0006D WSON NoLead")
+	(property "Reference" "REF**"
+		(at 0 -1.95 0)
+		(layer "F.SilkS")
+		(uuid "f3d39cf3-8f33-422b-98af-d731a50c0655")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm"
+		(at 0 1.95 0)
+		(layer "F.Fab")
+		(uuid "f4d0b7a7-fdf9-4ced-96a1-07a104ca8c8b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "9c17885b-5b81-4c30-84f8-10bd868c89f6")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "ce4cab73-aad0-416a-81f6-6c0c57a7fb1e")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -0.699252 -1.11)
+		(end 1.11 -1.11)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "d2740cb5-98f0-41ba-b6a2-30730d981568")
+	)
+	(fp_line
+		(start 1.11 1.11)
+		(end -1.11 1.11)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "b625c24d-103a-4cb0-bc17-023f11bdebe9")
+	)
+	(fp_poly
+		(pts
+			(xy -0.99 -1.12) (xy -1.13 -1.31) (xy -0.85 -1.31)
+		)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(fill yes)
+		(layer "F.SilkS")
+		(uuid "d671c289-ffba-4daa-af20-297fbb99ba10")
+	)
+	(fp_line
+		(start -1.45 -1.05)
+		(end -1.25 -1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "539a3900-554a-4ae0-9377-a22a1fe76414")
+	)
+	(fp_line
+		(start -1.45 1.05)
+		(end -1.45 -1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "213c9931-0e1f-43c9-804b-04973b72eb1b")
+	)
+	(fp_line
+		(start -1.25 -1.25)
+		(end 1.25 -1.25)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "b2c57d85-dc2b-4b62-92a4-6382b111672c")
+	)
+	(fp_line
+		(start -1.25 -1.05)
+		(end -1.25 -1.25)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "927dc2d8-c4ad-4534-83ac-c517305be638")
+	)
+	(fp_line
+		(start -1.25 1.05)
+		(end -1.45 1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "b8031276-a9ea-47e2-a481-0f5d08f6803c")
+	)
+	(fp_line
+		(start -1.25 1.25)
+		(end -1.25 1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "892bdd3f-9a75-4b58-a975-b5c763325b26")
+	)
+	(fp_line
+		(start 1.25 -1.25)
+		(end 1.25 -1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "8a15e6d2-0f29-43c4-a7c8-f68fc980a2e0")
+	)
+	(fp_line
+		(start 1.25 -1.05)
+		(end 1.45 -1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "6e47b325-727d-4f9e-abf8-1707cb5a3bd8")
+	)
+	(fp_line
+		(start 1.25 1.05)
+		(end 1.25 1.25)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "f9a2318b-a5b0-4cf1-abec-3dd89607de94")
+	)
+	(fp_line
+		(start 1.25 1.25)
+		(end -1.25 1.25)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "75b7e4df-69ac-4f29-8ab8-de4ac66690a8")
+	)
+	(fp_line
+		(start 1.45 -1.05)
+		(end 1.45 1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "46d45b23-fa76-474b-80ff-5a33043cb885")
+	)
+	(fp_line
+		(start 1.45 1.05)
+		(end 1.25 1.05)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "F.CrtYd")
+		(uuid "416ad1d2-5b10-46e3-8545-3208fe28c65e")
+	)
+	(fp_poly
+		(pts
+			(xy -0.5 -1) (xy 1 -1) (xy 1 1) (xy -1 1) (xy -1 -0.5)
+		)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "02a584cd-18f9-4158-bfda-56b2fcade976")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "f2e0c3e1-3a26-48c7-b2ad-a1153e631d3c")
+		(effects
+			(font
+				(size 0.5 0.5)
+				(thickness 0.08)
+			)
+		)
+	)
+	(pad "" smd roundrect
+		(at 0 -0.45)
+		(size 1 0.7)
+		(layers "F.Paste")
+		(roundrect_rratio 0.07142857143)
+		(thermal_bridge_angle 45)
+		(uuid "68112a91-c40b-43f2-9850-546eed4a32dc")
+	)
+	(pad "" smd roundrect
+		(at 0 0.45)
+		(size 1 0.7)
+		(layers "F.Paste")
+		(roundrect_rratio 0.07142857143)
+		(thermal_bridge_angle 45)
+		(uuid "1ad647d9-27f5-4d09-b328-cf713e0ae90b")
+	)
+	(pad "1" smd roundrect
+		(at -0.975 -0.65)
+		(size 0.45 0.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.1666666667)
+		(uuid "f6c5d591-d616-4562-8352-48fe954ea570")
+	)
+	(pad "2" smd roundrect
+		(at -0.975 0)
+		(size 0.45 0.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.1666666667)
+		(uuid "d94e38f6-4e1e-4a9a-8414-17b342d762cc")
+	)
+	(pad "3" smd roundrect
+		(at -0.975 0.65)
+		(size 0.45 0.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.1666666667)
+		(uuid "cc9ca1e0-0125-4c47-93c9-5f4f02d2410e")
+	)
+	(pad "4" smd roundrect
+		(at 0.975 0.65)
+		(size 0.45 0.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.1666666667)
+		(uuid "9261c1b3-07cb-48bf-ba04-c09ddf6e18a5")
+	)
+	(pad "5" smd roundrect
+		(at 0.975 0)
+		(size 0.45 0.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.1666666667)
+		(uuid "d8cc3104-338b-41a1-8b35-66261d301bdf")
+	)
+	(pad "6" smd roundrect
+		(at 0.975 -0.65)
+		(size 0.45 0.3)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.1666666667)
+		(uuid "d8ec98fc-0082-4cbc-a8b8-26a352cc0ce5")
+	)
+	(pad "7" smd rect
+		(at 0 0)
+		(size 1 1.6)
+		(property pad_prop_heatsink)
+		(layers "F.Cu" "F.Mask")
+		(zone_connect 2)
+		(uuid "9fa54166-c498-4687-8717-3b2dbfdf4173")
+	)
+	(embedded_fonts no)
+	(model "${KICAD10_3DMODEL_DIR}/Package_SON.3dshapes/WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm.stpZ"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

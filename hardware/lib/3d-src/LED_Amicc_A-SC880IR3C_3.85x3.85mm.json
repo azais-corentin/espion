@@ -1,0 +1,32 @@
+{"commands":[
+ {"command":"parameters.add","params":{"name":"body_w","expression":"3.85 mm","comment":"Datasheet p6 top view: ceramic body 3.85 x 3.85 (square)"}},
+ {"command":"parameters.add","params":{"name":"body_h","expression":"0.6 mm","comment":"Datasheet p6 side view: ceramic base height 0.6 (incl. bottom pads)"}},
+ {"command":"parameters.add","params":{"name":"total_h","expression":"2.3 mm","comment":"Datasheet p6 side view: overall height 2.3 (board to lens top)"}},
+ {"command":"parameters.add","params":{"name":"lens_d","expression":"2.76 mm","comment":"Datasheet p6 top view: lens diameter 2.76; dome = hemisphere on a short cylinder"}},
+ {"command":"parameters.add","params":{"name":"pad_t","expression":"0.05 mm","comment":"Bottom pad metallisation thickness (not on datasheet; assumed)"}},
+ {"command":"parameters.add","params":{"name":"pad_l","expression":"2.7 mm","comment":"Datasheet p6 bottom view: pad length 2.7"}},
+ {"command":"parameters.add","params":{"name":"pad_w_out","expression":"0.5 mm","comment":"Datasheet p6 bottom view: outer pad (cathode, anode) width 0.5"}},
+ {"command":"parameters.add","params":{"name":"pad_w_mid","expression":"1.0 mm","comment":"Datasheet p6 bottom view: centre (anode/thermal) pad width 1.0"}},
+ {"command":"parameters.add","params":{"name":"pad_gap","expression":"0.45 mm","comment":"Datasheet p6 bottom view: gap between pads 0.45"}},
+ {"command":"parameters.add","params":{"name":"lens_base_d","expression":"3.3 mm","comment":"Datasheet p6 top view outer circle / side view lens-base fillet, scaled from drawing"}},
+ {"command":"parameters.add","params":{"name":"mid_pad_ch","expression":"0.3 mm","comment":"Datasheet p6 bottom view: centre-pad corner chamfer (polarity), scaled"}},
+
+ {"command":"solid.box","params":{"length":"body_w","width":"body_w","height":"body_h - pad_t","center":[0,0,"(body_h + pad_t)/2"],"operation":"new","body_name":"Body","name":"Ceramic"}},
+
+ {"command":"sketch.create","params":{"plane":"XZ","name":"LensProfile"}},
+ {"command":"sketch.line","params":{"points":[[0,"-total_h"],[0,"-body_h"],["lens_base_d/2","-body_h"]]}},
+ {"command":"sketch.arc.center_point","params":{"center":["lens_base_d/2","-(body_h + (lens_base_d - lens_d)/2)"],"start":"l2.end","end":["lens_d/2","-(body_h + (lens_base_d - lens_d)/2)"]}},
+ {"command":"sketch.line","params":{"points":[["lens_d/2","-(body_h + (lens_base_d - lens_d)/2)"],["lens_d/2","-(total_h - lens_d/2)"]]}},
+ {"command":"sketch.arc.center_point","params":{"center":[0,"-(total_h - lens_d/2)"],"start":"l1.start","end":"l3.end"}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.revolve","params":{"sketch":"LensProfile","axis":"Z","operation":"new","body_name":"Lens","name":"Lens"}},
+
+ {"command":"solid.box","params":{"length":"pad_w_out","width":"pad_l","height":"pad_t","center":["-(pad_w_mid/2 + pad_gap + pad_w_out/2)",0,"pad_t/2"],"operation":"new","body_name":"Pad_K","name":"PadCathode"}},
+ {"command":"solid.box","params":{"length":"pad_w_mid","width":"pad_l","height":"pad_t","center":[0,0,"pad_t/2"],"operation":"new","body_name":"Pad_A_Mid","name":"PadAnodeMid"}},
+ {"command":"solid.chamfer","params":{"edges":[[-0.5,1.35,0.025]],"distance":"mid_pad_ch","body":"Pad_A_Mid","name":"MidPadPolarity"}},
+ {"command":"solid.box","params":{"length":"pad_w_out","width":"pad_l","height":"pad_t","center":["pad_w_mid/2 + pad_gap + pad_w_out/2",0,"pad_t/2"],"operation":"new","body_name":"Pad_A","name":"PadAnode"}},
+
+ {"command":"appearance.assign","params":{"bodies":["Body"],"color":"#F0EEE6"}},
+ {"command":"appearance.assign","params":{"bodies":["Pad_K","Pad_A_Mid","Pad_A"],"color":"#D4AF37"}},
+ {"command":"appearance.assign","params":{"bodies":["Lens"],"color":"#DDE6EE","opacity":0.6}}
+]}
