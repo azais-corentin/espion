@@ -50,6 +50,14 @@ export interface ProjectConfig {
 	padMatchExempt: string[];
 	/** References exempt from one required field, e.g. {"LCSC": ["U1"]} for a part bought elsewhere. */
 	fieldExempt: Record<string, string[]>;
+	/** Ground nets for the decoupling and pulls checks: `*`/`?` patterns on the net's leaf name, case-insensitive. */
+	groundNets: string[];
+	/** Power pins that need no decoupling capacitor, with the reason: {"U3": "…"} or {"U3.7": "…"}. */
+	decouplingExempt: Record<string, string>;
+	/** Nets that need a pull-up resistor to a rail: `*`/`?` patterns on the net's leaf name, case-insensitive. */
+	pullUpNets: string[];
+	/** Nets exempt from the pulls check, by net name or leaf name, with the reason. */
+	pullsExempt: Record<string, string>;
 }
 
 export interface Config {
@@ -70,6 +78,10 @@ export const DEFAULTS: ProjectConfig = {
 	klcWaivers: {},
 	padMatchExempt: [],
 	fieldExempt: {},
+	groundNets: ["GND*", "*GND", "VSS*"],
+	decouplingExempt: {},
+	pullUpNets: ["*SDA*", "*SCL*", "*MDIO*"],
+	pullsExempt: {},
 };
 
 /** Walk up from `start` to the directory holding `.omp` or `.git`. */
@@ -106,6 +118,8 @@ function merge(a: ProjectConfig, b: Partial<ProjectConfig>): ProjectConfig {
 		powerSymbols: { ...a.powerSymbols, ...b.powerSymbols },
 		fieldExempt: { ...a.fieldExempt, ...b.fieldExempt },
 		klcWaivers: { ...a.klcWaivers, ...b.klcWaivers },
+		decouplingExempt: { ...a.decouplingExempt, ...b.decouplingExempt },
+		pullsExempt: { ...a.pullsExempt, ...b.pullsExempt },
 	};
 }
 

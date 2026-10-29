@@ -10,7 +10,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, Ethernet/UDP, PTP, PPS capture via ETM) | `cargo build --release` in that directory |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
-| `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values, part notes); the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, rules); BOM: `kicad_query` `bom` (preset `Order`) |
+| `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values, part notes); the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, decoupling, pulls, BOM lines, rules); BOM: `kicad_query` `bom` (preset `Order`) |
 | `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad toolkit: `kicad_edit` library ops, `kicad_check` `klc`; model rebuild in `hardware/lib/README.md` |
 | `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`) and its `kicad-*` skills; the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its vendored skills | `bun test` in `.omp/extensions/kicad` |
 | `docs/` | Architecture, wire protocol, timing | — |
@@ -93,5 +93,5 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
     in a firmware crate)
   - the build (and `cargo test --workspace` for host/shared crates)
   - for hardware: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields,
-    rules), with `klc` for changed library parts
+    decoupling, pulls, BOM lines, rules), with `klc` for changed library parts
   - for the KiCad toolkit: `bun test` in `.omp/extensions/kicad`

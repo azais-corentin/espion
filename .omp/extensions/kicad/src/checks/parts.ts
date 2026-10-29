@@ -1,7 +1,8 @@
 /**
- * Part data checks (`footprints`, `fields`): every board part has a footprint that resolves and
- * whose pads match the symbol's pins, and every BOM part carries the sourcing fields the project
- * requires. Both read KiCad's netlist, so DNP / BOM / board flags are KiCad's own.
+ * Part data checks (`footprints`, `fields`, `bom_lines`): every board part has a footprint that
+ * resolves and whose pads match the symbol's pins, every BOM part carries the sourcing fields the
+ * project requires, and BOM lines agree (one part number per value and footprint, one value per
+ * part number). All read KiCad's netlist, so DNP / BOM / board flags are KiCad's own.
  */
 import type { Component } from "../cli";
 import type { Project } from "../project";
@@ -155,4 +156,104 @@ const fields: CheckDef = {
 	},
 };
 
-export const checks: CheckDef[] = [footprints, fields];
+const SI: Record<string, number> = { p: 1e-12, n: 1e-9, u: 1e-6, m: 1e-3, R: 1, r: 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9 };
+
+/**
+ * Numeric value of an R/C/L Value: SI prefix or RKM notation, optional unit ("4k7" = "4.7k" =
+ * "4700", "100n" = "100nF" = "0.1u", "1R5" = "1.5", "10 kΩ"); words after the value (a rating such
+ * as "50V", "1%", "X7R") are ignored. Undefined when it doesn't parse.
+ */
+export function parseValue(value: string): number | undefined {
+	const [first = "", second = ""] = value.trim().replace(/[µμ]/g, "u").split(/\s+/);
+	// "10 k", "100 nF": a second word that is only a prefix and/or unit belongs to the value
+	const s = second && /^[pnumkKMG]?(?:Ω|[Oo]hms?|[FfHh])?$/.test(second) ? first + second : first;
+	const m = /^(\d+(?:\.\d+)?|\.\d+)(?:([pnumkKMGRr])(\d*))?(?:Ω|[Oo]hms?|[FfHh])?$/.exec(s);
+	if (!m || (m[3] && m[1]!.includes("."))) return undefined;
+	const n = Number(m[3] ? `${m[1]}.${m[3]}` : m[1]) * (m[2] ? SI[m[2]]! : 1);
+	return Number(n.toPrecision(12));
+}
+
+const sortRefs = (refs: string[]) => refs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+interface BomPart {
+	c: Component;
+	prefix: string;
+	/** MPN, or "LCSC <code>" when the MPN is empty. */
+	id: string;
+	/** Normalized Value: the number for a parseable R/C/L value, else the trimmed Value. */
+	norm: string;
+	num?: number;
+}
+
+/** "100n/0.1u (C1, C2)": the Values as written and the references of a group of parts. */
+function listing(parts: BomPart[]): string {
+	return `${[...new Set(parts.map(p => p.c.value.trim()))].join("/")} (${sortRefs(parts.map(p => p.c.ref)).join(", ")})`;
+}
+
+function groupBy<T>(items: T[], key: (t: T) => string): Map<string, T[]> {
+	const m = new Map<string, T[]>();
+	for (const it of items) {
+		const k = key(it);
+		m.set(k, [...(m.get(k) ?? []), it]);
+	}
+	return m;
+}
+
+const bomLines: CheckDef = {
+	name: "bom_lines",
+	doc: 'BOM parts (not DNP, not excluded from the BOM) with an MPN field (else LCSC; parts with neither are skipped): same reference prefix, normalized Value and footprint but different MPNs (warning); one MPN with different normalized Values: error when all are R/C/L parts with parsed values (a wrong part), else info (Value naming the function, e.g. RESET/BOOT on one switch); R/C/L parts with the same footprint whose adjacent distinct values differ by a ratio <= 2.2 (info, merge candidates). R/C/L Values are compared as numbers: SI prefix or RKM ("4k7" = "4.7k" = "4700", "100n" = "0.1uF", "1R5"), units Ω/ohm/F/H, words after the value (a rating: "50V", "1%", "X7R") ignored; other Values compare as trimmed text.',
+	byDefault: true,
+	async run(ctx) {
+		const nl = await ctx.analysis.netlist();
+		const parts: BomPart[] = [];
+		for (const c of nl.components.values()) {
+			if (c.excludeFromBom || c.dnp) continue;
+			const mpn = (c.fields.MPN ?? "").trim();
+			const lcsc = (c.fields.LCSC ?? "").trim();
+			if (!mpn && !lcsc) continue;
+			const prefix = /^\D*/.exec(c.ref)![0];
+			const num = ["R", "C", "L"].includes(prefix) ? parseValue(c.value) : undefined;
+			parts.push({ c, prefix, id: mpn || `LCSC ${lcsc}`, norm: num === undefined ? c.value.trim() : String(num), num });
+		}
+		const out: Finding[] = [];
+		const add = (severity: Finding["severity"], group: BomPart[], message: string, key: string) =>
+			out.push({ check: "bom_lines", severity, message, key, refs: sortRefs(group.map(p => p.c.ref)) });
+		for (const group of groupBy(parts, p => `${p.prefix}\0${p.norm}\0${p.c.footprint}`).values()) {
+			const byId = groupBy(group, p => p.id);
+			if (byId.size < 2) continue;
+			const { prefix, norm, c } = group[0]!;
+			add(
+				"warning",
+				group,
+				`Value ${[...new Set(group.map(p => p.c.value.trim()))].join("/")} with footprint ${c.footprint} has different part numbers: ${[...byId].map(([id, ps]) => `${id} (${sortRefs(ps.map(p => p.c.ref)).join(", ")})`).join("; ")}`,
+				`bom_lines|mpns|${prefix}|${c.footprint}|${norm}`,
+			);
+		}
+		for (const [id, group] of groupBy(parts, p => p.id)) {
+			const byValue = groupBy(group, p => p.norm);
+			if (byValue.size < 2) continue;
+			const quantities = group.every(p => p.num !== undefined);
+			add(quantities ? "error" : "info", group, `${id} has different Values: ${[...byValue.values()].map(listing).join("; ")}`, `bom_lines|values|${id}`);
+		}
+		const rcl = parts.filter(p => p.num !== undefined && p.num > 0);
+		for (const group of groupBy(rcl, p => `${p.prefix}\0${p.c.footprint}`).values()) {
+			const byValue = [...groupBy(group, p => p.norm).values()].sort((a, b) => a[0]!.num! - b[0]!.num!);
+			for (let i = 1; i < byValue.length; i++) {
+				const [lo, hi] = [byValue[i - 1]!, byValue[i]!];
+				const ratio = hi[0]!.num! / lo[0]!.num!;
+				if (ratio > 2.2) continue;
+				add(
+					"info",
+					[...lo, ...hi],
+					`merge candidates (${lo[0]!.c.footprint}): ${listing(lo)} and ${listing(hi)} differ by x${Number(ratio.toFixed(2))}`,
+					`bom_lines|merge|${lo[0]!.prefix}|${lo[0]!.c.footprint}|${lo[0]!.norm}|${hi[0]!.norm}`,
+				);
+			}
+		}
+		if (!ctx.sheets) return out;
+		const paths = new Set(ctx.sheets.map(s => s.namePath));
+		return out.filter(f => f.refs!.some(r => paths.has(nl.components.get(r)!.sheetName)));
+	},
+};
+
+export const checks: CheckDef[] = [footprints, fields, bomLines];

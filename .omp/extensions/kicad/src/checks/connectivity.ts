@@ -29,7 +29,7 @@ export function ercFindings(v: ErcViolation[]): Finding[] {
 
 const erc: CheckDef = {
 	name: "erc",
-	doc: "KiCad's ERC, one finding per violation with KiCad's severity and sheet path; violations excluded in KiCad are listed as info with their exclusion comment.",
+	doc: "KiCad's ERC, one finding per violation with KiCad's severity and sheet path; violations excluded in KiCad are info with their exclusion comment, or a warning when the exclusion has no comment (excluded without a reason).",
 	byDefault: true,
 	async run(ctx) {
 		const violations = await ctx.analysis.erc();
@@ -37,9 +37,10 @@ const erc: CheckDef = {
 		const findings = [
 			...ercFindings(violations),
 			...ercFindings(excluded.map(v => ({ ...v, excluded: false }))).map((f, i): Finding => {
-				const v = excluded[i]!;
-				const comment = v.comment ? ` (${v.comment})` : "";
-				return { ...f, severity: "info", message: `excluded in KiCad${comment}: ${f.message}` };
+				const comment = excluded[i]!.comment?.trim();
+				return comment
+					? { ...f, severity: "info", message: `excluded in KiCad (${comment}): ${f.message}` }
+					: { ...f, severity: "warning", message: `excluded in KiCad without a reason (add a comment to the exclusion): ${f.message}` };
 			}),
 		];
 		if (!ctx.sheets) return findings;

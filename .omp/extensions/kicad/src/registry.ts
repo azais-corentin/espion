@@ -1,4 +1,5 @@
 /** Every edit op, query and check, keyed by name, plus the generated docs for the tool descriptions. */
+import { checks as circuitChecks } from "./checks/circuit";
 import { checks as connectivityChecks } from "./checks/connectivity";
 import { checks as klcChecks } from "./checks/klc";
 import { checks as partChecks } from "./checks/parts";
@@ -27,7 +28,7 @@ function byName<T>(items: T[], name: (t: T) => string, what: string): Map<string
 export const OPS = byName<OpDef>([...schematicOps, ...hierarchyOps, ...projectOps, ...libraryOps], o => o.op, "op");
 export const QUERIES = byName<QueryDef>([...projectQueries, ...libraryQueries, ...diffQueries], q => q.what, "query");
 export const CHECKS = byName<CheckDef>(
-	[...connectivityChecks, ...styleChecks, ...partChecks, ...rulesChecks, ...klcChecks],
+	[...connectivityChecks, ...styleChecks, ...partChecks, ...circuitChecks, ...rulesChecks, ...klcChecks],
 	c => c.name,
 	"check",
 );
