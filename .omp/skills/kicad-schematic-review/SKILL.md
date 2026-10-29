@@ -5,45 +5,109 @@ description: Use when reviewing or verifying a KiCad schematic in this repo (des
 
 # Reviewing a KiCad schematic
 
-## Scope first
-Ask (with `ask`) what to verify and what to skip when the request is open-ended: whole board or some sheets, electrical design vs drawing style, datasheet checks, doc conformance (`SCHEMATIC.md`), BOM/sourcing. A review is **report-only** unless the user asks for fixes; fixes then follow the `kicad-schematic-edit` skill.
+The items to verify are in [checklist.md](skill://kicad-schematic-review/checklist.md) (IDs such as `PWR-3`). This file is the process: modes, phases, who checks what, depth and output.
 
-## Machine checks (one call)
-`kicad_check` with no `checks` runs every default check: `erc`, `connectivity` (vs git HEAD; pass `baseline` for another ref), `style` (drawing rules), `footprints` (footprints resolve, pins ↔ pads), `fields` (sourcing fields), `netclasses`, `rules` (.kicad_dru loads). `klc` (library parts) runs when named. Use these results as the baseline of the report; don't repeat by hand what a check proves.
+## Rules
+- **Report-only** unless the user asks for fixes (then see [Fix loop](#fix-loop-only-when-asked)).
+- **Independent.** A reviewer never reviews a change it made. If you made the change in this session, every review step goes to subagents.
+- **Recompute, don't trust.** `SCHEMATIC.md` "Values and derivations", the author's report and earlier reviews are claims to check. Open the datasheet yourself.
+- **Known open items.** Entries in a `SCHEMATIC.md` "To verify" list are already known: don't report them again as findings. Report one only when the documents now settle it (say how) or when it is worse than the list says.
+- Never fetch EasyEDA/LCSC symbol, footprint or model data (AGENTS.md). Stock, price and second sources belong to `kicad-part-sourcing`; library parts to `kicad-library-review`.
 
-## Per-sheet review (fan out)
-For more than two sheets, spawn one `task` subagent per sheet (default agent type, so the kicad_* tools are available; don't restrict their tools). Give each:
-- the sheet name and its purpose from `SCHEMATIC.md`,
-- the parts on it with datasheet links (from `kicad_query symbols` / `symbol` Datasheet fields),
-- what to verify (below) and the findings format,
-- that it may only use `kicad_query`, `kicad_check`, `kicad_render`, `kicad_datasheet` (datasheet pages and crops as images, plus the local PDF path), `read`, `web_search`; no edits,
-- the depth limits below, verbatim.
+## Mode
+Ask (with `ask`) when the request doesn't settle it, together with the scope (whole board or some sheets, which topics to skip):
 
-What a sheet reviewer verifies:
-1. Every IC pin against the datasheet pin table: function, required pull-ups/downs, strapping, decoupling (value, count, placement near the pin it serves), absolute maximum ratings vs the nets on it.
-2. Power: input range, output setting resistors (compute the result), inductor/capacitor ratings, current paths, enable/sequence, protection.
-3. Signals: direction and level of every net leaving the sheet (hierarchical labels), pairs (`_P/_N`) and their net class, termination.
-4. Parts: value/footprint/rating fit, DNP intent, sourcing fields.
-5. Drawing: readability problems the `style` check can't see (crowding, misleading placement); look with `kicad_render`.
+| Mode | Scope | Derivations | Budget |
+|---|---|---|---|
+| `change` | Parts and nets in the `connectivity` diff vs the baseline, plus every part on those nets | Recompute the ones the change touches | ≈ 15 calls per touched sheet |
+| `standard` | Every sheet and topic | Spot-check: recompute at least the two that matter most per sheet | ≈ 30 per sheet, ≈ 30 per topic |
+| `full` | Every sheet and topic, plus the production topic | Recompute all of them with worst-case tolerances and rail ranges; compare every block with its vendor reference design | ≈ 60 per sheet, ≈ 40 per topic |
+
+Checklist items marked **(full)** run only in `full` mode.
+
+## Phase 0: machine checks (one call)
+`kicad_check` with no `checks` runs every default check:
+- `erc`: violations; an exclusion without a reason is a warning;
+- `connectivity`: vs git HEAD; pass `baseline` for another ref. In `change` mode, its diff defines the scope;
+- `style`: drawing rules;
+- `footprints`: footprints resolve; pins ↔ pads;
+- `fields`: sourcing fields;
+- `netclasses`;
+- `rules`: `.kicad_dru` loads;
+- `decoupling`: a capacitor to ground on the sheet for every IC rail;
+- `pulls`: pull-ups on open-drain, I²C and MDIO nets, with both I²C lines on the same rail;
+- `bom_lines`: MPN consistency and merge candidates.
+
+`klc` runs only when named. These results are the baseline of the report: a reviewer reads the result for an item marked **Auto:** in the checklist, and doesn't redo it by hand.
+
+## Phase 1: architecture (yourself)
+Work through ARCH-1…4:
+- the power tree with rail ranges;
+- the list of external contacts;
+- blocks vs `SCHEMATIC.md` and `docs/architecture.md`;
+- one reference design or hardware design guide per major IC (datasheet application circuit, app note, Espressif hardware design guidelines for the P4).
+
+Write the result to `local://review-architecture.md`. Every reviewer gets it. In `change` mode, cover only what the change touches: the rails it draws from or feeds, the external contacts it reaches, its blocks and the reference designs of its new or changed ICs.
+
+## Phase 2: reviewers (fan out)
+Spawn `task` subagents in one batch (default agent type, so the kicad_* tools are available; don't restrict their tools). In `change` mode, spawn one reviewer for the whole scope. It covers the sheet items of every sheet the change touches, plus the topic items that the change reaches: a rail, an external contact or an MCU pin. Spawn per-sheet reviewers only when the change spans more than two sheets.
+
+| Reviewer | Checklist items |
+|---|---|
+| One per sheet | PWR-2, PWR-4, PWR-7; PASS; IC; RST-1, RST-2; BUS-1…4, BUS-6; HS; CLK; ANA; PROT-5; DOC-2; DOC-3 for its own `SCHEMATIC.md` section |
+| Topic: power & protection | ARCH-1 checked in depth; PWR-1, PWR-3, PWR-5, PWR-6, PWR-8; PROT-1…4; EMC |
+| Topic: firmware & bring-up | RST-3, RST-4; FW-1…5; BUS-1 addresses and recovery; BUS-5 across sheets |
+| Topic: production (`full` only) | PROD |
+| You, after the reviewers | DOC-1, DOC-3 across sheets (hierarchical pins, buses, net classes), DOC-4, DOC-5; merging |
+
+Give each reviewer:
+- the mode, its scope (sheet or topic), and its purpose from `SCHEMATIC.md`;
+- the path of this skill's `checklist.md` and its item IDs;
+- `local://review-architecture.md` and the phase 0 findings for its scope;
+- the parts with their datasheet links (`kicad_query symbols` / `symbol` Datasheet fields);
+- the Rules and Depth limits sections of this file, verbatim;
+- the output format below.
+
+Tools for reviewers: `kicad_query`, `kicad_check`, `kicad_render`, `kicad_datasheet` (pages and crops as images, plus the local PDF path), `read`, `grep`, `web_search`. No edits.
 
 ## Depth limits (every reviewer, including subagents)
 A review ends; it does not chase every number to the last digit.
-- Budget about 30 tool calls per sheet. When a fact would need more digging, write the finding as `[unverified]` with what to check and move on; it goes under open questions.
-- Datasheets: read the pin table, the application circuit, the absolute maximum ratings and the package drawing pages through `kicad_datasheet` (crop a figure with `box` and a higher `dpi` instead of scripting). Don't extract PDF vectors or measure drawings pixel by pixel.
-- Footprints: compare `kicad_query lib_footprint` (pads, sizes, positions) with the datasheet's recommended land pattern. Never fetch EasyEDA/LCSC footprint or symbol data (AGENTS.md: their terms forbid using it). Library parts themselves are reviewed with the `kicad-library-review` skill.
-- Second sources, price and stock belong to the `kicad-part-sourcing` skill, not to a review, unless the user asked for them.
-- Finished when every item of "What a sheet reviewer verifies" has a finding, a pass with evidence, or an `[unverified]` entry. Then report; don't keep refining.
+- Keep to the mode's budget. When a fact would need more digging, record it under `unverified` with what to check and how, then move on.
+- Datasheets: read the pin table, the application circuit, the abs max and recommended operating conditions, and the equations the design uses, through `kicad_datasheet` (crop a figure with `box` and a higher `dpi`). Don't extract PDF vectors or measure drawings pixel by pixel.
+- Footprints: for stock footprints of ICs and connectors in scope (standard passive packages exempt; in `change` mode only new or changed footprints), compare `kicad_query lib_footprint` with the datasheet's land pattern. Project library parts are reviewed with `kicad-library-review`, not here.
+- Finished when every item in scope is in `findings`, `passed`, `unverified` or `na`. Then return; don't keep refining. An item may sit in `passed` and in `findings` when part of it passed. `na` only holds items that are in no other list.
 
-## Findings format
-One line per finding, grouped by sheet, worst first:
-`- [error|warning|note] <REF/net>: <what is wrong> — evidence: <tool output or datasheet page, table/figure> — fix: <concrete change>`
-- Every number from a datasheet cites the document and page. Every claim about the design cites a `kicad_query` / `kicad_check` result. Unverified → say so (`[unverified]`).
-- No finding without evidence; no style nits disguised as errors.
+## Reviewer output
+Return exactly one JSON object:
+```json
+{"scope": "sheet:Power | topic:power | topic:firmware | topic:production | change",
+ "verdict": "approve | changes_requested",
+ "findings": [{"severity": "blocker | major | minor", "item": "PWR-2", "where": "U5 / +3V3",
+               "issue": "…", "evidence": "datasheet p. N table/figure, or tool output", "fix": "concrete change"}],
+ "passed": [{"item": "PWR-1", "evidence": "…"}],
+ "unverified": [{"item": "BUS-1", "what": "bus capacitance unknown", "how": "measure t_r on the first boards"}],
+ "na": ["ANA-1"]}
+```
 
-## Cross-sheet pass (yourself, after the subagents)
-- Hierarchical/global nets that cross sheets: names, directions, levels match on both sides (`kicad_query net`).
-- Total power budget vs the supply, rail sequencing.
-- `SCHEMATIC.md` vs reality: buses, hierarchical pins, parts, values (`kicad_query hierarchy`, `symbols`, `netclasses`). List every mismatch; the doc or the schematic is wrong, say which you think.
+Severity:
+- **blocker**: the board won't work, or a part, the user or a connected device can be damaged;
+- **major**: it works only in some conditions or outside a spec, or needs rework or a firmware workaround;
+- **minor**: best practice, margins, documentation, readability.
 
-## Report
-Summary table (sheet × errors/warnings/notes), then the findings, then open questions for the user. Write longer findings to `local://` files and reference them.
+Every finding has evidence and a concrete fix. Every datasheet number cites the document and page; every claim about the design cites a `kicad_query` / `kicad_check` result. A remark that needs no change is not a finding: put it in `passed` with its evidence. `approve` only when `findings` is empty.
+
+## Merge and report (yourself)
+1. Collect the JSON objects. Merge findings with the same `where` and `item`, keeping the strongest evidence and the highest severity. Drop findings that repeat a known "To verify" entry.
+2. Do your own items (DOC-1, DOC-3…5) and the cross-sheet checks: names, directions and levels match on both ends of every hierarchical and global net (`kicad_query net`).
+3. Report:
+   - a summary table: sheet/topic × blocker/major/minor/unverified;
+   - coverage: items passed / with findings / unverified / na;
+   - findings grouped by sheet/topic, worst first, one line each: `- [blocker|major|minor] ITEM <REF/net>: <issue> — evidence: … — fix: …`;
+   - open questions for the user (the `unverified` entries that need a decision or a measurement).
+
+   Put long material (the merged JSON, long derivations) in `local://` files and reference them.
+
+## Fix loop (only when asked)
+1. Give the findings the user accepts to an author subagent, which follows `kicad-schematic-edit`, updates `SCHEMATIC.md`, and reports its connectivity diff.
+2. A fresh reviewer (never the author) checks only those findings and the fix's `connectivity` diff, in `change` mode, with this skill.
+3. Repeat until it approves. After three rounds without approval, stop and ask the user.

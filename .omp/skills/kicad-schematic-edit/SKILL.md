@@ -22,7 +22,8 @@ description: Use when changing anything in a KiCad project in this repo (schemat
    - Omit `expect` for edits that must not change connectivity (moves, fields, cosmetics).
    Use `dry_run: true` for large edits and `render: true` to see the result.
 4. **When it says NOT APPLIED**, nothing was written. Read every listed problem. If connectivity differs from `expect`, the drawing is wrong or the expectation is: find out which (render, `net`, `symbol`) before changing either. Never copy the actual result into `expect` without understanding it.
-5. **After applying**: `kicad_check {checks: ["erc", "style", "connectivity"]}` (connectivity compares with git HEAD), then update the docs.
+5. **After applying**: `kicad_check {checks: ["erc", "style", "connectivity", "decoupling", "pulls"]}` (connectivity compares with git HEAD), then update the docs.
+6. **Before finishing**: walk the items of the review checklist (`skill://kicad-schematic-review/checklist.md`) that the change touches. For a new part that means at least IC-1…4, RST-3, the PWR/PASS items for its supply and parts, and BUS-5 for every signal it shares with another device. Recompute each value you changed or added in `SCHEMATIC.md` "Values and derivations". Fix what you find. An independent review of the change is `kicad-schematic-review` in `change` mode, run by another agent.
 
 ## Drawing rules (checked on every edit; new violations reject the edit)
 - **R1 pin stub**: every wired pin leaves with at least 1.27 mm of straight wire in the pin's direction, with no junction, branch, bend or other connection inside that first 1.27 mm (exactly at 1.27 mm is fine).

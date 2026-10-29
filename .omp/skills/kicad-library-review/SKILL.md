@@ -5,7 +5,7 @@ description: Use when reviewing a project library part in this repo (symbol, foo
 
 # Reviewing a library part
 
-A review is **independent and read-only**: never the agent that made the part, never edits. Open the datasheet yourself and recompute every number; the author's report is a claim to check, not evidence. Fixes go back to an author (`kicad-library-part` skill).
+A review is **independent and read-only**: a reviewer never reviews a part it made, and never edits. Open the datasheet yourself and recompute every number; the author's report and `hardware/lib/README.md` are claims to check, not evidence. Fixes go back to an author (`kicad-library-part` skill). The output format and severities match `kicad-schematic-review`.
 
 ## Inputs
 - The part ids (`Lib:Name` of the symbol, footprint, model path) and the board that uses them.
@@ -25,15 +25,24 @@ A review is **independent and read-only**: never the agent that made the part, n
 9. **Provisional items** are marked in the part (Description / descr) and are truly unresolvable from the documents; if you can resolve one, say how.
 
 ## Depth limits
-Budget about 40 tool calls per part. When a fact needs more digging, record it as `[unverified]` with what to check. Datasheets through `kicad_datasheet` only (no hand-rolled PDF tooling). Finished when every checklist item has a finding, a pass with evidence, or an `[unverified]` entry.
+Budget about 40 tool calls per part. When a fact needs more digging, record it under `unverified` with what to check and how. Datasheets through `kicad_datasheet` only (no hand-rolled PDF tooling). Finished when every checklist item is in `findings`, `passed`, `unverified` or `na`.
 
 ## Verdict
 ```json
-{"verdict": "approve | changes_requested",
- "findings": [{"severity": "blocker | major | minor", "part": "Lib:Name", "issue": "…", "evidence": "datasheet p. N / tool output", "fix": "concrete change"}],
- "notes": "what was checked and passed, [unverified] items"}
+{"scope": "part:Lib:Name",
+ "verdict": "approve | changes_requested",
+ "findings": [{"severity": "blocker | major | minor", "item": "3", "where": "Lib:Name pad 5",
+               "issue": "…", "evidence": "datasheet p. N / tool output", "fix": "concrete change"}],
+ "passed": [{"item": "2", "evidence": "…"}],
+ "unverified": [{"item": "6", "what": "…", "how": "…"}],
+ "na": ["4"]}
 ```
-`approve` only when no finding needs a change; non-actionable remarks go in `notes`. Every finding has evidence and a concrete fix.
+`item` is the checklist number above. Severity:
+- **blocker**: the part can't be assembled or is wired wrong (pin ↔ pad, pinout, pad geometry);
+- **major**: assembly or yield risk, or a KLC error;
+- **minor**: naming, fields, graphics, documentation.
+
+`approve` only when `findings` is empty. A remark that needs no change goes in `passed` with its evidence. Every finding has evidence and a concrete fix.
 
 ## Review loop (when you orchestrate)
 Spawn one reviewer subagent per part (default agent type, so the kicad tools are available) with this skill, the inputs above and the author's report. On `changes_requested`, give the findings to an author (`kicad-library-part`), then review again in a new round with a fresh reviewer. After three rounds without approval, stop and ask the user.
