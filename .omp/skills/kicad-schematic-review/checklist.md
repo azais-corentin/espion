@@ -2,7 +2,7 @@
 
 Items carry an ID that findings and passes cite (`"item": "PWR-3"`). Every item applies in `change` mode (to the parts and nets in scope) and in `standard` and `full` mode, except those marked **(full)**: those run in `full` mode only. **Auto:** names the `kicad_check` check that already proves the item: read its result and don't redo it by hand. An item that doesn't apply to the scope is `na`, not a pass.
 
-Numbers come from the datasheet (document, page, table/figure) or from `kicad_query`; computed numbers show the formula and its inputs. Worst case means component tolerance and rail min/max (the rail ranges are in `SCHEMATIC.md`).
+Numbers come from the datasheet (document, page, table/figure) or from `kicad_query`; computed numbers show the formula and its inputs. Worst case means component tolerance and rail min/max (the rail ranges are in `SCHEMATIC.md`), as limited by the review skill's **Design assumptions** (`skill://kicad-schematic-review`): sources within their standard, accessories working, ±5 % rails in spec, no TCR or maximum-temperature leakage stacking, latest silicon revision. A case those assumptions exclude is not a finding under any item below.
 
 ## ARCH: architecture (orchestrator, phase 1)
 - **ARCH-1** Power tree: every rail, its source, its loads and its range at min/max input. Matches `SCHEMATIC.md` "Power nets" and `docs/architecture.md`.
@@ -11,7 +11,7 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 - **ARCH-4** Reference designs: for each major IC, the vendor's application circuit or hardware design guide (for the ESP32-P4: Espressif's hardware design guidelines and schematic checklist). Deviations from it are intentional and written down in `SCHEMATIC.md`; an undocumented deviation is a finding.
 
 ## PWR: power
-- **PWR-1** Every regulator input stays within its operating range over the worst-case source range, including UVLO and abs max (transients and the source's regulation limits).
+- **PWR-1** Every regulator input stays within its operating range over the source's specified range (its standard or datasheet regulation limits), including UVLO and abs max.
 - **PWR-2** Output setting: recompute the feedback divider with the datasheet's V_REF and its tolerance, and the resistor tolerance; the result fits every load's supply range.
 - **PWR-3** Load current: sum the loads per rail (typ and max); each regulator, load switch, mux and fuse carries it with margin. LDOs: dropout headroom at minimum input. **(full)** Thermal: P = (V_in − V_out)·I for linear parts, efficiency for switchers; T_j at the worst ambient stays below the limit.
 - **PWR-4** Switcher parts: inductor value in the datasheet's range, I_sat above the peak switch current, DCR; input and output capacitance (effective, after DC-bias derating) in the stable range, ESR as the datasheet asks; compensation parts against the datasheet's equations; diode ratings for a non-synchronous switcher.
@@ -28,7 +28,7 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 - **PASS-5** Recompute every divider, LED current-limit resistor, RC time constant and filter corner in scope with the actual values; worst case where it sets a threshold.
 
 ## IC: pins and parts
-- **IC-1** Every pin of every IC against the datasheet's pin table: function, net, required pull, required external part. Every pin, not only the ones that look important.
+- **IC-1** Every pin of every IC against the datasheet's pin table for the latest silicon revision: function, net, required pull, required external part. Every pin, not only the ones that look important.
 - **IC-2** Unused pins handled as the datasheet says (grounded, tied high, left open, no-connect flag); unused units of multi-unit parts (op-amps, gates) terminated.
 - **IC-3** Exposed/thermal pad connected to the net the datasheet names.
 - **IC-4** Abs max of each pin vs the worst-case voltage of the net on it, including during power-up when its own supply is off (back-powering through I/O).
@@ -60,13 +60,13 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 ## ANA: analog
 - **ANA-1** ADC inputs: source impedance and an RC filter fitting the ADC's sampling; the input range at worst case stays within the ADC's range.
 - **ANA-2** Op-amps and comparators: input polarity, supply and common-mode range, output swing vs what follows; stability with the capacitive load and the feedback network; unused sections terminated.
-- **ANA-3** Sense resistors and dividers: power, tolerance and temperature coefficient enough for the accuracy the firmware needs.
+- **ANA-3** Sense resistors and dividers: power, tolerance and (for measurements whose accuracy the firmware relies on) temperature coefficient enough for that accuracy. Threshold dividers that only select a mode or a switchover point are judged at tolerance, not drift.
 
 ## PROT: protection
-- **PROT-1** ESD protection on every external contact from ARCH-2: connector pins, shields, buttons, exposed pads and test points the user can touch; working voltage above the line's maximum; capacitance acceptable for the signal's speed.
-- **PROT-2** Input power: reverse polarity, overvoltage/transient clamp, overcurrent (fuse, current limit), undervoltage behaviour.
-- **PROT-3** Outputs that leave the board are short-circuit safe.
-- **PROT-4** Series resistors or current limits on nets coming from outside into MCU pins.
+- **PROT-1** ESD protection on every contact a user reaches in use, from ARCH-2: user-pluggable connector pins, shields, buttons, exposed pads and test points the user can touch; working voltage above the line's maximum; capacitance acceptable for the signal's speed. Internal connectors to the project's own accessories (camera FPC, pigtails) are assembled unpowered and need none.
+- **PROT-2** Input power within the source's standard: transient/ESD clamp on user-pluggable inputs, inrush, undervoltage and hot-plug behaviour. No overvoltage cut-off, reverse-polarity or overcurrent protection against sources outside their standard (USB stays ≤ 5.5 V, PoE follows 802.3).
+- **PROT-3** Outputs on user-pluggable connectors are short-circuit safe. Supplies to the project's own accessories (e.g. the camera module) need no current limit: the accessory is assumed to work.
+- **PROT-4** Series resistors or current limits on nets coming from user-pluggable connectors into MCU pins.
 - **PROT-5** Inductive and pulsed loads: MOSFETs and switches protected against the transients they switch (snubber, clamp, body diode rating).
 
 ## EMC

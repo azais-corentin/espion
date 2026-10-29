@@ -13,6 +13,17 @@ The items to verify are in [checklist.md](skill://kicad-schematic-review/checkli
 - **Recompute, don't trust.** `SCHEMATIC.md` "Values and derivations", the author's report and earlier reviews are claims to check. Open the datasheet yourself.
 - Never fetch EasyEDA/LCSC symbol, footprint or model data (AGENTS.md). Stock, price and second sources belong to `kicad-part-sourcing`; library parts to `kicad-library-review`.
 
+## Design assumptions (not findings)
+A finding is something that fails in normal operation with every part inside its specified tolerance, or a written claim that is wrong. The review takes the following as given. Don't report against them, don't spend calls proving them, and don't list them as `unverified`:
+- **Connected equipment meets its own standard.** USB VBUS stays ≤ 5.5 V, a PoE PSE follows 802.3, a host behaves like an ordinary host (a bench USB port supplies 500 mA from attach). No overvoltage cut-offs, fuses or current limits against non-compliant or faulty sources; ESD/surge clamps on user-pluggable inputs are still in scope (PROT-1).
+- **The project's own accessories work.** The camera module, its cables and other parts the design names are assembled correctly and don't short. No current limits, fuses, ESD parts or series resistors for internal connectors and cables; ESD covers what a user touches in use (USB, RJ45, buttons, exposed metal).
+- **A nominal rail is in spec.** A rail within ±5 % of its nominal (3.3 V: 3.135–3.465 V) suits every part rated for that nominal, even when one datasheet prints a slightly narrower window. A worst case that crosses a limit by tens of millivolts is not a finding.
+- **Worst case = datasheet tolerances at the operating point, not stacked extremes.** Use the reference and resistor tolerances and the rail range in `SCHEMATIC.md`. Don't add resistor TCR or temperature drift, maximum-temperature leakage corners (85 °C I_LK) or several independent worst cases at once, unless the circuit is a precision measurement whose accuracy the firmware relies on (ANA-3). A margin that only disappears that way is not a finding.
+- **Latest silicon revision.** Assume the newest revision of every IC and module; requirements and errata of older revisions are not findings.
+- **Firmware follows the documented rules.** Ask for a new firmware rule only when the hardware needs it to work; never one that guards against firmware setting wrong register bits or ignoring a documented rule.
+
+A concern these assumptions exclude stays out of the report even when its fix looks cheap. The project's own assumptions in `SCHEMATIC.md` (e.g. accepted corners, bring-up checks) also stand unless the review shows them wrong.
+
 ## Mode
 Ask (with `ask`) when the request doesn't settle it, together with the scope (whole board or some sheets, which topics to skip):
 
@@ -64,7 +75,7 @@ Give each reviewer:
 - the path of this skill's `checklist.md` and its item IDs;
 - `local://review-architecture.md` and the phase 0 findings for its scope;
 - the parts with their datasheet links (`kicad_query symbols` / `symbol` Datasheet fields);
-- the Rules and Depth limits sections of this file, verbatim;
+- the Rules, Design assumptions and Depth limits sections of this file, verbatim;
 - the output format below.
 
 Tools for reviewers: `kicad_query` (including `wires {sheet, box}` for wiring geometry), `kicad_check`, `kicad_render`, `kicad_datasheet` (`find`/`pages` for text, pages and crops as images, plus the local PDF path), `read`, `grep`, `web_search`. No edits.
@@ -90,13 +101,13 @@ Return exactly one JSON object:
 
 Severity:
 - **blocker**: the board won't work, or a part, the user or a connected device can be damaged;
-- **major**: it works only in some conditions or outside a spec, or needs rework or a firmware workaround;
-- **minor**: best practice, margins, documentation, readability.
+- **major**: it fails in some normal operating condition or runs a part outside its spec (judged by [Design assumptions](#design-assumptions-not-findings)), or needs rework or a firmware workaround;
+- **minor**: a wrong or missing statement in the docs, readability, or a best-practice deviation with a concrete consequence in normal operation. A thin margin is minor only when it fails at the worst case the Design assumptions define.
 
 Every finding has evidence and a concrete fix. Every datasheet number cites the document and page; every claim about the design cites a `kicad_query` / `kicad_check` result. A remark that needs no change is not a finding: put it in `passed` with its evidence. `approve` only when `findings` is empty.
 
 ## Merge and report (yourself)
-1. Collect the JSON objects. Merge findings with the same `where` and `item`, keeping the strongest evidence and the highest severity.
+1. Collect the JSON objects. Drop findings that rest on a case the [Design assumptions](#design-assumptions-not-findings) exclude (and their `unverified` entries). Merge findings with the same `where` and `item`, keeping the strongest evidence and the highest severity.
 2. Do your own items (DOC-1, DOC-3…5) and the cross-sheet checks: names, directions and levels match on both ends of every hierarchical and global net (`kicad_query net`).
 3. Report:
    - a summary table: sheet/topic × blocker/major/minor/unverified;
