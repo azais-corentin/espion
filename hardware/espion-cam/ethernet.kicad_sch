@@ -3317,6 +3317,12 @@
 		(uuid "dea39538-670a-4582-aa4a-7168607ff77c")
 	)
 	(junction
+		(at 33.02 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e5d2fba4-b40b-429e-bf9c-8a66814690a4")
+	)
+	(junction
 		(at 93.98 102.87)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -4452,6 +4458,16 @@
 	)
 	(wire
 		(pts
+			(xy 33.02 81.28) (xy 17.78 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "dc5c7745-5946-4c0a-aff8-a73b7d68c2c1")
+	)
+	(wire
+		(pts
 			(xy 209.55 43.18) (xy 209.55 44.45)
 		)
 		(stroke
@@ -4630,6 +4646,16 @@
 		)
 		(uuid "fd755b01-dd43-43af-bb42-f46504971fd5")
 	)
+	(label "ETH_SHIELD"
+		(at 34.29 69.85 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "066ecf89-d5a2-4b0f-b6a1-0cfec4bd2c42")
+	)
 	(label "POE_VA2"
 		(at 72.39 55.88 0)
 		(effects
@@ -4670,6 +4696,16 @@
 		)
 		(uuid "25d7a965-5623-45c0-88be-9756b881418d")
 	)
+	(label "XTAL_X2"
+		(at 113.03 93.98 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "3c098d72-3744-4a0a-8da5-7593aa2977d4")
+	)
 	(label "POE_VB1"
 		(at 72.39 58.42 0)
 		(effects
@@ -4689,6 +4725,46 @@
 			(justify left bottom)
 		)
 		(uuid "554dd30a-83e2-41e5-84d4-7ff72ce9f8c8")
+	)
+	(label "RMII_REF_CLK_SRC"
+		(at 171.45 86.36 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "557fa355-d662-4532-a776-31486214c5ae")
+	)
+	(label "ETH_CT"
+		(at 72.39 38.1 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "581b822b-a8d0-431e-a448-e9d3e2186f8b")
+	)
+	(label "PHY_REGOUT"
+		(at 105.41 119.38 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "5c7a1e3f-c802-4988-8627-b42fc86370d8")
+	)
+	(label "ETH_RD_N"
+		(at 72.39 45.72 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "63057414-0f8e-46a3-9246-e34ebd826aa2")
 	)
 	(label "PHY_3V3"
 		(at 105.41 83.82 0)
@@ -4720,6 +4796,16 @@
 		)
 		(uuid "92a539bd-e25f-4324-9519-f7a85fa1f117")
 	)
+	(label "XTAL_X1"
+		(at 95.25 91.44 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "954691b0-0fc2-4155-ad31-1ecdf172022f")
+	)
 	(label "POE_VB2"
 		(at 72.39 60.96 0)
 		(effects
@@ -4730,6 +4816,16 @@
 		)
 		(uuid "9750ed74-8f66-4380-a9c6-0b09d44c12c5")
 	)
+	(label "ETH_TD_N"
+		(at 72.39 35.56 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "9eb85ff1-0102-45ee-a7c5-cb7ad15950aa")
+	)
 	(label "PHY_3V3"
 		(at 224.79 104.14 180)
 		(effects
@@ -4739,6 +4835,16 @@
 			(justify right bottom)
 		)
 		(uuid "a228a604-137b-45ef-bf32-ec7ed53abe4a")
+	)
+	(label "ETH_TD_P"
+		(at 72.39 30.48 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "a56fdd37-2d06-4ea3-bd2c-cdea10932d5e")
 	)
 	(label "PHY_3V3"
 		(at 222.25 43.18 180)
@@ -4759,6 +4865,16 @@
 			(justify left bottom)
 		)
 		(uuid "afeef988-7974-48d9-92d6-bf4c6002936b")
+	)
+	(label "ETH_RD_P"
+		(at 72.39 40.64 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "b093753a-d9fc-4de5-a011-d7b24f661798")
 	)
 	(label "RMII_RXD0"
 		(at 246.38 93.98 0)
@@ -4819,6 +4935,16 @@
 			(justify left bottom)
 		)
 		(uuid "db4ce7d2-5794-4963-a601-670e77ff80a8")
+	)
+	(label "ETH_SHIELD_R"
+		(at 17.78 81.28 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ff550107-ee8b-4ae6-9f09-da296ad430d4")
 	)
 	(hierarchical_label "{PHY}"
 		(shape bidirectional)
@@ -9390,131 +9516,5 @@
 				)
 			)
 		)
-	)
-	(wire
-		(pts
-			(xy 33.02 81.28) (xy 17.78 81.28)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "dc5c7745-5946-4c0a-aff8-a73b7d68c2c1")
-	)
-	(junction
-		(at 33.02 81.28)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "e5d2fba4-b40b-429e-bf9c-8a66814690a4")
-	)
-	(label "ETH_SHIELD"
-		(at 34.29 69.85 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "066ecf89-d5a2-4b0f-b6a1-0cfec4bd2c42")
-	)
-	(label "ETH_TD_P"
-		(at 72.39 30.48 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "a56fdd37-2d06-4ea3-bd2c-cdea10932d5e")
-	)
-	(label "ETH_TD_N"
-		(at 72.39 35.56 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "9eb85ff1-0102-45ee-a7c5-cb7ad15950aa")
-	)
-	(label "ETH_CT"
-		(at 72.39 38.1 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "581b822b-a8d0-431e-a448-e9d3e2186f8b")
-	)
-	(label "ETH_RD_P"
-		(at 72.39 40.64 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "b093753a-d9fc-4de5-a011-d7b24f661798")
-	)
-	(label "ETH_RD_N"
-		(at 72.39 45.72 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "63057414-0f8e-46a3-9246-e34ebd826aa2")
-	)
-	(label "PHY_REGOUT"
-		(at 105.41 119.38 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "5c7a1e3f-c802-4988-8627-b42fc86370d8")
-	)
-	(label "XTAL_X1"
-		(at 95.25 91.44 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "954691b0-0fc2-4155-ad31-1ecdf172022f")
-	)
-	(label "XTAL_X2"
-		(at 113.03 93.98 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "3c098d72-3744-4a0a-8da5-7593aa2977d4")
-	)
-	(label "RMII_REF_CLK_SRC"
-		(at 171.45 86.36 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "557fa355-d662-4532-a776-31486214c5ae")
-	)
-	(label "ETH_SHIELD_R"
-		(at 17.78 81.28 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "ff550107-ee8b-4ae6-9f09-da296ad430d4")
 	)
 )

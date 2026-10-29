@@ -3193,6 +3193,12 @@
 		(uuid "606a87de-b190-442c-ac61-33e434999be0")
 	)
 	(junction
+		(at 46.99 124.46)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "63c1a32c-dba3-4adb-9b21-d99cca071f9d")
+	)
+	(junction
 		(at 172.72 35.56)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3416,6 +3422,16 @@
 			(type default)
 		)
 		(uuid "08f16a0f-d877-48a6-b9ad-1f7b1e9b01e8")
+	)
+	(wire
+		(pts
+			(xy 57.15 124.46) (xy 71.12 124.46)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "09066eb2-9f2c-454c-8dfb-16c1c31b9107")
 	)
 	(wire
 		(pts
@@ -3649,6 +3665,16 @@
 	)
 	(wire
 		(pts
+			(xy 33.02 124.46) (xy 49.53 124.46)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4974a44a-e223-4692-a7d4-292208cfe701")
+	)
+	(wire
+		(pts
 			(xy 101.6 45.72) (xy 101.6 46.99)
 		)
 		(stroke
@@ -3686,6 +3712,16 @@
 			(type default)
 		)
 		(uuid "50767ebe-a146-4f9e-a4f9-f47bf4d1409c")
+	)
+	(wire
+		(pts
+			(xy 22.86 124.46) (xy 25.4 124.46)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "57ba70ec-10d3-4e50-9f03-3aedf12e92ff")
 	)
 	(wire
 		(pts
@@ -4229,6 +4265,16 @@
 	)
 	(wire
 		(pts
+			(xy 46.99 124.46) (xy 46.99 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bc12dc71-ed1f-47f7-9008-d7e5d0b77508")
+	)
+	(wire
+		(pts
 			(xy 119.38 38.1) (xy 119.38 91.44)
 		)
 		(stroke
@@ -4439,6 +4485,16 @@
 	)
 	(wire
 		(pts
+			(xy 46.99 134.62) (xy 46.99 135.89)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "edcb819a-6e83-4cb8-a296-675705afd7bd")
+	)
+	(wire
+		(pts
 			(xy 193.04 121.92) (xy 193.04 124.46)
 		)
 		(stroke
@@ -4497,6 +4553,56 @@
 		)
 		(uuid "fea56bcf-f1df-41d5-9cd7-6c7dba7a1b6a")
 	)
+	(label "STROBE_TO"
+		(at 58.42 124.46 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "03e971c8-b94b-469a-b1a9-73f06d85c515")
+	)
+	(label "BST_COMP"
+		(at 125.73 58.42 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "09d055ea-f48d-47ce-b9d3-579069d77ad7")
+	)
+	(label "LED_ON"
+		(at 105.41 119.38 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "0ac01a1f-b10a-42e9-9504-d692ae427010")
+	)
+	(label "BST_FB"
+		(at 151.13 48.26 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "1d0ae7a7-f2a4-406b-a247-c9bd791f0924")
+	)
+	(label "BST_SW"
+		(at 147.32 33.02 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "1df2bce0-1616-473b-a2af-a664c92400a4")
+	)
 	(label "LED_EN"
 		(at 50.8 99.06 0)
 		(effects
@@ -4506,6 +4612,16 @@
 			(justify left bottom)
 		)
 		(uuid "2d86a3d3-8933-4058-a215-71f75fe5ae3c")
+	)
+	(label "STROBE_HP"
+		(at 34.29 124.46 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "2ed7e395-6f08-409d-b355-557c22a8955e")
 	)
 	(label "LED_PWR_EN"
 		(at 36.83 68.58 0)
@@ -4517,6 +4633,56 @@
 		)
 		(uuid "4017b23a-f54b-4df9-857e-177771ec9dd1")
 	)
+	(label "+5V_BST"
+		(at 86.36 35.56 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "435277aa-46b2-40d0-b0c2-081081b61188")
+	)
+	(label "SINK_DRV"
+		(at 172.72 135.89 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "4b059589-0f5a-4282-9953-47473abf0529")
+	)
+	(label "ISNS"
+		(at 205.74 144.78 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "5fdf6e78-4471-4356-8069-d43a7bfca929")
+	)
+	(label "SINK_G"
+		(at 184.15 121.92 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "65cdd2ce-598e-48dc-be8e-5472e3216e1c")
+	)
+	(label "ISET"
+		(at 139.7 119.38 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "78e21ffa-03f4-444d-ae3e-06f0000a033d")
+	)
 	(label "BST_EN"
 		(at 38.1 88.9 0)
 		(effects
@@ -4526,6 +4692,16 @@
 			(justify left bottom)
 		)
 		(uuid "a96bcc98-590f-4e97-bfa8-05c842bda765")
+	)
+	(label "ISNS_K"
+		(at 176.53 147.32 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d0dc92b0-86a0-478a-a04f-e64fdad6bb41")
 	)
 	(hierarchical_label "STROBE"
 		(shape input)
@@ -12836,181 +13012,5 @@
 				)
 			)
 		)
-	)
-	(wire
-		(pts
-			(xy 22.86 124.46) (xy 25.4 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "57ba70ec-10d3-4e50-9f03-3aedf12e92ff")
-	)
-	(wire
-		(pts
-			(xy 33.02 124.46) (xy 49.53 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "4974a44a-e223-4692-a7d4-292208cfe701")
-	)
-	(wire
-		(pts
-			(xy 46.99 124.46) (xy 46.99 127)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "bc12dc71-ed1f-47f7-9008-d7e5d0b77508")
-	)
-	(wire
-		(pts
-			(xy 46.99 134.62) (xy 46.99 135.89)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "edcb819a-6e83-4cb8-a296-675705afd7bd")
-	)
-	(wire
-		(pts
-			(xy 57.15 124.46) (xy 71.12 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "09066eb2-9f2c-454c-8dfb-16c1c31b9107")
-	)
-	(junction
-		(at 46.99 124.46)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "63c1a32c-dba3-4adb-9b21-d99cca071f9d")
-	)
-	(label "+5V_BST"
-		(at 86.36 35.56 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "435277aa-46b2-40d0-b0c2-081081b61188")
-	)
-	(label "BST_SW"
-		(at 147.32 33.02 90)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "1df2bce0-1616-473b-a2af-a664c92400a4")
-	)
-	(label "BST_FB"
-		(at 151.13 48.26 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "1d0ae7a7-f2a4-406b-a247-c9bd791f0924")
-	)
-	(label "BST_COMP"
-		(at 125.73 58.42 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "09d055ea-f48d-47ce-b9d3-579069d77ad7")
-	)
-	(label "STROBE_HP"
-		(at 34.29 124.46 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "2ed7e395-6f08-409d-b355-557c22a8955e")
-	)
-	(label "STROBE_TO"
-		(at 58.42 124.46 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "03e971c8-b94b-469a-b1a9-73f06d85c515")
-	)
-	(label "LED_ON"
-		(at 105.41 119.38 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "0ac01a1f-b10a-42e9-9504-d692ae427010")
-	)
-	(label "ISET"
-		(at 139.7 119.38 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "78e21ffa-03f4-444d-ae3e-06f0000a033d")
-	)
-	(label "SINK_DRV"
-		(at 172.72 135.89 90)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "4b059589-0f5a-4282-9953-47473abf0529")
-	)
-	(label "SINK_G"
-		(at 184.15 121.92 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "65cdd2ce-598e-48dc-be8e-5472e3216e1c")
-	)
-	(label "ISNS"
-		(at 205.74 144.78 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "5fdf6e78-4471-4356-8069-d43a7bfca929")
-	)
-	(label "ISNS_K"
-		(at 176.53 147.32 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "d0dc92b0-86a0-478a-a04f-e64fdad6bb41")
 	)
 )

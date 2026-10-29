@@ -3420,6 +3420,16 @@
 		)
 		(uuid "c1649ba5-c483-4e4f-891b-12e540af0573")
 	)
+	(label "SW_3V3"
+		(at 119.38 129.54 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ca6ea0da-0b9a-4a7d-8398-293b9f3ae2d8")
+	)
 	(label "POE_VB2"
 		(at 40.64 63.5 0)
 		(effects
@@ -9094,15 +9104,5 @@
 				)
 			)
 		)
-	)
-	(label "SW_3V3"
-		(at 119.38 129.54 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "ca6ea0da-0b9a-4a7d-8398-293b9f3ae2d8")
 	)
 )
