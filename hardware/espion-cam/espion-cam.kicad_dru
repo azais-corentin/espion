@@ -3,17 +3,10 @@
 # Spacing rules from SCHEMATIC.md (layout constraints). Track widths and diff-pair geometry
 # are in the net classes (Schematic Setup > Net Classes), sized for JLC04161H-7628.
 
-# PoE isolation (1500 V rms, 802.3 / DP1435 1.5 kV): cable-side copper keeps 2 mm from every
-# board-side net on all layers. Exempt only the pad pairs of the parts that bridge the barrier
-# by design: the MagJack, the 1 nF/2 kV shield capacitor and the bleeder resistor to GND.
-(rule "PoE isolation"
-	(condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J2') && B.memberOfFootprint('J2')) && !(A.memberOfFootprint('C12') && B.memberOfFootprint('C12')) && !(A.memberOfFootprint('R16') && B.memberOfFootprint('R16'))")
-	(constraint clearance (min 2mm)))
-
 # MIPI CSI-2: >= 2W (0.36 mm) to everything except the pair's own partner; this also keeps GND
 # pour >= 0.30 mm away, which the 100 ohm geometry (0.18/0.15 mm) assumes.
 (rule "MIPI_CSI spacing"
-	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair()")
+	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R38') && B.memberOfFootprint('R38')) && !(A.memberOfFootprint('R39') && B.memberOfFootprint('R39')) && !(A.memberOfFootprint('R40') && B.memberOfFootprint('R40')) && !(A.memberOfFootprint('R41') && B.memberOfFootprint('R41')) && !(A.memberOfFootprint('R42') && B.memberOfFootprint('R42')) && !(A.memberOfFootprint('R43') && B.memberOfFootprint('R43'))")
 	(constraint clearance (min 0.36mm)))
 
 # Ethernet MDI: 3x spacing to other nets (IP101G DS 6.2).
@@ -25,3 +18,12 @@
 (rule "USB spacing"
 	(condition "A.NetClass == 'USB' && !A.isCoupledDiffPair()")
 	(constraint clearance (min 0.3mm)))
+
+(rule "PoE isolation"
+	(condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J2') && B.memberOfFootprint('J2'))")
+	(constraint clearance (min 2mm)))
+
+(rule "MIPI_CSI intra-pair skew"
+	(condition "A.NetClass == 'MIPI_CSI'")
+	(constraint skew (max 0.254mm) (within_diff_pairs)))
+

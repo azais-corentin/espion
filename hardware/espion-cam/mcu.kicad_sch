@@ -4,6 +4,11 @@
 	(generator_version "10.0")
 	(uuid "a320b484-1fb2-4d37-ac24-f1e66af5ecf9")
 	(paper "A4")
+	(title_block
+		(title "espion-cam — MCU")
+		(date "2026-10-29")
+		(rev "0.1")
+	)
 	(lib_symbols
 		(symbol "Connector:TestPoint"
 			(pin_numbers
@@ -6607,7 +6612,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 105.41 134.62 0)
 			(hide yes)
 			(show_name no)
@@ -6800,7 +6805,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -6822,7 +6827,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Samsung"
+		(property "Manufacturer" "YAGEO"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -6833,7 +6838,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL05B104KB54PNC"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -6844,7 +6849,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C307331"
+		(property "LCSC" "C131394"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -6913,7 +6918,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://www.usb.org/sites/default/files/documents/usb_type-c.zip"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/9e56b777c022540fcce7c7f67825f55e.pdf"
 			(at 41.91 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -7073,7 +7078,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7095,7 +7100,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
+		(property "Manufacturer" "FOJAN"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7106,7 +7111,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1002TCE"
+		(property "MPN" "FRC0402F1002TS"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7117,7 +7122,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25744"
+		(property "LCSC" "C2906861"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7266,7 +7271,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -7288,7 +7293,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Samsung"
+		(property "Manufacturer" "YAGEO"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -7299,7 +7304,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL05B104KB54PNC"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -7310,7 +7315,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C307331"
+		(property "LCSC" "C131394"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -7538,7 +7543,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 226.06 100.33 0)
 			(hide yes)
 			(show_name no)
@@ -7651,7 +7656,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 133.35 83.82 0)
 			(hide yes)
 			(show_name no)
@@ -7846,7 +7851,7 @@
 				(justify left)
 			)
 		)
-		(property "Datasheet" "https://www.st.com/resource/en/datasheet/usblc6-2.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0d3a2ab954b34651a0695e7ccf534db0.pdf"
 			(at 100.33 76.835 0)
 			(hide yes)
 			(show_name no)
@@ -8052,7 +8057,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8074,7 +8079,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Samsung"
+		(property "Manufacturer" "YAGEO"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8085,7 +8090,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL05B104KB54PNC"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8096,7 +8101,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C307331"
+		(property "LCSC" "C131394"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8323,7 +8328,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 66.04 58.42 0)
 			(hide yes)
 			(show_name no)
@@ -8436,7 +8441,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 124.46 81.28 0)
 			(hide yes)
 			(show_name no)
@@ -8551,7 +8556,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/56c8799ae5193945a16a1ffbe378246a.pdf"
 			(at 226.06 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -9056,7 +9061,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/56c8799ae5193945a16a1ffbe378246a.pdf"
 			(at 115.57 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9149,7 +9154,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF 25V"
+		(property "Value" "4.7uF 25V"
 			(at 204.47 27.94 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9171,7 +9176,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 200.66 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -9204,7 +9209,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL21A106KAYNNNE"
+		(property "MPN" "CL21A475KAQNNNE"
 			(at 200.66 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -9215,7 +9220,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C15850"
+		(property "LCSC" "C1779"
 			(at 200.66 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -9286,7 +9291,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 132.08 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -9713,7 +9718,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -9735,7 +9740,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
+		(property "Manufacturer" "FOJAN"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -9746,7 +9751,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1002TCE"
+		(property "MPN" "FRC0402F1002TS"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -9757,7 +9762,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25744"
+		(property "LCSC" "C2906861"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -9828,7 +9833,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 68.58 40.64 0)
 			(hide yes)
 			(show_name no)
@@ -9941,7 +9946,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 210.82 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -10210,7 +10215,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 114.3 121.92 0)
 			(hide yes)
 			(show_name no)
@@ -10325,7 +10330,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://docs.waveshare.com/ESP32-P4-Core"
+		(property "Datasheet" "https://docs.waveshare.com/assets/files/ESP32-P4-Core-Schematic-a722ef3b60d90d46f8fe6ada1aad1cbe.pdf"
 			(at 172.72 96.52 0)
 			(hide yes)
 			(show_name no)
@@ -10948,7 +10953,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 105.41 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -11119,7 +11124,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10nF C0G 50V"
+		(property "Value" "100nF 50V"
 			(at 115.57 148.59 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11130,7 +11135,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
+		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -11141,7 +11146,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -11163,7 +11168,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FH"
+		(property "Manufacturer" "YAGEO"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -11174,7 +11179,7 @@
 				)
 			)
 		)
-		(property "MPN" "0603CG103J500NT"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -11185,7 +11190,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C82282"
+		(property "LCSC" "C131394"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -11256,7 +11261,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -11278,7 +11283,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
+		(property "Manufacturer" "FOJAN"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -11289,7 +11294,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1002TCE"
+		(property "MPN" "FRC0402F1002TS"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -11300,7 +11305,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25744"
+		(property "LCSC" "C2906861"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -11371,7 +11376,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 80.01 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -11564,7 +11569,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
 			(at 226.06 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -11586,7 +11591,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
+		(property "Manufacturer" "FOJAN"
 			(at 226.06 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -11597,7 +11602,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1002TCE"
+		(property "MPN" "FRC0402F1002TS"
 			(at 226.06 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -11608,7 +11613,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25744"
+		(property "LCSC" "C2906861"
 			(at 226.06 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -11835,7 +11840,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/4adec3e10718fa4444bfddc0d5622733.pdf"
 			(at 213.36 63.5 0)
 			(hide yes)
 			(show_name no)

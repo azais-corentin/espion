@@ -33,10 +33,10 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | IP101GRI | 10/100 Ethernet PHY on RMII, 25 MHz crystal. Drives the 50 MHz RMII reference clock into the P4. The PHY of Espressif's and Waveshare's P4 Ethernet boards |
 | RJ45 MagJack (HanRun HR871150C) | Integrated magnetics and Bob-Smith termination. Brings out both centre taps and the spare pairs (4/5, 7/8) for the PoE PD |
 | [SDAPO DP1435-5V](https://www.lcsc.com/product-detail/C5380097.html) (LCSC C5380097) | IEEE 802.3af PoE PD module: bridge rectifiers, isolated flyback (1.5 kV), 5.15 V out. Class 0 (no class pin brought out). Through-hole SIP-6 |
-| 5 V OR-ing (TI TPS2116) | PoE 5 V and USB-C VBUS, either one powers the board, PoE has priority, no back-feed into USB |
+| 5 V OR-ing (TI TPS2121) | PoE 5 V and USB-C VBUS, either one powers the board, PoE has priority, no back-feed into USB. Current-limited switchover and soft start |
 | 3.3 V buck (TI TLV62569) | 5 V → ESP_3V3 for the module, the PHY and the camera module |
 | 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver (TI TPS22918 load switch, TPS61170 boost to 32 V, 1 A op-amp current sink) | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`, for at most ≈ 1 ms per pulse. See [LED ring](#led-ring) |
-| USB-C | 5 V on the bench, through a TI TSD05DYFR VBUS TVS into the TPS2116; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub). VBUS is also sensed on GPIO20 (`VBUS_SENSE`) |
+| USB-C | 5 V on the bench, through a TI TSD05DYFR VBUS TVS into the TPS2121; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub). VBUS is also sensed on GPIO20 (`VBUS_SENSE`) |
 | WS2812B-2020-V6 RGB LED | Status, on +3V3, driven by an RMT channel |
 | ST LSM6DS3TR-C 6-axis IMU (LCSC C967633) | On its own I2C bus. Wake-on-motion on INT1 tells firmware the camera was bumped, so the host can flag the rig extrinsics as stale; the accelerometer gives the gravity vector (camera tilt, floor plane) for calibration. The gyroscope is spare |
 
@@ -55,8 +55,8 @@ The schematic's sheets, nets, pin-level connections and component values are in
 | LED_PWR_EN | P4 → TPS22918 ON | Connects +5V to the LED boost through a ≈ 27 ms ramp. Pulled low |
 | BST_EN | P4 → TPS61170 CTRL | Starts the 32 V LED boost after the load switch has ramped. Pulled low: the rail stays off until firmware enables it |
 | CAM_EN | P4 → OV9281 module | Enables the module's regulators (FPC pin 11). Pulled low |
-| PWR_SRC | TPS2116 → P4 | High when PoE powers the board; firmware keeps the LED rail off on USB |
-| VBUS_SENSE | USB-C VBUS → P4 GPIO20 (ADC1_CH4) | VBUS through a 47 kΩ / 75 kΩ divider (10 nF filter). Reads high as a digital input from VBUS ≈ 4.4 V; ADC1 (ATTEN3) reads VBUS up to ≈ 5.3 V. Firmware turns the USB Serial/JTAG D+ pull-up off while VBUS is absent (USB 2.0 §7.1.5.1), since the board also runs on PoE alone. PWR_SRC can't replace it: with PoE present it says nothing about USB |
+| PWR_SRC | TPS2121 ST → P4 | High when PoE powers the board; firmware keeps the LED rail off on USB |
+| VBUS_SENSE | USB-C VBUS → P4 GPIO20 (ADC1_CH4) | VBUS through a 47 kΩ / 75 kΩ divider (100 nF filter). Reads high as a digital input from VBUS ≈ 4.4 V; ADC1 (ATTEN3) reads VBUS up to ≈ 5.3 V. Firmware turns the USB Serial/JTAG D+ pull-up off while VBUS is absent (USB 2.0 §7.1.5.1), since the board also runs on PoE alone. PWR_SRC can't replace it: with PoE present it says nothing about USB |
 | VLED_SENSE, NTC_SENSE | LED driver → P4 ADC1 | +32V rail and sink-MOSFET temperature |
 | STATUS_LED | P4 → RGB LED | One-wire status LED data (RMT) |
 | IMU_SDA, IMU_SCL | P4 ↔ IMU | I2C (GPIO3/4, ≤ 400 kHz), 10 kΩ pull-ups. Address 0x6A |

@@ -11,7 +11,6 @@ The items to verify are in [checklist.md](skill://kicad-schematic-review/checkli
 - **Report-only** unless the user asks for fixes (then see [Fix loop](#fix-loop-only-when-asked)).
 - **Independent.** A reviewer never reviews a change it made. If you made the change in this session, every review step goes to subagents.
 - **Recompute, don't trust.** `SCHEMATIC.md` "Values and derivations", the author's report and earlier reviews are claims to check. Open the datasheet yourself.
-- **Known open items.** Entries in a `SCHEMATIC.md` "To verify" list are already known: don't report them again as findings. Report one only when the documents now settle it (say how) or when it is worse than the list says.
 - Never fetch EasyEDA/LCSC symbol, footprint or model data (AGENTS.md). Stock, price and second sources belong to `kicad-part-sourcing`; library parts to `kicad-library-review`.
 
 ## Mode
@@ -97,7 +96,7 @@ Severity:
 Every finding has evidence and a concrete fix. Every datasheet number cites the document and page; every claim about the design cites a `kicad_query` / `kicad_check` result. A remark that needs no change is not a finding: put it in `passed` with its evidence. `approve` only when `findings` is empty.
 
 ## Merge and report (yourself)
-1. Collect the JSON objects. Merge findings with the same `where` and `item`, keeping the strongest evidence and the highest severity. Drop findings that repeat a known "To verify" entry.
+1. Collect the JSON objects. Merge findings with the same `where` and `item`, keeping the strongest evidence and the highest severity.
 2. Do your own items (DOC-1, DOC-3…5) and the cross-sheet checks: names, directions and levels match on both ends of every hierarchical and global net (`kicad_query net`).
 3. Report:
    - a summary table: sheet/topic × blocker/major/minor/unverified;

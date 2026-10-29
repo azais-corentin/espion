@@ -13,6 +13,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Converter_DCDC_SDAPO.kicad_sym`, `Converter_DCDC_SDAPO.pretty/` | SDAPO PoE PD modules |
 | `Interface_Ethernet_ICPlus.kicad_sym` | IC Plus Ethernet PHYs |
 | `Regulator_Switching_TI.kicad_sym` | TI switching regulators |
+| `Power_Management_TI.kicad_sym` | TI power management ICs (power muxes) |
 | `Transistor_FET_Infineon.kicad_sym` | Infineon MOSFETs |
 | `Capacitor_SMD_AISHI.pretty/`, `Capacitor_SMD_JIERR.pretty/` | Aluminium SMD can capacitors |
 | `Connector_FFC-FPC_XFCN.pretty/` | XFCN FFC/FPC connectors (not used by espion-cam any more) |
@@ -20,6 +21,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Connector_USB_HRO.pretty/` | Korean Hroparts USB connectors |
 | `LED_SMD_Amicc.pretty/` | Amicc SMD LEDs |
 | `Package_SON_TI.pretty/` | TI SON packages with TI's land patterns |
+| `Package_DFN_QFN_TI.pretty/` | TI DFN/QFN packages with TI's land patterns |
 | `<Library>.3dshapes/` | 3D models (STEP) for the footprints above |
 | `3d-src/` | SolidCraft scripts the 3D models are built from |
 
@@ -155,6 +157,28 @@ TI TPS61170 1.2 A, 40 V boost converter (LCSC C15163), the 5 V → 32 V LED boos
   `_ThermalVias` variant adds TI's two optional 0.2 mm vias. CC-BY-SA 4.0 with the KiCad
   library exception.
 - 3D model: KiCad's stock WSON-6 model (same body).
+
+### `Power_Management_TI:TPS2121RUX`, `Package_DFN_QFN_TI:Texas_RUX0012A_VQFN-HR-12_2x2.5mm_P0.5mm`
+
+TI TPS2121RUXR 2.8–22 V, 4.5 A priority power mux with fast switchover, adjustable current
+limit and soft start, VQFN-HR-12 2 × 2.5 mm (LCSC C485916). The symbol's default footprint is
+the project one. Used by espion-cam as U4.
+
+- Source: [TPS212x datasheet](https://www.ti.com/lit/ds/symlink/tps2121.pdf) SLVSEA3F (pin
+  functions pp. 4–5, ratings p. 6, RUX0012A outline p. 38, land pattern p. 39, stencil p. 40).
+  Symbol and 3D model drawn for this project (CERN-OHL-P-2.0).
+- OUT is a native pin stack `[1,8]`, 5.08 mm long so the stacked pin number clears the body.
+  ST is open drain (6–20 kΩ pull-up, p. 6). ILIM and SS
+  take a resistor and a capacitor, so they are passive. The package has no exposed pad.
+- Pin layout: IN1 and its PR1 at the top left, IN2 and CP2 below them, OV1/OV2 at the bottom
+  left; OUT and ST on the right; GND, ILIM and SS at the bottom, where their parts go.
+- The footprint is derived from KiCad's `Package_DFN_QFN:Texas_VQFN-HR-12_2x2.5mm_P0.5mm`
+  (CC-BY-SA 4.0 with the KiCad library exception), whose pads already match TI's land
+  pattern (p. 39): renamed after the TI package and given the project 3D model. KiCad ships
+  no model for the stock footprint: its `.stpZ` path resolves to no file.
+- 3D model: `Package_DFN_QFN_TI.3dshapes/`, from `3d-src/`, to the RUX0012A outline (p. 38):
+  2.0 × 2.5 mm body, 1.0 mm high (the drawing gives only the maximum), 0.2 × 0.4 mm and
+  0.35 × 0.85 mm terminals, pin-1 dot.
 
 ### `Transistor_FET_Infineon:IRLR024N`
 

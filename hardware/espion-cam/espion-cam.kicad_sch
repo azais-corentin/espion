@@ -4,6 +4,11 @@
 	(generator_version "10.0")
 	(uuid "6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6")
 	(paper "A4")
+	(title_block
+		(title "espion-cam")
+		(date "2026-10-29")
+		(rev "0.1")
+	)
 	(lib_symbols
 		(symbol "Mechanical:MountingHole_Pad"
 			(pin_numbers

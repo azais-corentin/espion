@@ -4,6 +4,11 @@
 	(generator_version "10.0")
 	(uuid "b55036ab-bbf6-4acc-a103-d4c4c78dd301")
 	(paper "A4")
+	(title_block
+		(title "espion-cam — Ethernet")
+		(date "2026-10-29")
+		(rev "0.1")
+	)
 	(lib_symbols
 		(symbol "Connector_HanRun:HR871150C"
 			(exclude_from_sim no)
@@ -3305,12 +3310,6 @@
 		(uuid "d5e2dbfb-e2c3-432a-a6c3-8952bcb0177a")
 	)
 	(junction
-		(at 209.55 43.18)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "d77d88de-ba67-4b94-9fb3-97ede3bee36b")
-	)
-	(junction
 		(at 152.4 43.18)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3538,16 +3537,6 @@
 	)
 	(wire
 		(pts
-			(xy 209.55 52.07) (xy 209.55 53.34)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "0b392c12-4068-470f-9db4-a9aab0a467ae")
-	)
-	(wire
-		(pts
 			(xy 93.98 113.03) (xy 102.87 113.03)
 		)
 		(stroke
@@ -3718,7 +3707,7 @@
 	)
 	(wire
 		(pts
-			(xy 187.96 93.98) (xy 265.43 93.98)
+			(xy 200.66 93.98) (xy 265.43 93.98)
 		)
 		(stroke
 			(width 0)
@@ -3958,7 +3947,7 @@
 	)
 	(wire
 		(pts
-			(xy 170.18 88.9) (xy 193.04 88.9)
+			(xy 170.18 88.9) (xy 205.74 88.9)
 		)
 		(stroke
 			(width 0)
@@ -4168,7 +4157,7 @@
 	)
 	(wire
 		(pts
-			(xy 170.18 93.98) (xy 180.34 93.98)
+			(xy 170.18 93.98) (xy 193.04 93.98)
 		)
 		(stroke
 			(width 0)
@@ -4468,16 +4457,6 @@
 	)
 	(wire
 		(pts
-			(xy 209.55 43.18) (xy 209.55 44.45)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "dc9febb9-87a8-4193-a216-13ea34fc55c3")
-	)
-	(wire
-		(pts
 			(xy 128.27 43.18) (xy 127 43.18)
 		)
 		(stroke
@@ -4628,7 +4607,7 @@
 	)
 	(wire
 		(pts
-			(xy 200.66 88.9) (xy 265.43 88.9)
+			(xy 213.36 88.9) (xy 265.43 88.9)
 		)
 		(stroke
 			(width 0)
@@ -4645,6 +4624,16 @@
 			(type default)
 		)
 		(uuid "fd755b01-dd43-43af-bb42-f46504971fd5")
+	)
+	(label "RMII_RXD0_PHY"
+		(at 171.45 93.98 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "008168e1-282d-4ef4-bd15-63e0430c2b9c")
 	)
 	(label "ETH_SHIELD"
 		(at 34.29 69.85 0)
@@ -4725,16 +4714,6 @@
 			(justify left bottom)
 		)
 		(uuid "554dd30a-83e2-41e5-84d4-7ff72ce9f8c8")
-	)
-	(label "RMII_REF_CLK_SRC"
-		(at 171.45 86.36 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "557fa355-d662-4532-a776-31486214c5ae")
 	)
 	(label "ETH_CT"
 		(at 72.39 38.1 0)
@@ -4856,6 +4835,16 @@
 		)
 		(uuid "a69244ee-7d7f-47dd-be18-89d07737d05d")
 	)
+	(label "RMII_CRS_DV_PHY"
+		(at 171.45 88.9 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ab79bff4-3bf6-4ffa-8966-23cd836d6620")
+	)
 	(label "PHY_RST_N"
 		(at 246.38 119.38 0)
 		(effects
@@ -4936,6 +4925,26 @@
 		)
 		(uuid "db4ce7d2-5794-4963-a601-670e77ff80a8")
 	)
+	(label "RMII_REF_CLK_SRC"
+		(at 177.8 86.36 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "e7fa0724-023e-43d8-8915-2cdc5a1d1ac3")
+	)
+	(label "RMII_RXD1_PHY"
+		(at 171.45 96.52 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "f7451350-c366-4fbc-8a2c-4bdc606628a4")
+	)
 	(label "ETH_SHIELD_R"
 		(at 17.78 81.28 0)
 		(effects
@@ -5013,7 +5022,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 184.15 106.68 0)
 			(hide yes)
 			(show_name no)
@@ -5362,7 +5371,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://yageogroup.com/content/datasheet/asset/file/PYU-RV_51_ROHS_L"
 			(at 33.02 87.63 0)
 			(hide yes)
 			(show_name no)
@@ -5434,7 +5443,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 196.85 88.9 90)
+		(at 209.55 88.9 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5445,7 +5454,7 @@
 		(fields_autoplaced yes)
 		(uuid "3e581c0f-bfe1-4f04-bd0f-16da62ecb8ae")
 		(property "Reference" "R12"
-			(at 196.21 91.44 90)
+			(at 208.91 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5456,7 +5465,7 @@
 			)
 		)
 		(property "Value" "22 1%"
-			(at 197.49 91.44 90)
+			(at 210.19 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5467,7 +5476,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 196.85 88.9 90)
+			(at 209.55 88.9 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5477,8 +5486,8 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
-			(at 196.85 88.9 0)
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
+			(at 209.55 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5489,7 +5498,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 196.85 88.9 0)
+			(at 209.55 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5500,7 +5509,7 @@
 			)
 		)
 		(property "Manufacturer" "UNI-ROYAL"
-			(at 196.85 88.9 0)
+			(at 209.55 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5511,7 +5520,7 @@
 			)
 		)
 		(property "MPN" "0402WGF220JTCE"
-			(at 196.85 88.9 0)
+			(at 209.55 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5522,7 +5531,7 @@
 			)
 		)
 		(property "LCSC" "C25092"
-			(at 196.85 88.9 0)
+			(at 209.55 88.9 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5542,84 +5551,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
 					(reference "R12")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GND")
-		(at 209.55 53.34 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "44b78e49-2841-468c-a3f3-1a9753a367ce")
-		(property "Reference" "#PWR208"
-			(at 209.55 59.69 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "GND"
-			(at 209.55 57.15 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 209.55 53.34 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 209.55 53.34 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 209.55 53.34 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "f200ee08-18c8-4405-b8bb-76edc5cf6653")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#PWR208")
 					(unit 1)
 				)
 			)
@@ -5670,7 +5601,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 104.14 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -5785,7 +5716,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/e23807227dca831bf1c88df22fc8323c.pdf"
 			(at 45.72 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -5900,7 +5831,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 171.45 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -5922,7 +5853,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Samsung"
+		(property "Manufacturer" "YAGEO"
 			(at 171.45 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -5933,7 +5864,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL05B104KB54PNC"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 171.45 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -5944,7 +5875,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C307331"
+		(property "LCSC" "C131394"
 			(at 171.45 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -6015,7 +5946,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://yageogroup.com/content/datasheet/asset/file/PYU-RV_51_ROHS_L"
 			(at 33.02 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -6130,7 +6061,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf"
 			(at 93.98 107.95 0)
 			(hide yes)
 			(show_name no)
@@ -6245,7 +6176,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 86.36 91.44 0)
 			(hide yes)
 			(show_name no)
@@ -6358,7 +6289,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://download.epsondevice.com/td/pdf/td_xtal_mhz/TSX-3225_X1E0000210139_en.pdf"
 			(at 102.87 102.87 0)
 			(hide yes)
 			(show_name no)
@@ -6501,7 +6432,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 209.55 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -6694,7 +6625,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 132.08 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -6887,7 +6818,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf"
 			(at 111.76 107.95 0)
 			(hide yes)
 			(show_name no)
@@ -7002,7 +6933,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 196.85 96.52 0)
 			(hide yes)
 			(show_name no)
@@ -7379,121 +7310,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:C")
-		(at 209.55 48.26 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "949a9dcc-8e18-4a99-9b8a-884fdb405d54")
-		(property "Reference" "C10"
-			(at 213.36 46.99 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "10uF 25V"
-			(at 213.36 49.53 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric"
-			(at 209.55 48.26 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 209.55 48.26 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 209.55 48.26 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "Samsung"
-			(at 209.55 48.26 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "CL21A106KAYNNNE"
-			(at 209.55 48.26 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C15850"
-			(at 209.55 48.26 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "f7e9a3b5-b142-49d9-9f5a-af927a77d97b")
-		)
-		(pin "2"
-			(uuid "b202e0aa-8368-4e5d-893d-16e5b67de3c3")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "C10")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "power:GND")
 		(at 124.46 129.54 0)
 		(unit 1)
@@ -7616,7 +7432,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 152.4 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -7638,7 +7454,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Samsung"
+		(property "Manufacturer" "YAGEO"
 			(at 152.4 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -7649,7 +7465,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL05B104KB54PNC"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 152.4 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -7660,7 +7476,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C307331"
+		(property "LCSC" "C131394"
 			(at 152.4 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -7922,7 +7738,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 184.15 93.98 90)
+		(at 196.85 93.98 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -7933,7 +7749,7 @@
 		(fields_autoplaced yes)
 		(uuid "a46d3319-654d-46ea-80f6-a9943b4dd970")
 		(property "Reference" "R13"
-			(at 183.51 91.44 90)
+			(at 196.21 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -7944,7 +7760,7 @@
 			)
 		)
 		(property "Value" "22 1%"
-			(at 184.79 91.44 90)
+			(at 197.49 91.44 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -7955,7 +7771,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 184.15 93.98 90)
+			(at 196.85 93.98 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7965,8 +7781,8 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
-			(at 184.15 93.98 0)
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
+			(at 196.85 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7977,7 +7793,7 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 184.15 93.98 0)
+			(at 196.85 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7988,7 +7804,7 @@
 			)
 		)
 		(property "Manufacturer" "UNI-ROYAL"
-			(at 184.15 93.98 0)
+			(at 196.85 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7999,7 +7815,7 @@
 			)
 		)
 		(property "MPN" "0402WGF220JTCE"
-			(at 184.15 93.98 0)
+			(at 196.85 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8010,7 +7826,7 @@
 			)
 		)
 		(property "LCSC" "C25092"
-			(at 184.15 93.98 0)
+			(at 196.85 93.98 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8080,7 +7896,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 215.9 109.22 0)
 			(hide yes)
 			(show_name no)
@@ -8273,7 +8089,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8295,7 +8111,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Samsung"
+		(property "Manufacturer" "YAGEO"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8306,7 +8122,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL05B104KB54PNC"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8317,7 +8133,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C307331"
+		(property "LCSC" "C131394"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8388,7 +8204,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 118.11 83.82 0)
 			(hide yes)
 			(show_name no)
@@ -8868,7 +8684,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/dee9240a2b31fe338e6cd2e004fb49a8.pdf"
 			(at 71.12 83.82 0)
 			(hide yes)
 			(show_name no)
@@ -8983,7 +8799,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9005,7 +8821,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Samsung"
+		(property "Manufacturer" "YAGEO"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9016,7 +8832,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL05B104KB54PNC"
+		(property "MPN" "CC0402KRX7R9BB104"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9027,7 +8843,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C307331"
+		(property "LCSC" "C131394"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9254,7 +9070,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9276,7 +9092,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
+		(property "Manufacturer" "FOJAN"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9287,7 +9103,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1002TCE"
+		(property "MPN" "FRC0402F1002TS"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9298,7 +9114,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25744"
+		(property "LCSC" "C2906861"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9425,7 +9241,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF 25V"
+		(property "Value" "4.7uF 25V"
 			(at 194.31 49.53 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9447,7 +9263,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 190.5 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -9480,7 +9296,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL21A106KAYNNNE"
+		(property "MPN" "CL21A475KAQNNNE"
 			(at 190.5 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -9491,7 +9307,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C15850"
+		(property "LCSC" "C1779"
 			(at 190.5 48.26 0)
 			(hide yes)
 			(show_name no)

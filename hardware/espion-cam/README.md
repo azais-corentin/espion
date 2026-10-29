@@ -26,7 +26,7 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - IP101GRI Ethernet PHY on RMII (25 MHz crystal, PHY supplies the 50 MHz REF_CLK), HanRun
   HR871150C MagJack with both centre taps and the spare pairs brought out, PPS test point
 - Power: SDAPO DP1435-5V IEEE 802.3af PoE PD module (isolated 5.15 V, LCSC C5380097)
-  through an LC filter, OR-ed with USB-C 5 V by a TPS2116; TLV62569 buck to 3.3 V
+  through an LC filter, OR-ed with USB-C 5 V by a TPS2121 priority mux; TLV62569 buck to 3.3 V
 - USB-C straight to the P4's USB Serial/JTAG (no hub), with ESD protection and a TI
   TSD05DYFR VBUS TVS. VBUS is sensed on GPIO20 (`VBUS_SENSE`, 47 kΩ / 75 kΩ divider):
   firmware turns the D+ pull-up off while no USB host supplies VBUS

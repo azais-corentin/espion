@@ -4,6 +4,11 @@
 	(generator_version "10.0")
 	(uuid "00176eb4-ab73-4174-aebf-d1b4d6f4db7b")
 	(paper "A4")
+	(title_block
+		(title "espion-cam — LED ring")
+		(date "2026-10-29")
+		(rev "0.1")
+	)
 	(lib_symbols
 		(symbol "Device:LED"
 			(pin_numbers
@@ -486,6 +491,116 @@
 		)
 		(uuid "e465d8fe-d55d-4a55-a77a-a8a7e79836ce")
 	)
+	(label "RING_9"
+		(at 193.04 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "0a8ccf26-fd9c-4ddd-bf16-c98ea5f2e6ae")
+	)
+	(label "RING_4"
+		(at 104.14 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "2bffc38e-2048-4514-8032-1a5abf2f6dcc")
+	)
+	(label "RING_7"
+		(at 157.48 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "312133d1-e9bf-4d50-be6f-b8da57f6f71d")
+	)
+	(label "RING_5"
+		(at 121.92 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "6d80e350-1df0-4753-b2b4-25cf9d99be07")
+	)
+	(label "RING_11"
+		(at 228.6 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "7623ecd2-1c0a-43ae-b3ef-77dcab2ef197")
+	)
+	(label "RING_2"
+		(at 68.58 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "95585926-5ea9-4301-8583-3b3e72e4af00")
+	)
+	(label "RING_3"
+		(at 86.36 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "a125af08-d5da-4fb2-b0ac-2c563f0e63ed")
+	)
+	(label "RING_8"
+		(at 175.26 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "c9e615de-4523-4bd0-8fa5-b9827d44b3ad")
+	)
+	(label "RING_6"
+		(at 139.7 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "dc4a8e83-e4c4-4d4f-a6af-80bac41d9c47")
+	)
+	(label "RING_1"
+		(at 50.8 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ddc04377-8100-490e-8a78-93666ede5680")
+	)
+	(label "RING_10"
+		(at 210.82 60.96 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "e9ba7b2c-7acb-402c-bc45-ee87f90b906f")
+	)
 	(hierarchical_label "LED_K"
 		(shape passive)
 		(at 266.7 60.96 0)
@@ -540,7 +655,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 116.84 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -664,7 +779,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -788,7 +903,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 99.06 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -912,7 +1027,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1036,7 +1151,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 45.72 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1160,7 +1275,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1284,7 +1399,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 170.18 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1408,7 +1523,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1610,7 +1725,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 223.52 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1734,7 +1849,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1858,7 +1973,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 81.28 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1982,7 +2097,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf"
 			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)
