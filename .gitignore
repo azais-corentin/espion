@@ -23,9 +23,6 @@ fp-info-cache
 hardware/**/fab/
 hardware/**/gerbers/
 hardware/**/production/
-# kicad-mcp-pro (.omp/mcp.json): export output dir and incremental cache
-hardware/**/output/
-hardware/**/.kicad-mcp-cache/
 
 # Editors / OS
 .vscode/
