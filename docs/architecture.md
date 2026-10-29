@@ -16,6 +16,7 @@ flowchart LR
     G --> L[850 nm LED ring<br/>12 × Amicc A-SC880IR3C]
     P4 -- RMII --> PHY[IP101GRI PHY]
     PHY --> J[RJ45 + PoE PD]
+    P4 <-- "I2C, INT1" --> IMU[LSM6DS3TR-C IMU]
   end
   J -- "UDP: espion-proto<br/>PTP (IEEE 1588)" --> SW[(PoE switch,<br/>unmanaged)]
   SW --> H[host:<br/>espion-server, viewer,<br/>calib, sync]
@@ -37,6 +38,7 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver (TI TPS22918 load switch, TPS61170 boost to 32 V, 1 A op-amp current sink) | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`, for at most ≈ 1 ms per pulse. See [LED ring](#led-ring) |
 | USB-C | 5 V on the bench, through a TI TSD05DYFR VBUS TVS into the TPS2116; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub). VBUS is also sensed on GPIO20 (`VBUS_SENSE`) |
 | WS2812B-2020-V6 RGB LED | Status, on +3V3, driven by an RMT channel |
+| ST LSM6DS3TR-C 6-axis IMU (LCSC C967633) | On its own I2C bus. Wake-on-motion on INT1 tells firmware the camera was bumped, so the host can flag the rig extrinsics as stale; the accelerometer gives the gravity vector (camera tilt, floor plane) for calibration. The gyroscope is spare |
 
 The schematic's sheets, nets, pin-level connections and component values are in
 [`hardware/espion-cam/SCHEMATIC.md`](../hardware/espion-cam/SCHEMATIC.md).
@@ -57,6 +59,8 @@ The schematic's sheets, nets, pin-level connections and component values are in
 | VBUS_SENSE | USB-C VBUS → P4 GPIO20 (ADC1_CH4) | VBUS through a 47 kΩ / 75 kΩ divider (10 nF filter). Reads high as a digital input from VBUS ≈ 4.4 V; ADC1 (ATTEN3) reads VBUS up to ≈ 5.3 V. Firmware turns the USB Serial/JTAG D+ pull-up off while VBUS is absent (USB 2.0 §7.1.5.1), since the board also runs on PoE alone. PWR_SRC can't replace it: with PoE present it says nothing about USB |
 | VLED_SENSE, NTC_SENSE | LED driver → P4 ADC1 | +32V rail and sink-MOSFET temperature |
 | STATUS_LED | P4 → RGB LED | One-wire status LED data (RMT) |
+| IMU_SDA, IMU_SCL | P4 ↔ IMU | I2C (GPIO3/4, ≤ 400 kHz), 10 kΩ pull-ups. Address 0x6A |
+| IMU_INT1 | IMU → P4 GPIO54 | Wake-on-motion interrupt; push-pull, low at power-up |
 | RMII (REF_CLK, CRS_DV, RXD0–1, TX_EN, TXD0–1) | P4 ↔ IP101GRI | Ethernet frames |
 | MDC, MDIO | P4 → IP101GRI | PHY management |
 | PHY_RST | P4 → IP101GRI | PHY reset, active low |
@@ -247,7 +251,7 @@ The P4 has 768 KB of internal L2 memory, minus the L2 cache for flash and PSRAM
 
 | Crate | Chip / target | Runs |
 |---|---|---|
-| `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo (ETM capture), Ethernet and embassy-net (DHCP, UDP), PTP (statime) and the LED gate |
+| `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo (ETM capture), Ethernet and embassy-net (DHCP, UDP), PTP (statime), the LED gate and the IMU (bump detection, gravity) on a second I2C bus |
 | `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, in esp-hal style. Used by `cam-p4` |
 
 `cam-p4` is built with `esp-hal` + `esp-rtos` (embassy executor). The XVS edge schedule
@@ -302,7 +306,7 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 | MIPI CSI-2 receiver | ❌ | `firmware/esp32p4-csi`: driver on the `esp32p4` PAC. Write it like an esp-hal driver (`Config`, typed pins, DMA buffers, blocking and async APIs, HIL-testable) without planning to upstream it. On the ESP32-P4-Core the MIPI PHY is powered from `ESP_LDO_VO3` (0 V by default): the driver sets it to 2.5 V before starting the CSI host |
 | ISP | ❌ | Bypass: RAW8 goes straight to memory. Blob detection does not need demosaicing (mono sensor). Check the CSI → memory path that skips the ISP against the TRM |
 | DMA for CSI | ⚒ (DMA partial) | Confirm which DMA engine the CSI bridge uses on the P4 and whether esp-hal drives it; otherwise part of the CSI driver. It writes frames into PSRAM; the driver does the cache invalidation (esp-hal has no cache maintenance for this path). Also check whether it can interrupt per block of lines (strip fallback, see [Memory](#memory)) |
-| I2C master (SCCB) | ✔ | — |
+| I2C master (SCCB, IMU) | ✔ | Two buses: SCCB to the camera, and the IMU on its own pins |
 | Ethernet (EMAC, RMII) | ⚒ `unstable` ([esp-hal#5556](https://github.com/esp-rs/esp-hal/pull/5556), "basic") | `esp_hal::ethernet::Ethernet` with an `RmiiPinBundle`, `ExternalRefClock` on GPIO50 and the generic PHY driver; embassy-net driver included. New in 1.2: review flagged P4 RX-buffer cache maintenance as unverified, so soak-test RX on hardware |
 | EMAC IEEE 1588 (PTP clock, timestamps, PPS) | ❌ | The clock (sub-second increment, addend, time update) and PPS are registers in the EMAC MAC block: PAC-level code in `cam-p4`. The per-frame RX/TX timestamps live in the DMA descriptors that esp-hal's driver owns (it leaves descriptor words 4–7 unread), so they need a change to esp-hal: carry it as a `[patch.crates-io]` fork and upstream it |
 | Per-packet timestamps to statime | n/a | embassy-net sockets carry no per-packet metadata. The driver pairs PTP event frames (UDP 319) with their descriptor timestamps by message type and `sequenceId` and hands them to statime |

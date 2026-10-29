@@ -1,8 +1,8 @@
 # espion-cam
 
 KiCad project for the espion camera board: a baseboard for the Waveshare ESP32-P4-Core
-module. The schematic is captured and ERC clean: a root sheet and six hierarchical sheets
-(power, mcu, ethernet, camera, led_driver, led_ring), with the multi-signal interfaces
+module. The schematic is captured and ERC clean: a root sheet and seven hierarchical sheets
+(power, mcu, ethernet, camera, led_driver, led_ring, imu), with the multi-signal interfaces
 crossing sheets as buses. PCB layout has not started (`espion-cam.kicad_pcb` is empty).
 Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 
@@ -31,6 +31,8 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   TSD05DYFR VBUS TVS. VBUS is sensed on GPIO20 (`VBUS_SENSE`, 47 kΩ / 75 kΩ divider):
   firmware turns the D+ pull-up off while no USB host supplies VBUS
 - WS2812B-2020-V6 RGB status LED; BOOT and RESET buttons
+- ST LSM6DS3TR-C 6-axis IMU on its own I2C bus (GPIO3/4), INT1 on GPIO54: wake-on-motion
+  flags a bumped camera, the accelerometer gives the gravity vector for rig calibration
 - 4 × M3 plated mounting holes (H1–H4), each pad on GND, ≥ 2 mm from the PoE cable-side
   copper
 

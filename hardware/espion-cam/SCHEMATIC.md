@@ -31,6 +31,7 @@ the board-wide ones from KiCad's annotation, in every section.
 | RJ45 shield | To GND through 1 nF/2 kV (C12) ∥ 1 MΩ (R15 + R16, 2 × 499 kΩ) |
 | Indicators | One addressable RGB status LED (WS2812B-2020-V6, D1, on +3V3) on a P4 GPIO. The MagJack's LEDs are not used; the PHY's LED pins are straps only |
 | Debug and sense | Test points on XVS, STROBE, gate output, LED_EN, PPS, the LED current shunt (`ISNS`), +5V, +3V3, +32V and GND. +32V sense divider and an NTC at the sink MOSFET, both into ADC1 pins. No UART header, no JTAG pads |
+| IMU | ST LSM6DS3TR-C 6-axis IMU (U12) on its own I2C bus (GPIO3/4, `IMU_SDA`/`IMU_SCL`), with INT1 on GPIO54 (`IMU_INT1`). Uses: wake-on-motion flags a camera that was bumped (stale extrinsics), the accelerometer gives the gravity vector for rig calibration, the rest is spare. INT2 is not connected. See [IMU](#imu-imukicad_sch) |
 | GPIO numbers | Fixed for Ethernet ([Ethernet pin map](../../docs/architecture.md#ethernet-pin-map)). The rest are assigned during PCB placement, within the groups in [GPIO groups](#gpio-groups) |
 | BOM | Generated from the schematic with the project's KiCad BOM preset `Order`; the output is not committed. See [Bill of materials](#bill-of-materials) |
 
@@ -45,6 +46,7 @@ the board-wide ones from KiCad's annotation, in every section.
 | `camera.kicad_sch` | 15-pin FPC, JST-SH aux (XVS/STROBE), SCCB pull-ups, CAM_EN, XVS divider, STROBE buffer |
 | `led_driver.kicad_sch` | TPS22918 load switch, TPS61170 boost, storage caps, '1G97 gate and timeout RC, TLV9061/IRLR024N sink, NTC, +32V sense |
 | `led_ring.kicad_sch` | 12 × A-SC880IR3C (D4–D15) in series between +32V and `LED_K` |
+| `imu.kicad_sch` | LSM6DS3TR-C IMU, its decoupling and I2C pull-ups |
 
 ```mermaid
 flowchart LR
@@ -57,6 +59,7 @@ flowchart LR
   MCU -->|"{LEDCTL}"| LED
   LED -->|"VLED_SENSE, NTC_SENSE"| MCU
   LED -->|LED_K| RING[led_ring]
+  MCU <-->|"{IMU}"| IMU[imu]
 ```
 
 ### Power nets
@@ -68,7 +71,7 @@ Global power symbols carry the rails; local nets stay on one sheet.
 | `GND` | global | — | everything, including the mounting holes H1–H4. Isolated from the cable side by the DP1435 |
 | `VBUS` | global | USB-C J1 (mcu) | TPS2116 VIN2 (U4), TSD05DYFR TVS (D2), 100 kΩ bleeder (R25), VBUS sense divider (R62/R63) |
 | `+5V` | global | TPS2116 U4 (power) | TLV62569 (U5), TPS22918 (U8, led_driver), TLV9061 (U11) |
-| `+3V3` | global | TLV62569 U5 (power) | P4 module, PHY (via `PHY_3V3`), camera (via `CAM_3V3`), logic, RGB LED, pull-ups, NTC divider |
+| `+3V3` | global | TLV62569 U5 (power) | P4 module, PHY (via `PHY_3V3`), camera (via `CAM_3V3`), logic, RGB LED, IMU, pull-ups, NTC divider |
 | `+32V` | global | TPS61170 U9 via D3 (led_driver) | LED ring, boost feedback divider (R45/R46), sense divider (R60/R61). Stock `power:+36V` symbol with Value `+32V` (stock KiCad has no `+32V`; the net name follows the Value) |
 | `+5V_POE`, `+5V_POE_F` | local, power | DP1435 (U3) VOUT; after the LC filter (L1) | LC filter; TPS2116 VIN1 |
 | `+5V_BST` | local, led_driver | TPS22918 (U8) VOUT | TPS61170 VIN, boost inductor (L3) |
@@ -98,11 +101,13 @@ them by name. On the root sheet, buses run directly between the sheet pins.
 | `{CSI}` | `CSI_CLK_P`, `CSI_CLK_N`, `CSI_D0_P`, `CSI_D0_N`, `CSI_D1_P`, `CSI_D1_N` | mcu ↔ camera | passive |
 | `{CAMCTL}` | `SCCB_SDA`, `SCCB_SCL`, `CAM_EN`, `XVS` | mcu ↔ camera | bidirectional |
 | `{LEDCTL}` | `LED_PWR_EN`, `BST_EN`, `LED_EN` | mcu ↔ led_driver | bidirectional |
+| `{IMU}` | `IMU_SDA`, `IMU_SCL`, `IMU_INT1` | mcu ↔ imu | bidirectional |
 
 `STROBE`, `PWR_SRC`, `VLED_SENSE`, `NTC_SENSE` and `LED_K` stay single hierarchical pins.
 Within a sheet, a bus that has to reach members on two sides of a part is split into pieces
 joined by a local bus label of the same `{ALIAS}` name (mcu sheet: `{LEDCTL}` reaches
-`BST_EN` on GPIO53 this way); each sheet has exactly one hierarchical label per bus.
+`BST_EN` on GPIO53 and `{IMU}` reaches `IMU_INT1` on GPIO54 this way); each sheet has
+exactly one hierarchical label per bus.
 
 ### Hierarchical pins
 
@@ -128,6 +133,8 @@ joined by a local bus label of the same `{ALIAS}` name (mcu sheet: `{LEDCTL}` re
 | `NTC_SENSE` | — | led_driver → mcu | passive (analog) | NTC divider (TH1/R59), ADC1 |
 | `PWR_SRC` | — | power → mcu | open drain | TPS2116 ST; 10 kΩ pull-up (R26) on the mcu sheet. High = PoE |
 | `LED_K` | — | led_driver ↔ led_ring | passive, ≈ 2–34 V, 1 A pulsed | String cathode (D15) → MOSFET drain (Q1) |
+| `IMU_SDA`, `IMU_SCL` | `{IMU}` | mcu ↔ imu | open drain | GPIO3, GPIO4 (second P4 I2C controller). 10 kΩ pull-ups (R64, R65) on the imu sheet |
+| `IMU_INT1` | `{IMU}` | imu → mcu | push-pull | U12 INT1 → GPIO54. No pull: U12 drives it low from power-up |
 
 ### GPIO groups
 
@@ -143,7 +150,8 @@ it).
 | ADC | `VLED_SENSE`, `NTC_SENSE`, `VBUS_SENSE` | ADC1: GPIO20–23 | GPIO22, GPIO23, GPIO20 (ADC1 CH4) |
 | STAT | `PWR_SRC`, `STATUS_LED` | `STATUS_LED` on GPIO6–13 (no reset pull-up) | GPIO2, GPIO13 |
 | PPS | `PPS`, `PPS_IN` | Adjacent pins for a short 0 Ω loop | GPIO32, GPIO33 |
-| Spare | — | GPIO26/27 carry USB by default; measure before use | GPIO3, 4, 5, 21, 26, 27, 54 |
+| IMU | `IMU_SDA`, `IMU_SCL`, `IMU_INT1` | Inputs or open drain only on GPIO3/4 (JTAG MTDI/MTMS pads, IE after reset) | GPIO3, GPIO4, GPIO54 |
+| Spare | — | GPIO26/27 carry USB by default; measure before use | GPIO5, 21, 26, 27 |
 
 ### Firmware rules from the schematic
 
@@ -186,6 +194,10 @@ The hardware relies on these; `cam-p4` must follow them.
     whether or not USB is plugged in. The divider puts the pin above V_IH for VBUS
     ≥ 4.4 V, so a digital read works; ADC1 CH4 at ATTEN3 (0–3.3 V) reads VBUS up to
     ≈ 5.3 V ([MCU](#mcu-mcukicad_sch)).
+11. **IMU:** keep U12's INT1 push-pull (`CTRL3_C.PP_OD` = 0, the default): `IMU_INT1`
+    has no pull resistor, so open-drain mode would leave GPIO54 floating. U12 answers at
+    I2C address 0x6A (SA0 tied low) on the bus at GPIO3/4, at up to 400 kHz. Wait
+    ≥ 35 ms after power-up (turn-on time, LSM6DS3TR-C DS Table 4) before the first access.
 
 ### Clocks
 
@@ -595,7 +607,7 @@ Sources cited:
 
 ### Hierarchical pins
 
-Directions are as seen from the mcu sheet. All signals are 3.3 V logic unless the table says otherwise. Sheet labels: the buses `{PHY}` (RMII, `MDC`, `MDIO`, `PHY_RST_N`), `{CSI}`, `{CAMCTL}` (`SCCB_*`, `CAM_EN`, `XVS`) and `{LEDCTL}` (`LED_EN`, `LED_PWR_EN`, `BST_EN`), and the single pins `STROBE`, `VLED_SENSE`, `NTC_SENSE` and `PWR_SRC`. `{LEDCTL}` is drawn in two pieces joined by a local `{LEDCTL}` bus label, because `BST_EN` (GPIO53) is on the other pin column.
+Directions are as seen from the mcu sheet. All signals are 3.3 V logic unless the table says otherwise. Sheet labels: the buses `{PHY}` (RMII, `MDC`, `MDIO`, `PHY_RST_N`), `{CSI}`, `{CAMCTL}` (`SCCB_*`, `CAM_EN`, `XVS`), `{LEDCTL}` (`LED_EN`, `LED_PWR_EN`, `BST_EN`) and `{IMU}` (`IMU_SDA`, `IMU_SCL`, `IMU_INT1`), and the single pins `STROBE`, `VLED_SENSE`, `NTC_SENSE` and `PWR_SRC`. `{LEDCTL}` and `{IMU}` are each drawn in two pieces joined by a local bus label of the same name, because `BST_EN` (GPIO53) and `IMU_INT1` (GPIO54) are on the other pin column.
 
 | Name | Dir | Level | Goes to | Module pin / GPIO |
 |---|---|---|---|---|
@@ -623,6 +635,9 @@ Directions are as seen from the mcu sheet. All signals are 3.3 V logic unless th
 | `VLED_SENSE` | in | analog, 0–3.3 V | led_driver (100 nF there) | group ADC (ADC1) |
 | `NTC_SENSE` | in | analog, 0–3.3 V | led_driver (100 nF there) | group ADC (ADC1) |
 | `PWR_SRC` | in | open-drain, pulled up here | power (TPS2116 ST) | group STAT |
+| `IMU_SDA` | bidir (open-drain) | 3.3 V | imu (10 kΩ pull-up there) | 5 / GPIO3 (group IMU) |
+| `IMU_SCL` | out (open-drain) | 3.3 V | imu (10 kΩ pull-up there) | 6 / GPIO4 (group IMU) |
+| `IMU_INT1` | in | 3.3 V, push-pull from U12 | imu | 72 / GPIO54 (group IMU) |
 
 Global power symbols used: `+3V3`, `VBUS`, `GND`. Local nets: `ESP_EN`, `BOOT_SW`, `USB_C_D_P`/`USB_C_D_N` (connector side), `USB_D_P`/`USB_D_N` (module side), `CC1`, `CC2`, `VBUS_SENSE` (VBUS divider node into GPIO20), `PPS`, `PPS_IN`, `STATUS_LED`, `STATUS_LED_DIN`. `VBUS_SENSE` needs no hierarchical pin: `VBUS` is global, so the divider sits on this sheet.
 
@@ -668,8 +683,8 @@ Stock symbol and footprint names were checked in the nix-store KiCad libraries (
 | 2 | GPIO0/XTAL_32K_N | NC | Module's 32.768 kHz crystal [WS-PIN] |
 | 3 | GPIO1/XTAL_32K_P | NC | Module's 32.768 kHz crystal |
 | 4 | GPIO2 | hier `PWR_SRC` (group STAT), R26 pull-up | WPU after reset (DS Table 2-1): use only for inputs or pulled-up lines |
-| 5 | GPIO3 | NC (spare) | IE after reset |
-| 6 | GPIO4 | NC (spare) | IE after reset |
+| 5 | GPIO3 | hier `IMU_SDA` (group IMU) | IE after reset; JTAG MTDI pad, an input |
+| 6 | GPIO4 | hier `IMU_SCL` (group IMU) | IE after reset; JTAG MTMS pad, an input |
 | 7 | GPIO5 | NC (spare) | |
 | 8 | GPIO6 | hier `LED_PWR_EN` (group LED) | |
 | 9 | GPIO7 | hier `LED_EN` (group LED) | |
@@ -726,7 +741,7 @@ Stock symbol and footprint names were checked in the nix-store KiCad libraries (
 | 69 | GPIO51 | hier `PHY_RST_N` | |
 | 70 | GPIO52 | hier `MDIO` | |
 | 71 | GPIO53 | hier `BST_EN` (group LED) | ADC2_CH4 not needed |
-| 72 | GPIO54 | NC (spare, ADC2_CH5) | |
+| 72 | GPIO54 | hier `IMU_INT1` (group IMU) | No reset pull; ADC2_CH5 not needed |
 | 73 | GND | GND | |
 | 74 | VBAT | +3V3 | VDD_BAT must not float [HDG-SC Analog]. The 10 µF + 100 nF it needs are on the module (module C37/C38) [WS-SCH] |
 | 75, 76 | ESP_3V3 | +3V3, C26 10 µF + C27 100 nF at the pins | |
@@ -763,16 +778,17 @@ The symbol's GND pin carries `[20,27,34,55,73]` and ESP_3V3 carries `[75,76]`: b
 
 ### GPIO groups and constraints (final numbers set at placement)
 
-Exposed GPIOs available in the 3.3 V domains (module schematic: VDD_LP pin 9, VDD_IO_0 pin 21 and VDD_IO_6 pin 96 on ESP_3V3; VDD_IO_4 pin 62 on ESP_3V3 [WS-SCH]): GPIO2–13, 20–23, 26, 27, 32, 33, 53, 54. That is 22 pins for 15 signals, which leaves 7 spare.
+Exposed GPIOs available in the 3.3 V domains (module schematic: VDD_LP pin 9, VDD_IO_0 pin 21 and VDD_IO_6 pin 96 on ESP_3V3; VDD_IO_4 pin 62 on ESP_3V3 [WS-SCH]): GPIO2–13, 20–23, 26, 27, 32, 33, 53, 54. That is 22 pins for 18 signals, which leaves 4 spare.
 
 | Group | Signals | Constraint | Schematic |
 |---|---|---|---|
 | CAM | SCCB_SDA, SCCB_SCL, CAM_EN (out, pull-down on camera sheet), XVS (out, RMT), STROBE (in, ETM capture) | Any 3.3 V GPIO; I2C, RMT and the GPIO ETM event all route through the GPIO matrix (the ETM event selects any GPIO 0–54, TRM §10.17). CAM_EN and XVS must not be on GPIO2 (WPU) | GPIO8, 9, 10, 11, 12 (pins 10–14, left edge, toward the CSI corner) |
 | LED | LED_EN, LED_PWR_EN, BST_EN (100 kΩ pull-downs on the LED sheet) | Not GPIO2: its 45 kΩ WPU against a 100 kΩ pull-down gives 3.3 × 100/145 = 2.3 V. Not GPIO34–38 (straps) | GPIO7, GPIO6, GPIO53 |
-| ADC | VLED_SENSE, NTC_SENSE, VBUS_SENSE (also read as a digital input) | ADC1 = GPIO20–23 (CH4–7) [WS-PIN], [HDG-SC ADC], DS Table 2-7. ADC2 is GPIO49–54 (CH0–5): CH0–3 (GPIO49–52) carry Ethernet and CH4 (GPIO53) carries BST_EN, so the spare analog inputs are GPIO21 (ADC1_CH5) and GPIO54 (ADC2_CH5). The P4 has no Wi-Fi, so the classic ESP32 ADC2/Wi-Fi conflict does not apply [INFERENCE]. esp-hal 1.2.2 has a P4 one-shot driver for both units (`src/analog/adc/p4.rs`, `unstable`). ATTEN3 covers 0–3300 mV ±15 mV after calibration (DS Table 5-6) | GPIO22, GPIO23, GPIO20 (pins 18/19/16) |
+| ADC | VLED_SENSE, NTC_SENSE, VBUS_SENSE (also read as a digital input) | ADC1 = GPIO20–23 (CH4–7) [WS-PIN], [HDG-SC ADC], DS Table 2-7. ADC2 is GPIO49–54 (CH0–5): CH0–3 (GPIO49–52) carry Ethernet, CH4 (GPIO53) carries BST_EN and CH5 (GPIO54) carries IMU_INT1, so the only spare analog input is GPIO21 (ADC1_CH5). The P4 has no Wi-Fi, so the classic ESP32 ADC2/Wi-Fi conflict does not apply [INFERENCE]. esp-hal 1.2.2 has a P4 one-shot driver for both units (`src/analog/adc/p4.rs`, `unstable`). ATTEN3 covers 0–3300 mV ±15 mV after calibration (DS Table 5-6) | GPIO22, GPIO23, GPIO20 (pins 18/19/16) |
 | STAT | PWR_SRC (in), STATUS_LED (out) | PWR_SRC may use GPIO2, since its WPU only adds to R26 | GPIO2, GPIO13 |
 | PPS | PPS (out: GPIO matrix signal 243 `emac_ptp_pps_pad_out`, TRM Table 10.12-1), PPS_IN (in) | Two pins next to each other for a short 0 Ω loop | GPIO32/33 (module pins 44/45, near the RMII pins) |
-| Spare | — | — | GPIO3, 4, 5, 21, 26, 27, 54 |
+| IMU | IMU_SDA, IMU_SCL (open drain, 10 kΩ pull-ups on the imu sheet), IMU_INT1 (in, push-pull from U12) | GPIO3/4 are the JTAG MTDI/MTMS pads: inputs with IE after reset, so an open-drain bus held high by its pull-ups is safe on them. Not GPIO5 (MTDO, a JTAG output). INT1 needs no pull at reset: U12 drives it low from power-up (LSM6DS3TR-C DS Table 18). I2C goes through the GPIO matrix | GPIO3, GPIO4 (pins 5/6), GPIO54 (pin 72) |
+| Spare | — | — | GPIO5, 21, 26, 27 |
 
 **P4 GPIO reset state** (DS Table 2-1 and [HDG-SC GPIO], "IO MUX Pin Functions"):
 - **During reset:** every exposed GPIO is high-Z with no pull, except GPIO32–34 and 36–38 (input enabled, no pull) and GPIO35 (input enabled plus WPU).
@@ -788,6 +804,7 @@ Exposed GPIOs available in the 3.3 V domains (module schematic: VDD_LP pin 9, VD
 | XVS | Held low by R32, the bottom resistor of the divider (camera) |
 | PHY_RST_N | R10 10 kΩ pull-down (ethernet) |
 | STATUS_LED | R29 10 kΩ pull-down on the LED's DIN (RGB status LED): a floating data line could latch noise |
+| IMU_SDA, IMU_SCL | R64, R65 10 kΩ pull-ups (imu): the bus idles high, so U12 sees no START while the pins float |
 
 - With LED_PWR_EN and BST_EN low the boost is off. +32V can still hold its charge after a reset (τ ≈ 58 s), but the gate also needs STROBE, which R30 (10 kΩ, on the 1.8 V `STROBE_1V8` side of the camera sheet's level shifter) holds low until firmware configures the sensor. A glitch on LED_EN alone cannot light the ring.
 - Firmware should write each output's level before enabling its driver.
@@ -972,7 +989,7 @@ Ordering: D1 is the only in-stock addressable LED rated for 3.3 V, which is why 
 - Avoid GPIO2–5. They default to the JTAG pads MTCK/MTDI/MTMS/MTDO (Table 2-3), GPIO2 has a reset pull-up (Table 2-1), and GPIO5 is MTDO, a JTAG output.
 - Avoid GPIO20–23. They are the ADC1 pins: `VBUS_SENSE`, `VLED_SENSE` and `NTC_SENSE` use three of them, and GPIO21 is the last spare ADC1 input.
 - Avoid GPIO24–27. They are the USB1P1 pins, and USB is enabled at reset (Table 2-1 note 4).
-- GPIO32/33 (PPS) and GPIO53 (BST_EN) are taken. GPIO54 (ADC2_CH5, no reset pull) is the only free fallback.
+- GPIO32/33 (PPS), GPIO53 (BST_EN) and GPIO54 (IMU_INT1) are taken, so a swap has to stay within GPIO6–13.
 
 #### Values and derivations
 
@@ -2032,3 +2049,88 @@ Part choices:
 1. **The LED footprint is provisional:** datasheet labels and drawn scale disagree (hardware/lib README).
 2. **LCSC stock is 885.** That is enough for 73 boards. The second source, MEIHUA MHP3838IR138CT (C409781), needs its land pattern compared with the project footprint before use.
 3. **ESD exposure of the front-side LEDs** depends on the enclosure. Revisit if the ring stays touchable.
+
+## IMU (`imu.kicad_sch`)
+
+An ST LSM6DS3TR-C 6-axis IMU (U12: 3D accelerometer and 3D gyroscope) on its own I2C bus to the P4, with INT1 on a GPIO. It does two jobs: its wake-on-motion interrupt tells firmware that a camera was bumped, so the host knows the rig extrinsics are stale, and its accelerometer gives the gravity vector (camera tilt, floor plane) for rig calibration. The gyroscope and the rest of the part are spare. INT2 is not connected.
+
+Sources cited:
+- [DS]: ST LSM6DS3TR-C datasheet, DocID030071 Rev 3 (May 2017), LCSC PDF for C967633.
+- [UM10204]: NXP I2C-bus specification and user manual (Fast-mode rise time).
+
+### Hierarchical pins
+
+Sheet label: `{IMU}` (bus, bidirectional). The rows are its members.
+
+| Name | Direction (this sheet) | Level | Goes to |
+|---|---|---|---|
+| `IMU_SDA` | bidirectional | 3.3 V open drain | mcu: U1 pin 5, GPIO3 (P4 I2C SDA, GPIO matrix) |
+| `IMU_SCL` | input | 3.3 V open drain | mcu: U1 pin 6, GPIO4 (P4 I2C SCL, GPIO matrix) |
+| `IMU_INT1` | output | 3.3 V push-pull | mcu: U1 pin 72, GPIO54 |
+
+Rails: `+3V3` and `GND` (global power symbols). The pull-ups join the bus through a second pair of `IMU_SDA`/`IMU_SCL` labels, and `IMU_INT1` reaches its bus entry through a pair of local labels.
+
+### Parts
+
+| Ref | Function | Value / MPN | LCSC (stock, lowest-break price, 2026-10-29) | KiCad symbol | KiCad footprint |
+|---|---|---|---|---|---|
+| U12 | 6-axis IMU | ST LSM6DS3TR-C, LGA-14 2.5 × 3 × 0.83 mm | C967633 (22,416, $1.4689) | `Sensor_Motion:LSM6DS3` (same pinout as the TR-C) | `Package_LGA:LGA-14_3x2.5mm_P0.5mm_LayoutBorder3x4y` (stock; drawn from the LSM6DS3TR-C datasheet) |
+| R64, R65 | I2C pull-ups to +3V3 (SDA, SCL) | 10.0 kΩ 1 % 0402, 0402WGF1002TCE (same part as R26) | C25744 (0 in stock, $0.0024 @ 100) | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| C50, C51 | Decoupling at Vdd_IO (pin 5) and Vdd (pin 8) | 100 nF 50 V X7R 0402, CL05B104KB54PNC (Samsung) | C307331 (518,300, $0.0090 @ 100) | `Device:C` | `Capacitor_SMD:C_0402_1005Metric` |
+
+Part choice (LCSC, 2026-10-29, price at 1 / 100 pieces):
+
+| Part | LCSC | Stock | Price | Why not |
+|---|---|---|---|---|
+| **LSM6DS3TR-C** (chosen) | C967633 | 22,416 | $1.47 / $0.99 | — Cheapest, in stock, stock KiCad symbol and footprint |
+| TDK ICM-42670-P | C3288646 | 3,067 | $1.87 / $1.36 | Lower stock, needs a project symbol |
+| QST QMI8658A | C3021082 | 10,364 | $2.00 / $1.40 | Dearer, needs a project symbol |
+| Bosch BMI270 | C2836813 | 26,770 | $2.62 / $1.35 | Dearer, needs an 8 KB config upload at every boot |
+| QMI8658C, BMI160 | C2842151, C94021 | 0 | — | Out of stock |
+| LSM6DSOTR, ICM-42605, ICM-42688-P | C2655100, C2655099, C1850418 | — | $4.02, $9.07, $22.89 | Price |
+
+### Connections
+
+**U12 LSM6DS3TR-C** (all 14 pins; [DS] Table 2 and Table 18, pin numbers match the stock symbol):
+
+| Pin | Name | Net | Note |
+|---|---|---|---|
+| 1 | SDO/SA0 | `GND` | I2C address 0x6A ([DS] §6.3.1). Input without pull-up, so it must be tied |
+| 2 | SDx | `GND` | Sensor hub (Mode 2) not used: "Connect to VDDIO or GND" ([DS] Table 2) |
+| 3 | SCx | `GND` | As SDx |
+| 4 | INT1 | `IMU_INT1` | Push-pull, "output forced to ground" by default ([DS] Table 18) |
+| 5 | Vdd_IO | `+3V3`, C50 100 nF | |
+| 6, 7 | GND | `GND` | Pin 7 is a hidden pin of the stock symbol, stacked on pin 6 |
+| 8 | Vdd | `+3V3`, C51 100 nF | |
+| 9 | INT2 | NC (no-connect flag) | Output forced to ground by default ([DS] Table 18) |
+| 10, 11 | NC | NC | "Leave unconnected and soldered to PCB" ([DS] Table 2). Hidden `no_connect` pins in the stock symbol |
+| 12 | CS | `+3V3` | High selects I2C ([DS] §6.1) |
+| 13 | SCL | `IMU_SCL`, R65 10 kΩ to `+3V3` | |
+| 14 | SDA | `IMU_SDA`, R64 10 kΩ to `+3V3` | |
+
+**ERC exclusions.** The stock symbol types SDO/SA0 and SDx as bidirectional (their SPI SDO and sensor-hub MSDA roles), so tying them to GND raises two `pin_to_pin` warnings (bidirectional vs. power output). Both are excluded in `espion-cam.kicad_pro` with a comment; `kicad-cli sch erc` reports 0 violations, `--severity-exclusions` lists the two.
+
+### Values and derivations
+
+- **Supply:** Vdd 1.71–3.6 V and Vdd_IO 1.62 V – Vdd + 0.1 V ([DS] Table 4). Both pins sit on `+3V3` (3.20–3.44 V worst case, see Camera), so Vdd_IO = Vdd and both limits hold. Current ≤ 0.9 mA (gyro + accelerometer, high-performance mode, [DS] Table 4).
+- **Decoupling (C50, C51):** 100 nF ceramic on each supply pin, as near the pin as possible ([DS] §7.1, Figure 15). Same part as the board's other 100 nF capacitors.
+- **Pull-ups (R64, R65: 10 kΩ):** [DS] Figure 15 shows R_pu = 10 kΩ to Vdd_IO. The board's 10.0 kΩ part is reused.
+  - **Rise time:** [INFERENCE] bus ≈ 15 pF (U12 and P4 pins, a few cm of track) gives t_r ≈ 0.8473 × 10 k × 15 p ≈ 127 ns. Even 30 pF gives 254 ns, under the 300 ns Fast-mode limit ([UM10204]), so 400 kHz works.
+  - **Sink current:** 3.3 V / 10 kΩ = 0.33 mA, well inside U12's V_OL ≤ 0.2 V at 4 mA ([DS] Table 4).
+- **Own bus, not SCCB:** the IMU stays reachable while the camera is unpowered or unplugged (the module's load on SCCB with `CAM_EN` low is still unknown: Camera, To verify 3), and IMU reads never wait behind sensor register writes.
+- **INT1 without a pull:** U12 drives INT1 low from power-up ([DS] Table 18), and GPIO54 has no reset pull, so the line is defined before firmware runs. Firmware keeps it push-pull ([firmware rule 11](#firmware-rules-from-the-schematic)).
+- **Gravity accuracy:** the zero-g offset is ±40 mg typ ([DS] Table 3, LA_TyOff), ≈ 2.3° of tilt, plus ±0.5 mg/°C. A per-board 6-orientation calibration removes most of it if the rig calibration needs better.
+
+### Layout constraints
+
+- U12 measures the camera's motion, so place it on the board region that holds the lens mount, with its package edges parallel to the image axes. Record its orientation (pin 1 corner relative to the image axes) for the firmware's axis mapping.
+- Keep it away from heat, since offset drifts with temperature: the sink MOSFET Q1 and its DPAK copper, the boost (U9, L3, D3) and the PoE PD module U3.
+- Keep it away from the mounting holes H1–H4 and the board edges, where screw torque bends the board [INFERENCE: MEMS offset is stress sensitive].
+- C50 at pin 5 and C51 at pin 8, with short vias to the L2 GND plane.
+- `IMU_SDA`, `IMU_SCL` and `IMU_INT1` use the Default net class.
+
+### To verify
+
+1. **Land pattern:** the stock footprint follows the LSM6DS3TR-C datasheet drawing. ST's land-pattern and soldering recommendations for LGA MEMS ([DS] §13 points to www.st.com/mems) were not read: check them before layout, including any keep-out under the package.
+2. **10 kΩ stock:** LCSC showed 0 stock for C25744 on 2026-10-29. This affects every 10.0 kΩ 0402 on the board, not only R64/R65: pick an in-stock equivalent before ordering.
+3. **Wake-on-motion threshold and duration:** firmware settings, to tune on a mounted rig (floor vibration and door slams against real bumps).

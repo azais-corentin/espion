@@ -28,7 +28,16 @@
     "equivalence_files": []
   },
   "erc": {
-    "erc_exclusions": [],
+    "erc_exclusions": [
+      [
+        "pin_to_pin|1371600|939800|0158166b-1052-43f6-921e-5cf218d0b459|c082198d-9317-456f-a5e6-dc5097bb410f|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0",
+        "U12 SA0 tied to GND on purpose: I2C address 0x6A (LSM6DS3TR-C DS Table 2). The stock symbol types the pin bidirectional for its SPI SDO role."
+      ],
+      [
+        "pin_to_pin|1371600|965200|30952fc4-ae1f-4f49-8913-a2a7c2395467|c082198d-9317-456f-a5e6-dc5097bb410f|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0",
+        "U12 SDx tied to GND on purpose: sensor hub (Mode 2) unused, DS Table 2 says connect to VDDIO or GND. The stock symbol types the pin bidirectional for its MSDA role."
+      ]
+    ],
     "meta": {
       "version": 0
     },
@@ -743,6 +752,11 @@
         "CSI_D0_N",
         "CSI_D1_P",
         "CSI_D1_N"
+      ],
+      "IMU": [
+        "IMU_SDA",
+        "IMU_SCL",
+        "IMU_INT1"
       ],
       "LEDCTL": [
         "LED_PWR_EN",
