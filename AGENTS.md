@@ -10,9 +10,9 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, Ethernet/UDP, PTP, PPS capture via ETM) | `cargo build --release` in that directory |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
-| `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values, part notes); the BOM is exported from the schematic with the `Order` preset | KiCad; ERC: `kicad-cli sch erc hardware/espion-cam/espion-cam.kicad_sch`; BOM: `kicad-cli sch export bom --preset Order -o espion-cam-bom.csv espion-cam.kicad_sch` in `hardware/espion-cam/` |
-| `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad; KLC checks and model rebuild in `hardware/lib/README.md` |
-| `.omp/` | Agent config: the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its vendored skills | — |
+| `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values, part notes); the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, rules); BOM: `kicad_query` `bom` (preset `Order`) |
+| `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad toolkit: `kicad_edit` library ops, `kicad_check` `klc`; model rebuild in `hardware/lib/README.md` |
+| `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`) and its `kicad-*` skills; the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its vendored skills | `bun test` in `.omp/extensions/kicad` |
 | `docs/` | Architecture, wire protocol, timing | — |
 
 - Enter the environment with `direnv allow` or `nix develop`. Don't install toolchains
@@ -51,8 +51,17 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 
 ## Hardware
 
-- Never edit KiCad files (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, `.kicad_dru`,
-  `.kicad_sym`, footprints) by hand. Changes go through KiCad.
+- KiCad files (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, `.kicad_dru`, `.kicad_sym`,
+  `.kicad_mod`, the lib tables) are **toolkit-only**. Read, change and check them only with
+  the KiCad toolkit: `kicad_query`, `kicad_edit`, `kicad_check`, `kicad_render`, and
+  `kicad_datasheet` for the datasheets (skills `kicad-schematic-edit`,
+  `kicad-schematic-review`, `kicad-part-sourcing`, `kicad-library-part`,
+  `kicad-library-review`). Never edit them with other tools and never run `kicad-cli`,
+  `kicad`, `eeschema` or `pcbnew` yourself; a hook blocks it. If the toolkit can't do
+  something, stop, tell the user what is missing and use the `ask` tool to ask whether it
+  should be added to the toolkit.
+- `kicad_edit` writes nothing while KiCad has the project open (lock files): ask the user to
+  close it.
 - `hardware/espion-cam/SCHEMATIC.md` is the plan the schematic follows. A schematic change
   updates it (sheets, buses, hierarchical pins, parts, values) in the same commit, and the
   board list in `hardware/espion-cam/README.md` when a part changes. Keep ERC at 0
@@ -61,8 +70,12 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
   fields; set them when you add or change a part. The BOM comes from the project's `Order`
   preset and is never committed (see Hygiene).
 - Library parts follow `hardware/lib/README.md`: KLC naming, `${KIPRJMOD}`-relative paths,
-  a Parts entry per part (say there when a board stops using it), and the KLC check
-  scripts. `hardware/lib/.gitattributes` keeps the library files at LF line endings.
+  a Parts entry per part (say there when a board stops using it), and the KLC checks
+  (`kicad_check` with `klc`). `hardware/lib/.gitattributes` keeps the library files at LF
+  line endings.
+- The KLC scripts and the official symbol/footprint generators come from the
+  `kicad-library-tools` flake input. Its `library_utils/` layout may still move: after
+  bumping it, run the toolkit's tests.
 - 3D models are built with SolidCraft from the manufacturer's drawings, with the script in
   `hardware/lib/3d-src/`. Don't use EasyEDA/LCSC models (their terms forbid it). When you
   bump the `solidcraft` flake input, re-copy the skills (`.omp/skills/VENDORED.md`).
@@ -79,4 +92,6 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
   - `cargo clippy` (`--workspace --all-targets` at the root; plain `cargo clippy --release`
     in a firmware crate)
   - the build (and `cargo test --workspace` for host/shared crates)
-  - for hardware: ERC on the schematic, and the KLC scripts on changed library parts
+  - for hardware: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields,
+    rules), with `klc` for changed library parts
+  - for the KiCad toolkit: `bun test` in `.omp/extensions/kicad`

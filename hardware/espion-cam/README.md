@@ -63,6 +63,8 @@ Signal list, module pin notes, Ethernet pin map and hardware tasks: see
 ## Conventions
 
 - Edit only with KiCad (the dev shell provides KiCad 10). Never hand-edit `.kicad_*` files.
+  Agents work through the KiCad toolkit instead (`kicad_query`, `kicad_edit`,
+  `kicad_check`, `kicad_render`; see `../../AGENTS.md`).
 - `SCHEMATIC.md` is the plan the schematic follows: a schematic change updates it in the
   same commit. A part change also updates the symbol's Manufacturer, MPN and LCSC fields
   and the board list above. There is no committed BOM file.

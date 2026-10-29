@@ -1,0 +1,307 @@
+/**
+ * External programs: kicad-cli and the Python tools from kicad-library-tools.
+ *
+ * All of them come from the repo's dev shell. When the omp process was not started inside it
+ * (no kicad-cli on PATH), the dev shell environment is loaded once with `nix develop` and reused.
+ */
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { child, children, type List, parse, text } from "./sexpr";
+
+let shellEnv: Promise<Record<string, string>> | undefined;
+
+async function loadEnv(repoRoot: string): Promise<Record<string, string>> {
+	const base = { ...process.env } as Record<string, string>;
+	if (Bun.which("kicad-cli", { PATH: base.PATH ?? "" }) && base.KICAD_LIBRARY_TOOLS) return base;
+	const proc = Bun.spawn(["nix", "develop", repoRoot, "--command", "env", "-0"], {
+		cwd: repoRoot,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const [out, err, code] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	if (code !== 0) throw new Error(`could not load the dev shell (nix develop): ${err.trim().slice(-2000)}`);
+	const env: Record<string, string> = {};
+	for (const kv of out.split("\0")) {
+		const i = kv.indexOf("=");
+		if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
+	}
+	return env;
+}
+
+/** The dev-shell environment (cached for the process). */
+export function devEnv(repoRoot: string): Promise<Record<string, string>> {
+	shellEnv ??= loadEnv(repoRoot).catch(e => {
+		shellEnv = undefined;
+		throw e;
+	});
+	return shellEnv;
+}
+
+export interface RunResult {
+	code: number;
+	stdout: string;
+	stderr: string;
+}
+
+export interface RunOpts {
+	cwd: string;
+	repoRoot: string;
+	signal?: AbortSignal;
+	env?: Record<string, string>;
+}
+
+export async function run(cmd: string[], opts: RunOpts): Promise<RunResult> {
+	const env = { ...(await devEnv(opts.repoRoot)), ...opts.env };
+	const proc = Bun.spawn(cmd, { cwd: opts.cwd, env, stdout: "pipe", stderr: "pipe", signal: opts.signal });
+	const [stdout, stderr, code] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	return { code, stdout, stderr };
+}
+
+async function must(cmd: string[], opts: RunOpts): Promise<RunResult> {
+	const r = await run(cmd, opts);
+	if (r.code !== 0) {
+		throw new Error(`${cmd.slice(0, 3).join(" ")} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim().slice(-2000)}`);
+	}
+	return r;
+}
+
+export function tmpDir(prefix: string): string {
+	return fs.mkdtempSync(path.join(os.tmpdir(), `kicad-${prefix}-`));
+}
+
+// ---- kicad-cli ------------------------------------------------------------------------------
+
+export interface NetNode {
+	ref: string;
+	pin: string;
+	pinfunction?: string;
+	pintype?: string;
+}
+
+export interface Net {
+	code: number;
+	name: string;
+	netclass?: string;
+	nodes: NetNode[];
+}
+
+export interface Component {
+	ref: string;
+	value: string;
+	footprint: string;
+	datasheet: string;
+	description: string;
+	lib: string;
+	part: string;
+	sheetName: string;
+	sheetFile: string;
+	fields: Record<string, string>;
+	dnp: boolean;
+	excludeFromBom: boolean;
+	excludeFromBoard: boolean;
+}
+
+export interface Netlist {
+	nets: Net[];
+	components: Map<string, Component>;
+}
+
+/** Text of the `(key "value")` child of l, or "". */
+function txt(l: List | undefined, key: string): string {
+	return (l && text(child(l, key))) ?? "";
+}
+
+export function parseNetlist(source: string): Netlist {
+	const t = parse(source);
+	const components = new Map<string, Component>();
+	for (const c of children(child(t, "components") ?? [], "comp")) {
+		const fields: Record<string, string> = {};
+		for (const f of children(child(c, "fields") ?? [], "field")) fields[txt(f, "name")] = text(f, 2) ?? "";
+		const props: Record<string, string> = {};
+		for (const p of children(c, "property")) props[txt(p, "name")] = txt(p, "value");
+		const libsource = child(c, "libsource");
+		const ref = txt(c, "ref");
+		components.set(ref, {
+			ref,
+			value: txt(c, "value"),
+			footprint: txt(c, "footprint"),
+			datasheet: txt(c, "datasheet"),
+			description: txt(c, "description"),
+			lib: txt(libsource, "lib"),
+			part: txt(libsource, "part"),
+			sheetName: txt(child(c, "sheetpath"), "names"),
+			sheetFile: props.Sheetfile ?? "",
+			fields,
+			dnp: "dnp" in props,
+			excludeFromBom: "exclude_from_bom" in props,
+			excludeFromBoard: "exclude_from_board" in props,
+		});
+	}
+	const nets: Net[] = [];
+	for (const n of children(child(t, "nets") ?? [], "net")) {
+		nets.push({
+			code: Number(txt(n, "code")),
+			name: txt(n, "name"),
+			netclass: txt(n, "class") || undefined,
+			nodes: children(n, "node").map(x => ({
+				ref: txt(x, "ref"),
+				pin: txt(x, "pin"),
+				pinfunction: txt(x, "pinfunction") || undefined,
+				pintype: txt(x, "pintype") || undefined,
+			})),
+		});
+	}
+	return { nets, components };
+}
+
+/** Run a kicad-cli export into a temp file, read it, and remove the temp dir. */
+async function exportText(file: string, cmd: (out: string) => string[], o: RunOpts, allowExit = false): Promise<{ text: string; r: RunResult }> {
+	const dir = tmpDir("out");
+	try {
+		const out = path.join(dir, file);
+		const r = allowExit ? await run(cmd(out), o) : await must(cmd(out), o);
+		if (!fs.existsSync(out)) throw new Error(`${cmd(out).slice(0, 3).join(" ")} wrote no output: ${(r.stderr || r.stdout).trim()}`);
+		return { text: fs.readFileSync(out, "utf8"), r };
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+export async function netlist(rootSch: string, o: RunOpts): Promise<Netlist> {
+	const { text } = await exportText("out.net", out => ["kicad-cli", "sch", "export", "netlist", "--format", "kicadsexpr", "-o", out, rootSch], o);
+	return parseNetlist(text);
+}
+
+export interface ErcItem {
+	description: string;
+	uuid?: string;
+	pos?: { x: number; y: number };
+}
+
+export interface ErcViolation {
+	type: string;
+	severity: string;
+	description: string;
+	sheet: string;
+	items: ErcItem[];
+	excluded?: boolean;
+	/** Comment the user gave when excluding the violation in KiCad. */
+	comment?: string;
+}
+
+export async function erc(rootSch: string, o: RunOpts): Promise<ErcViolation[]> {
+	// ERC exits non-zero when it finds violations; the report is what matters
+	const { text } = await exportText("erc.json", out => ["kicad-cli", "sch", "erc", "--format", "json", "--severity-all", "-o", out, rootSch], o, true);
+	// kicad-cli's JSON report (erc.v1 schema, coordinate_units "mm") is trusted as KiCad's own output.
+	const j = JSON.parse(text) as { sheets: { path: string; violations: Omit<ErcViolation, "sheet">[] }[] };
+	return j.sheets.flatMap(s => s.violations.map(v => ({ ...v, sheet: s.path })));
+}
+
+/** Export every sheet to SVG in a temp dir; files are named `<project>-<Sheet name>.svg` (root: `<project>.svg`). */
+export async function svg(rootSch: string, o: RunOpts): Promise<string> {
+	const dir = tmpDir("svg");
+	await must(["kicad-cli", "sch", "export", "svg", "-o", dir, rootSch], o);
+	return dir;
+}
+
+/**
+ * Plot one symbol of a library file into `outDir`: one SVG per unit and body style
+ * (`<name>_unit<N>[_demorgan | _<body style name>].svg`), each page fitted to that unit.
+ */
+export async function symSvg(lib: string, name: string, theme: string, outDir: string, o: RunOpts): Promise<void> {
+	await must(["kicad-cli", "sym", "export", "svg", "--theme", theme, "--symbol", name, "-o", outDir, lib], o);
+}
+
+/** Plot one footprint of a .pretty directory into `outDir/<name>.svg`, the page fitted to the footprint. */
+export async function fpSvg(pretty: string, name: string, layers: string[], theme: string, outDir: string, o: RunOpts): Promise<string> {
+	// unlike sym export, fp export doesn't create its output directory
+	fs.mkdirSync(outDir, { recursive: true });
+	const r = await must(
+		["kicad-cli", "fp", "export", "svg", "--theme", theme, "--footprint", name, "--layers", layers.join(","), "--sketch-pads-on-fab-layers", "-o", outDir, pretty],
+		o,
+	);
+	// a failed plot still exits 0
+	const out = path.join(outDir, `${name}.svg`);
+	if (!fs.existsSync(out)) throw new Error(`kicad-cli fp export svg wrote no output: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
+	return out;
+}
+
+export interface Render3dOpts {
+	/** Side of the square image, px. */
+	size: number;
+	side: string;
+	/** Board rotation [x, y, z] in degrees. */
+	rotate?: readonly number[];
+	zoom: number;
+	perspective: boolean;
+}
+
+/**
+ * Window side for which KiCad's raytracer draws at least `size` px. It draws the centre of the
+ * window in 28 px steps (render_3d_raytrace_base.cpp initializeBlockPositions): the largest
+ * multiple of 28 below window − 36, plus 32, rounded down to 8.
+ */
+function raytraceWindow(size: number): number {
+	let k = 0;
+	while (((28 * k + 32) & ~7) < size) k++;
+	return 28 * k + 37;
+}
+
+/**
+ * Raytrace a board with KiCad's 3D viewer (high quality, opaque background), then crop the
+ * centre to exactly `size` × `size`; returns the PNG bytes.
+ */
+export async function pcbRender(board: string, v: Render3dOpts, o: RunOpts): Promise<Uint8Array> {
+	const dir = path.dirname(board);
+	const raw = path.join(dir, "raytraced.png");
+	const out = path.join(dir, "render.png");
+	const win = String(raytraceWindow(v.size));
+	const r = await must(
+		[
+			"kicad-cli", "pcb", "render", "--quality", "high", "--background", "opaque",
+			"--width", win, "--height", win, "--side", v.side, "--zoom", String(v.zoom),
+			...(v.rotate ? ["--rotate", v.rotate.join(",")] : []),
+			...(v.perspective ? ["--perspective"] : []),
+			"-o", raw, board,
+		],
+		o,
+	);
+	if (!fs.existsSync(raw)) throw new Error(`kicad-cli pcb render wrote no image: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
+	await must(["magick", raw, "-gravity", "center", "-crop", `${v.size}x${v.size}+0+0`, "+repage", out], o);
+	return fs.readFileSync(out);
+}
+
+/** BOM as CSV text (KiCad's own export, optionally through a BOM preset). */
+export async function bom(rootSch: string, preset: string | undefined, o: RunOpts): Promise<string> {
+	const { text } = await exportText("bom.csv", out => ["kicad-cli", "sch", "export", "bom", "-o", out, ...(preset ? ["--preset", preset] : []), rootSch], o);
+	return text;
+}
+
+export async function upgrade(kind: "sch" | "sym" | "fp", file: string, o: RunOpts): Promise<void> {
+	await must(["kicad-cli", kind, "upgrade", "--force", file], o);
+}
+
+export async function pcbDrc(board: string, o: RunOpts): Promise<{ violations: unknown[]; raw: string }> {
+	const { text, r } = await exportText("drc.json", out => ["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", "-o", out, board], o, true);
+	const j = JSON.parse(text) as { violations?: unknown[] };
+	return { violations: j.violations ?? [], raw: r.stdout + r.stderr };
+}
+
+/** Root of kicad-library-tools (dev shell env KICAD_LIBRARY_TOOLS). */
+export async function libraryTools(repoRoot: string): Promise<string> {
+	const env = await devEnv(repoRoot);
+	const root = env.KICAD_LIBRARY_TOOLS;
+	if (!root || !fs.existsSync(root)) {
+		throw new Error("KICAD_LIBRARY_TOOLS is not set: enter the dev shell (flake input kicad-library-tools)");
+	}
+	return root;
+}

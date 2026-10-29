@@ -1,0 +1,31 @@
+{
+  "defaults": {
+    "grid": 1.27
+  },
+  "projects": {
+    "hardware/espion-cam": {
+      "libDir": "hardware/lib",
+      "fields": {
+        "required": ["Manufacturer", "MPN", "LCSC"],
+        "exemptPrefixes": ["#", "H", "TP", "NT"]
+      },
+      "refBase": {
+        "#PWR": {
+          "root": 100,
+          "Ethernet": 200,
+          "Power": 300,
+          "MCU": 400,
+          "Camera": 500,
+          "LED driver": 600,
+          "LED ring": 700,
+          "IMU": 800
+        }
+      },
+      "klcExpected": ["F9.3", "F6.3"],
+      "klcWaivers": {
+        "Connector_HanRun:HR871150C": { "S4.5": "the part has no pin 6 (HanRun datasheet p. 2, \"Remove Pin#6\")" }
+      },
+      "fieldExempt": { "LCSC": ["U1"] }
+    }
+  }
+}

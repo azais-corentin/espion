@@ -24,25 +24,30 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `3d-src/` | SolidCraft scripts the 3D models are built from |
 
 Each project registers them in its `sym-lib-table` / `fp-lib-table` with
-`${KIPRJMOD}`-relative paths, so the project opens on any machine. Edit them only in KiCad
-(or through KiCad's Python API / kicad-library-utils, then re-saved by KiCad).
+`${KIPRJMOD}`-relative paths, so the project opens on any machine. Edit them in KiCad;
+agents use the KiCad toolkit's library ops (`kicad_edit` `lib_*`, skill
+`kicad-library-part`), which build parts with the official KiCad generators and re-save
+them through KiCad.
 
 Check a change with the KLC scripts from
-[kicad-library-utils](https://gitlab.com/kicad/libraries/kicad-library-utils):
-`klc-check/check_symbol.py --footprints <dir> hardware/lib/*.kicad_sym` and
-`klc-check/check_footprint.py hardware/lib/*.pretty/*.kicad_mod`. Run them with the Python
-that ships with KiCad. `--footprints` takes one directory: for symbols whose default
-footprint is a stock one, point it at a directory that links both the stock `.pretty`
-libraries and these, or the checker reports a false S5.1.
+[kicad-library-tools](https://gitlab.com/kicad/libraries/kicad-library-tools) (the
+`kicad-library-tools` flake input, at `$KICAD_LIBRARY_TOOLS` in the dev shell; it replaced
+kicad-library-utils): `library_utils/klc-check/check_symbol.py --footprints <dir>
+hardware/lib/*.kicad_sym` and `library_utils/klc-check/check_footprint.py
+hardware/lib/*.pretty/*.kicad_mod`, with the dev shell's `python3`. `--footprints` takes
+one directory: for symbols whose default footprint is a stock one, point it at a directory
+that links both the stock `.pretty` libraries and these, or the checker reports a false
+S5.1. Agents run the same checks with `kicad_check` `klc`, which does this linking.
 
-Expected checker messages:
+Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part may break,
+`klcWaivers` for one part with the reason; `kicad_check` reports both as info):
 
 - **F9.3** on every footprint with a project 3D model: the path is
   `${KIPRJMOD}/../lib/<Library>.3dshapes/<Footprint>.step`, not `${KICAD10_3DMODEL_DIR}`.
 - **F9.3 "must be STEP"** and **F6.3 "pad 7 missing Paste"** on footprints that use a stock
   `.stpZ` model or split the exposed-pad paste into separate apertures. The stock footprints
   they come from get the same messages.
-- **S4.5** on `Connector_HanRun:HR871150C`: the part has no pin 6.
+- **S4.5** on `Connector_HanRun:HR871150C` only (waiver): the part has no pin 6.
 
 ## 3D models
 
