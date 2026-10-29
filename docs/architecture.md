@@ -49,8 +49,8 @@ The schematic's sheets, nets, pin-level connections and component values are in
 |---|---|---|
 | MIPI CSI-2 (CLK + 2 data lanes) | OV9281 → P4 | Pixel data |
 | SCCB (I2C) | P4 → OV9281 | Sensor registers |
-| XVS | P4 → OV9281 | Frame trigger, one edge per frame at a scheduled network time. 1.8 V at the sensor (resistor divider) |
-| STROBE | OV9281 → LED gate, P4 | High during exposure. 1.8 V at the sensor, buffered to 3.3 V (SN74LV1T34). The P4 timestamps it with ETM |
+| XVS | P4 → OV9281 | Frame trigger, one edge per frame at a scheduled network time. The level at the module's back pad is not known (1.8, 2.8 or 3.3 V): a resistor divider (R31/R32) is an assembly option set for it |
+| STROBE | OV9281 → LED gate, P4 | High during exposure. Level not known (1.8–3.3 V); buffered to 3.3 V by an SN74LV1T34, which reads any level from 1.8 V to 5 V. The P4 timestamps it with ETM |
 | LED_EN | P4 → LED gate | Enables the strobed LEDs; low for dark frames |
 | LED_PWR_EN | P4 → TPS22918 ON | Connects +5V to the LED boost through a ≈ 27 ms ramp. Pulled low |
 | BST_EN | P4 → TPS61170 CTRL | Starts the 32 V LED boost after the load switch has ramped. Pulled low: the rail stays off until firmware enables it |
@@ -101,12 +101,15 @@ Sizing:
 
 Driver (parts, values and part notes: the LED driver section and "Bill of materials" in
 [`hardware/espion-cam/SCHEMATIC.md`](../hardware/espion-cam/SCHEMATIC.md)):
-- **Rail.** One string: 23 V typ, 27.6 V max at 1 A. A TI TPS61170 boost (40 V switch,
-  0.96 A minimum current limit, 10 µH) takes 5 V to 32 V and charges 2 × 220 µF/50 V
-  electrolytics. 32 V covers the max-V_F string plus 0.1 V on the shunt, ≈ 1 V for the
-  MOSFET and ≈ 3 V of droop. One pulse takes 0.5 mC (1 A × 500 µs): ≈ 1.1 V of droop on
-  440 µF, plus ESR. Two capacitors also share the ≈ 0.24 A RMS ripple current (each is
-  rated 230 mA at 120 Hz).
+- **Rail.** One string: 23 V typ, 28.8 V worst case at 1 A (2.3 V max V_F plus the
+  datasheet's ±0.1 V tolerance per LED). A TI TPS61170 boost (40 V switch, 0.96 A minimum
+  current limit, 10 µH) takes 5 V to 32 V and charges 2 × 220 µF/50 V electrolytics. One
+  pulse takes 0.5 mC (1 A × 500 µs): ≈ 1.1 V of droop on 440 µF, plus ≤ 0.42 V across the
+  ESR. A typical board keeps several volts for the MOSFET. On a board at the low corner
+  (31.3 V rail, worst-case string, −20 % capacitors) the MOSFET runs out of headroom
+  ≈ 0.5 ms into a pulse and the current sags toward the 0.75 ms firmware cap; this is
+  accepted. Two capacitors also share the ≈ 0.24 A RMS ripple current (each is rated
+  230 mA at 120 Hz).
 - **Boost limits.** Worst case (minimum current limit, 85 %) the boost delivers ≈ 100 mA
   at 32 V. 500 µs pulses at 120 fps average 60 mA, so it can sustain ≈ 0.8 ms of light per
   frame. Refilling the capacitors at power-up takes ≈ 70 ms (0.23 J).
@@ -118,14 +121,16 @@ Driver (parts, values and part notes: the LED driver section and "Bill of materi
 - **Current sink.** A TLV9061 op-amp on 5 V drives an IRLR024N MOSFET (55 V, planar, for
   its linear-mode SOA) so that 1 A flows through a 0.1 Ω shunt. Its 100 mV reference is a
   divider from the gate output, so the gate turns the sink on and off. The MOSFET drops
-  32 V − V_F, ≈ 9 V typ (up to ≈ 13 V with low-V_F parts): 9–13 W during a pulse,
+  32 V − V_F, ≈ 9 V typ (up to ≈ 14.6 V with min-V_F parts): 9–15 W during a pulse,
   ≤ 0.8 W average at 6 % duty, so it needs DPAK copper.
 - **Gate and timeout.** An SN74LVC1G97 is wired as a 2-input AND with Schmitt inputs (A
-  tied low, Y = B·C). B is `LED_EN`. C is STROBE through an RC high-pass and a 10 kΩ
-  series resistor: C falls below the threshold ≈ 1 ms after STROBE rises (τ ≈ 0.9 ms), so
-  the LEDs are on for min(STROBE, ≈ 1 ms). The series resistor limits the input clamp
-  current when STROBE falls, and the node recovers well within the 8.3 ms frame. A STROBE
-  stuck high lights one ≈ 1 ms pulse and then nothing.
+  tied low, Y = B·C). B is `LED_EN`. C is STROBE through a 1 kΩ series resistor, an RC
+  high-pass and a 10 kΩ series resistor: C falls below the threshold 0.78–1.32 ms after
+  STROBE rises (τ ≈ 0.92 ms), so the LEDs are on for min(STROBE, timeout). Firmware caps
+  exposure at 0.75 ms, so the timeout only acts when firmware fails. The 1 kΩ limits the
+  buffer's edge current into the capacitor; the 10 kΩ limits the input clamp current when
+  STROBE falls, and the node recovers well within the 8.3 ms frame. A STROBE stuck high
+  lights one ≈ 1 ms pulse and then nothing.
 - **Power.** 60 mA from the 32 V rail is 1.9 W, ≈ 2.3 W at the boost input; the PoE PD
   supplies only this average. The 23 W pulses come from the capacitors.
 - Fixed current. Near markers (≈ 40× brighter at 2 m than at 5 m) are handled by the
@@ -195,10 +200,11 @@ Hardware tasks for the KiCad project:
   `ISNS` test point, and τ against the '1G97's Schmitt thresholds (interpolated at 3.3 V).
 - Eye-safety check of the ring (IEC 62471) at 500 µs exposure and 6 % duty cycle. Rough
   estimate: exempt group (average IR irradiance ≈ 7 W/m² at 20 cm, limit 100 W/m²).
-- OV9281 module: the listing's reviews report an interface that doesn't match the
-  Raspberry Pi pinout. Check the FPC pinout on a real module before powering it from the
-  board (the camera's 3.3 V goes through a 0 Ω link for that first check), and confirm
-  that XVS and STROBE are 1.8 V, as the schematic assumes.
+- OV9281 module: confirmed by the user: it runs on 3.3 V from the 15-pin FPC (the 0 Ω
+  link R37 is fitted), SCCB is 3.3 V, and FPC pin 11 is the camera enable (`CAM_EN`). The
+  XVS and STROBE level on the module's back pads is not known. Measure STROBE's high level
+  on a real module before connecting XVS, then fit R31/R32 for that level (table in
+  `hardware/espion-cam/SCHEMATIC.md`, Camera, XVS level option).
 
 ## Data flow per frame
 

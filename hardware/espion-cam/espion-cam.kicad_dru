@@ -9,9 +9,10 @@
 	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R38') && B.memberOfFootprint('R38')) && !(A.memberOfFootprint('R39') && B.memberOfFootprint('R39')) && !(A.memberOfFootprint('R40') && B.memberOfFootprint('R40')) && !(A.memberOfFootprint('R41') && B.memberOfFootprint('R41')) && !(A.memberOfFootprint('R42') && B.memberOfFootprint('R42')) && !(A.memberOfFootprint('R43') && B.memberOfFootprint('R43'))")
 	(constraint clearance (min 0.36mm)))
 
-# Ethernet MDI: 3x spacing to other nets (IP101G DS 6.2).
+# Ethernet MDI: 3x spacing (0.55 mm) to other nets (IP101G DS 6.2).
+# Exempt inside U6's courtyard: its 0.4 mm pitch QFN pads (0.2 mm gap) can't hold 0.55 mm.
 (rule "MDI spacing"
-	(condition "A.NetClass == 'MDI' && B.NetClass != 'MDI'")
+	(condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !A.intersectsCourtyard('U6')")
 	(constraint clearance (min 0.55mm)))
 
 # USB 2.0: keep GND and other nets >= 0.30 mm from the 90 ohm pair (0.245/0.15 mm).

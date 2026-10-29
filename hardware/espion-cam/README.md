@@ -15,17 +15,18 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - OV9281 global-shutter mono camera module (Raspberry Pi style) on a 15-pin 1.0 mm FPC
   (MIPI CSI-2, 2 lanes), mounted on the back with the lens through a cutout. The board's
   FPC connector (JUSHUO AFA07-S15ECA-00) is single contact, so a face-flipped cable makes
-  no contact. XVS and STROBE (1.8 V) come from pads on the module over a JST-SH 4-pin
-  pigtail: XVS through a resistor divider, STROBE through an SN74LV1T34 to the LED gate
-  and a P4 GPIO (ETM capture)
+  no contact. XVS and STROBE (level not known: 1.8, 2.8 or 3.3 V) come from pads on the
+  module over a JST-SH 4-pin pigtail: XVS through a resistor divider set as an assembly
+  option, STROBE through an SN74LV1T34 to the LED gate and a P4 GPIO (ETM capture)
 - 850 nm LED ring for passive retroreflective markers at 2–5 m: 12 × Amicc
   A-SC880IR3C-P03-1T (90°) in one string, on the front around the lens cutout. TPS22918
   load switch (`LED_PWR_EN`) and TPS61170 boost to 32 V (`BST_EN`) into 2 × 220 µF storage,
   TLV9061 + IRLR024N sink at a fixed 1 A, gated by `STROBE ∧ LED_EN` (SN74LVC1G97) with a
-  ≈ 1 ms hardware timeout per pulse. No continuous-on mode
+  0.78–1.32 ms hardware timeout per pulse behind the 0.75 ms firmware exposure cap. No
+  continuous-on mode
 - IP101GRI Ethernet PHY on RMII (25 MHz crystal, PHY supplies the 50 MHz REF_CLK), HanRun
   HR871150C MagJack with both centre taps and the spare pairs brought out, its LEDs driven
-  by the PHY (green link/activity, yellow 100 Mb/s), PPS test point
+  by the PHY (green link/activity, yellow 100 Mb/s), PPS and PHY reset test points
 - Power: SDAPO DP1435-5V IEEE 802.3af PoE PD module (isolated 5.15 V, LCSC C5380097)
   through an LC filter, OR-ed with USB-C 5 V by a TPS2121 priority mux; TLV62569 buck to 3.3 V
 - USB-C straight to the P4's USB Serial/JTAG (no hub), with ESD protection and a TI

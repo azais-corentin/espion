@@ -1739,6 +1739,28 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "XVS level: assembly option R31/R32.\nFitted by default: 1.5k / 1.8k (1.8 V module I/O).\nValues for 2.8 V and 3.3 V I/O: SCHEMATIC.md, Camera."
+		(exclude_from_sim no)
+		(at 96.52 149.86 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "369ad37e-1bad-4926-aaa3-c54f3f734def")
+	)
+	(text "J3 pad n = camera FPC pin 16 - n:\npad 1 = camera pin 15 (3V3),\npad 15 = camera pin 1 (GND).\nSee SCHEMATIC.md, Camera FPC connector."
+		(exclude_from_sim no)
+		(at 198.12 91.44 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "6bd4f50d-97de-44e7-b4a2-201ff01c4100")
+	)
 	(junction
 		(at 162.56 63.5)
 		(diameter 0)
@@ -2765,7 +2787,7 @@
 		)
 		(uuid "2db26ddf-f5f4-4aa5-8fc3-d59a9c94a801")
 	)
-	(label "STROBE_1V8"
+	(label "STROBE_CAM"
 		(at 158.75 146.05 0)
 		(effects
 			(font
@@ -2845,7 +2867,7 @@
 		)
 		(uuid "5e9301a4-1817-4945-84d3-2cc4050a5f4c")
 	)
-	(label "XVS_1V8"
+	(label "XVS_CAM"
 		(at 149.86 125.73 0)
 		(effects
 			(font
@@ -3133,7 +3155,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp yes)
+		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "139a6453-eac8-4891-96e9-4a19a356866e")
 		(property "Reference" "R37"
@@ -6548,7 +6570,7 @@
 				)
 			)
 		)
-		(property "Value" "XVS_1V8"
+		(property "Value" "XVS_CAM"
 			(at 147.32 118.491 0)
 			(show_name no)
 			(do_not_autoplace no)

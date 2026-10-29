@@ -1802,7 +1802,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "3926c343-09ab-427f-b9f1-809d3e061e05")
-		(property "Reference" "R65"
+		(property "Reference" "R64"
 			(at 93.98 87.63 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -1899,7 +1899,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0"
-					(reference "R65")
+					(reference "R64")
 					(unit 1)
 				)
 			)
@@ -1917,7 +1917,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "404999d8-b158-4c00-8b4b-fdd4b8a5977a")
-		(property "Reference" "R64"
+		(property "Reference" "R65"
 			(at 111.76 87.63 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2014,7 +2014,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0"
-					(reference "R64")
+					(reference "R65")
 					(unit 1)
 				)
 			)
