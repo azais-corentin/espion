@@ -12,7 +12,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
 | `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values, part notes); the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, decoupling, pulls, BOM lines, rules); BOM: `kicad_query` `bom` (preset `Order`) |
 | `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad toolkit: `kicad_edit` library ops, `kicad_check` `klc`; model rebuild in `hardware/lib/README.md` |
-| `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`) and its `kicad-*` skills; the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its vendored skills | `bun test` in `.omp/extensions/kicad` |
+| `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`) and its `kicad-*` skills; the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its `solidcraft-*` skills, which the dev shell links from the flake input (`solidcraftSkills` in `flake.nix`) | `bun test` in `.omp/extensions/kicad` |
 | `docs/` | Architecture, wire protocol, timing | — |
 
 - Enter the environment with `direnv allow` or `nix develop`. Don't install toolchains
@@ -77,8 +77,9 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
   `kicad-library-tools` flake input. Its `library_utils/` layout may still move: after
   bumping it, run the toolkit's tests.
 - 3D models are built with SolidCraft from the manufacturer's drawings, with the script in
-  `hardware/lib/3d-src/`. Don't use EasyEDA/LCSC models (their terms forbid it). When you
-  bump the `solidcraft` flake input, re-copy the skills (`.omp/skills/VENDORED.md`).
+  `hardware/lib/3d-src/`. Don't use EasyEDA/LCSC models (their terms forbid it). The
+  SolidCraft skills follow the `solidcraft` flake input: after bumping it, re-enter the dev
+  shell and restart omp.
 - Hardware is CERN-OHL-P-2.0 (`hardware/LICENSE`); code is MIT OR Apache-2.0.
 
 ## Hygiene

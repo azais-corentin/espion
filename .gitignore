@@ -8,6 +8,9 @@ firmware/esp32p4-csi/Cargo.lock
 result
 result-*
 
+# SolidCraft skills, linked from the flake input by the dev shell
+/.omp/skills/solidcraft-*
+
 # Local secrets and build settings (see .envrc.local.example)
 .envrc.local
 

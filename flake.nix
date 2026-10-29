@@ -64,6 +64,16 @@
             libxi
             libxrandr
           ];
+
+          # SolidCraft's modelling skills for omp. The shellHook links them from the locked
+          # `solidcraft` input into .omp/skills (gitignored), so they always match the
+          # solidcraft-cli above. omp reads skills at startup: restart it after a bump.
+          solidcraftSkills = [
+            "solidcraft-modeling"
+            "solidcraft-editing"
+            "solidcraft-checking"
+            "solidcraft-mechanisms"
+          ];
         in
         {
           default = pkgs.mkShell {
@@ -95,6 +105,30 @@
             KICAD_LIBRARY_TOOLS = "${kicad-library-tools}";
 
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiLibs;
+
+            shellHook = ''
+              if root=$(git rev-parse --show-toplevel 2>/dev/null) \
+                && grep -qs 'tangency-labs/solidcraft' "$root/flake.nix"; then
+                skills="$root/.omp/skills"
+                wanted=" ${pkgs.lib.concatStringsSep " " solidcraftSkills} "
+                # Drop links this hook made for skills no longer in the list.
+                for link in "$skills"/solidcraft-*; do
+                  if [ -L "$link" ] && [[ $(readlink "$link") == /nix/store/* ]] \
+                    && [[ $wanted != *" ''${link##*/} "* ]]; then
+                    rm "$link"
+                  fi
+                done
+                for name in $wanted; do
+                  target="${solidcraft}/skills/$name"
+                  link="$skills/$name"
+                  if [ -e "$link" ] && [ ! -L "$link" ]; then
+                    echo "espion: $link is not a symlink; not linking the SolidCraft skill" >&2
+                  elif [ "$(readlink "$link")" != "$target" ]; then
+                    ln -sfn "$target" "$link"
+                  fi
+                done
+              fi
+            '';
           };
         }
       );
