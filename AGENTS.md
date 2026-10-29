@@ -55,9 +55,11 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
   footprints) by hand. Changes go through KiCad.
 - `hardware/espion-cam/SCHEMATIC.md` is the plan the schematic follows. A schematic change
   updates it (sheets, buses, hierarchical pins, parts, values) in the same commit, and
-  `BOM.md` when a part changes. Keep ERC at 0 violations.
+  `BOM.md` and the board list in `hardware/espion-cam/README.md` when a part changes. Keep
+  ERC at 0 violations.
 - Library parts follow `hardware/lib/README.md`: KLC naming, `${KIPRJMOD}`-relative paths,
-  a Parts entry per part, and the KLC check scripts.
+  a Parts entry per part (say there when a board stops using it), and the KLC check
+  scripts. `hardware/lib/.gitattributes` keeps the library files at LF line endings.
 - 3D models are built with SolidCraft from the manufacturer's drawings, with the script in
   `hardware/lib/3d-src/`. Don't use EasyEDA/LCSC models (their terms forbid it). When you
   bump the `solidcraft` flake input, re-copy the skills (`.omp/skills/VENDORED.md`).

@@ -15,7 +15,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Regulator_Switching_TI.kicad_sym` | TI switching regulators |
 | `Transistor_FET_Infineon.kicad_sym` | Infineon MOSFETs |
 | `Capacitor_SMD_AISHI.pretty/`, `Capacitor_SMD_JIERR.pretty/` | Aluminium SMD can capacitors |
-| `Connector_FFC-FPC_XFCN.pretty/` | XFCN FFC/FPC connectors |
+| `Connector_FFC-FPC_XFCN.pretty/` | XFCN FFC/FPC connectors (not used by espion-cam any more) |
 | `Connector_RJ_HanRun.pretty/` | HanRun RJ45 jacks |
 | `Connector_USB_HRO.pretty/` | Korean Hroparts USB connectors |
 | `LED_SMD_Amicc.pretty/` | Amicc SMD LEDs |
@@ -185,9 +185,13 @@ Amicc A-SC880IR3C-P03-1T 850 nm, 1 A IR LED, ceramic 3.85 × 3.85 mm (LCSC C5355
 ### `Connector_FFC-FPC_XFCN:XFCN_F1004-H-15-20G-R_1x15-1MP_P1.00mm_Horizontal`
 
 XFCN F1004-H-15-20G-R, 15-pin 1.00 mm FFC/FPC connector, rear flip, dual contact (LCSC
-C22438965), for the OV9281 camera FFC. Symbol:
+C22438965), drawn for the OV9281 camera FFC. Symbol:
 `Connector_Generic_MountingPin:Conn_01x15_MountingPin`.
 
+- **Not used by espion-cam.** Dual contact lets a face-flipped FFC mirror the pins and put
+  +3V3 on the camera's GND, so the board now uses the single-contact JUSHUO
+  AFA07-S15ECA-00 on a stock footprint (`../espion-cam/SCHEMATIC.md`, Camera FPC
+  connector). The library is still registered in `espion-cam/fp-lib-table`.
 - Source: XFCN drawing F1004-H-xx-20G-R rev A1 ([LCSC](https://datasheet.lcsc.com/datasheet/pdf/b071ded21ff6dd235e3f83c07f03e103.pdf),
   15P row, recommended PCB layout); pin 1 cross-checked with LCSC's footprint. Drawn for this
   project; CERN-OHL-P-2.0.
