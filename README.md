@@ -5,8 +5,8 @@ the same instant as every other board, finds the IR blobs at 120 fps, computes s
 centroids and streams them over Ethernet (UDP). The host triangulates 3D marker positions,
 runs calibration and coordinates time sync.
 
-**Status:** repository skeleton. Firmware and host apps are stubs that build; the PCB is not
-started.
+**Status:** firmware and host apps are stubs that build. The camera board's schematic is
+captured in KiCad (hierarchical, wired, ERC clean); PCB layout has not started.
 
 ## Hardware
 
@@ -32,13 +32,14 @@ themselves, with automatic failover. The board is powered over PoE (802.3af) or 
 | `host/espion-viewer/` | egui live view |
 | `host/espion-calib/` | Intrinsics + extrinsics calibration |
 | `host/espion-sync/` | Time-sync coordinator |
-| `hardware/` | KiCad project (`espion-cam/`) and local libraries (`lib/`) |
+| `hardware/` | KiCad project (`espion-cam/`, with its [schematic design](hardware/espion-cam/SCHEMATIC.md) and [BOM](hardware/espion-cam/BOM.md)) and local libraries with their 3D models (`lib/`) |
 | `docs/` | [architecture](docs/architecture.md), [protocol](docs/protocol.md), [timing](docs/timing.md) |
 
 ## Dev environment
 
 Needs Nix with flakes. The dev shell provides Rust 1.99.1 with the host and
-`riscv32imafc-unknown-none-elf` (P4) targets, espflash, probe-rs and KiCad.
+`riscv32imafc-unknown-none-elf` (P4) targets, espflash, probe-rs, KiCad 10 and SolidCraft
+(builds the library parts' 3D models).
 
 ```sh
 direnv allow        # or: nix develop
@@ -72,8 +73,14 @@ cd firmware/cam-p4 && ESPFLASH_PORT=/dev/ttyACM0 cargo run --release
 Hardware:
 
 ```sh
-kicad hardware/espion-cam/   # TODO: project not created yet
+kicad hardware/espion-cam/espion-cam.kicad_pro
+kicad-cli sch erc hardware/espion-cam/espion-cam.kicad_sch
+
+# Rebuild a library part's 3D model from its SolidCraft script:
+solidcraft-cli run hardware/lib/3d-src/<Footprint>.json --out hardware/lib/<Library>.3dshapes/<Footprint>.step
 ```
+
+Library conventions and KLC checks: [hardware/lib/README.md](hardware/lib/README.md).
 
 ## License
 

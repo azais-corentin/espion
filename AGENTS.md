@@ -10,8 +10,9 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, Ethernet/UDP, PTP, PPS capture via ETM) | `cargo build --release` in that directory |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
-| `hardware/espion-cam/` | KiCad project | KiCad only |
-| `hardware/lib/` | Project-local symbols, footprints, 3D models | KiCad only |
+| `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values); `BOM.md` the selected parts | KiCad; ERC: `kicad-cli sch erc hardware/espion-cam/espion-cam.kicad_sch` |
+| `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad; KLC checks and model rebuild in `hardware/lib/README.md` |
+| `.omp/` | Agent config: the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its vendored skills | — |
 | `docs/` | Architecture, wire protocol, timing | — |
 
 - Enter the environment with `direnv allow` or `nix develop`. Don't install toolchains
@@ -52,15 +53,25 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 
 - Never edit KiCad files (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, `.kicad_sym`,
   footprints) by hand. Changes go through KiCad.
+- `hardware/espion-cam/SCHEMATIC.md` is the plan the schematic follows. A schematic change
+  updates it (sheets, buses, hierarchical pins, parts, values) in the same commit, and
+  `BOM.md` when a part changes. Keep ERC at 0 violations.
+- Library parts follow `hardware/lib/README.md`: KLC naming, `${KIPRJMOD}`-relative paths,
+  a Parts entry per part, and the KLC check scripts.
+- 3D models are built with SolidCraft from the manufacturer's drawings, with the script in
+  `hardware/lib/3d-src/`. Don't use EasyEDA/LCSC models (their terms forbid it). When you
+  bump the `solidcraft` flake input, re-copy the skills (`.omp/skills/VENDORED.md`).
 - Hardware is CERN-OHL-P-2.0 (`hardware/LICENSE`); code is MIT OR Apache-2.0.
 
 ## Hygiene
 
 - Never commit generated files or build outputs (`target/`, Gerbers/BOM exports, KiCad
-  backups and caches, `result*`). Never commit `.envrc.local`.
+  backups, caches and `.history/`, `result*`). Never commit `.envrc.local`. The STEP models
+  in `hardware/lib/*.3dshapes/` are the exception: commit them with their `3d-src` script.
 - Keep changes small and focused.
 - Before finishing, for every affected part:
   - `cargo fmt` (root for the workspace, and in each touched firmware crate)
   - `cargo clippy` (`--workspace --all-targets` at the root; plain `cargo clippy --release`
     in a firmware crate)
   - the build (and `cargo test --workspace` for host/shared crates)
+  - for hardware: ERC on the schematic, and the KLC scripts on changed library parts
