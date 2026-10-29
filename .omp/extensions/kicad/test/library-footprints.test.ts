@@ -61,7 +61,7 @@ function padKeys(pads: FpPadInfo[]): string[] {
 }
 
 const STOCK_RJ45 = "Connector_RJ:RJ45_Abracon_ARJP11A-MA_Horizontal";
-const COPY = { op: "lib_copy_footprint", from: STOCK_RJ45, library: "Connector_RJ_Test", name: "RJ45_HanRun_HR871150C_Horizontal" };
+const COPY = { op: "lib_copy_footprint", from: STOCK_RJ45, library: "Connector_RJ_Test", library_description: "Test RJ45 jacks", name: "RJ45_HanRun_HR871150C_Horizontal" };
 const ID = "Connector_RJ_Test:RJ45_HanRun_HR871150C_Horizontal";
 
 /** The HR871150C land pattern derived from the Abracon ARJP11A, as hardware/lib's Connector_RJ_HanRun has it. */
@@ -184,7 +184,7 @@ describe("library footprints", () => {
 
 		const target = { library: "Module_Test", name: "Pico_Redrawn" };
 		await commit(root, [
-			{ op: "lib_copy_footprint", from: STOCK, ...target },
+			{ op: "lib_copy_footprint", from: STOCK, library_description: "Test modules", ...target },
 			{ op: "lib_edit_footprint", ...target, graphics: Object.fromEntries(layers.map(l => [l, []])) },
 		]);
 		expect((await lib_footprint(root, "Module_Test:Pico_Redrawn", true)).graphics).toEqual({});
@@ -198,6 +198,7 @@ describe("library footprints", () => {
 	test.skipIf(!HAS_KICAD)("lib_create_footprint graphics replace the generated drawings of their layers only; bad shapes are refused", async () => {
 		const base = {
 			op: "lib_create_footprint",
+			library_description: "Test modules",
 			library: "Module_Test",
 			name: "Gfx_Test",
 			description: "Graphics test (https://example.com/gfx.pdf)",

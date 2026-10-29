@@ -40,6 +40,7 @@ const footprint = async (root: string, fp_id: string) => (await query(root, "lib
 
 const MODULE = {
 	op: "lib_create_footprint",
+	library_description: "Test modules",
 	library: "Module_Test",
 	name: "Placed_Module",
 	description: "Test module with a placed 3D model (https://example.com/module.pdf)",
@@ -110,7 +111,7 @@ describe("lib_diff", () => {
 	test.skipIf(!HAS_KICAD)("a footprint derived through the ops differs from its source by exactly the edits", async () => {
 		const line = { type: "line", start: [0, -3], end: [11.43, -3], width: 0.1 };
 		await commit(root, [
-			{ op: "lib_copy_footprint", from: STOCK_RJ45, library: "Connector_RJ_Test", name: "RJ45_Derived" },
+			{ op: "lib_copy_footprint", from: STOCK_RJ45, library: "Connector_RJ_Test", library_description: "Test RJ45 jacks", name: "RJ45_Derived" },
 			{
 				op: "lib_edit_footprint",
 				library: "Connector_RJ_Test",
@@ -154,7 +155,7 @@ describe("lib_diff", () => {
 		const srcPins = src.pins as Record<string, unknown>[];
 		const rect = { type: "rectangle", start: [-2, -2], end: [2, 2] };
 		await commit(root, [
-			{ op: "lib_copy_symbol", from: "Device:R", library: "Device_Test", name: "R_Derived" },
+			{ op: "lib_copy_symbol", from: "Device:R", library: "Device_Test", library_description: "Test devices", name: "R_Derived" },
 			{
 				op: "lib_edit_symbol",
 				library: "Device_Test",

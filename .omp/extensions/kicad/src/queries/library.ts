@@ -4,7 +4,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { describeFootprint, describeLibSymbol, type LibEntry, splitId } from "../libs";
+import { describeFootprint, describeLibSymbol, LEGACY_STACK_NOTE, type LibEntry, type LibSource, legacyStacks, splitId } from "../libs";
 import { child, children, head, isList, parse, text } from "../sexpr";
 import { symbolGraphics, symbolItems } from "../symgfx";
 import type { QueryDef } from "../types";
@@ -12,9 +12,14 @@ import type { QueryDef } from "../types";
 interface Part {
 	kind: "symbol" | "footprint";
 	id: string;
+	source: LibSource;
 	description: string;
 	keywords: string;
 }
+
+/** What the `source` of a library part means, for the query docs. */
+const SOURCE_DOC =
+	'`source`: "project" (the project\'s lib tables: in the repo, KLC-checked), "stock" (KiCad\'s own libraries) or "user" (the user\'s personal global libraries: neither in the repo nor KLC-reviewed; never place or copy one without reviewing it against the datasheet and KLC)';
 
 /** Index rows of one file, cached by modification time (the stock libraries are large). */
 const fileCache = new Map<string, { mtime: number; rows: { name: string; description: string; keywords: string }[] }>();
@@ -79,7 +84,7 @@ function libMatcher(pattern: unknown): (s: string) => boolean {
 
 const libSearch: QueryDef = {
 	what: "lib_search",
-	doc: "Find symbols and footprints in the project and global libraries whose name, description or keywords contain every word of the query (case-insensitive); name matches first.",
+	doc: `Find symbols and footprints in the project and global libraries whose name, description or keywords contain every word of the query (case-insensitive); name matches first. Each hit has ${SOURCE_DOC}.`,
 	fields: {
 		query: { t: "string", req: true, doc: 'words, e.g. "QFN-32 4x4" or "ethernet phy"' },
 		kind: { t: "string", values: ["symbol", "footprint"], doc: "only symbols or only footprints" },
@@ -94,14 +99,16 @@ const libSearch: QueryDef = {
 		const parts: Part[] = [];
 		if (a.kind !== "footprint") {
 			for (const e of libs.sym.filter(x => lib(x.name))) {
-				for (const f of symbolFiles(e)) for (const r of symbolRows(f)) parts.push({ kind: "symbol", id: `${e.name}:${r.name}`, description: r.description, keywords: r.keywords });
+				for (const f of symbolFiles(e)) {
+					for (const r of symbolRows(f)) parts.push({ kind: "symbol", id: `${e.name}:${r.name}`, source: e.source, description: r.description, keywords: r.keywords });
+				}
 			}
 		}
 		if (a.kind !== "symbol") {
 			for (const e of libs.fp.filter(x => lib(x.name) && fs.existsSync(x.uri))) {
 				for (const f of fs.readdirSync(e.uri).filter(x => x.endsWith(".kicad_mod"))) {
 					const r = footprintRow(path.join(e.uri, f));
-					parts.push({ kind: "footprint", id: `${e.name}:${r.name}`, description: r.description, keywords: r.keywords });
+					parts.push({ kind: "footprint", id: `${e.name}:${r.name}`, source: e.source, description: r.description, keywords: r.keywords });
 				}
 			}
 		}
@@ -125,7 +132,7 @@ const libSearch: QueryDef = {
 
 const libSymbol: QueryDef = {
 	what: "lib_symbol",
-	doc: "A library symbol (derived symbols resolved): properties, unit count, power flag and pins with number, name, electrical type, unit (0 = common to all units), hidden flag, `at` (pin end relative to the symbol origin, sheet orientation, rot 0) and `dir` (L|R|U|D: side the wire leaves at rot 0). Use `at` to plan wires before add_symbol: rotate it with the symbol. With graphics: true also the drawing in lib_draw_symbol's input format (shapes, pin length/shape/body_style, pin_name_offset, hide_pin_names, hide_pin_numbers), so the result can be redrawn or adapted; text boxes have no shape form and are left out.",
+	doc: `A library symbol (derived symbols resolved): ${SOURCE_DOC}, properties, unit count, power flag and pins with number, name, electrical type, unit (0 = common to all units), hidden flag, \`at\` (pin end relative to the symbol origin, sheet orientation, rot 0) and \`dir\` (L|R|U|D: side the wire leaves at rot 0). Use \`at\` to plan wires before add_symbol: rotate it with the symbol. With graphics: true also the drawing in lib_draw_symbol's input format (shapes, pin length/shape/body_style, pin_name_offset, hide_pin_names, hide_pin_numbers), so the result can be redrawn or adapted; text boxes have no shape form and are left out. Pins stacked the legacy way (hidden duplicates on one visible pin, which KLC S4.3 rejects) are listed in \`legacy_stacks\` ({unit, body_style, at, visible, hidden, native}) with a \`note\`: draw each as one pin numbered \`native\` (KiCad 10 stacked pin, e.g. "[2,7]") when adapting the symbol.`,
 	fields: {
 		lib_id: { t: "string", req: true, doc: 'e.g. "MCU_Module_Waveshare:ESP32-P4-Core"' },
 		graphics: { t: "boolean", doc: "add shapes and full pin geometry (default false)" },
@@ -134,13 +141,20 @@ const libSymbol: QueryDef = {
 		const libs = await ctx.libs();
 		const id = a.lib_id as string;
 		const sym = libs.flatSymbol(id);
-		return { lib_id: id, ...describeLibSymbol(sym), ...(a.graphics === true ? symbolGraphics(sym) : {}) };
+		const stacks = legacyStacks(sym);
+		return {
+			lib_id: id,
+			source: libs.symLib(splitId(id)[0]).source,
+			...describeLibSymbol(sym),
+			...(a.graphics === true ? symbolGraphics(sym) : {}),
+			...(stacks.length ? { legacy_stacks: stacks, note: LEGACY_STACK_NOTE } : {}),
+		};
 	},
 };
 
 const libFootprint: QueryDef = {
 	what: "lib_footprint",
-	doc: "A library footprint: file, description, tags, properties, attributes (smd, through_hole, …), pads (number, type, shape, at [x, y, angle?], size, drill, layers) and 3D models (path, offset [x, y, z] mm, rotation [x, y, z] degrees, scale [x, y, z]: as KiCad's 3D model properties show them and lib_create_footprint / lib_edit_footprint set them); with graphics, its drawings per layer.",
+	doc: `A library footprint: file, ${SOURCE_DOC}, description, tags, properties, attributes (smd, through_hole, …), footprint-level \`overrides\` when set (solder_mask_margin, solder_paste_margin mm, solder_paste_margin_ratio, clearance, zone_connect, thermal_bridge_width, thermal_gap: KiCad's footprint Clearance Overrides; unset = board defaults), pads (number, type, shape, at [x, y, angle?], size, drill, layers; when set: roundrect_rratio with the resulting corner_radius mm (rratio × smaller side), chamfer_ratio and chamfer corners, the pad's solder_mask_margin, solder_paste_margin, solder_paste_margin_ratio, clearance, zone_connect (0 none, 1 thermal, 2 solid, 3 thermal for through-hole only), thermal_bridge_width, thermal_gap, thermal_bridge_angle; a pad without a margin uses the footprint's, else the board's) and 3D models (path, offset [x, y, z] mm, rotation [x, y, z] degrees, scale [x, y, z]: as KiCad's 3D model properties show them and lib_create_footprint / lib_edit_footprint set them); with graphics, its drawings per layer.`,
 	fields: {
 		fp_id: { t: "string", req: true, doc: 'e.g. "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"' },
 		graphics: {
@@ -150,10 +164,12 @@ const libFootprint: QueryDef = {
 	},
 	async run(ctx, a) {
 		const libs = await ctx.libs();
-		const file = libs.footprintFile(a.fp_id as string);
+		const id = a.fp_id as string;
+		const file = libs.footprintFile(id);
 		return {
-			fp_id: a.fp_id,
+			fp_id: id,
 			file: path.relative(ctx.project.repoRoot, file).startsWith("..") ? file : path.relative(ctx.project.repoRoot, file),
+			source: libs.fpLib(splitId(id)[0]).source,
 			...describeFootprint(parse(fs.readFileSync(file, "utf8")), a.graphics === true),
 		};
 	},

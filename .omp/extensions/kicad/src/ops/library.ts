@@ -8,15 +8,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cli from "../cli";
 import { applyGraphics, encodeShape, GRAPHICS_DOC, graphicsIn, mm, replaceDrawings, xy } from "../fpgfx";
-import type { Pt } from "../geom";
-import { flattenSymbol, kicadVars, splitId } from "../libs";
+import type { Box, Pt } from "../geom";
+import { flattenSymbol, type LibSource, splitId } from "../libs";
 import type { Project } from "../project";
 import { prop, propValue } from "../sch";
 import { child, children, clone, head, inline, isList, type Item, L, type List, num, parse, print, removeChild, setChild, str, Sym, text } from "../sexpr";
-import { type Fields, validate } from "../spec";
+import { type Field, type Fields, validate } from "../spec";
 import {
 	drawExtent,
 	editPinNode,
+	itemsExtent,
 	PIN_NAME_OFFSET,
 	PIN_SHAPES,
 	PIN_TYPES,
@@ -62,11 +63,28 @@ function stateOf(project: Project): LibState {
 
 const NICK = /^[A-Za-z0-9][A-Za-z0-9_.+-]*$/;
 
+/** The `library_description` argument of every op that can create a library. */
+const LIBRARY_DESCRIPTION: Field = {
+	t: "string",
+	doc: 'what the library holds, e.g. "TI power multiplexers"; required when `library` doesn\'t exist yet (the lib table entry gets it plus the project suffix, libraryDescriptionSuffix in .omp/kicad.json); ignored for an existing library (lib_set_library changes it)',
+};
+
+/** A lib table description: `description` with the configured project suffix appended (once). */
+function libDescription(project: Project, description: string): string {
+	const d = description.trim();
+	const suffix = project.settings.libraryDescriptionSuffix.trim();
+	return !suffix || d.endsWith(suffix) ? d : `${d} ${suffix}`;
+}
+
+/** How a refusal names where a library comes from. */
+const ORIGIN: Record<LibSource, string> = { project: "a project", stock: "a stock KiCad", user: "the user's own global (not a project)" };
+
 /**
  * Path of a project library by nickname. With `create`, a library missing from the project table
- * is added (file under settings.libDir, `${KIPRJMOD}`-relative uri).
+ * is added (file under settings.libDir, `${KIPRJMOD}`-relative uri, `description` plus the project
+ * suffix as its table description).
  */
-function projectLib(ctx: OpContext, kind: Kind, nick: string, create: boolean): string {
+function projectLib(ctx: OpContext, kind: Kind, nick: string, create: boolean, description?: unknown): string {
 	const st = stateOf(ctx.project);
 	const t = TABLE[kind];
 	const added = st.added.get(`${kind}:${nick}`);
@@ -74,21 +92,31 @@ function projectLib(ctx: OpContext, kind: Kind, nick: string, create: boolean): 
 	const tableFile = path.join(ctx.project.dir, t.file);
 	const entries = kind === "sym" ? ctx.libs.sym : ctx.libs.fp;
 	const own = entries.find(e => e.name === nick && e.table === tableFile);
-	if (own) return path.resolve(own.uri);
+	if (own) {
+		if (typeof description === "string") ctx.notes.push(`${t.what} library ${nick} exists: library_description ignored (lib_set_library changes it)`);
+		return path.resolve(own.uri);
+	}
 	const ownNames = entries.filter(e => e.table === tableFile).map(e => e.name);
 	if (!create) throw new Error(`"${nick}" is not a ${t.what} library of the project; project ${t.what} libraries: ${ownNames.join(", ") || "none"}`);
-	if (entries.some(e => e.name === nick)) {
-		throw new Error(`"${nick}" is a stock ${t.what} library; project libraries need their own KLC name (e.g. "${nick}_<Vendor>")`);
+	const global = entries.find(e => e.name === nick);
+	if (global) {
+		throw new Error(`"${nick}" is ${ORIGIN[global.source]} ${t.what} library; project libraries need their own KLC name (e.g. "${nick}_<Vendor>")`);
 	}
 	if (!NICK.test(nick)) throw new Error(`library name "${nick}" must be letters, digits and _ . + - (KLC S1.1 / F1.1), e.g. "Connector_HanRun"`);
+	if (typeof description !== "string" || !description.trim()) {
+		throw new Error(
+			`${t.what} library "${nick}" doesn't exist yet: give library_description, what it holds (e.g. "TI power multiplexers"); its ${t.file} entry becomes "${libDescription(ctx.project, "<library_description>")}"`,
+		);
+	}
 	const file = path.join(ctx.project.repoRoot, ctx.project.settings.libDir, `${nick}${t.ext}`);
 	const uri = `\${KIPRJMOD}/${path.relative(ctx.project.dir, file).split(path.sep).join("/")}`;
-	const table = libTable(ctx.project, kind);
-	table.push(L("lib", L("name", str(nick)), L("type", str("KiCad")), L("uri", str(uri)), L("options", str("")), L("descr", str(""))));
-	// KiCad writes one line per library
-	ctx.project.setFile(tableFile, `(${t.head}\n${table.slice(1).map(c => `\t${inline(c)}`).join("\n")}\n)\n`);
+	const descr = libDescription(ctx.project, description);
+	libTable(ctx.project, kind).push(
+		L("lib", L("name", str(nick)), L("type", str("KiCad")), L("uri", str(uri)), L("options", str("")), L("descr", str(descr))),
+	);
+	saveTable(ctx.project, kind);
 	st.added.set(`${kind}:${nick}`, file);
-	ctx.notes.push(`new ${t.what} library ${nick} (${ctx.project.rel(file)}), registered in ${t.file} as ${uri}`);
+	ctx.notes.push(`new ${t.what} library ${nick} (${ctx.project.rel(file)}), registered in ${t.file} as ${uri}, description "${descr}"`);
 	return file;
 }
 
@@ -98,6 +126,42 @@ function libTable(project: Project, kind: Kind): List {
 	st.tables[kind] ??= fs.existsSync(file) ? parse(fs.readFileSync(file, "utf8")) : L(TABLE[kind].head, L("version", 7));
 	return st.tables[kind];
 }
+
+/** Write the project's lib table as KiCad does: one line per library. */
+function saveTable(project: Project, kind: Kind): void {
+	const t = TABLE[kind];
+	const table = libTable(project, kind);
+	project.setFile(path.join(project.dir, t.file), `(${t.head}\n${table.slice(1).map(c => `\t${inline(c)}`).join("\n")}\n)\n`);
+}
+
+const setLibrary: OpDef = {
+	op: "lib_set_library",
+	group: "library",
+	doc: "Set the description of a project library in the project's sym-lib-table or fp-lib-table (the project suffix, libraryDescriptionSuffix in .omp/kicad.json, is appended). Stock and the user's global libraries are refused.",
+	fields: {
+		kind: { t: "string", req: true, values: ["symbol", "footprint"], doc: "symbol or footprint library" },
+		library: { t: "string", req: true, doc: "project library nickname" },
+		description: { t: "string", req: true, doc: 'what the library holds, e.g. "TI power multiplexers"' },
+	},
+	apply(ctx, a) {
+		const kind: Kind = a.kind === "symbol" ? "sym" : "fp";
+		const t = TABLE[kind];
+		const library = a.library as string;
+		const description = (a.description as string).trim();
+		if (!description) throw new Error("description must not be empty");
+		const global = (kind === "sym" ? ctx.libs.sym : ctx.libs.fp).find(e => e.name === library && e.source !== "project");
+		if (global) throw new Error(`"${library}" is ${ORIGIN[global.source]} ${t.what} library; only project libraries can be described`);
+		projectLib(ctx, kind, library, false);
+		const entry = children(libTable(ctx.project, kind), "lib").find(l => text(child(l, "name")) === library);
+		if (!entry) throw new Error(`"${library}" is not in the project's ${t.file}`);
+		const descr = libDescription(ctx.project, description);
+		const old = text(child(entry, "descr")) ?? "";
+		if (old === descr) throw new Error(`${t.what} library ${library} already has the description "${descr}"`);
+		setChild(entry, L("descr", str(descr)));
+		saveTable(ctx.project, kind);
+		ctx.notes.push(`${t.what} library ${library}: description "${old}" -> "${descr}" (${t.file})`);
+	},
+};
 
 function symLibTree(project: Project, file: string): List {
 	const st = stateOf(project);
@@ -225,6 +289,7 @@ const createSymbol: OpDef = {
 	doc: "Generate a KLC-style symbol with kicad-library-utils' CSV symbol generator (pins grouped on the sides you give, body sized to the pin names) and add it to a project symbol library (created and registered in sym-lib-table when missing). Put positive supplies on top, grounds at the bottom, inputs left, outputs right (KLC S4.2).",
 	fields: {
 		library: { t: "string", req: true, doc: 'project symbol library nickname, e.g. "Interface_Ethernet_ICPlus"; created in libDir when missing' },
+		library_description: LIBRARY_DESCRIPTION,
 		name: { t: "string", req: true, doc: "symbol name (the part number, KLC S2.1); must not exist in the library" },
 		reference: { t: "string", req: true, doc: 'reference prefix, e.g. "U"' },
 		pins: {
@@ -244,7 +309,7 @@ const createSymbol: OpDef = {
 		const name = a.name as string;
 		const pins = pinRows(a.pins as Record<string, unknown>[]);
 		if (typeof a.footprint === "string") checkFootprintRef(ctx, a.footprint);
-		const file = projectLib(ctx, "sym", library, true);
+		const file = projectLib(ctx, "sym", library, true, a.library_description);
 		const tree = symLibTree(ctx.project, file);
 		checkNewSymbol(tree, name, library);
 		const meta: [string, unknown][] = [
@@ -302,6 +367,10 @@ function checkNewSymbol(tree: List, name: string, library: string): void {
 const SHAPES_DOC =
 	'[shape]: {type, unit?, body_style?, …} in mm, sheet orientation (x right, y down) relative to the symbol origin; type polyline {points: [[x,y],…]} | rectangle {start, end} | circle {center, radius} | arc {start, mid, end} | bezier {points: 4 points} | text {text, at, size? (1.27), rot? 0|90, justify? left|center|right}; non-text shapes take width? (stroke mm, 0 = KiCad default; KLC body outline 0.254) and fill? none|outline|background (KLC body: background); unit 0 = every unit (default), body_style 1 (default), 2 = De Morgan, 0 = both. lib_symbol with graphics: true returns this format';
 
+/** Pin stacks, for the pins docs of lib_draw_symbol and lib_edit_symbol. */
+const PIN_STACK_DOC =
+	'several pads on one pin (e.g. GND on 1 and 8) are one pin with a KiCad 10 stacked number, "[1,8]" or "[1-3,5]"; hidden duplicate pins at one point (legacy stacks, as in stock Power_Management:TPS2116DRL; lib_symbol lists them in legacy_stacks) fail KLC S4.3';
+
 /** A property as KiCad 10 writes it: visible ones (Reference, Value) left-justified at `at` (sheet orientation), the rest hidden at the origin. */
 function propertyNode(key: string, value: string, at?: Pt): List {
 	return L(
@@ -316,12 +385,18 @@ function propertyNode(key: string, value: string, at?: Pt): List {
 	);
 }
 
+/** Reference 1.27 mm above and Value 1.27 mm below a drawing extent, both at its left edge. */
+function symbolFieldPlaces([x0, y0, , y1]: Box): { Reference: Pt; Value: Pt } {
+	return { Reference: [x0, y0 - 1.27], Value: [x0, y1 + 1.27] };
+}
+
 const drawSymbol: OpDef = {
 	op: "lib_draw_symbol",
 	group: "library",
 	doc: "Draw a symbol from explicit pins and shapes (transformer coils as arcs, capacitor plates, LED triangles, text, a connector outline …) and add it to a project symbol library (created and registered when missing). Reference goes above and Value below the drawing, left-aligned; the other fields are hidden. Start from a similar stock symbol: kicad_query lib_symbol {lib_id, graphics: true} returns its pins and shapes in this format, and kicad_render {symbol} shows it. KLC: pin ends on the 2.54 mm grid, pin length 2.54 (default), body rectangle width 0.254 with fill background.",
 	fields: {
 		library: { t: "string", req: true, doc: "project symbol library nickname (created when missing)" },
+		library_description: LIBRARY_DESCRIPTION,
 		name: { t: "string", req: true, doc: "symbol name (the part number, KLC S2.1); must not exist in the library" },
 		reference: { t: "string", req: true, doc: 'reference prefix, e.g. "J"' },
 		value: { t: "string", doc: "Value field (default: the symbol name)" },
@@ -333,7 +408,7 @@ const drawSymbol: OpDef = {
 		pins: {
 			t: "objects",
 			req: true,
-			doc: `[{number, name, type, at, dir, length?, shape?, hidden?, unit?, body_style?}]: at = connection end [x, y] mm (sheet orientation), dir L|R|U|D = side the wire leaves, name "" for none ("~{RST}" overbars), type ${PIN_TYPES.join("|")}, length default 2.54, shape ${PIN_SHAPES.join("|")} (default line), unit default 1 (0 = every unit), body_style default 1`,
+			doc: `[{number, name, type, at, dir, length?, shape?, hidden?, unit?, body_style?}]: at = connection end [x, y] mm (sheet orientation), dir L|R|U|D = side the wire leaves, name "" for none ("~{RST}" overbars), type ${PIN_TYPES.join("|")}, length default 2.54, shape ${PIN_SHAPES.join("|")} (default line), unit default 1 (0 = every unit), body_style default 1; ${PIN_STACK_DOC}`,
 		},
 		shapes: { t: "objects", req: true, doc: SHAPES_DOC },
 		pin_name_offset: { t: "number", doc: "pin name offset inside the body in mm (default 0.508; 0 puts names outside, above the pin)" },
@@ -349,14 +424,14 @@ const drawSymbol: OpDef = {
 		const offset = typeof a.pin_name_offset === "number" ? a.pin_name_offset : PIN_NAME_OFFSET;
 		if (offset < 0) throw new Error("pin_name_offset must not be negative");
 		if (typeof a.footprint === "string") checkFootprintRef(ctx, a.footprint);
-		const file = projectLib(ctx, "sym", library, true);
+		const file = projectLib(ctx, "sym", library, true, a.library_description);
 		const tree = symLibTree(ctx.project, file);
 		checkNewSymbol(tree, name, library);
 		const items: SymItem[] = [
 			...shapes.map(s => ({ unit: s.unit, body: s.body_style, node: shapeNode(s) })),
 			...pins.map(p => ({ unit: p.unit, body: p.body_style, node: pinNode(p) })),
 		];
-		const [x0, y0, , y1] = drawExtent(shapes, pins);
+		const places = symbolFieldPlaces(drawExtent(shapes, pins));
 		const filters = (a.fp_filters as string[] | undefined) ?? [];
 		const sym = L(
 			"symbol",
@@ -371,8 +446,8 @@ const drawSymbol: OpDef = {
 			L("on_board", true),
 			L("in_pos_files", true),
 			L("duplicate_pin_numbers_are_jumpers", false),
-			propertyNode("Reference", a.reference as string, [x0, y0 - 1.27]),
-			propertyNode("Value", typeof a.value === "string" ? a.value : name, [x0, y1 + 1.27]),
+			propertyNode("Reference", a.reference as string, places.Reference),
+			propertyNode("Value", typeof a.value === "string" ? a.value : name, places.Value),
 			propertyNode("Footprint", typeof a.footprint === "string" ? a.footprint : ""),
 			propertyNode("Datasheet", typeof a.datasheet === "string" ? a.datasheet : ""),
 			propertyNode("Description", typeof a.description === "string" ? a.description : ""),
@@ -403,17 +478,18 @@ const copySymbol: OpDef = {
 	fields: {
 		from: { t: "string", req: true, doc: 'source symbol "Library:Name", e.g. "Connector:RJ45_Abracon_ARJP11A-MASA-B-A-EMU2"' },
 		library: { t: "string", req: true, doc: "project symbol library nickname (created when missing)" },
+		library_description: LIBRARY_DESCRIPTION,
 		name: { t: "string", req: true, doc: "new symbol name (the part number, KLC S2.1); must not exist in the library" },
 		footprint: { t: "string", doc: 'default footprint "Library:Name" replacing the source\'s (must exist)' },
 	},
-	async apply(ctx, a) {
+	apply(ctx, a) {
 		const from = a.from as string;
 		const library = a.library as string;
 		const name = a.name as string;
 		const [nick, srcName] = splitId(from);
 		const sym = flattenSymbol(sourceSymLib(ctx, nick), srcName, nick);
 		if (typeof a.footprint === "string") checkFootprintRef(ctx, a.footprint);
-		const file = projectLib(ctx, "sym", library, true);
+		const file = projectLib(ctx, "sym", library, true, a.library_description);
 		const tree = symLibTree(ctx.project, file);
 		checkNewSymbol(tree, name, library);
 		sym[1] = str(name);
@@ -423,12 +499,11 @@ const copySymbol: OpDef = {
 		tree.push(sym);
 		saveSymLib(ctx.project, file, tree);
 		ctx.touchPart("symbol", `${library}:${name}`);
-		const stockDir = (await kicadVars(ctx.project.repoRoot)).KICAD10_SYMBOL_DIR;
-		const src = ctx.libs.sym.find(e => e.name === nick);
-		const stock = !!stockDir && !!src && !path.relative(path.resolve(stockDir), path.resolve(src.uri)).startsWith("..");
+		const source = ctx.libs.sym.find(e => e.name === nick)?.source;
 		ctx.notes.push(
 			`copied ${from} to ${library}:${name}${typeof a.footprint === "string" ? ` (footprint ${a.footprint})` : ""}; update Description, Datasheet, keywords and footprint filters for the new part` +
-				(stock ? `; derived from the KiCad symbol library, licensed CC-BY-SA 4.0 (with the KiCad libraries exception): keep that license and attribution if the library is shared` : ""),
+				(source === "stock" ? `; derived from the KiCad symbol library, licensed CC-BY-SA 4.0 (with the KiCad libraries exception): keep that license and attribution if the library is shared` : "") +
+				(source === "user" ? `; ${nick} is the user's own global library, neither in the repo nor KLC-reviewed: check the copy against the datasheet and KLC` : ""),
 		);
 	},
 };
@@ -438,7 +513,7 @@ const MANDATORY = ["Reference", "Value", "Footprint", "Datasheet", "Description"
 const editSymbol: OpDef = {
 	op: "lib_edit_symbol",
 	group: "library",
-	doc: "Change a project library symbol: set or remove properties; replace all graphics (shapes); add, remove, move, resize, restyle, hide, rename or retype pins (by number, every pin with that number in every unit). Placed symbols keep their cached copy until updated from the library.",
+	doc: "Change a project library symbol: set or remove properties; replace all graphics (shapes); add, remove, move, resize, restyle, hide, rename or retype pins (by number, every pin with that number in every unit). When shapes are replaced or pins are added, removed, moved, turned or resized, Reference and Value are re-placed above and below the new drawing as lib_draw_symbol places them (fields: \"keep\" leaves them). Placed symbols keep their cached copy until updated from the library.",
 	fields: {
 		library: { t: "string", req: true, doc: "project symbol library nickname" },
 		name: { t: "string", req: true, doc: "symbol name" },
@@ -448,9 +523,14 @@ const editSymbol: OpDef = {
 		},
 		pins: {
 			t: "objects",
-			doc: `[{number, name?, type?, at?, dir?, length?, shape?, hidden?, unit?, remove?: true}]: only the given keys change (at, dir and shapes as in lib_draw_symbol); a number that doesn't exist yet with at and dir adds a pin (name default "", type passive, length 2.54, unit 1); remove: true deletes it`,
+			doc: `[{number, name?, type?, at?, dir?, length?, shape?, hidden?, unit?, remove?: true}]: only the given keys change (at, dir and shapes as in lib_draw_symbol); a number that doesn't exist yet with at and dir adds a pin (name default "", type passive, length 2.54, unit 1); remove: true deletes it; ${PIN_STACK_DOC}: to convert one, remove the hidden duplicates and renumber the visible pin (remove it and add the stacked number at its place)`,
 		},
 		shapes: { t: "objects", doc: `replaces all graphics of the symbol (every unit and body style; pins stay): ${SHAPES_DOC}` },
+		fields: {
+			t: "string",
+			values: ["auto", "keep"],
+			doc: 'Reference and Value placement: "auto" puts Reference 1.27 mm above and Value 1.27 mm below the drawing, left-aligned at its left edge (as lib_draw_symbol); "keep" leaves them. Default: auto when shapes are replaced or pins are added, removed, moved, turned or resized, else keep',
+		},
 	},
 	apply(ctx, a) {
 		const library = a.library as string;
@@ -483,6 +563,7 @@ const editSymbol: OpDef = {
 		if ((pinEdits.length || shapes) && child(sym, "extends")) {
 			throw new Error(`${name} extends ${text(child(sym, "extends"))}: its pins and graphics belong to that symbol, edit it instead`);
 		}
+		let moved = false;
 		if (pinEdits.length || shapes) {
 			const { items, unitNames } = symbolItems(sym);
 			let list = shapes ? items.filter(it => head(it.node) === "pin") : items;
@@ -496,6 +577,7 @@ const editSymbol: OpDef = {
 				if (e.remove) {
 					if (!hits.length) throw new Error(`${where}: ${name} has no pin ${e.number} to remove`);
 					list = list.filter(it => !hits.includes(it));
+					moved = true;
 					changes.push(`removed pin ${e.number}`);
 					return;
 				}
@@ -506,6 +588,7 @@ const editSymbol: OpDef = {
 					const unit = e.unit ?? 1;
 					const p = { number: e.number, name: e.name ?? "", type: e.type ?? "passive", at: e.at, dir: e.dir, length: e.length ?? 2.54, shape: e.shape ?? "line", hidden: e.hidden ?? false, unit, body_style: 1 };
 					list.push({ unit, body: 1, node: pinNode(p) });
+					moved = true;
 					changes.push(`added pin ${e.number}`);
 					return;
 				}
@@ -516,6 +599,7 @@ const editSymbol: OpDef = {
 					editPinNode(h.node, e);
 					if (e.unit !== undefined) h.unit = e.unit;
 				}
+				if (e.at || e.dir || e.length !== undefined) moved = true;
 				changes.push(`pin ${e.number} ${keys.join("/")}`);
 			});
 			if (list.some(it => it.body === 2) && !child(sym, "body_styles")) {
@@ -524,7 +608,26 @@ const editSymbol: OpDef = {
 			}
 			setSubSymbols(sym, subSymbols(name, list, unitNames));
 		}
-		if (!changes.length) throw new Error("nothing to change: give properties, pins and/or shapes");
+		if ((a.fields ?? (shapes || moved ? "auto" : "keep")) === "auto") {
+			if (child(sym, "extends")) throw new Error(`${name} extends ${text(child(sym, "extends"))}: its drawing belongs to that symbol; use fields: "auto" there`);
+			const items = symbolItems(sym).items;
+			if (!items.length) throw new Error(`${name} has no drawing to place Reference and Value around`);
+			const places = symbolFieldPlaces(itemsExtent(items));
+			for (const key of ["Reference", "Value"] as const) {
+				const p = prop(sym, key);
+				if (!p) continue;
+				const [x, y] = places[key];
+				setChild(p, L("at", x, 0 - y, 0));
+				let fx = child(p, "effects");
+				if (!fx) {
+					fx = L("effects", L("font", L("size", 1.27, 1.27)));
+					p.push(fx);
+				}
+				setChild(fx, L("justify", "left"));
+			}
+			changes.push(`Reference and Value re-placed above and below the drawing`);
+		}
+		if (!changes.length) throw new Error("nothing to change: give properties, pins, shapes and/or fields");
 		saveSymLib(ctx.project, file, tree);
 		ctx.touchPart("symbol", `${library}:${name}`);
 		ctx.notes.push(`${library}:${name}: ${changes.join(", ")}`);
@@ -601,9 +704,9 @@ function placeModel(fp: List, a: Record<string, unknown>): string[] {
 
 const FP_NAME = /^[A-Za-z0-9][A-Za-z0-9_.+,-]*$/;
 
-function footprintFile(ctx: OpContext, nick: string, name: string, create: boolean): { dir: string; file: string } {
+function footprintFile(ctx: OpContext, nick: string, name: string, create: boolean, description?: unknown): { dir: string; file: string } {
 	if (!FP_NAME.test(name)) throw new Error(`footprint name "${name}" may use letters, digits and _ . + - , only (KLC F2.1)`);
-	const dir = projectLib(ctx, "fp", nick, create);
+	const dir = projectLib(ctx, "fp", nick, create, description);
 	return { dir, file: path.join(dir, `${name}.kicad_mod`) };
 }
 
@@ -658,6 +761,7 @@ const generateFootprint: OpDef = {
 		)}. The spec is one entry of the family's YAML files ($KICAD_LIBRARY_TOOLS/data/<generator>/*.yaml; copy a similar part, keep its keys, change the dimensions), as JSON, e.g. package/no_lead: {"device_type": "WSON", "manufacturer": "Texas", "part_number": "DSG0008A", "size_source": "https://…", "body_size_x": "1.9 .. 2.0 .. 2.1", "body_size_y": "1.9 .. 2.0 .. 2.1", "overall_height": 0.8, "num_pins_x": 0, "num_pins_y": 4, "pitch": 0.5, "lead_width": "0.2 .. 0.25 .. 0.3", "lead_len": "0.2 .. 0.3 .. 0.4", "EP_size_x": "0.8 .. 0.9 .. 1.0", "EP_size_y": "1.5 .. 1.6 .. 1.7", "EP_num_paste_pads": [1, 2]}. "inherit": "<entry>" builds on any entry of those files (and that file's defaults), as the connector families need. The 3D model path is set to the project's <Library>.3dshapes/<Name>.step.`,
 	fields: {
 		library: { t: "string", req: true, doc: "project footprint library nickname (created when missing)" },
+		library_description: LIBRARY_DESCRIPTION,
 		generator: { t: "string", req: true, values: Object.keys(GENERATORS), doc: "generator family" },
 		spec: { t: "object", req: true, doc: "one part spec in the family's YAML format (as JSON); size_source must be the datasheet URL" },
 		name: { t: "string", doc: "footprint name instead of the generated one (e.g. with the vendor prefix of a vendor land pattern)" },
@@ -712,7 +816,7 @@ const generateFootprint: OpDef = {
 		}
 		const mod = mods[names.indexOf(base)]!;
 		const name = typeof a.name === "string" ? a.name : base;
-		const { dir, file } = footprintFile(ctx, library, name, true);
+		const { dir, file } = footprintFile(ctx, library, name, true, a.library_description);
 		if (footprintTree(ctx.project, file)) throw new Error(`footprint ${library}:${name} already exists; remove it first`);
 		mod[1] = str(name);
 		prop(mod, "Value")![2] = str(name);
@@ -766,18 +870,123 @@ interface PadIn {
 	size: [number, number];
 	drill?: number | [number, number];
 	layers: string[];
-	rratio?: number;
+}
+
+/** A pad given to lib_create_footprint / add_pads, with the node it is written as. */
+interface NewPad extends PadIn {
+	node: List;
+}
+
+/** Pad overrides the pad inputs take as lib_footprint reports them (KiCad's tokens), with their limits. */
+const PAD_OVERRIDES: Record<string, { min?: number; max?: number; integer?: boolean }> = {
+	solder_mask_margin: {},
+	solder_paste_margin: {},
+	solder_paste_margin_ratio: {},
+	clearance: { min: 0 },
+	zone_connect: { min: 0, max: 3, integer: true },
+	thermal_bridge_width: { min: 0 },
+	thermal_bridge_angle: {},
+	thermal_gap: { min: 0 },
+};
+const CHAMFER_CORNERS = ["top_left", "top_right", "bottom_left", "bottom_right"];
+/** Optional pad keys of the pad inputs (lib_footprint's pad details). */
+const PAD_SETTING_KEYS = ["roundrect_rratio", "corner_radius", "chamfer_ratio", "chamfer", ...Object.keys(PAD_OVERRIDES)];
+/** KiCad's order of those pad children (PCB_IO_KICAD_SEXPR's pad writer), for inserting a missing one. */
+const PAD_ORDER = [
+	"roundrect_rratio",
+	"chamfer_ratio",
+	"chamfer",
+	"solder_mask_margin",
+	"solder_paste_margin",
+	"solder_paste_margin_ratio",
+	"clearance",
+	"zone_connect",
+	"thermal_bridge_width",
+	"thermal_bridge_angle",
+	"thermal_gap",
+	"uuid",
+];
+
+const PAD_SETTINGS_DOC =
+	'roundrect pads: roundrect_rratio (default 0.25) or corner_radius in mm (rratio = radius / smaller pad side; both may be given when they agree, as lib_footprint reports them), chamfer_ratio with chamfer (corners: top_left|top_right|bottom_left|bottom_right); any pad: overrides solder_mask_margin, solder_paste_margin (mm), solder_paste_margin_ratio, clearance (mm), zone_connect (0 none, 1 thermal, 2 solid, 3 thermal for through-hole only), thermal_bridge_width, thermal_gap (mm), thermal_bridge_angle (degrees); unset ones follow the footprint and board settings';
+
+/** Set a pad child: replace it, else insert it where KiCad writes it. */
+function setPadChild(p: List, node: List): void {
+	const key = head(node)!;
+	const i = p.findIndex(c => isList(c) && head(c) === key);
+	if (i >= 0) {
+		p[i] = node;
+		return;
+	}
+	const rank = PAD_ORDER.indexOf(key);
+	const j = p.findIndex(c => isList(c) && PAD_ORDER.indexOf(head(c) ?? "") > rank);
+	if (j >= 0) p.splice(j, 0, node);
+	else p.push(node);
+}
+
+/** Apply the optional pad settings of a pads entry (PAD_SETTING_KEYS; null removes one) to a pad node of its final shape and size. */
+function padSettings(p: List, e: Record<string, unknown>, where: string): void {
+	const rr = e.roundrect_rratio;
+	const cr = e.corner_radius;
+	if (text(p, 3) !== "roundrect") {
+		const given = ["roundrect_rratio", "corner_radius", "chamfer_ratio", "chamfer"].filter(k => e[k] !== undefined && e[k] !== null);
+		if (given.length) throw new Error(`${where}: ${given.join(", ")} ${given.length > 1 ? "are" : "is"} for roundrect pads`);
+		for (const k of ["roundrect_rratio", "chamfer_ratio", "chamfer"]) removeChild(p, k);
+	} else {
+		if (rr !== undefined && (typeof rr !== "number" || rr < 0 || rr > 0.5)) throw new Error(`${where}: roundrect_rratio is a number from 0 to 0.5`);
+		if (cr !== undefined && (typeof cr !== "number" || cr < 0)) throw new Error(`${where}: corner_radius is a radius in mm`);
+		const size = child(p, "size");
+		const side = Math.min(num(size, 1), num(size, 2));
+		if (typeof cr === "number") {
+			if (cr > side / 2 + 1e-9) throw new Error(`${where}: corner_radius ${cr} mm is more than half the smaller pad side (${side} mm)`);
+			if (typeof rr === "number" && Math.abs(rr * side - cr) > 5e-4) {
+				throw new Error(`${where}: roundrect_rratio ${rr} makes a ${mm(rr * side).v} mm corner radius on this pad, not corner_radius ${cr}; give one of them`);
+			}
+		}
+		const ratio = typeof rr === "number" ? rr : typeof cr === "number" ? cr / side : undefined;
+		if (ratio !== undefined) setPadChild(p, L("roundrect_rratio", mm(ratio)));
+		else if (!child(p, "roundrect_rratio")) setPadChild(p, L("roundrect_rratio", 0.25));
+		if (e.chamfer === null) {
+			removeChild(p, "chamfer_ratio");
+			removeChild(p, "chamfer");
+		} else if (e.chamfer !== undefined || e.chamfer_ratio !== undefined) {
+			const ch = e.chamfer_ratio;
+			if (ch !== undefined && (typeof ch !== "number" || ch < 0 || ch > 0.5)) throw new Error(`${where}: chamfer_ratio is a number from 0 to 0.5`);
+			if (typeof ch === "number") setPadChild(p, L("chamfer_ratio", mm(ch)));
+			const corners = e.chamfer;
+			if (corners !== undefined) {
+				if (!Array.isArray(corners) || !corners.length || !corners.every((c): c is string => typeof c === "string" && CHAMFER_CORNERS.includes(c))) {
+					throw new Error(`${where}: chamfer is a list of corners from ${CHAMFER_CORNERS.join(", ")} (null removes the chamfer)`);
+				}
+				setPadChild(p, L("chamfer", ...corners.map(c => new Sym(c))));
+			}
+			if (!child(p, "chamfer_ratio") || !child(p, "chamfer")) throw new Error(`${where}: a chamfer needs both chamfer_ratio and chamfer (the corners)`);
+		}
+	}
+	for (const [k, lim] of Object.entries(PAD_OVERRIDES)) {
+		const v = e[k];
+		if (v === undefined) continue;
+		if (v === null) {
+			removeChild(p, k);
+			continue;
+		}
+		const [lo, hi] = [lim.min ?? -Infinity, lim.max ?? Infinity];
+		if (typeof v !== "number" || !Number.isFinite(v) || v < lo || v > hi || (lim.integer && !Number.isInteger(v))) {
+			throw new Error(`${where}: "${k}" must be ${lim.integer ? "an integer" : "a number"}${lo > -Infinity ? ` from ${lo}` : ""}${hi < Infinity ? ` to ${hi}` : ""} (null removes it), got ${JSON.stringify(v)}`);
+		}
+		setPadChild(p, L(k, mm(v)));
+	}
 }
 
 function isPair(v: unknown): v is [number, number] {
 	return Array.isArray(v) && v.length === 2 && v.every(x => typeof x === "number" && Number.isFinite(x));
 }
 
-function padsIn(raw: Record<string, unknown>[], field = "pads"): PadIn[] {
+function padsIn(raw: Record<string, unknown>[], field = "pads"): NewPad[] {
 	return raw.map((p, i) => {
 		const where = `${field}[${i}]`;
 		for (const k of Object.keys(p)) {
-			if (!["number", "type", "shape", "at", "size", "drill", "layers", "roundrect_rratio"].includes(k)) throw new Error(`${where}: unknown key "${k}"`);
+			if (!["number", "type", "shape", "at", "size", "drill", "layers", ...PAD_SETTING_KEYS].includes(k)) throw new Error(`${where}: unknown key "${k}"`);
 		}
 		const type = oneOf(strField(p, "type", where), PAD_TYPES, `${where} type`);
 		const shape = oneOf(strField(p, "shape", where), PAD_SHAPES, `${where} shape`);
@@ -789,18 +998,10 @@ function padsIn(raw: Record<string, unknown>[], field = "pads"): PadIn[] {
 		if (drill !== undefined && !(typeof drill === "number" || isPair(drill))) throw new Error(`${where}: "drill" must be a diameter or [w, h] (oval)`);
 		const layers = p.layers === undefined ? PAD_LAYERS[type]! : p.layers;
 		if (!Array.isArray(layers) || !layers.every(l => typeof l === "string")) throw new Error(`${where}: "layers" must be a list of layer names`);
-		const rr = p.roundrect_rratio;
-		if (rr !== undefined && (typeof rr !== "number" || shape !== "roundrect")) throw new Error(`${where}: roundrect_rratio is a number, for roundrect pads`);
-		return {
-			number: strField(p, "number", where) ?? "",
-			type,
-			shape,
-			at: p.at,
-			size: p.size,
-			drill,
-			layers: layers as string[],
-			rratio: shape === "roundrect" ? ((rr as number | undefined) ?? 0.25) : undefined,
-		};
+		const pad: PadIn = { number: strField(p, "number", where) ?? "", type, shape, at: p.at, size: p.size, drill, layers: layers as string[] };
+		const node = padNode(pad);
+		padSettings(node, p, where);
+		return { ...pad, node };
 	});
 }
 
@@ -814,11 +1015,11 @@ function padRect(p: PadIn): Rect {
 	return [p.at[0] - hw, p.at[1] - hh, p.at[0] + hw, p.at[1] + hh];
 }
 
+/** A pad's number, type, shape, position, size, drill and layers; padSettings adds the rest. */
 function padNode(p: PadIn): List {
 	const parts: Item[] = [str(p.number), new Sym(p.type), new Sym(p.shape), L("at", mm(p.at[0]), mm(p.at[1]), ...(p.rot ? [p.rot] : [])), xy("size", p.size)];
 	if (p.drill !== undefined) parts.push(typeof p.drill === "number" ? L("drill", mm(p.drill)) : L("drill", "oval", mm(p.drill[0]), mm(p.drill[1])));
 	parts.push(L("layers", ...p.layers.map(l => str(l))));
-	if (p.rratio !== undefined) parts.push(L("roundrect_rratio", p.rratio));
 	return L("pad", ...parts);
 }
 
@@ -1004,7 +1205,7 @@ function fieldPlaces(cy: Rect): { reference: [number, number]; value: [number, n
 }
 
 /** KLC-style footprint: pads plus the outline drawings of `outlineItems`. */
-function drawFootprint(o: { name: string; description: string; tags: string; attr: string; pads: PadIn[]; body: Body; margin: number; model?: string }): List {
+function drawFootprint(o: { name: string; description: string; tags: string; attr: string; pads: NewPad[]; body: Body; margin: number; model?: string }): List {
 	const { items, courtyard } = outlineItems(o.pads, o.body, o.margin);
 	const at = fieldPlaces(courtyard);
 	return L(
@@ -1021,7 +1222,7 @@ function drawFootprint(o: { name: string; description: string; tags: string; att
 		L("attr", new Sym(o.attr)),
 		L("duplicate_pad_numbers_are_jumpers", false),
 		...items,
-		...o.pads.map(padNode),
+		...o.pads.map(p => p.node),
 		L("embedded_fonts", false),
 		...(o.model ? [modelNode(o.model)] : []),
 	);
@@ -1033,6 +1234,7 @@ const createFootprint: OpDef = {
 	doc: "Draw a KLC-style footprint for a part no generator family fits (modules, odd connectors) and add it to a project footprint library: your pads, F.Fab body outline with pin-1 chamfer and ${REFERENCE}, F.SilkS outline 0.12 mm clear of copper by 0.2 mm with a pin-1 triangle, F.CrtYd rectangle around pads and body, then your own `graphics`. Origin: body centre for SMD, pad 1 for through-hole (KLC F7.2).",
 	fields: {
 		library: { t: "string", req: true, doc: "project footprint library nickname (created when missing)" },
+		library_description: LIBRARY_DESCRIPTION,
 		name: { t: "string", req: true, doc: 'footprint name per KLC F2, e.g. "Waveshare_ESP32-P4-Core"' },
 		description: { t: "string", req: true, doc: "description ending with the datasheet URL (KLC F9.1)" },
 		tags: { t: "string", req: true, doc: "space-separated keywords" },
@@ -1040,7 +1242,7 @@ const createFootprint: OpDef = {
 		pads: {
 			t: "objects",
 			req: true,
-			doc: `[{number, type, shape, at, size, drill?, layers?, roundrect_rratio?}]: type ${PAD_TYPES.join("|")}, shape ${PAD_SHAPES.join("|")}, at/size [x, y] mm (y down), drill diameter or [w, h] slot (holes only), layers default by type (smd: F.Cu F.Mask F.Paste; thru_hole: *.Cu *.Mask), roundrect_rratio default 0.25`,
+			doc: `[{number, type, shape, at, size, drill?, layers?, …settings}]: type ${PAD_TYPES.join("|")}, shape ${PAD_SHAPES.join("|")}, at/size [x, y] mm (y down), drill diameter or [w, h] slot (holes only), layers default by type (smd: F.Cu F.Mask F.Paste; thru_hole: *.Cu *.Mask); optional settings, as lib_footprint reports them: ${PAD_SETTINGS_DOC}`,
 		},
 		body: { t: "object", req: true, doc: "{width, height, center?: [x, y]} body outline in mm (center default [0, 0])" },
 		courtyard_margin: { t: "number", doc: "courtyard clearance around pads and body (default 0.25 mm; KLC: 0.5 connectors, 1 BGA)" },
@@ -1056,7 +1258,7 @@ const createFootprint: OpDef = {
 		if (!pads.length) throw new Error("pads: give at least one pad");
 		const graphics = a.graphics ? graphicsIn(a.graphics as Record<string, unknown>) : undefined;
 		if (!/https?:\/\//.test(a.description as string)) throw new Error("description must include the datasheet URL (KLC F9.1)");
-		const { dir, file } = footprintFile(ctx, library, name, true);
+		const { dir, file } = footprintFile(ctx, library, name, true, a.library_description);
 		if (footprintTree(ctx.project, file)) throw new Error(`footprint ${library}:${name} already exists; remove it first`);
 		const model = a.model === true ? projectModel(ctx.project, dir, library, name) : undefined;
 		const tree = drawFootprint({
@@ -1084,9 +1286,10 @@ const copyFootprint: OpDef = {
 	fields: {
 		from: { t: "string", req: true, doc: '"Library:Name" of the source, e.g. "Connector_RJ:RJ45_Abracon_ARJP11A-MA_Horizontal"' },
 		library: { t: "string", req: true, doc: "project footprint library nickname (created when missing)" },
+		library_description: LIBRARY_DESCRIPTION,
 		name: { t: "string", req: true, doc: "new footprint name per KLC F2; must not exist in the library" },
 	},
-	async apply(ctx, a) {
+	apply(ctx, a) {
 		const from = a.from as string;
 		const library = a.library as string;
 		const name = a.name as string;
@@ -1095,7 +1298,7 @@ const copyFootprint: OpDef = {
 		const srcFile = srcDir ? path.join(srcDir, `${srcName}.kicad_mod`) : "";
 		const src = srcFile ? footprintTree(ctx.project, srcFile) : undefined;
 		if (!src) throw new Error(`footprint "${from}" not found (expected "Library:Name" of an existing footprint)`);
-		const { file } = footprintFile(ctx, library, name, true);
+		const { file } = footprintFile(ctx, library, name, true, a.library_description);
 		if (footprintTree(ctx.project, file)) throw new Error(`footprint ${library}:${name} already exists; remove it first`);
 		const fp = clone(src);
 		fp[1] = str(name);
@@ -1103,18 +1306,18 @@ const copyFootprint: OpDef = {
 		if (value) value[2] = str(name);
 		saveFootprint(ctx.project, file, fp);
 		ctx.touchPart("footprint", `${library}:${name}`);
-		const stockDir = (await kicadVars(ctx.project.repoRoot)).KICAD10_FOOTPRINT_DIR;
-		const stock = !!stockDir && path.resolve(srcFile).startsWith(`${path.resolve(stockDir)}${path.sep}`);
+		const source = ctx.libs.fp.find(e => e.name === nick)?.source;
 		const model = children(fp, "model").map(m => text(m) ?? "");
 		ctx.notes.push(
 			`copied footprint ${from} to ${library}:${name}` +
-				(stock ? "; it derives from the KiCad footprint library, CC-BY-SA 4.0 material" : "") +
+				(source === "stock" ? "; it derives from the KiCad footprint library, CC-BY-SA 4.0 material" : "") +
+				(source === "user" ? `; ${nick} is the user's own global library, neither in the repo nor KLC-reviewed: check the copy against the datasheet and KLC` : "") +
 				`; still ${from}'s: description "${text(child(fp, "descr")) ?? ""}", Datasheet "${propValue(fp, "Datasheet") ?? ""}", 3D model ${model.join(", ") || "none"}; update them for the new part (lib_edit_footprint description/model)`,
 		);
 	},
 };
 
-const PAD_EDIT_KEYS = ["pad", "number", "type", "shape", "at", "size", "drill", "layers", "roundrect_rratio", "remove"];
+const PAD_EDIT_KEYS = ["pad", "number", "type", "shape", "at", "size", "drill", "layers", ...PAD_SETTING_KEYS, "remove"];
 
 /** The pad a selector names: its number, or {number, near} for the nearest of several pads sharing a number. */
 function selectPad(pads: List[], sel: unknown, where: string): List {
@@ -1181,14 +1384,7 @@ function editPad(p: List, e: Record<string, unknown>, where: string): void {
 		if (!Array.isArray(layers) || !layers.every((l): l is string => typeof l === "string")) throw new Error(`${where}: "layers" must be a list of layer names`);
 		setChild(p, L("layers", ...layers.map(l => str(l))));
 	}
-	const rr = e.roundrect_rratio;
-	if (text(p, 3) !== "roundrect") {
-		if (rr !== undefined) throw new Error(`${where}: roundrect_rratio is for roundrect pads`);
-		removeChild(p, "roundrect_rratio");
-	} else if (rr !== undefined) {
-		if (typeof rr !== "number" || rr < 0 || rr > 0.5) throw new Error(`${where}: roundrect_rratio is a number from 0 to 0.5`);
-		setChild(p, L("roundrect_rratio", rr));
-	} else if (!child(p, "roundrect_rratio")) setChild(p, L("roundrect_rratio", 0.25));
+	padSettings(p, e, where);
 }
 
 const editFootprint: OpDef = {
@@ -1207,7 +1403,7 @@ const editFootprint: OpDef = {
 		...MODEL_PLACEMENT_FIELDS,
 		pads: {
 			t: "objects",
-			doc: `[{pad, number?, type?, shape?, at?, size?, drill?, layers?, roundrect_rratio?, remove?: true}]: pad selects one pad by number ("6"; "" for unnumbered NPTH) or, when several share it, {number, near: [x, y]} (the nearest); an ambiguous selector is an error. Selectors refer to the pads before this edit. The other keys as in lib_create_footprint's pads; at [x, y] keeps the pad rotation, [x, y, degrees] sets it; a new type without layers gets that type's default layers; remove: true deletes the pad`,
+			doc: `[{pad, number?, type?, shape?, at?, size?, drill?, layers?, …settings, remove?: true}]: pad selects one pad by number ("6"; "" for unnumbered NPTH) or, when several share it, {number, near: [x, y]} (the nearest); an ambiguous selector is an error. Selectors refer to the pads before this edit. The other keys as in lib_create_footprint's pads, settings null removes one (chamfer: null removes the chamfer); at [x, y] keeps the pad rotation, [x, y, degrees] sets it; a new size keeps roundrect_rratio (the corner radius scales) unless corner_radius is given; a new type without layers gets that type's default layers; remove: true deletes the pad`,
 		},
 		add_pads: { t: "objects", doc: "new pads, in lib_create_footprint's pads format" },
 		outline: {
@@ -1270,7 +1466,7 @@ const editFootprint: OpDef = {
 			const add = padsIn(a.add_pads as Record<string, unknown>[], "add_pads");
 			const last = children(tree, "pad").at(-1);
 			const end = tree.findIndex(c => isList(c) && ["embedded_fonts", "model"].includes(text(c, 0) ?? ""));
-			tree.splice(last ? tree.indexOf(last) + 1 : end < 0 ? tree.length : end, 0, ...add.map(padNode));
+			tree.splice(last ? tree.indexOf(last) + 1 : end < 0 ? tree.length : end, 0, ...add.map(p => p.node));
 			changes.push(`added pads ${add.map(p => `"${p.number}"`).join(", ")}`);
 		}
 
@@ -1336,4 +1532,5 @@ export const ops: OpDef[] = [
 	copyFootprint,
 	editFootprint,
 	removeFootprint,
+	setLibrary,
 ];

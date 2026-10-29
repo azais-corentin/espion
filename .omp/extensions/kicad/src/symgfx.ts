@@ -662,3 +662,17 @@ export function drawExtent(shapes: Shape[], pins: Pin[]): Box {
 	for (const [x, y] of ps) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
 	return [x0, y0, x1, y1];
 }
+
+/** drawExtent of a symbol's drawing items (shapes and pins; text boxes are left out). */
+export function itemsExtent(items: Item[]): Box {
+	const shapes: Shape[] = [];
+	const pins: Pin[] = [];
+	for (const it of items) {
+		if (head(it.node) === "pin") pins.push(readPin(it.node, it.unit, it.body));
+		else {
+			const s = readShape(it.node, it.unit, it.body);
+			if (s) shapes.push(s);
+		}
+	}
+	return drawExtent(shapes, pins);
+}

@@ -5,7 +5,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { describeFootprint, describeLibSymbol, type FpPadInfo, type Libraries, splitId } from "../libs";
+import { describeFootprint, describeLibSymbol, type FpPadInfo, type Libraries, PAD_DETAILS, splitId } from "../libs";
 import { head, parse } from "../sexpr";
 import { type Pin, readPin, symbolGraphics, symbolItems } from "../symgfx";
 import type { QueryDef } from "../types";
@@ -111,7 +111,7 @@ function diffSymbols(libs: Libraries, a: string, b: string): Record<string, unkn
 	});
 }
 
-const PAD_FIELDS = ["type", "shape", "at", "size", "drill", "layers"] as const;
+const PAD_FIELDS = ["type", "shape", "at", "size", "drill", "layers", ...PAD_DETAILS] as const;
 
 function diffFootprints(libs: Libraries, a: string, b: string): Record<string, unknown> {
 	const read = (id: string) => describeFootprint(parse(fs.readFileSync(libs.footprintFile(id), "utf8")), true);
@@ -126,6 +126,7 @@ function diffFootprints(libs: Libraries, a: string, b: string): Record<string, u
 	return compact({
 		properties: changed(fa.properties, fb.properties),
 		...changed({ ...fa }, { ...fb }, ["description", "tags", "attributes", "models"]),
+		overrides: changed({ ...fa.overrides }, { ...fb.overrides }),
 		pads: compact({ added: m.added, removed: m.removed, changed: changedPairs(m.pairs, fa.pads, PAD_FIELDS) }),
 		graphics,
 	});
@@ -143,7 +144,7 @@ function kindOf(libs: Libraries, id: string): "symbol" | "footprint" {
 
 const libDiff: QueryDef = {
 	what: "lib_diff",
-	doc: 'What differs from library part `a` to `b` (two symbols or two footprints, stock or project; e.g. a derived part against its source). Every change is [a, b]; unchanged sections are left out, `same` says whether anything differs. Symbols: properties, units/power/pin text settings, pins added/removed/changed (matched by number, then unit, body style and position; fields name, type, at, dir, length, unit, body_style, hidden, shape), shapes added/removed (lib_symbol graphics format). Footprints: properties, description, tags, attributes, models, pads added/removed/changed (matched by number, nearest position among repeats, which also get `near`; fields type, shape, at, size, drill, layers; a renumbered pad shows as removed + added), graphics added/removed per layer (lib_footprint graphics format).',
+	doc: 'What differs from library part `a` to `b` (two symbols or two footprints, stock or project; e.g. a derived part against its source). Every change is [a, b]; unchanged sections are left out, `same` says whether anything differs. Symbols: properties, units/power/pin text settings, pins added/removed/changed (matched by number, then unit, body style and position; fields name, type, at, dir, length, unit, body_style, hidden, shape), shapes added/removed (lib_symbol graphics format). Footprints: properties, description, tags, attributes, models, footprint-level overrides (solder mask / paste margins, clearance, zone connection; as lib_footprint reports them), pads added/removed/changed (matched by number, nearest position among repeats, which also get `near`; fields type, shape, at, size, drill, layers and the pad details of lib_footprint: roundrect_rratio, corner_radius, chamfer, solder mask / paste margins, clearance, zone_connect, thermal settings; a renumbered pad shows as removed + added), graphics added/removed per layer (lib_footprint graphics format).',
 	fields: {
 		a: { t: "string", req: true, doc: '"Library:Name", e.g. the source "Connector_RJ:RJ45_Abracon_ARJP11A-MA_Horizontal"' },
 		b: { t: "string", req: true, doc: '"Library:Name" of the same kind, e.g. the derived "Connector_RJ_HanRun:RJ45_HanRun_HR871150C_Horizontal"' },

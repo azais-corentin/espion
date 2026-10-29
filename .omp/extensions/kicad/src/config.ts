@@ -39,6 +39,11 @@ export interface ProjectConfig {
 	powerSymbols: Record<string, string>;
 	/** Project library directory (repo-relative) where new libraries are created. */
 	libDir: string;
+	/**
+	 * Appended to the description of every project library the toolkit creates or describes
+	 * (lib-table `descr`), e.g. "(espion project library)"; "" for none.
+	 */
+	libraryDescriptionSuffix: string;
 	/** KLC rule ids expected on every project part (reported as info, not failures), e.g. "F9.3". */
 	klcExpected: string[];
 	/**
@@ -74,6 +79,7 @@ export const DEFAULTS: ProjectConfig = {
 	refBase: {},
 	powerSymbols: {},
 	libDir: "lib",
+	libraryDescriptionSuffix: "",
 	klcExpected: [],
 	klcWaivers: {},
 	padMatchExempt: [],

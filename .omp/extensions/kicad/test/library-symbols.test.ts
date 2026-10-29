@@ -66,6 +66,7 @@ describe("library symbols", () => {
 		const { files, parts } = await apply(root, [
 			{
 				op: "lib_draw_symbol",
+				library_description: "Test connectors",
 				library: "Connector_Test",
 				name: "RJ45_Redrawn",
 				reference: "J",
@@ -111,7 +112,7 @@ describe("library symbols", () => {
 	test.skipIf(!HAS_KICAD)("lib_copy_symbol then lib_edit_symbol: remove, move and add pins, replace shapes", async () => {
 		const stock = await query(root, { lib_id: RJ45, graphics: true });
 		const { notes, files } = await apply(root, [
-			{ op: "lib_copy_symbol", from: RJ45, library: "Connector_Copy", name: "HR871150C_Test", footprint: "Connector_RJ:RJ45_Abracon_ARJP11A-MA_Horizontal" },
+			{ op: "lib_copy_symbol", from: RJ45, library: "Connector_Copy", library_description: "Test connector copies", name: "HR871150C_Test", footprint: "Connector_RJ:RJ45_Abracon_ARJP11A-MA_Horizontal" },
 		]);
 		expect(notes.join("\n")).toContain("CC-BY-SA 4.0");
 		const src = fs.readFileSync(files[0]!, "utf8");
@@ -157,7 +158,7 @@ describe("library symbols", () => {
 	}, 60_000);
 
 	test.skipIf(!HAS_KICAD)("lib_copy_symbol flattens a derived De Morgan symbol", async () => {
-		const { files } = await apply(root, [{ op: "lib_copy_symbol", from: "74xx:74HC00", library: "Logic_Test", name: "HC00_Copy" }]);
+		const { files } = await apply(root, [{ op: "lib_copy_symbol", from: "74xx:74HC00", library: "Logic_Test", library_description: "Test logic", name: "HC00_Copy" }]);
 		const q = await query(root, { lib_id: "Logic_Test:HC00_Copy", graphics: true });
 		expect(q.units).toBe(5);
 		expect((q.shapes as { body_style?: number }[]).some(s => s.body_style === 2)).toBe(true);
@@ -176,6 +177,7 @@ describe("library symbols", () => {
 		const { files, notes } = await apply(root, [
 			{
 				op: "lib_draw_symbol",
+				library_description: "Test interfaces",
 				library: "Interface_Draw_Test",
 				name: "TST42",
 				reference: "U",
@@ -204,6 +206,7 @@ describe("library symbols", () => {
 		];
 		const draw = (name: string, fp_filters: string[], footprint?: string) => ({
 			op: "lib_draw_symbol",
+			library_description: "Test filters",
 			library: "Filter_Test",
 			name,
 			reference: "Q",

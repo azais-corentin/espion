@@ -47,6 +47,7 @@ function libFiles(dir: string): string[] {
 
 const IC = {
 	op: "lib_create_symbol",
+	library_description: "Test interfaces",
 	library: "Interface_Test",
 	name: "TST1234",
 	reference: "U",
@@ -69,6 +70,7 @@ const IC = {
 
 const WSON = {
 	op: "lib_generate_footprint",
+	library_description: "Test SON packages",
 	library: "Package_SON_Test",
 	generator: "package/no_lead",
 	spec: {
@@ -92,6 +94,7 @@ const WSON = {
 
 const MODULE = {
 	op: "lib_create_footprint",
+	library_description: "Test modules",
 	library: "Module_Test",
 	name: "Test_Module_12x10mm",
 	description: "Test 4-pad SMD module, 12x10mm (https://example.com/module.pdf)",
@@ -159,6 +162,7 @@ describe("library ops", () => {
 		const notes = await commit(root, [
 			{
 				op: "lib_generate_footprint",
+				library_description: "Test connectors",
 				library: "Connector_Test",
 				generator: "connector/generator",
 				name: "JST_SHD_BM20B-SRDS-G-TF_Test",

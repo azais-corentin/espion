@@ -1,6 +1,7 @@
 {
   "defaults": {
-    "grid": 1.27
+    "grid": 1.27,
+    "libraryDescriptionSuffix": "(espion project library)"
   },
   "projects": {
     "hardware/espion-cam": {
