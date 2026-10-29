@@ -52,16 +52,19 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 ## Hardware
 
 - KiCad files (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, `.kicad_dru`, `.kicad_sym`,
-  `.kicad_mod`, the lib tables) are **toolkit-only**. Read, change and check them only with
-  the KiCad toolkit: `kicad_query`, `kicad_edit`, `kicad_check`, `kicad_render`, and
+  `.kicad_mod`, the lib tables) are **toolkit-only for changes**. Change and check them only
+  with the KiCad toolkit: `kicad_query`, `kicad_edit`, `kicad_check`, `kicad_render`, and
   `kicad_datasheet` for the datasheets (skills `kicad-schematic-edit`,
   `kicad-schematic-review`, `kicad-part-sourcing`, `kicad-library-part`,
-  `kicad-library-review`). Never edit them with other tools and never run `kicad-cli`,
-  `kicad`, `eeschema` or `pcbnew` yourself; a hook blocks it. If the toolkit can't do
-  something, stop, tell the user what is missing and use the `ask` tool to ask whether it
-  should be added to the toolkit.
-- `kicad_edit` writes nothing while KiCad has the project open (lock files): ask the user to
-  close it.
+  `kicad-library-review`). Reading them with `read`/`grep` is allowed, but prefer the
+  queries: they answer with nets, pins and positions KiCad computes. Never write them with
+  other tools (write, edit, shell, eval) and never run `kicad-cli`, `kicad`, `eeschema` or
+  `pcbnew` yourself; a hook blocks the shell and file tools, and eval is on you. If the
+  toolkit can't do something, stop, tell the user what is missing and use the `ask` tool
+  to ask whether it should be added to the toolkit.
+- `kicad_edit` checks for KiCad's lock files itself: it ignores a stale one (this host and
+  user, no KiCad running) and refuses while KiCad has the project open. Then ask the user
+  to close it; never delete lock files.
 - `hardware/espion-cam/SCHEMATIC.md` is the plan the schematic follows. A schematic change
   updates it (sheets, buses, hierarchical pins, parts, values) in the same commit, and the
   board list in `hardware/espion-cam/README.md` when a part changes. Keep ERC at 0

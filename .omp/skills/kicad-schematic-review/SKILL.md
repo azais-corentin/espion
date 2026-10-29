@@ -27,7 +27,7 @@ Checklist items marked **(full)** run only in `full` mode.
 ## Phase 0: machine checks (one call)
 `kicad_check` with no `checks` runs every default check:
 - `erc`: violations; an exclusion without a reason is a warning;
-- `connectivity`: vs git HEAD; pass `baseline` for another ref. In `change` mode, its diff defines the scope;
+- `connectivity`: vs git HEAD; pass `baseline` for another ref, `sheets` to scope it, `args: {detail: true}` for every rename and full pin lists (compact by default). In `change` mode, its diff defines the scope;
 - `style`: drawing rules;
 - `footprints`: footprints resolve; pins ↔ pads;
 - `fields`: sourcing fields;
@@ -67,7 +67,7 @@ Give each reviewer:
 - the Rules and Depth limits sections of this file, verbatim;
 - the output format below.
 
-Tools for reviewers: `kicad_query`, `kicad_check`, `kicad_render`, `kicad_datasheet` (pages and crops as images, plus the local PDF path), `read`, `grep`, `web_search`. No edits.
+Tools for reviewers: `kicad_query` (including `wires {sheet, box}` for wiring geometry), `kicad_check`, `kicad_render`, `kicad_datasheet` (`find`/`pages` for text, pages and crops as images, plus the local PDF path), `read`, `grep`, `web_search`. No edits.
 
 ## Depth limits (every reviewer, including subagents)
 A review ends; it does not chase every number to the last digit.

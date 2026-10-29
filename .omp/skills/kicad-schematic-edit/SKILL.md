@@ -6,13 +6,13 @@ description: Use when changing anything in a KiCad project in this repo (schemat
 # Editing a KiCad project
 
 ## Rules
-- KiCad files are **toolkit-only**. Never edit `.kicad_*` files or lib tables with write/edit/eval/shell, and never run `kicad-cli`, `kicad`, `eeschema` or `pcbnew` yourself. A hook blocks it.
+- KiCad files are **toolkit-only for changes**. Never write `.kicad_*` files or lib tables with write/edit/eval/shell, and never run `kicad-cli`, `kicad`, `eeschema` or `pcbnew` yourself. A hook blocks the file tools and the shell; eval isn't checked, so the rule is yours to keep. Reading them is allowed, but the queries below answer better.
 - If the toolkit can't do what the task needs, **stop**: tell the user exactly what is missing (which op or query, with which arguments), then use the `ask` tool to ask whether it should be added to the toolkit. Don't work around it.
-- `kicad_edit` refuses while KiCad has the project open (lock files). Ask the user to close KiCad; don't delete lock files.
+- `kicad_edit` checks for lock files itself. It ignores a stale lock (this host and user, no KiCad running) and says so in its report; it refuses while KiCad runs or the lock belongs to another host or user. Then ask the user to close KiCad; never delete lock files.
 - A schematic change updates `hardware/<board>/SCHEMATIC.md` in the same commit (repo rule), and `README.md`/`BOM` notes when a part changes.
 
 ## Workflow
-1. **Read first.** `kicad_query` with `hierarchy`, `sheet`, `symbol {ref}` (pins with positions, directions and nets), `net {name}`, `labels`, `free_space`. Look at the area with `kicad_render {sheet, refs}`. Don't guess pin positions: take them from `symbol`.
+1. **Read first.** `kicad_query` with `hierarchy`, `sheet`, `symbol {ref}` (pins with positions, directions and nets), `symbols` (filter on any field with `fields: {LCSC: "C25744"}`, add field columns with `show: ["MPN", "LCSC"]`; never one `symbol` call per part), `net {name}`, `labels`, `wires {sheet, box}` (every segment with what sits at each end and along it, junctions, no-connects, dangling ends, buses and bus entries), `free_space`, and `next_ref {prefix, sheet, count}` for the references `add_symbol` will assign (so `expect` can name them). Look at the area with `kicad_render {sheet, refs}`. Don't guess pin positions or wire geometry from a render: take them from `symbol` and `wires`.
 2. **Work the change out in numbers.** Every point on the 1.27 mm grid, wires orthogonal, each new wire end on a pin, wire, label or junction. Apply the drawing rules below while you plan, not afterwards.
 3. **One `kicad_edit` per coherent change**, with `expect` stating the connectivity change exactly:
    - `added_parts` / `removed_parts`: references.
@@ -20,22 +20,28 @@ description: Use when changing anything in a KiCad project in this repo (schemat
    - `renamed_nets`: `{from, to}` for nets that only change name.
    - `unconnected`: pins of existing parts that end up on no net.
    - Omit `expect` for edits that must not change connectivity (moves, fields, cosmetics).
-   Use `dry_run: true` for large edits and `render: true` to see the result.
-4. **When it says NOT APPLIED**, nothing was written. Read every listed problem. If connectivity differs from `expect`, the drawing is wrong or the expectation is: find out which (render, `net`, `symbol`) before changing either. Never copy the actual result into `expect` without understanding it.
-5. **After applying**: `kicad_check {checks: ["erc", "style", "connectivity", "decoupling", "pulls"]}` (connectivity compares with git HEAD), then update the docs.
+   Use `dry_run: true` for large edits and `render: true` to see the result. Every dry run and every NOT APPLIED report ends with the actual change as a JSON `expect` block. A good flow for a large edit: dry run, check that block line by line against what the edit is meant to do, then send the real run with the reviewed block.
+4. **When it says NOT APPLIED**, nothing was written. Read every listed problem. If connectivity differs from `expect`, the drawing is wrong or the expectation is: find out which (render, `net`, `wires`, `symbol`) before changing either. An unintended pin move in the printed block is a bug to fix, not something to declare.
+5. **After applying**: `kicad_check {checks: ["erc", "style", "connectivity", "decoupling", "pulls"], sheets: [<touched sheets>]}` (connectivity compares with git HEAD; it is compact by default, renames are counted not listed, `args: {detail: true}` lists everything), then update the docs.
 6. **Before finishing**: walk the items of the review checklist (`skill://kicad-schematic-review/checklist.md`) that the change touches. For a new part that means at least IC-1…4, RST-3, the PWR/PASS items for its supply and parts, and BUS-5 for every signal it shares with another device. Recompute each value you changed or added in `SCHEMATIC.md` "Values and derivations". Fix what you find. An independent review of the change is `kicad-schematic-review` in `change` mode, run by another agent.
 
 ## Drawing rules (checked on every edit; new violations reject the edit)
 - **R1 pin stub**: every wired pin leaves with at least 1.27 mm of straight wire in the pin's direction, with no junction, branch, bend or other connection inside that first 1.27 mm (exactly at 1.27 mm is fine).
 - **R2 power symbols**: upright (rot 0). A power symbol serving one pin sits 1.27 mm straight out from a vertical pin, or 1.27 mm out then 1.27 mm up (rails) or down (GND) from a horizontal pin. Sideways only on a horizontal pin whose wired neighbour pin blocks the L, on a straight 1.27 mm wire.
 - **R3 label underline**: a horizontal local label sits on a horizontal wire that runs under its whole text (text width ≈ 1.35 mm per character at 1.27 mm text; `labels` and `free_space` help). Labels on vertical wires are exempt.
-- On the 1.27 mm grid, no overlapping symbols/fields, nothing outside the frame or on the title block, no dangling wire ends.
+- On the 1.27 mm grid, no overlapping symbols/fields, nothing outside the frame or on the title block, no dangling wire ends, no redundant junctions (a junction joining fewer than 3 connections is a warning).
 
 ## Op notes
 - `add_symbol` places by symbol origin; fields are auto-placed on a pin-free side. Plan its wires from `kicad_query lib_symbol` (each pin's `at` offset and `dir` at rot 0; rotate them with the symbol). The edit report lists the placed pins' positions.
 - `add_power {net, at}` puts the power pin exactly on `at`: put `at` at the end of the 1.27 mm stub.
 - `add_wire` adds junctions where a wire end lands on another wire; points must be orthogonal.
-- `move_symbol` drags the wire ends sitting on its pins; a move that would make a wire diagonal is refused: move along the wire's axis or remove and redraw the wire.
+- `remove_wire {from, to}` removes any stretch inside one segment and keeps the rest; `{at}` or the exact ends remove the whole segment. Junctions left joining fewer than 3 connections go automatically (ends and middle). Read the note's "left unconnected" list.
+- `move_symbol` drags the wire ends and junctions sitting on its pins; a move that would make a wire diagonal is refused: move along the wire's axis or remove and redraw the wire.
+- **Swapping a part** (another symbol, same reference): `change_symbol {ref, lib_id, value?, footprint?, fields?}`, not remove + add. It keeps the reference, pose, attributes and the sourcing fields (Manufacturer, MPN, LCSC): set the new part's ones with `fields`. Nothing is rewired: the note lists the wire ends, labels and no-connects left off a pin and the new pins with nothing on them; rewire from that list in the same call.
+- **After a library edit** (`lib_edit_symbol` on a placed part): placed symbols keep their cached copy until `change_symbol {ref}` (no `lib_id`) refreshes them; other symbols with that lib_id on the same sheet are redrawn too.
+- **Same fields on many parts** (a board-wide part swap): one `set_fields {refs: [...], fields: {...}}`.
+- **Buses**: a pin joins a bus member through `add_bus` (a branch, when needed) → `add_bus_entry {at: point on the bus, dir: UR|DR|UL|DL}` → `add_wire` from the entry's wire side → `add_label` with the member name (e.g. `IMU_SDA`) on that wire. Never end a wire directly on a bus. `remove_bus` works like `remove_wire`; `remove_bus_entry` takes either end. A bus ending on another bus's middle needs a junction.
+- **Design rules**: `set_rule {rule, comment}` with a comment saying why the rule exists (datasheet or standard reference); on replace, omitting `comment` keeps the old one and `""` removes it. `kicad_query rules` shows each rule's comment.
 - New sheet: `create_sheet`, hierarchical labels in the child (`add_label kind: "hierarchical"`), then `add_sheet_pin` (or `sync_sheet_pins`) and wires on the parent, all in one call.
 - References: omit `ref` (or end it with `?`) to annotate; power symbols follow the per-sheet `#PWR` blocks in `.omp/kicad.json`, and a new sheet gets the next free block automatically (no config edit needed).
 - Library parts (new symbols/footprints) are made with the `kicad-library-part` skill, in a separate `kicad_edit` call before they're placed.

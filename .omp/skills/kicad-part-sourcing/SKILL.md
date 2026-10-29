@@ -10,9 +10,9 @@ Write down, before searching: function, electrical limits (voltage, current, pow
 
 ## Search (fan out)
 One `task` subagent per part (or per small group of passives). Each:
-- searches LCSC (`web_search`, then `read https://www.lcsc.com/product-detail/<Cnumber>.html` for stock, price breaks, package, datasheet link) and the manufacturer's site;
-- checks every electrical requirement **in the datasheet** (`kicad_datasheet`; cite document and page; numbers from distributor summaries are not evidence);
-- checks the footprint: an existing project or stock KiCad footprint that matches the datasheet land pattern (`kicad_query lib_search` / `lib_footprint`: pads, pitch); otherwise says a library part is needed (`kicad-library-part` skill). Never use EasyEDA/LCSC CAD models (their terms forbid it);
+- searches LCSC (`web_search` to find candidates, then `kicad_query lcsc {codes: ["C…", …]}` for MPN, maker, package, stock, price breaks and datasheet link; quote its fetch date with stock and prices) and the manufacturer's site;
+- checks every electrical requirement **in the datasheet** (`kicad_datasheet`; `url` may be the PDF URL or the LCSC code, e.g. `"C9196"`; `find` and `pages` for text, `page` + `box` for figures; cite document and page; numbers from distributor summaries are not evidence);
+- checks the footprint: an existing project or stock KiCad footprint that matches the datasheet land pattern (`kicad_query lib_search` / `lib_footprint`: pads, pitch, corner radius; a `source: "user"` hit is the user's personal library, not usable as is); otherwise says a library part is needed (`kicad-library-part` skill). Never use EasyEDA/LCSC CAD models (their terms forbid it);
 - returns 2–4 ranked candidates.
 
 ## Candidate table
@@ -20,4 +20,4 @@ One `task` subagent per part (or per small group of passives). Each:
 Rank by: meets every requirement, then footprint already available, then stock depth, then price. Flag single-source and low-stock parts.
 
 ## After the user picks
-Update the part with `kicad_edit` `set_fields` (`Value`, `Footprint`, `Manufacturer`, `MPN`, `LCSC`, `Datasheet`) and, if the footprint changes, run `kicad_check {checks: ["footprints", "fields"]}`. Update `SCHEMATIC.md` (and the board README parts list) in the same commit.
+Update the part with `kicad_edit` `set_fields` (`Value`, `Footprint`, `Manufacturer`, `MPN`, `LCSC`, `Datasheet`; `refs: [...]` for every part using it, found with `kicad_query symbols {fields: {LCSC: "<old code>"}}`), or with `change_symbol {ref, lib_id, fields}` when the new part needs another symbol (`kicad-schematic-edit` skill), and, if the footprint changes, run `kicad_check {checks: ["footprints", "fields"]}`. Update `SCHEMATIC.md` (and the board README parts list) in the same commit.
