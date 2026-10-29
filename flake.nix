@@ -12,6 +12,13 @@
       url = "github:tangency-labs/solidcraft/v0.25.1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # KiCad library tooling (KLC check scripts in library_utils/klc-check, symbol and
+    # footprint generators), used by the KiCad toolkit in .omp/extensions/kicad.
+    # kicad-library-utils was merged into this repo; library_utils/ may still move.
+    kicad-library-tools = {
+      url = "git+https://gitlab.com/kicad/libraries/kicad-library-tools.git";
+      flake = false;
+    };
   };
 
   outputs =
@@ -19,6 +26,7 @@
       nixpkgs,
       rust-overlay,
       solidcraft,
+      kicad-library-tools,
       ...
     }:
     let
@@ -66,7 +74,25 @@
               pkgs.kicad
               solidcraft.packages.${pkgs.stdenv.hostPlatform.system}.solidcraft
               pkgs.pkg-config
+              # KiCad toolkit (.omp/extensions/kicad): bun runs its tests, Python the KLC
+              # scripts and the official symbol/footprint generators.
+              pkgs.bun
+              (pkgs.python3.withPackages (
+                ps: with ps; [
+                  asteval
+                  colorlog
+                  pyclipper
+                  pyyaml
+                  tabulate
+                  typing-extensions
+                ]
+              ))
+              # Datasheets: pdftoppm/pdftotext (kicad_datasheet) and image crops.
+              pkgs.poppler-utils
+              pkgs.imagemagick
             ];
+
+            KICAD_LIBRARY_TOOLS = "${kicad-library-tools}";
 
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiLibs;
           };

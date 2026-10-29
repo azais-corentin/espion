@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "kicad-library-tools": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792762858,
+        "narHash": "sha256-M5fuRStdgDuGhG6p/pV/Oap7nJd/V1EKISuJeR6C1pA=",
+        "ref": "refs/heads/main",
+        "rev": "36d1ed208379d7c4127661ac384118cc6837392b",
+        "revCount": 7114,
+        "type": "git",
+        "url": "https://gitlab.com/kicad/libraries/kicad-library-tools.git"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://gitlab.com/kicad/libraries/kicad-library-tools.git"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1792773339,
@@ -18,6 +34,7 @@
     },
     "root": {
       "inputs": {
+        "kicad-library-tools": "kicad-library-tools",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay",
         "solidcraft": "solidcraft"
