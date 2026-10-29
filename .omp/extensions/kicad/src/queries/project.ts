@@ -6,8 +6,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHAR_W, TEXT_H } from "../analysis";
+import { placementRefs, refPrefix } from "../annotate";
 import * as cli from "../cli";
-import { type Box, bbox, key, type Pt, onInterior, overlap, pt, r3, xform } from "../geom";
+import { type Box, bbox, key, onInterior, overlap, type Pt, pt, r3, type Seg, samePt, xform } from "../geom";
 import type { Project, SheetInst } from "../project";
 import { at, isHidden, type Label, propValue, type Sch } from "../sch";
 import { child, children, flag, head, isList, type List, num, parseMany, text } from "../sexpr";
@@ -388,6 +389,128 @@ const labels: QueryDef = {
 	},
 };
 
+// ---- wiring ------------------------------------------------------------------------------------
+
+const WIRE_COLUMNS = ["a", "b", "at_a", "at_b", "on"];
+
+type WireRow = [a: Pt, b: Pt, atA: string, atB: string, on: string];
+
+/** "wire end, wire end, junction" → "wire end ×2, junction". */
+function tally(items: string[]): string {
+	const n = new Map<string, number>();
+	for (const i of items) n.set(i, (n.get(i) ?? 0) + 1);
+	return [...n].map(([i, c]) => (c > 1 ? `${i} ×${c}` : i)).join(", ");
+}
+
+/**
+ * One row per segment: what sits at each end (connection points, other segments' ends or middles;
+ * "dangling" when nothing) and, per point along its middle, what sits there. `noun` names the
+ * segments: "wire" or "bus".
+ */
+function segRows(segs: Seg[], conn: Map<string, string[]>, pts: Pt[], noun: string): WireRow[] {
+	const atEnd = (s: Seg, p: Pt) => {
+		const items = [...(conn.get(key(p)) ?? [])];
+		for (const o of segs) {
+			if (o === s) continue;
+			if (samePt(o.a, p) || samePt(o.b, p)) items.push(`${noun} end`);
+			else if (onInterior(p, o)) items.push(`${noun} middle`);
+		}
+		return items.length ? tally(items) : "dangling";
+	};
+	return segs
+		.map((s): WireRow => {
+			const on = new Map<string, { p: Pt; items: string[] }>();
+			const put = (p: Pt, items: string[]) => {
+				const e = on.get(key(p)) ?? { p, items: [] };
+				e.items.push(...items);
+				on.set(key(p), e);
+			};
+			for (const p of pts) if (onInterior(p, s)) put(p, conn.get(key(p)) ?? []);
+			for (const o of segs) for (const p of [o.a, o.b]) if (o !== s && onInterior(p, s)) put(p, [`${noun} end`]);
+			const dist = (p: Pt) => Math.abs(p[0] - s.a[0]) + Math.abs(p[1] - s.a[1]);
+			const mid = [...on.values()]
+				.sort((x, y) => dist(x.p) - dist(y.p))
+				.map(e => `(${e.p[0]}, ${e.p[1]}) ${tally(e.items)}`)
+				.join("; ");
+			return [s.a, s.b, atEnd(s, s.a), atEnd(s, s.b), mid];
+		})
+		.sort((x, y) => x[0][1] - y[0][1] || x[0][0] - y[0][0]);
+}
+
+const wires: QueryDef = {
+	what: "wires",
+	doc:
+		"Wiring of one sheet. wires: rows [a, b, at_a, at_b, on] per segment — what sits at each end (pin U4.7, power GND, label / global label / hierarchical label NAME, sheet pin Block/NAME, junction, no-connect, bus entry, wire end, wire middle; \"dangling\" when nothing) and on its middle (\"(x, y) junction, wire end; …\" along the segment). " +
+		"Also junctions and no_connects; buses (same columns, bus end / bus middle) and bus_entries [a, b] when the sheet has any. `box` keeps what touches the region.",
+	fields: {
+		sheet: { t: "string", doc: "Sheet name, file or \"root\".", req: true },
+		box: { t: "any", doc: "Region [x0, y0, x1, y1] in sheet mm: only items touching it." },
+		limit: { t: "integer", doc: "Most wire rows to return (default 200)." },
+	},
+	async run({ project }, args) {
+		const inst = project.sheet(String(args.sheet));
+		const sch = inst.sch;
+		let box: Box | undefined;
+		if (args.box !== undefined) {
+			const b = args.box as number[];
+			if (!Array.isArray(b) || b.length !== 4 || !b.every(v => typeof v === "number") || b[0]! > b[2]! || b[1]! > b[3]!) {
+				throw new Error(`box must be [x0, y0, x1, y1] with x0 ≤ x1 and y0 ≤ y1, got ${JSON.stringify(b)}`);
+			}
+			box = [b[0]!, b[1]!, b[2]!, b[3]!];
+		}
+		const hit = (ps: Pt[]) => {
+			if (!box) return true;
+			const [x0, y0, x1, y1] = bbox(ps);
+			return x0 <= box[2] && box[0] <= x1 && y0 <= box[3] && box[1] <= y1;
+		};
+		const conn = sch.connectionPoints(inst.path);
+		const pts = [...conn.keys()].map(k => k.split(",").map(Number) as [number, number]);
+		const keep = (rows: WireRow[]) => rows.filter(r => hit([r[0], r[1]]));
+		const out: Record<string, unknown> = { sheet: inst.name, box, columns: WIRE_COLUMNS };
+		Object.assign(out, page(keep(segRows(sch.wires(), conn, pts, "wire")), limitArg(args.limit, 200), "wires"));
+		out.junctions = sch.points("junction").map(j => j.at).filter(p => hit([p]));
+		out.no_connects = sch.points("no_connect").map(j => j.at).filter(p => hit([p]));
+		const buses = sch.buses();
+		const entries = sch.busEntries();
+		if (buses.length) out.buses = keep(segRows(buses, conn, pts, "bus"));
+		if (entries.length) out.bus_entries = entries.filter(e => hit([e.a, e.b])).map(e => [e.a, e.b]);
+		return out;
+	},
+};
+
+// ---- references ----------------------------------------------------------------------------------
+
+const nextRefQuery: QueryDef = {
+	what: "next_ref",
+	doc:
+		"References add_symbol would assign next for a prefix, without reserving them (same numbering code): the sheet's refBase block from .omp/kicad.json (a sheet without one gets the next free block), else one past the highest in the project. " +
+		"`count` consecutive picks, as that many add_symbol calls in a row get them; a reused sheet gets one per placement, keyed by name path. Without sheet: every sheet when the prefix is numbered in blocks, else the project-wide picks.",
+	fields: {
+		prefix: { t: "string", req: true, doc: "Reference prefix, e.g. \"R\" or \"#PWR\"." },
+		sheet: { t: "string", doc: "Sheet name, file or name path." },
+		count: { t: "integer", doc: "How many consecutive references (default 1)." },
+	},
+	async run({ project }, args) {
+		const prefix = String(args.prefix);
+		if (!prefix || refPrefix(prefix) !== prefix) throw new Error(`prefix ${JSON.stringify(prefix)}: give the letters only, e.g. "R" or "#PWR"`);
+		const count = limitArg(args.count, 1);
+		const picks = (inst: SheetInst) => {
+			const taken = new Set<string>();
+			const rows = Array.from({ length: count }, () => placementRefs(project, prefix, inst, taken));
+			return rows[0]!.length > 1 ? rows.map(r => Object.fromEntries(r.map(x => [x.inst.namePath, x.ref]))) : rows.map(r => r[0]!.ref);
+		};
+		if (typeof args.sheet === "string") {
+			const inst = project.sheet(args.sheet);
+			return { prefix, sheet: inst.name, refs: picks(inst) };
+		}
+		if (!project.settings.refBase[prefix]) return { prefix, numbering: "project-wide", refs: picks(project.hierarchy()[0]!) };
+		// one entry per sheet file: a reused sheet's picks already cover each placement
+		const sheets = new Map<string, SheetInst>();
+		for (const s of project.hierarchy()) if (!sheets.has(s.file)) sheets.set(s.file, s);
+		return { prefix, numbering: "per sheet (refBase blocks)", sheets: Object.fromEntries([...sheets.values()].map(s => [s.name, picks(s)])) };
+	},
+};
+
 // ---- project settings ----------------------------------------------------------------------------
 
 const CLASS_KEYS = ["priority", "clearance", "track_width", "via_diameter", "via_drill", "diff_pair_width", "diff_pair_gap"];
@@ -725,4 +848,4 @@ const freeSpace: QueryDef = {
 	},
 };
 
-export const queries: QueryDef[] = [hierarchy, symbols, symbol, nets, net, labels, netclasses, rules, bom, sheet, freeSpace];
+export const queries: QueryDef[] = [hierarchy, symbols, symbol, nets, net, labels, wires, nextRefQuery, netclasses, rules, bom, sheet, freeSpace];

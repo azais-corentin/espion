@@ -3,7 +3,7 @@
  * in place, so content the toolkit doesn't model survives untouched.
  */
 import * as fs from "node:fs";
-import { bbox, type Box, type Dir, type Mirror, pinDir, type Pt, pt, type Seg, xform } from "./geom";
+import { bbox, type Box, type Dir, key, type Mirror, onInterior, pinDir, type Pt, pt, samePt, type Seg, xform } from "./geom";
 import {
 	child,
 	children,
@@ -62,6 +62,14 @@ export interface Label {
 
 export interface Wire extends Seg {
 	node: List;
+}
+
+/** Sch.junctionContext: connection points by layer, keyed by `geom.key`. */
+export interface JunctionContext {
+	pins: Map<string, number>;
+	entries: Map<string, number>;
+	wires: Wire[];
+	buses: Wire[];
 }
 
 export interface SheetPin {
@@ -409,27 +417,63 @@ export class Sch {
 		});
 	}
 
-	/** Every connection point on the sheet with what sits there (for wiring checks and drags). */
-	connectionPoints(): Map<string, string[]> {
+	/**
+	 * Every connection point on the sheet with what sits there, keyed by `geom.key`: "pin U4.7",
+	 * "power GND" (a power symbol's pin, by net), "label X" / "global label X" / "hierarchical
+	 * label X", "junction", "no-connect", "sheet pin Block/X", "bus entry". References are those
+	 * of sheet instance `path` (default: the Reference field).
+	 */
+	connectionPoints(path?: string): Map<string, string[]> {
 		const m = new Map<string, string[]>();
 		const add = (p: Pt, what: string) => {
-			const k = `${p[0]},${p[1]}`;
-			const l = m.get(k);
+			const l = m.get(key(p));
 			if (l) l.push(what);
-			else m.set(k, [what]);
+			else m.set(key(p), [what]);
 		};
 		for (const s of this.symbols()) {
-			const ref = this.refOf(s);
-			for (const p of this.pins(s)) add(p.at, `pin ${ref}.${p.num}`);
+			const ref = this.refOf(s, path);
+			const power = child(this.lib(s), "power") ? `power ${propValue(s, "Value") ?? ref}` : undefined;
+			for (const p of this.pins(s)) add(p.at, power ?? `pin ${ref}.${p.num}`);
 		}
-		for (const l of this.labels()) add(l.at, `${l.kind} ${l.name}`);
+		for (const l of this.labels()) add(l.at, `${l.kind.replace("_", " ")} ${l.name}`);
 		for (const j of this.points("junction")) add(j.at, "junction");
-		for (const j of this.points("no_connect")) add(j.at, "no_connect");
+		for (const j of this.points("no_connect")) add(j.at, "no-connect");
 		for (const sh of this.sheets()) for (const p of sh.pins) add(p.at, `sheet pin ${sh.name}/${p.name}`);
 		for (const e of this.busEntries()) {
-			add(e.a, "bus_entry");
-			add(e.b, "bus_entry");
+			add(e.a, "bus entry");
+			add(e.b, "bus entry");
 		}
 		return m;
+	}
+
+	/**
+	 * What junctions count, precomputed once per sheet: pins on the wire layer (symbol pins,
+	 * sheet-block pins, bus entry ends) and bus entry ends on the bus layer, keyed by `geom.key`.
+	 */
+	junctionContext(): JunctionContext {
+		const pins = new Map<string, number>();
+		const entries = new Map<string, number>();
+		const add = (m: Map<string, number>, p: Pt) => m.set(key(p), (m.get(key(p)) ?? 0) + 1);
+		for (const s of this.symbols()) for (const p of this.pins(s)) add(pins, p.at);
+		for (const sh of this.sheets()) for (const p of sh.pins) add(pins, p.at);
+		for (const e of this.busEntries()) {
+			for (const p of [e.a, e.b]) {
+				add(pins, p);
+				add(entries, p);
+			}
+		}
+		return { pins, entries, wires: this.wires(), buses: this.buses() };
+	}
+
+	/**
+	 * Connections a junction at p joins, per layer (wires with pins, buses with bus entries; the
+	 * larger counts): each segment end and pin once, a segment passing through twice. Below 3 the
+	 * junction is redundant. The edit ops add and drop junctions by this count, and the style
+	 * check reports junctions below it.
+	 */
+	junctionDegree(p: Pt, c: JunctionContext = this.junctionContext()): number {
+		const k = key(p);
+		const along = (segs: readonly Seg[]) => segs.reduce((n, s) => n + (samePt(s.a, p) || samePt(s.b, p) ? 1 : onInterior(p, s) ? 2 : 0), 0);
+		return Math.max((c.pins.get(k) ?? 0) + along(c.wires), (c.entries.get(k) ?? 0) + along(c.buses));
 	}
 }

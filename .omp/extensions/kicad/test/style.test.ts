@@ -241,6 +241,20 @@ describe("style rules on synthetic sheets", () => {
 		expect(fs.map(f => [f.key, f.severity])).toEqual([["style|wiring|missing_junction|T|net A", "error"]]);
 	});
 
+	test("wiring: a junction joining fewer than 3 connections warns; one on a T doesn't", async () => {
+		const tee = new Draw()
+			.sym("Device:R", "R1", 0, 0)
+			.wire([0, 3.81], [0, 8.89])
+			.label("A", 0, 8.89)
+			.wire([0, 6.35], [5.08, 6.35])
+			.label("A", 5.08, 6.35, 180)
+			.junction(0, 6.35);
+		expect(await tee.findings()).toEqual([]);
+		const corner = await correct().junction(30.48, 0).findings();
+		expect(corner.map(f => [f.key, f.severity])).toEqual([["style|wiring|redundant_junction|T|wire at #PWR3.1", "warning"]]);
+		expect(corner[0]!.message).toContain("only 2 connection(s)");
+	});
+
 	test("wiring: sheet-block pins are connection points", async () => {
 		const d = new Draw().sym("Device:R", "R1", 0, 0, 90).wire([3.81, 0], [12.7, 0]).label("B", 5.08, 0);
 		expect(keys(await d.findings())).toEqual(["style|wiring|dangling|T|net B"]);
@@ -268,4 +282,10 @@ describe("style on the espion-cam fixture", () => {
 		},
 		240_000,
 	);
+
+	test("has no redundant junctions", async () => {
+		const project = Project.open(PROJECT, root);
+		const fs = await styleFindings(new NoSvg(project), project.hierarchy());
+		expect(fs.filter(f => f.key.includes("|redundant_junction|"))).toEqual([]);
+	});
 });

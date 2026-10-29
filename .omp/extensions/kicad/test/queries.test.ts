@@ -69,6 +69,33 @@ describe("project queries", () => {
 		expect(byLib.rows.map((r: string[]) => r[0])).toContain("D4");
 	});
 
+	test("wires lists a region's segments with what sits at their ends and on their middle", async () => {
+		const box: Box = [165, 50, 200, 80];
+		const res = await q("wires", { sheet: "Power", box });
+		expect(res.columns).toEqual(["a", "b", "at_a", "at_b", "on"]);
+		const row = (a: number[], b: number[]) => res.wires.find((r: number[][]) => r[0]!.join() === a.join() && r[1]!.join() === b.join());
+		// the T at (170.18, 63.5) feeding U4.3
+		expect(row([170.18, 55.88], [170.18, 71.12])).toEqual([[170.18, 55.88], [170.18, 71.12], "wire end", "wire end", "(170.18, 63.5) junction, wire end"]);
+		expect(row([170.18, 63.5], [177.8, 63.5])).toEqual([[170.18, 63.5], [177.8, 63.5], "junction, wire middle", "pin U4.3", ""]);
+		expect(row([187.96, 78.74], [187.96, 80.01])).toEqual([[187.96, 78.74], [187.96, 80.01], "pin U4.1", "power GND", ""]);
+		expect(res.junctions).toEqual([[170.18, 63.5]]);
+		for (const [a, b] of res.wires) {
+			expect(overlap([Math.min(a[0], b[0]) - 0.01, Math.min(a[1], b[1]) - 0.01, Math.max(a[0], b[0]) + 0.01, Math.max(a[1], b[1]) + 0.01], box)).toBe(true);
+		}
+		const all = await q("wires", { sheet: "Power" });
+		expect(all.total).toBe(project.sheet("Power").sch.wires().length);
+		await expect(q("wires", { sheet: "Power", box: [1, 2, 3] })).rejects.toThrow(/box must be/);
+	});
+
+	test("next_ref picks per refBase block or project-wide, consecutively", async () => {
+		expect(await q("next_ref", { prefix: "R", count: 3 })).toEqual({ prefix: "R", numbering: "project-wide", refs: ["R66", "R67", "R68"] });
+		expect(await q("next_ref", { prefix: "#PWR", sheet: "Power", count: 2 })).toEqual({ prefix: "#PWR", sheet: "Power", refs: ["#PWR325", "#PWR326"] });
+		const blocks = await q("next_ref", { prefix: "#PWR" });
+		expect(blocks.sheets.Power).toEqual(["#PWR325"]);
+		expect(blocks.sheets.root).toEqual(["#PWR105"]);
+		await expect(q("next_ref", { prefix: "R?" })).rejects.toThrow(/letters only/);
+	});
+
 	test.skipIf(!HAS_KICAD)("symbol U1 shows GPIO20 on /MCU/VBUS_SENSE", async () => {
 		const u1 = await q("symbol", { ref: "U1" });
 		const pin = u1.pins.find((p: { num: string }) => p.num === "16");

@@ -50,3 +50,20 @@ export function nextRef(project: Project, prefix: string, sheetInst: SheetInst, 
 	while (used.has(`${prefix}${n}`)) n++;
 	return `${prefix}${n}`;
 }
+
+/**
+ * References a symbol newly placed on `inst`'s sheet gets: one per instance of that sheet file (a
+ * reused sheet numbers each placement), in hierarchy order, the first being `first` when given.
+ * add_symbol and the next_ref query both use this, so the preview matches the placement. The
+ * picks are added to `taken`.
+ */
+export function placementRefs(project: Project, prefix: string, inst: SheetInst, taken: Set<string>, first?: string): { inst: SheetInst; ref: string }[] {
+	return project
+		.hierarchy()
+		.filter(i => i.file === inst.file)
+		.map((i, n) => {
+			const ref = n === 0 && first !== undefined ? first : nextRef(project, prefix, i, taken);
+			taken.add(ref);
+			return { inst: i, ref };
+		});
+}

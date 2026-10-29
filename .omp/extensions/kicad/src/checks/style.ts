@@ -65,6 +65,7 @@ const WIRING_SEVERITY: Record<string, Severity> = {
 	unlabeled_bus_wire: "error",
 	dangling: "warning",
 	wire_over_body: "warning",
+	redundant_junction: "warning",
 };
 
 /** Page border inset and title block size (mm) of KiCad's default worksheet. */
@@ -99,7 +100,7 @@ export const checks: CheckDef[] = [
 			"Drawing rules per sheet (those listed in style.rules of .omp/kicad.json): pin_stub (every wired pin leaves on ≥ 1.27 mm of straight wire, no connection inside it), " +
 			"power (upright power symbols, straight or L-shaped 1.27 mm off a single pin), underline (a horizontal local label sits on a wire running under its whole text), " +
 			"overlap (bodies, pins, visible fields of different symbols), off_grid (connection points on the grid), frame (inside the border, off the title block) and " +
-			"wiring (pins on wire interiors, missing junctions, pin collisions, no-connects on wired pins, bus entries and labels; dangling ends and wires over bodies as warnings).",
+			"wiring (pins on wire interiors, missing junctions, pin collisions, no-connects on wired pins, bus entries and labels; dangling ends, wires over bodies and redundant junctions — joining fewer than 3 connections — as warnings).",
 		byDefault: true,
 		run: ctx => styleFindings(ctx.analysis, ctx.sheets ?? ctx.project.hierarchy()),
 	},
@@ -554,6 +555,14 @@ function wiring(g: Geo): Finding[] {
 			const subj = subject(g, at, g.wires);
 			add("missing_junction", subj, `a wire ends on the middle of another wire without a junction (${subj})`, at);
 		}
+	}
+
+	const jc = g.sch.junctionContext();
+	for (const j of g.junctions.values()) {
+		const n = g.sch.junctionDegree(j, jc);
+		if (n >= 3) continue;
+		const subj = subject(g, j, g.wires);
+		add("redundant_junction", subj, `a junction joins only ${n} connection(s) (${subj}); remove it`, j);
 	}
 
 	for (const s of g.syms) {

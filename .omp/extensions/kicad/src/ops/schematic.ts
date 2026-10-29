@@ -6,13 +6,13 @@
  * kisch.py autoplace (Reference/Value stacked on a pin-free side, text horizontal on the sheet).
  */
 import { CHAR_W } from "../analysis";
-import { nextRef, refPrefix } from "../annotate";
+import { nextRef, placementRefs, refPrefix } from "../annotate";
 import { dragWireEnds, gridPt, sheetArg } from "../edit-util";
-import { bbox, type Box, isOrthogonal, key, type Mirror, onInterior, type Pt, samePt, touches, xform } from "../geom";
+import { bbox, type Box, isOrthogonal, key, type Mirror, onInterior, type Pt, samePt, type Seg, touches, xform } from "../geom";
 import { describeLibSymbol } from "../libs";
 import type { FoundSymbol, SheetInst } from "../project";
 import { at, isHidden, type LabelKind, libGeom, newUuid, prop, propValue, type Sch } from "../sch";
-import { child, children, clone, head, isList, L, type List, removeChild, setChild, str, text } from "../sexpr";
+import { child, children, clone, head, isList, L, type List, print, removeChild, setChild, str, text } from "../sexpr";
 import type { Field } from "../spec";
 import type { OpContext, OpDef } from "../types";
 
@@ -187,15 +187,40 @@ function checkFootprint(ctx: OpContext, fp: string): void {
 	if (fp) ctx.libs.footprintFile(fp);
 }
 
-/** The lib_symbols entry for `libId`, copied from the library when the sheet doesn't have it. */
-function ensureLib(ctx: OpContext, sch: Sch, libId: string): List {
-	const have = sch.libSymbol(libId);
-	if (have) return have;
-	const flat = ctx.libs.flatSymbol(libId);
+/** Put a flattened library symbol into the sheet's lib_symbols, in name order. */
+function insertLib(sch: Sch, flat: List): List {
 	const ls = sch.libSymbols();
-	const i = ls.findIndex((c, k) => k > 0 && isList(c) && head(c) === "symbol" && (text(c) ?? "") > libId);
+	const id = text(flat) ?? "";
+	const i = ls.findIndex((c, k) => k > 0 && isList(c) && head(c) === "symbol" && (text(c) ?? "") > id);
 	ls.splice(i > 0 ? i : ls.length, 0, flat);
 	return flat;
+}
+
+/** The lib_symbols entry for `libId`, copied from the library when the sheet doesn't have it. */
+function ensureLib(ctx: OpContext, sch: Sch, libId: string): List {
+	return sch.libSymbol(libId) ?? insertLib(sch, ctx.libs.flatSymbol(libId));
+}
+
+/** A placed symbol's field shaped after the library's field `lp` (visibility, effects), at `p`. */
+function libFieldNode(lp: List, value: string, p: Pt): List {
+	const n = L("property", str(text(lp) ?? ""), str(value), L("at", p[0], p[1], at(lp).rot));
+	if (isHidden(lp)) n.push(L("hide", true));
+	n.push(clone(child(lp, "show_name") ?? L("show_name", false)));
+	n.push(clone(child(lp, "do_not_autoplace") ?? L("do_not_autoplace", false)));
+	n.push(clone(child(lp, "effects") ?? defaultEffects()));
+	return n;
+}
+
+/** The `(pin "n" (uuid …))` entries of one unit, reusing the uuids in `keep` (by pin number). */
+function pinNodes(lib: List, unit: number, keep: Map<string, string> = new Map()): List[] {
+	const seen = new Set<string>();
+	const out: List[] = [];
+	for (const p of libGeom(lib).pins) {
+		if ((p.unit !== 0 && p.unit !== unit) || (p.style !== 0 && p.style !== 1) || seen.has(p.num)) continue;
+		seen.add(p.num);
+		out.push(L("pin", str(p.num), L("uuid", str(keep.get(p.num) ?? newUuid()))));
+	}
+	return out;
 }
 
 function pinNote(sch: Sch, sym: List): string {
@@ -234,13 +259,7 @@ function placeSymbol(ctx: OpContext, inst: SheetInst, o: Placement): List {
 			if (clash) throw new Error(`reference ${ref} is already used (${clash.sheet.sch.libId(clash.sym)} unit ${clash.sheet.sch.unit(clash.sym)} on ${clash.sheet.name})`);
 		}
 	}
-	const paths = instancesOf(ctx, inst);
-	const taken = new Set<string>();
-	const refs = paths.map((p, i) => {
-		const r = i === 0 && ref !== undefined ? ref : nextRef(project, prefix, p, taken);
-		taken.add(r);
-		return r;
-	});
+	const refs = placementRefs(project, prefix, inst, new Set(), ref);
 	if (o.footprint !== undefined) checkFootprint(ctx, o.footprint);
 
 	const [x, y] = o.at;
@@ -249,32 +268,21 @@ function placeSymbol(ctx: OpContext, inst: SheetInst, o: Placement): List {
 	node.push(L("unit", o.unit), L("body_style", 1));
 	for (const f of ["exclude_from_sim", "in_bom", "on_board", "in_pos_files"]) node.push(clone(child(lib, f) ?? L(f, f !== "exclude_from_sim")));
 	node.push(L("dnp", false), L("fields_autoplaced", true), L("uuid", str(newUuid())));
-	const given: Record<string, string | undefined> = { Reference: refs[0], Value: o.value, Footprint: o.footprint };
+	const given: Record<string, string | undefined> = { Reference: refs[0]!.ref, Value: o.value, Footprint: o.footprint };
 	for (const lp of children(lib, "property")) {
 		const name = text(lp) ?? "";
 		if (name.startsWith("ki_")) continue;
-		const value = given[name] ?? o.fields?.[name] ?? text(lp, 2) ?? "";
-		const n = L("property", str(name), str(value), L("at", x, y, at(lp).rot));
-		if (isHidden(lp)) n.push(L("hide", true));
-		n.push(clone(child(lp, "show_name") ?? L("show_name", false)));
-		n.push(clone(child(lp, "do_not_autoplace") ?? L("do_not_autoplace", false)));
-		n.push(clone(child(lp, "effects") ?? defaultEffects()));
-		node.push(n);
+		node.push(libFieldNode(lp, given[name] ?? o.fields?.[name] ?? text(lp, 2) ?? "", o.at));
 	}
 	for (const [name, value] of Object.entries(o.fields ?? {})) {
 		if (name === "Reference") throw new Error("fields: set the reference with ref, not fields");
 		if (!prop(node, name)) node.push(fieldNode(name, value, o.at, true));
 	}
-	const seen = new Set<string>();
-	for (const p of libGeom(lib).pins) {
-		if ((p.unit !== 0 && p.unit !== o.unit) || (p.style !== 0 && p.style !== 1) || seen.has(p.num)) continue;
-		seen.add(p.num);
-		node.push(L("pin", str(p.num), L("uuid", str(newUuid()))));
-	}
+	node.push(...pinNodes(lib, o.unit));
 	node.push(
 		L(
 			"instances",
-			L("project", str(project.name), ...paths.map((p, i) => L("path", str(p.path), L("reference", str(refs[i]!)), L("unit", o.unit)))),
+			L("project", str(project.name), ...refs.map(r => L("path", str(r.inst.path), L("reference", str(r.ref)), L("unit", o.unit)))),
 		),
 	);
 	sch.insert(node);
@@ -284,40 +292,29 @@ function placeSymbol(ctx: OpContext, inst: SheetInst, o: Placement): List {
 	return node;
 }
 
-/** Connections meeting at p: wire ends + symbol pins, a wire passing through counts twice. */
-function connections(sch: Sch, p: Pt): number {
-	let n = 0;
-	for (const w of sch.wires()) n += samePt(w.a, p) || samePt(w.b, p) ? 1 : onInterior(p, w) ? 2 : 0;
-	for (const s of sch.symbols()) for (const pin of sch.pins(s)) if (samePt(pin.at, p)) n++;
-	return n;
-}
-
 function junctionNode(p: Pt): List {
 	return L("junction", L("at", p[0], p[1]), L("diameter", 0), L("color", 0, 0, 0, 0), L("uuid", str(newUuid())));
 }
 
 /**
  * kisch.py `auto_junctions`, limited to the points the new wires touch: a junction where 3+
- * connections meet, or a wire end / pin lands on a wire interior.
+ * connections meet (Sch.junctionDegree) on a new wire's end, or where a wire end or pin lands on
+ * a new wire's interior.
  */
-function autoJunctions(sch: Sch, added: { a: Pt; b: Pt }[]): Pt[] {
-	const wires = sch.wires();
-	const pins = new Map<string, Pt>();
-	for (const s of sch.symbols()) for (const p of sch.pins(s)) pins.set(key(p.at), p.at);
+function autoJunctions(sch: Sch, added: readonly Seg[]): Pt[] {
+	const c = sch.junctionContext();
 	const have = new Set(sch.points("junction").map(j => key(j.at)));
 	const cands = new Map<string, Pt>();
 	const onNew = (p: Pt) => added.some(s => onInterior(p, s));
 	for (const s of added) for (const p of [s.a, s.b]) cands.set(key(p), p);
-	for (const w of wires) for (const p of [w.a, w.b]) if (onNew(p)) cands.set(key(p), p);
-	for (const [k, p] of pins) if (onNew(p)) cands.set(k, p);
+	for (const w of c.wires) for (const p of [w.a, w.b]) if (onNew(p)) cands.set(key(p), p);
+	for (const s of sch.symbols()) for (const p of sch.pins(s)) if (onNew(p.at)) cands.set(key(p.at), p.at);
+	for (const b of sch.sheets()) for (const p of b.pins) if (onNew(p.at)) cands.set(key(p.at), p.at);
 	const out: Pt[] = [];
 	for (const [k, p] of cands) {
-		const ends = wires.filter(w => samePt(w.a, p) || samePt(w.b, p)).length;
-		const interior = wires.filter(w => onInterior(p, w)).length;
-		if (ends + (pins.has(k) ? 1 : 0) + 2 * interior >= 3 && !have.has(k) && (ends > 0 || interior > 0)) {
-			sch.insert(junctionNode(p));
-			out.push(p);
-		}
+		if (have.has(k) || sch.junctionDegree(p, c) < 3) continue;
+		sch.insert(junctionNode(p));
+		out.push(p);
 	}
 	return out;
 }
@@ -326,17 +323,50 @@ function findPoint(sch: Sch, kind: "junction" | "no_connect", p: Pt): List | und
 	return sch.points(kind).find(j => samePt(j.at, p))?.node;
 }
 
-/** Junctions at these points that no longer join 3+ connections are removed; returns how many. */
-function dropStaleJunctions(sch: Sch, pts: Pt[]): number {
-	let n = 0;
-	for (const p of pts) {
-		const j = findPoint(sch, "junction", p);
-		if (j && connections(sch, p) < 3) {
-			sch.remove(j);
-			n++;
-		}
+/**
+ * Junctions on these segments (ends or interior, e.g. the wires before an edit removed or moved
+ * them) or at these points that no longer join 3+ connections are removed; returns where.
+ */
+function dropStaleJunctions(sch: Sch, segs: readonly Seg[], pts: readonly Pt[] = []): Pt[] {
+	const c = sch.junctionContext();
+	const out: Pt[] = [];
+	for (const j of sch.points("junction")) {
+		if (!segs.some(s => touches(j.at, s)) && !pts.some(p => samePt(p, j.at))) continue;
+		if (sch.junctionDegree(j.at, c) >= 3) continue;
+		sch.remove(j.node);
+		out.push(j.at);
 	}
-	return n;
+	return out;
+}
+
+function droppedNote(pts: readonly Pt[]): string {
+	return pts.length ? `junction(s) no longer needed removed at ${pts.map(fmtPt).join(", ")}` : "";
+}
+
+/**
+ * Pins, labels, sheet pins and wire ends on `seg` that connect to nothing any more (after an edit
+ * removed wiring there), each with its position; references as on sheet instance `inst`. Points
+ * with a no-connect flag are left out.
+ */
+function leftOpen(inst: SheetInst, seg: Seg): string[] {
+	const wires = inst.sch.wires();
+	const conn = inst.sch.connectionPoints(inst.path);
+	const pts = new Map<string, Pt>();
+	for (const k of conn.keys()) {
+		const p = k.split(",").map(Number) as [number, number];
+		if (touches(p, seg)) pts.set(k, p);
+	}
+	for (const w of wires) for (const e of [w.a, w.b]) if (touches(e, seg)) pts.set(key(e), e);
+	const out: string[] = [];
+	for (const [k, p] of pts) {
+		const items = conn.get(k) ?? [];
+		if (items.includes("no-connect")) continue;
+		const things = items.filter(x => x !== "junction");
+		const ends = wires.filter(w => samePt(w.a, p) || samePt(w.b, p)).length;
+		const through = wires.some(w => onInterior(p, w));
+		if (!through && things.length + ends === 1) out.push(`${things[0] ?? "wire end"} ${fmtPt(p)}`);
+	}
+	return out;
 }
 
 function labelNode(kind: LabelKind, name: string, p: Pt, rot: number, shape: string): List {
@@ -480,7 +510,7 @@ const setAttrs: OpDef = {
 const addSymbol: OpDef = {
 	op: "add_symbol",
 	group: "schematic",
-	doc: "Place a library symbol (origin at `at`). The reference defaults to the next free number (the sheet's refBase block, a new sheet getting the next free block; else project-wide); Reference/Value are auto-placed on a pin-free side. The note lists the pin positions and the side each wire leaves.",
+	doc: "Place a library symbol (origin at `at`). The reference defaults to the next free number (the sheet's refBase block, a new sheet getting the next free block; else project-wide; the next_ref query previews it); Reference/Value are auto-placed on a pin-free side. The note lists the pin positions and the side each wire leaves. To replace a placed part by another symbol (or refresh it from the library) use change_symbol, not remove + add.",
 	fields: {
 		sheet: SHEET,
 		lib_id: { t: "string", req: true, doc: "\"Library:Symbol\"" },
@@ -518,16 +548,18 @@ const addSymbol: OpDef = {
 const removeSymbol: OpDef = {
 	op: "remove_symbol",
 	group: "schematic",
-	doc: "Delete a symbol (all units, or one unit) and the no-connects on its pins. Wires on its pins stay; the note says how many wire ends were left open.",
+	doc: "Delete a symbol (all units, or one unit) and the no-connects on its pins. Wires on its pins stay; the note says how many wire ends were left open. To swap a part for another library symbol keeping its place and sourcing fields, use change_symbol.",
 	fields: { ref: REF, unit: { t: "integer", doc: "remove only this unit" } },
 	apply(ctx, args) {
 		const hits = args.unit === undefined ? units(ctx, args.ref) : [oneUnit(ctx, args.ref, args.unit)];
 		let open = 0;
 		let ncs = 0;
+		const dropped: Pt[] = [];
 		for (const { sheet, sym } of hits) {
 			const sch = sheet.sch;
 			const box = symBox(sch, sym);
-			const pins = new Set(sch.pins(sym).map(p => key(p.at)));
+			const pinPts = sch.pins(sym).map(p => p.at);
+			const pins = new Set(pinPts.map(key));
 			const libId = sch.libId(sym);
 			sch.remove(sym);
 			for (const w of sch.wires()) for (const e of [w.a, w.b]) if (pins.has(key(e))) open++;
@@ -540,18 +572,230 @@ const removeSymbol: OpDef = {
 				const lib = sch.libSymbol(libId);
 				if (lib) sch.libSymbols().splice(sch.libSymbols().indexOf(lib), 1);
 			}
+			dropped.push(...dropStaleJunctions(sch, [], pinPts));
 			ctx.project.touch(sch);
 			ctx.touch(sheet, box);
 		}
-		const extra = [open ? `${open} wire end(s) left open at its pins` : "", ncs ? `${ncs} no-connect(s) on its pins removed` : ""].filter(Boolean);
+		const extra = [open ? `${open} wire end(s) left open at its pins` : "", ncs ? `${ncs} no-connect(s) on its pins removed` : "", droppedNote(dropped)].filter(Boolean);
 		ctx.notes.push(`removed ${args.ref}${args.unit !== undefined ? ` unit ${args.unit}` : ""}${extra.length ? `; ${extra.join("; ")}` : ""}`);
+	},
+};
+
+/** What change_symbol reports about the wiring at the changed symbols' pins (nothing is rewired). */
+interface PinReport {
+	offPin: string[];
+	bare: string[];
+	midWire: string[];
+	oldPts: Pt[];
+}
+
+/**
+ * Wiring left at the old pin points of `before` that no longer meets a pin, and pins of
+ * `syms` (as now drawn) with nothing on them or sitting on the middle of a wire.
+ */
+function pinReport(sch: Sch, inst: SheetInst, before: Map<List, { ref: string; pins: { num: string; at: Pt }[] }>, syms: List[]): PinReport {
+	const conn = sch.connectionPoints(inst.path);
+	const wires = sch.wires();
+	const pinKeys = new Set<string>();
+	for (const s of sch.symbols()) for (const p of sch.pins(s)) pinKeys.add(key(p.at));
+	for (const b of sch.sheets()) for (const p of b.pins) pinKeys.add(key(p.at));
+	const r: PinReport = { offPin: [], bare: [], midWire: [], oldPts: [] };
+	const seen = new Set<string>();
+	for (const { ref, pins } of before.values()) {
+		for (const pin of pins) {
+			const k = key(pin.at);
+			if (seen.has(k)) continue;
+			seen.add(k);
+			r.oldPts.push(pin.at);
+			if (pinKeys.has(k)) continue;
+			const here = [
+				...wires.filter(w => samePt(w.a, pin.at) || samePt(w.b, pin.at)).map(() => "wire end"),
+				...(conn.get(k) ?? []).filter(x => x !== "junction"),
+			];
+			for (const h of here) r.offPin.push(`${h} ${fmtPt(pin.at)} (was ${ref}.${pin.num})`);
+		}
+	}
+	for (const s of syms) {
+		const ref = sch.refOf(s, inst.path);
+		const pins = sch.pins(s);
+		for (const pin of pins) {
+			if (pin.hidden) continue;
+			const name = pin.name && pin.name !== pin.num && pin.name !== "~" ? ` ${pin.name}` : "";
+			// anything at its point besides the symbol's own pins there (stacked pins), or a wire through it
+			const own = pins.filter(q => samePt(q.at, pin.at)).length;
+			const others = (conn.get(key(pin.at)) ?? []).filter(x => x !== "junction").length - own;
+			if (!others && !wires.some(w => touches(pin.at, w))) r.bare.push(`${ref}.${pin.num}${name} ${fmtPt(pin.at)}`);
+			if (wires.some(w => onInterior(pin.at, w))) r.midWire.push(`${ref}.${pin.num}${name} ${fmtPt(pin.at)}`);
+		}
+	}
+	return r;
+}
+
+const changeSymbol: OpDef = {
+	op: "change_symbol",
+	group: "schematic",
+	doc:
+		"Swap a placed part for another library symbol, or (without lib_id) refresh it from the current library: KiCad's Change / Update Symbol, on every unit. " +
+		"Reference, position, rotation, mirror, unit, attributes (dnp, in_bom, …) and the fields the new library part doesn't define (Manufacturer, MPN, LCSC, …) stay. " +
+		"On a swap, Value, Footprint, Datasheet, Description and any other field the new part defines come from it (one it leaves empty keeps the placed value); " +
+		"on a refresh a field follows the library only where it still held the old library's value. value/footprint/fields override. Fields are re-placed. " +
+		"The sheet's cached copy of the symbol is replaced, so other symbols of that lib_id on the sheet are refreshed too (the note names them). " +
+		"Nothing is rewired: the note lists wire ends, labels and no-connects left off a pin, pins with nothing on them, and the new pin positions.",
+	fields: {
+		ref: REF,
+		lib_id: { t: "string", doc: "\"Library:Symbol\" to swap to (default: the placed lib_id, refreshed from the library)" },
+		unit: { t: "integer", doc: "unit of the new part, for a part with one unit placed (default: unchanged)" },
+		value: { t: "string", doc: "Value (default: see above)" },
+		footprint: { t: "string", doc: "\"Library:Footprint\" (default: see above)" },
+		fields: { t: "object", doc: "{Name: value | null}: set or add fields (new ones hidden), null removes one (Reference: use rename_ref)" },
+	},
+	apply(ctx, args) {
+		const ref = String(args.ref);
+		const hits = units(ctx, ref);
+		// a reused sheet lists the same symbol once per instance
+		const placed = hits.filter((h, i) => hits.findIndex(o => o.sym === h.sym) === i);
+		const oldId = placed[0]!.sheet.sch.libId(placed[0]!.sym);
+		const newId = args.lib_id === undefined ? oldId : textArg(args.lib_id, "lib_id");
+		const refresh = newId === oldId;
+		const fresh = ctx.libs.flatSymbol(newId);
+		const nUnits = describeLibSymbol(fresh).units;
+		const unitArg = args.unit as number | undefined;
+		if (unitArg !== undefined) {
+			if (placed.length > 1) throw new Error(`${ref} has ${placed.length} units placed; unit only applies to a part with one unit placed`);
+			if (unitArg < 1 || unitArg > nUnits) throw new Error(`${newId} has units 1..${nUnits}, not ${unitArg}`);
+		} else {
+			const extra = placed.map(h => h.sheet.sch.unit(h.sym)).filter(u => u > nUnits);
+			if (extra.length) throw new Error(`${newId} has ${nUnits} unit(s) but ${ref} has unit(s) ${extra.join(", ")} placed; remove those first (remove_symbol with unit)`);
+		}
+		const over: Record<string, string | null> = {};
+		for (const [name, v] of Object.entries((args.fields as Record<string, unknown> | undefined) ?? {})) {
+			if (name === "Reference") throw new Error("the reference can't be set here; use rename_ref");
+			if (v !== null && typeof v !== "string") throw new Error(`fields.${name} must be a string or null, got ${JSON.stringify(v)}`);
+			if (v === null && MANDATORY[name]) throw new Error(`${name} is a mandatory field; set it to "" instead of removing it`);
+			over[name] = v;
+		}
+		for (const [arg, name] of [["value", "Value"], ["footprint", "Footprint"]] as const) {
+			if (args[arg] === undefined) continue;
+			if (name in over) throw new Error(`${name} given both as ${arg} and in fields`);
+			over[name] = String(args[arg]);
+		}
+		if (typeof over.Footprint === "string") checkFootprint(ctx, over.Footprint);
+
+		const bySheet = new Map<string, FoundSymbol[]>();
+		for (const h of placed) bySheet.set(h.sheet.file, [...(bySheet.get(h.sheet.file) ?? []), h]);
+		const changes = new Set<string>();
+		const kept = new Set<string>();
+		const notes: string[] = [];
+		const pinLists: string[] = [];
+		for (const list of bySheet.values()) {
+			const inst = list[0]!.sheet;
+			const sch = inst.sch;
+			const targets = list.map(h => h.sym);
+			const cached = sch.libSymbol(newId);
+			const libCopy = clone(fresh);
+			// symbols sharing a cache entry that changes are redrawn from the new copy too
+			const sharers = cached && print(cached) !== print(libCopy) ? sch.symbols().filter(s => !targets.includes(s) && sch.libId(s) === newId) : [];
+			const affected = [...targets, ...sharers];
+			const before = new Map(affected.map(s => [s, { ref: sch.refOf(s, inst.path), pins: sch.pins(s), box: symBox(sch, s) }]));
+			const oldLibs = new Map(targets.map(s => [s, sch.lib(s)]));
+			if (cached) sch.libSymbols().splice(sch.libSymbols().indexOf(cached), 1, libCopy);
+			else insertLib(sch, libCopy);
+
+			for (const sym of targets) {
+				setChild(sym, L("lib_id", str(newId)));
+				if (unitArg !== undefined) {
+					setChild(sym, L("unit", unitArg));
+					for (const proj of children(child(sym, "instances") ?? [], "project")) for (const p of children(proj, "path")) setChild(p, L("unit", unitArg));
+				}
+				const keep = new Map(children(sym, "pin").map(n => [text(n) ?? "", text(child(n, "uuid")) ?? newUuid()]));
+				for (const n of children(sym, "pin")) sym.splice(sym.indexOf(n), 1);
+				const pinsAt = sym.findIndex(c => isList(c) && head(c) === "instances");
+				sym.splice(pinsAt >= 0 ? pinsAt : sym.length, 0, ...pinNodes(libCopy, sch.unit(sym), keep));
+
+				const origin = at(sym).p;
+				const addField = (n: List) => {
+					const last = children(sym, "property").at(-1);
+					sym.splice(last ? sym.indexOf(last) + 1 : sym.length, 0, n);
+				};
+				const oldVals = new Map(children(oldLibs.get(sym)!, "property").map(p => [text(p) ?? "", text(p, 2) ?? ""]));
+				const libProps = new Map(children(libCopy, "property").map(p => [text(p) ?? "", p]));
+				for (const [name, lp] of libProps) {
+					if (name === "Reference" || name.startsWith("ki_") || name in over) continue;
+					const libVal = text(lp, 2) ?? "";
+					const p = prop(sym, name);
+					if (!p) {
+						addField(libFieldNode(lp, libVal, origin));
+						changes.add(`+${name}=${JSON.stringify(libVal)}`);
+						continue;
+					}
+					const cur = text(p, 2) ?? "";
+					if (cur === libVal) continue;
+					if (refresh ? cur === (oldVals.get(name) ?? "") : libVal !== "") {
+						p[2] = str(libVal);
+						changes.add(`${name} ${JSON.stringify(cur)} → ${JSON.stringify(libVal)}`);
+					} else kept.add(`${name}=${JSON.stringify(cur)}`);
+				}
+				for (const [name, v] of Object.entries(over)) {
+					const p = prop(sym, name);
+					if (v === null) {
+						if (!p) throw new Error(`${ref} has no field ${name}`);
+						sym.splice(sym.indexOf(p), 1);
+						changes.add(`-${name}`);
+					} else if (p) {
+						if (text(p, 2) !== v) changes.add(`${name} ${JSON.stringify(text(p, 2) ?? "")} → ${JSON.stringify(v)}`);
+						p[2] = str(v);
+					} else {
+						const lp = libProps.get(name);
+						addField(lp ? libFieldNode(lp, v, origin) : fieldNode(name, v, origin, true));
+						changes.add(`+${name}=${JSON.stringify(v)}`);
+					}
+				}
+				if (!refresh) {
+					for (const p of children(sym, "property")) {
+						const name = text(p) ?? "";
+						if (!MANDATORY[name] && !libProps.has(name) && !(name in over)) kept.add(`${name}=${JSON.stringify(text(p, 2) ?? "")}`);
+					}
+				}
+				placeFields(ctx, sch, sym);
+			}
+			if (!refresh && !sch.symbols().some(s => sch.libId(s) === oldId)) {
+				const old = sch.libSymbol(oldId);
+				if (old) sch.libSymbols().splice(sch.libSymbols().indexOf(old), 1);
+			}
+
+			const rep = pinReport(sch, inst, before, affected);
+			const dropped = dropStaleJunctions(sch, [], rep.oldPts);
+			if (sharers.length) notes.push(`also redrew ${sharers.map(s => sch.refOf(s, inst.path)).join(", ")} on ${inst.name} (they use the sheet's copy of ${newId})`);
+			if (rep.offPin.length) notes.push(`left off a pin on ${inst.name}, not rewired: ${rep.offPin.join(", ")}`);
+			if (rep.bare.length) notes.push(`pins with nothing on them: ${rep.bare.join(", ")}`);
+			if (rep.midWire.length) notes.push(`pins on the middle of a wire (KiCad connects them): ${rep.midWire.join(", ")}`);
+			if (dropped.length) notes.push(droppedNote(dropped));
+			for (const sym of targets) pinLists.push(`pins${placed.length > 1 ? ` (unit ${sch.unit(sym)} on ${inst.name})` : ""}: ${pinNote(sch, sym)}`);
+			ctx.project.touch(sch);
+			const pts: Pt[] = [];
+			for (const [s, b] of before) {
+				const nb = symBox(sch, s);
+				pts.push([b.box[0], b.box[1]], [b.box[2], b.box[3]], [nb[0], nb[1]], [nb[2], nb[3]]);
+			}
+			ctx.touch(inst, bbox(pts));
+		}
+		const parts = [refresh ? `refreshed ${ref} from the library (${newId})` : `changed ${ref}: ${oldId} → ${newId}`];
+		if (changes.size) parts.push(`fields: ${[...changes].join(", ")}`);
+		if (kept.size) {
+			parts.push(
+				refresh
+					? `kept ${[...kept].join(", ")} (they differ from the library)`
+					: `kept ${[...kept].join(", ")}: check they fit ${newId} and set them with fields`,
+			);
+		}
+		ctx.notes.push([...parts, ...notes, ...pinLists].join("; "));
 	},
 };
 
 const moveSymbol: OpDef = {
 	op: "move_symbol",
 	group: "schematic",
-	doc: "Move/rotate/mirror a symbol (origin to `at`). With drag (default), wire ends, labels and no-connects on its pins follow the pins (only that wire end moves); a wire that would turn diagonal is an error.",
+	doc: "Move/rotate/mirror a symbol (origin to `at`). With drag (default), wire ends, labels, junctions and no-connects on its pins follow the pins (only that wire end moves); a wire that would turn diagonal is an error. Junctions left joining fewer than 3 connections go.",
 	fields: {
 		ref: REF,
 		at: { ...AT, doc: "new symbol origin in mm, on the connection grid" },
@@ -588,19 +832,28 @@ const moveSymbol: OpDef = {
 		});
 		const notes = [`moved ${args.ref} to ${fmtPt(p)} rot ${rot}${mirror ? ` mirror ${mirror}` : ""}`];
 		const dragged: Pt[] = [];
+		const oldSegs: Seg[] = [];
 		if (args.drag !== false && moves.size) {
-			for (const w of sch.wires()) for (const e of [w.a, w.b]) if (moves.has(key(e))) dragged.push(e, moves.get(key(e))!);
+			for (const w of sch.wires()) {
+				if (!moves.has(key(w.a)) && !moves.has(key(w.b))) continue;
+				oldSegs.push({ a: w.a, b: w.b });
+				for (const e of [w.a, w.b]) if (moves.has(key(e))) dragged.push(e, moves.get(key(e))!);
+			}
 			const n = dragWireEnds(sch, moves);
 			for (const l of sch.labels()) {
 				const to = moves.get(key(l.at));
 				if (to) setAt(l.node, to[0], to[1], l.rot);
 			}
-			for (const nc of sch.points("no_connect")) {
-				const to = moves.get(key(nc.at));
-				if (to) setChild(nc.node, L("at", to[0], to[1]));
+			for (const kind of ["no_connect", "junction"] as const) {
+				for (const pnt of sch.points(kind)) {
+					const to = moves.get(key(pnt.at));
+					if (to) setChild(pnt.node, L("at", to[0], to[1]));
+				}
 			}
 			if (n) notes.push(`dragged ${n} wire(s)`);
 		}
+		const dropped = dropStaleJunctions(sch, oldSegs, [...oldPins, ...newPins].map(q => q.at));
+		if (dropped.length) notes.push(droppedNote(dropped));
 		if (mode === "keep" && reposed) notes.push("fields kept their offsets although the symbol turned; use fields: \"auto\" to re-place them");
 		notes.push(`pins: ${pinNote(sch, sym)}`);
 		ctx.project.touch(sch);
@@ -650,19 +903,20 @@ const addWire: OpDef = {
 const removeWire: OpDef = {
 	op: "remove_wire",
 	group: "schematic",
-	doc: "Delete one wire segment: the one containing `at`, or the one from `from` to `to`. Junctions left joining fewer than 3 connections go too.",
+	doc: "Delete a stretch of wire: the whole segment containing `at`, or from `from` to `to` — two points on one segment, its ends or any grid points inside it (the rest of the segment stays as new wires). Junctions left joining fewer than 3 connections go too; the note names pins, labels and wire ends left unconnected.",
 	fields: {
 		sheet: SHEET,
-		at: { t: "point", doc: "a point on the segment (must identify exactly one)" },
-		from: { t: "point", doc: "one end of the segment (with to)" },
-		to: { t: "point", doc: "the other end (with from)" },
+		at: { t: "point", doc: "a point on the segment (must identify exactly one); removes the whole segment" },
+		from: { t: "point", doc: "one end of the stretch to remove (with to), on the segment" },
+		to: { t: "point", doc: "the other end of the stretch (with from), on the same segment" },
 	},
 	apply(ctx, args) {
 		const inst = sheetArg(ctx, args.sheet);
 		const sch = inst.sch;
 		const wires = sch.wires();
-		const show = (ws: typeof wires) => ws.map(w => `${fmtPt(w.a)}-${fmtPt(w.b)}`).join(", ");
+		const show = (ws: typeof wires) => ws.map(w => `${fmtPt(w.a)}-${fmtPt(w.b)}`).join(", ") || "none";
 		let hit: (typeof wires)[number];
+		let cut: Seg;
 		if (args.at !== undefined) {
 			if (args.from !== undefined || args.to !== undefined) throw new Error("give either at, or from and to");
 			const p = gridPt(ctx, args.at, "at");
@@ -670,22 +924,49 @@ const removeWire: OpDef = {
 			if (!hits.length) throw new Error(`no wire at ${fmtPt(p)} on ${inst.name}`);
 			if (hits.length > 1) throw new Error(`${hits.length} wires meet at ${fmtPt(p)}: ${show(hits)}; pick one with from/to or a point inside it`);
 			hit = hits[0]!;
+			cut = hit;
 		} else {
 			if (args.from === undefined || args.to === undefined) throw new Error("give either at, or from and to");
 			const a = gridPt(ctx, args.from, "from");
 			const b = gridPt(ctx, args.to, "to");
-			const found = wires.find(w => (samePt(w.a, a) && samePt(w.b, b)) || (samePt(w.a, b) && samePt(w.b, a)));
-			if (!found) {
-				const near = wires.filter(w => touches(a, w) || touches(b, w));
-				throw new Error(`no wire from ${fmtPt(a)} to ${fmtPt(b)} on ${inst.name}${near.length ? `; wires there: ${show(near)}` : ""}`);
+			if (samePt(a, b)) throw new Error(`from and to are the same point ${fmtPt(a)}`);
+			const exact = wires.find(w => (samePt(w.a, a) && samePt(w.b, b)) || (samePt(w.a, b) && samePt(w.b, a)));
+			const hits = exact ? [exact] : wires.filter(w => touches(a, w) && touches(b, w));
+			if (!hits.length) {
+				throw new Error(
+					`${fmtPt(a)} and ${fmtPt(b)} don't lie on one wire segment on ${inst.name}; wires at from: ${show(wires.filter(w => touches(a, w)))}; ` +
+						`wires at to: ${show(wires.filter(w => touches(b, w)))}`,
+				);
 			}
-			hit = found;
+			if (hits.length > 1) throw new Error(`${hits.length} overlapping wires contain ${fmtPt(a)}-${fmtPt(b)}: ${show(hits)}; remove them by their ends`);
+			hit = hits[0]!;
+			cut = { a, b };
 		}
-		sch.remove(hit.node);
-		const dropped = dropStaleJunctions(sch, [hit.a, hit.b]);
+		// what stays of the segment: hit.a up to the nearer cut point, the farther one up to hit.b
+		const dist = (p: Pt) => Math.abs(p[0] - hit.a[0]) + Math.abs(p[1] - hit.a[1]);
+		const [near, far] = dist(cut.a) <= dist(cut.b) ? [cut.a, cut.b] : [cut.b, cut.a];
+		const rest: Seg[] = [];
+		if (!samePt(hit.a, near)) rest.push({ a: hit.a, b: near });
+		if (!samePt(far, hit.b)) rest.push({ a: far, b: hit.b });
+		const nodes = rest.map(r => {
+			const n = clone(hit.node);
+			setChild(n, L("pts", L("xy", r.a[0], r.a[1]), L("xy", r.b[0], r.b[1])));
+			setChild(n, L("uuid", str(newUuid())));
+			return n;
+		});
+		sch.tree.splice(sch.tree.indexOf(hit.node), 1, ...nodes);
+		const dropped = dropStaleJunctions(sch, [hit]);
+		const open = leftOpen(inst, cut);
 		ctx.project.touch(sch);
 		ctx.touch(inst, bbox([hit.a, hit.b]));
-		ctx.notes.push(`removed wire ${fmtPt(hit.a)}-${fmtPt(hit.b)} on ${inst.name}${dropped ? `; ${dropped} junction(s) no longer needed removed` : ""}`);
+		const notes = [
+			rest.length
+				? `removed ${fmtPt(near)}-${fmtPt(far)} of wire ${fmtPt(hit.a)}-${fmtPt(hit.b)} on ${inst.name}, keeping ${rest.map(r => `${fmtPt(r.a)}-${fmtPt(r.b)}`).join(" and ")}`
+				: `removed wire ${fmtPt(hit.a)}-${fmtPt(hit.b)} on ${inst.name}`,
+		];
+		if (open.length) notes.push(`left unconnected: ${open.join(", ")}`);
+		if (dropped.length) notes.push(droppedNote(dropped));
+		ctx.notes.push(notes.join("; "));
 	},
 };
 
@@ -851,7 +1132,8 @@ function pointOps(kind: "junction" | "no_connect", what: string): OpDef[] {
 				const notes = [`${what} at ${fmtPt(p)} on ${inst.name}`];
 				if (kind === "junction") {
 					sch.insert(junctionNode(p));
-					if (connections(sch, p) < 3) notes.push(`only ${connections(sch, p)} connection(s) meet there`);
+					const n = sch.junctionDegree(p);
+					if (n < 3) notes.push(`only ${n} connection(s) meet there: a redundant junction (style warns)`);
 				} else {
 					const pinHere =
 						sch.symbols().some(s => sch.pins(s).some(q => samePt(q.at, p))) || sch.sheets().some(b => b.pins.some(q => samePt(q.at, p)));
@@ -974,6 +1256,7 @@ export const ops: OpDef[] = [
 	setAttrs,
 	addSymbol,
 	removeSymbol,
+	changeSymbol,
 	moveSymbol,
 	addWire,
 	removeWire,
