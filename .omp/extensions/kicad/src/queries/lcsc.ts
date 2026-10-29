@@ -110,6 +110,25 @@ export async function lcscParts(codes: string[], opts: LcscOptions = {}): Promis
 	return out;
 }
 
+/**
+ * The LCSC code a datasheet `url` names: a bare code ("C9196"), an lcsc.com datasheet page
+ * (`lcsc.com/datasheet/C9196.pdf`, `…/datasheet/lcsc_datasheet_…_C9196.pdf`) or a product page
+ * (`lcsc.com/product-detail/…_C9196.html`). Those pages are HTML, not the PDF.
+ */
+export function lcscCodeOf(url: string): string | undefined {
+	const s = url.trim();
+	if (/^C\d+$/i.test(s)) return s.toUpperCase();
+	return /^https?:\/\/(?:www\.)?lcsc\.com\/(?:datasheet|product-detail)\/(?:[^?#]*[_/])?(C\d+)\.(?:pdf|html)(?:[?#].*)?$/i.exec(s)?.[1]?.toUpperCase();
+}
+
+/** The part and the URL of its datasheet PDF, from LCSC's product data; throws when LCSC has none. */
+export async function lcscDatasheet(code: string, opts: LcscOptions = {}): Promise<{ part: LcscPart; pdf: string }> {
+	const [p] = await lcscParts([code], opts);
+	if (!p || "error" in p) throw new Error(`LCSC ${code}: ${p?.error ?? "no answer"}`);
+	if (!p.datasheet) throw new Error(`LCSC has no datasheet for ${code} (${p.mpn})`);
+	return { part: p, pdf: p.datasheet };
+}
+
 const lcsc: QueryDef = {
 	what: "lcsc",
 	doc: "LCSC's live data for LCSC part codes (network): code, mpn, manufacturer, package, description, stock, prices [[quantity, USD each]], datasheet (PDF URL), url (product page) and fetched (date: stock and prices change). A code LCSC doesn't know, a changed answer format or a network failure is an {code, error} entry; the other codes still answer.",

@@ -213,11 +213,11 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 		name: "kicad_datasheet",
 		label: "KiCad datasheet",
 		description: [
-			"Read a part's datasheet PDF (from a URL, e.g. a symbol's Datasheet field, or a local path). Downloads once into the user cache (outside the repo) and refuses non-PDF answers.",
+			"Read a part's datasheet PDF (from a URL, e.g. a symbol's Datasheet field, an LCSC code, or a local path). Downloads once into the user cache (outside the repo) and refuses non-PDF answers. An LCSC code (\"C9196\") or an lcsc.com datasheet/product page resolves to the part's PDF through LCSC's product data (network).",
 			"Without `page`, `pages` or `find`: the local PDF path, page count, title and the first lines of every page (find the pinout, package drawing or land pattern page). With `page`: that page's text and an image of the page, or of `box` (fractions of the page, y down) to zoom into a drawing. With `pages` (\"4-18\", \"4,6,10-12\"): the text of those pages, no images. With `find` (regex, case-insensitive): every matching line as `p<page>:<line>:` with a line of context around it, on all pages or on `pages`. The local path can also be read directly.",
 		].join("\n\n"),
 		parameters: z.object({
-			url: z.string().describe("http(s) URL of the PDF, or a local PDF path (repo-relative or absolute)."),
+			url: z.string().describe('http(s) URL of the PDF, an LCSC code ("C9196") or lcsc.com datasheet/product page URL, or a local PDF path (repo-relative or absolute).'),
 			page: z.number().int().optional().describe("Page number, 1-based: its text and image. Omit for the page index."),
 			pages: z.string().optional().describe('Text only of these pages: "4-18" or "4,6,10-12". With `find`: search only these pages.'),
 			find: z.string().optional().describe("Regex (case-insensitive): matching lines with page and line numbers and one line of context, at most 100 matches."),

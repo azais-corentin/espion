@@ -16,6 +16,7 @@
  * connectivity change as a paste-ready `expect`.
  */
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { Analysis } from "./analysis";
 import { ercFindings } from "./checks/connectivity";
@@ -47,14 +48,81 @@ export interface EditResult {
 	images: LabelledImage[];
 }
 
-/** KiCad lock files (`~name.ext.lck`) in the project or its in-repo library directories. */
-export function findLocks(dirs: string[]): string[] {
-	const out: string[] = [];
-	for (const d of dirs) {
-		if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) continue;
-		for (const f of fs.readdirSync(d)) if (f.startsWith("~") && f.endsWith(".lck")) out.push(path.join(d, f));
+/** A running KiCad GUI program of this user. */
+export interface KicadProcess {
+	pid: number;
+	name: string;
+}
+
+/** This user's running KiCad GUI programs, or undefined where that can't be told (not Linux). */
+export type ProcessLookup = () => KicadProcess[] | undefined;
+
+/**
+ * Programs that keep a project open: the project manager and the standalone editors, also as nix
+ * wrappers (`.kicad-wrapped`). kicad-cli is left out: it runs a single command and the toolkit
+ * runs it on temporary copies, so it never holds a project's lock for long.
+ */
+const KICAD_GUI = /^\.*(?:kicad|eeschema|pcbnew)(?:-wrapped)*$/;
+
+/** This user's KiCad GUI processes, by executable or argv[0] name from /proc. */
+export function kicadProcesses(): KicadProcess[] | undefined {
+	if (process.platform !== "linux") return undefined;
+	const uid = process.getuid?.();
+	const out: KicadProcess[] = [];
+	for (const pid of fs.readdirSync("/proc")) {
+		if (!/^\d+$/.test(pid)) continue;
+		try {
+			if (fs.statSync(`/proc/${pid}`).uid !== uid) continue;
+			const argv0 = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0] ?? "";
+			let exe = "";
+			try {
+				exe = fs.readlinkSync(`/proc/${pid}/exe`).replace(/ \(deleted\)$/, "");
+			} catch {
+				// kernel threads have no executable
+			}
+			const name = [exe, argv0].map(p => path.basename(p)).find(n => KICAD_GUI.test(n));
+			if (name) out.push({ pid: Number(pid), name });
+		} catch {
+			// the process ended while being read
+		}
 	}
 	return out;
+}
+
+/**
+ * KiCad lock files (`~name.ext.lck`) in the project or its in-repo library directories, held or
+ * stale. KiCad writes `{"hostname": …, "username": …}` into them and removes them on close; one
+ * left behind by a crash or kill is stale: it names this host and user (or nothing readable) and
+ * no KiCad GUI program of this user runs. Stale locks are ignored, never deleted.
+ */
+export function checkLocks(dirs: string[], processes: ProcessLookup): { held: { file: string; why: string }[]; stale: string[] } {
+	const files: string[] = [];
+	for (const d of dirs) {
+		if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) continue;
+		for (const f of fs.readdirSync(d)) if (f.startsWith("~") && f.endsWith(".lck")) files.push(path.join(d, f));
+	}
+	const held: { file: string; why: string }[] = [];
+	const stale: string[] = [];
+	if (files.length === 0) return { held, stale };
+	const running = processes();
+	const user = os.userInfo().username;
+	// host names as KiCad writes them (wxGetHostName): without the domain, any case
+	const here = os.hostname().split(".")[0]!.toLowerCase();
+	for (const file of files) {
+		let owner: { hostname?: unknown; username?: unknown } = {};
+		try {
+			owner = JSON.parse(fs.readFileSync(file, "utf8")) ?? {};
+		} catch {
+			// empty or unreadable: nobody named
+		}
+		const host = typeof owner.hostname === "string" ? owner.hostname : "";
+		const name = typeof owner.username === "string" ? owner.username : "";
+		if ((host && host.split(".")[0]!.toLowerCase() !== here) || (name && name !== user)) held.push({ file, why: `locked by ${name || "?"}@${host || "?"}` });
+		else if (running === undefined) held.push({ file, why: `can't check for a running KiCad on ${process.platform}` });
+		else if (running.length) held.push({ file, why: `${running.map(p => `${p.name} (pid ${p.pid})`).join(", ")} running` });
+		else stale.push(file);
+	}
+	return { held, stale };
 }
 
 /** In-repo library locations of the project's own lib tables (files or .pretty dirs). */
@@ -104,18 +172,25 @@ function fmtFinding(f: Finding): string {
 	return `  - [${f.check}] ${f.sheet ? `${f.sheet} ` : ""}${f.message}${f.at ? ` @ (${f.at[0]}, ${f.at[1]})` : ""}`;
 }
 
-export async function runEdit(req: EditRequest, repoRoot: string, rasterize: Rasterize | undefined, signal?: AbortSignal): Promise<EditResult> {
+export async function runEdit(
+	req: EditRequest,
+	repoRoot: string,
+	rasterize: Rasterize | undefined,
+	signal?: AbortSignal,
+	processes: ProcessLookup = kicadProcesses,
+): Promise<EditResult> {
 	const project = Project.open(req.project, repoRoot);
 	const libs = await project.libs();
 	const libPaths = inRepoLibPaths(project, libs);
 	const lockDirs = [project.dir, ...new Set(libPaths.map(p => path.dirname(p)))];
-	const locks = findLocks(lockDirs);
-	if (locks.length) {
+	const locks = checkLocks(lockDirs, processes);
+	if (locks.held.length) {
 		throw new Error(
-			`KiCad has the project open (${locks.map(l => project.rel(l)).join(", ")}). ` +
+			`KiCad has the project open (${locks.held.map(l => `${project.rel(l.file)}: ${l.why}`).join("; ")}). ` +
 				"Close it in KiCad first: KiCad would overwrite toolkit edits on its next save.",
 		);
 	}
+	const lockNotes = locks.stale.map(l => `Ignored stale lock ${project.rel(l)}: no KiCad process running.`);
 	if (!Array.isArray(req.ops) || req.ops.length === 0) throw new Error("ops: give at least one op");
 
 	// 1. apply the ops in memory
@@ -147,12 +222,12 @@ export async function runEdit(req: EditRequest, repoRoot: string, rasterize: Ras
 		}
 	}
 	const pending = project.pendingWrites();
-	if (pending.size === 0 && project.deleted.size === 0) return { applied: false, report: "No file changes.", images: [] };
+	if (pending.size === 0 && project.deleted.size === 0) return { applied: false, report: ["No file changes.", ...lockNotes].join("\n"), images: [] };
 
 	// 2. stage a copy; everything from here on works in it and the copy always goes away
 	const tempRoot = stage(project, libPaths);
 	try {
-		return await verifyAndWrite({ req, project, tempRoot, pending, touched, touchedParts, notes: ctx.notes, lockDirs, rasterize, signal });
+		return await verifyAndWrite({ req, project, tempRoot, pending, touched, touchedParts, notes: ctx.notes, lockDirs, lockNotes, processes, rasterize, signal });
 	} finally {
 		fs.rmSync(tempRoot, { recursive: true, force: true });
 	}
@@ -168,6 +243,9 @@ interface Staged {
 	touchedParts: Map<string, { kind: PartKind; id: string }>;
 	notes: string[];
 	lockDirs: string[];
+	/** Stale lock files ignored, for the report. */
+	lockNotes: string[];
+	processes: ProcessLookup;
 	rasterize: Rasterize | undefined;
 	signal?: AbortSignal;
 }
@@ -227,7 +305,7 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		problems.push(...[...ercNew, ...styleNew, ...klcNew].map(fmtFinding));
 		problems.push(...druErrs.map(e => `  - [rules] ${e}`));
 
-		const lines: string[] = [];
+		const lines: string[] = [...s.lockNotes];
 		if (s.notes.length) lines.push("Done:", ...s.notes.map(n => `  - ${n}`));
 		const sum = summarize(diff);
 		lines.push("Connectivity and part changes:", ...(sum.length ? sum.map(x => `  - ${x}`) : ["  - none"]));
@@ -280,8 +358,10 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		if (req.dry_run) return { applied: false, report: ["Dry run: all checks pass; nothing written.", ...lines, ...expectBlock].join("\n"), images };
 
 		// 5. copy KiCad's re-saved bytes over the real files
-		const late = findLocks(s.lockDirs);
-		if (late.length) throw new Error(`KiCad opened the project during the edit (${late.join(", ")}); nothing written.`);
+		const late = checkLocks(s.lockDirs, s.processes).held;
+		if (late.length) {
+			throw new Error(`KiCad opened the project during the edit (${late.map(l => `${project.rel(l.file)}: ${l.why}`).join("; ")}); nothing written.`);
+		}
 		const written: { file: string; old?: Buffer }[] = [];
 		try {
 			for (const f of pending.keys()) {

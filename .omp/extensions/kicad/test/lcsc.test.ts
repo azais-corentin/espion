@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { lcscParts } from "../src/queries/lcsc";
+import { lcscCodeOf, lcscDatasheet, lcscParts } from "../src/queries/lcsc";
 
 /** The endpoint's answer for C25911 (trimmed to the fields the query reads, plus a few it ignores). */
 const C25911 = {
@@ -126,5 +126,28 @@ describe("lcsc", () => {
 		const p = lcscParts(["C1"], { fetch: mockFetch({ C1: never }).fn, signal: ctl.signal, now });
 		ctl.abort();
 		await expect(p).rejects.toBeDefined();
+	});
+
+	test("datasheet urls: LCSC codes and lcsc.com pages name their code, PDF links don't", () => {
+		expect(lcscCodeOf(" c9196 ")).toBe("C9196");
+		expect(lcscCodeOf("https://www.lcsc.com/datasheet/C9196.pdf")).toBe("C9196");
+		expect(lcscCodeOf("https://www.lcsc.com/datasheet/lcsc_datasheet_2304140030_Texas-Instruments-TPS54202DDCR_C9196.pdf")).toBe("C9196");
+		expect(lcscCodeOf("https://lcsc.com/product-detail/C25911.html")).toBe("C25911");
+		expect(lcscCodeOf("https://www.lcsc.com/product-detail/Chip-Resistor_UNI-ROYAL-0402WGF6042TCE_C25911.html?s_z=n")).toBe("C25911");
+		expect(lcscCodeOf("https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf?productCode=C9196")).toBeUndefined();
+		expect(lcscCodeOf("https://www.ti.com/lit/ds/symlink/tps54202.pdf")).toBeUndefined();
+		expect(lcscCodeOf("docs/C9196.pdf")).toBeUndefined();
+	});
+
+	test("lcscDatasheet: the part's PDF URL, or the code's error", async () => {
+		const noPdf = structuredClone(C25911) as { result: Record<string, unknown> };
+		noPdf.result.productCode = "C2";
+		delete noPdf.result.pdfUrl;
+		const m = mockFetch({ C25911: json(C25911), C1: json({ result: null }), C2: json(noPdf) });
+		const { part, pdf } = await lcscDatasheet("C25911", { fetch: m.fn, now });
+		expect(part.mpn).toBe("0402WGF6042TCE");
+		expect(pdf).toBe("https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf");
+		await expect(lcscDatasheet("C1", { fetch: m.fn, now })).rejects.toThrow("LCSC C1: LCSC has no product C1");
+		await expect(lcscDatasheet("C2", { fetch: m.fn, now })).rejects.toThrow("LCSC has no datasheet for C2 (0402WGF6042TCE)");
 	});
 });

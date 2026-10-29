@@ -3,8 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { druProblems } from "../src/checks/rules";
 import { bom, netlist } from "../src/cli";
-import { ops } from "../src/ops/project";
+import { druRules, ops } from "../src/ops/project";
 import { Project } from "../src/project";
+import { text } from "../src/sexpr";
 import { validate } from "../src/spec";
 import type { OpContext } from "../src/types";
 import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
@@ -123,6 +124,35 @@ describe.skipIf(!HAS_KICAD)("project ops", () => {
 		]);
 		const dru1 = fs.readFileSync(druFile, "utf8");
 		expect(dru1).toBe(`${dru0.slice(0, usb)}${replacement}\n\n${added}\n`);
+		expect(await druProblems(Project.open(PROJECT, root))).toEqual([]);
+	});
+
+	test("set_rule comment: above a new rule; replacing keeps it when omitted, replaces it when given, removes it with an empty one", async () => {
+		const dru0 = fs.readFileSync(druFile, "utf8");
+		const usbComment = dru0.indexOf("# USB 2.0");
+		const usb = (min: string) => `(rule "USB spacing"\n\t(condition "A.NetClass == 'USB' && !A.isCoupledDiffPair()")\n\t(constraint clearance (min ${min})))`;
+		const rmii = `(rule "RMII spacing"\n\t(condition "A.NetClass == 'RMII'")\n\t(constraint clearance (min 0.25mm)))`;
+		const rmiiText = `# RMII: 2W from the 50 MHz reference clock\n# (LAN8720 layout guide)\n${rmii}\n`;
+		const read = () => fs.readFileSync(druFile, "utf8");
+		const comments = () => Object.fromEntries(druRules(read()).map(r => [text(r.node, 1), r.comment]));
+
+		await apply(root, [{ op: "set_rule", rule: rmii, comment: "RMII: 2W from the 50 MHz reference clock\n(LAN8720 layout guide)" }]);
+		expect(read()).toBe(`${dru0.trimEnd()}\n\n${rmiiText}`);
+
+		await apply(root, [{ op: "set_rule", rule: usb("0.35mm") }]);
+		expect(read()).toBe(`${dru0.slice(0, dru0.indexOf('(rule "USB spacing"'))}${usb("0.35mm")}\n\n${rmiiText}`);
+
+		await apply(root, [{ op: "set_rule", rule: usb("0.4mm"), comment: "USB 2.0: 0.4 mm from the pair" }]);
+		expect(read()).toBe(`${dru0.slice(0, usbComment)}# USB 2.0: 0.4 mm from the pair\n${usb("0.4mm")}\n\n${rmiiText}`);
+
+		await apply(root, [{ op: "set_rule", rule: usb("0.4mm"), comment: "" }]);
+		expect(read()).toBe(`${dru0.slice(0, usbComment)}${usb("0.4mm")}\n\n${rmiiText}`);
+
+		const c = comments();
+		expect(c["USB spacing"]).toBeUndefined();
+		expect(c["RMII spacing"]).toBe("RMII: 2W from the 50 MHz reference clock\n(LAN8720 layout guide)");
+		expect(c["MDI spacing"]).toBe("Ethernet MDI: 3x spacing to other nets (IP101G DS 6.2).");
+		expect(c["PoE isolation"]?.split("\n")).toHaveLength(3);
 		expect(await druProblems(Project.open(PROJECT, root))).toEqual([]);
 	});
 

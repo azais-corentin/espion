@@ -3,17 +3,45 @@
  *
  * Blocked: editing or writing KiCad files (schematics, project, rules, libraries, lib tables,
  * board) with any file tool, and shell commands that run a KiCad program or write a KiCad file.
- * A KiCad program counts only at command position (start of a command, after a separator,
- * behind env assignments and wrappers such as sudo/env/exec, or as the command of `-c`/`-exec`),
- * so paths like `.omp/extensions/kicad` or `~/.config/kicad` are not mistaken for it. Reading
- * (read, grep, glob, find, git) stays allowed. Eval cells are not inspected: AGENTS.md and the
- * skills keep agents from touching KiCad files there. The toolkit's own test fixtures are exempt.
+ * Shell lines are split into commands at separators outside quotes; a KiCad program counts only
+ * at command position (start of a command, behind env assignments and wrappers such as
+ * sudo/env/exec/xargs/timeout), as the command after `-c`/`--command`/`-exec` (a quoted payload
+ * there, as of `sh -c '…'`, is read as a shell line), as the argument of `eval`, or inside a
+ * command substitution. So paths like `.omp/extensions/kicad`, words in quoted arguments of
+ * ordinary commands (`pgrep -f 'kicad|eeschema'`, `grep -E "kicad|eeschema"`, `git commit -m
+ * "…"`) and process names given to `pkill`/`killall` (stopping KiCad is not running it) are not
+ * mistaken for a run. Reading (read, grep, glob, find, git) stays allowed. Eval cells are not
+ * inspected: AGENTS.md and the skills keep agents from touching KiCad files there. The toolkit's
+ * own test fixtures are exempt.
  */
 
 const KICAD_FILE = /[\w./~@+-]*?(\.kicad_(?:sch|pro|dru|sym|mod|pcb|prl|wks)\b|(?:^|[\\/\s"'=])(?:sym|fp)-lib-table\b)/g;
 const KICAD_PROGS: Record<string, true> = { "kicad-cli": true, kicad: true, eeschema: true, pcbnew: true, "kicad-cmd": true, _kipython: true };
-/** Where a new command starts: separators, subshells, groups, substitutions, and the command argument of `sh -c`, `nix develop -c`, `--command`, `find -exec`. */
-const COMMAND_START = /\n|;|&&|\|\||[|&(){}`]|\s-[A-Za-z]*c(?=\s)|\s--command(?=\s)|\s-exec(?:dir)?(?=\s)/;
+/** Options whose argument is a command: `sh -c`, `bash -lc`, `nix develop -c`, `nix-shell --command/--run`, `find -exec`. */
+const COMMAND_OPTION = /^(?:-[A-Za-z]*c|--command|--run|-exec(?:dir)?|-ok(?:dir)?)$/;
+/** Commands whose `-c`-like options are not commands (`grep -c`, `wc -c`, `git -c key=value`). */
+const PLAIN_TOOLS: Record<string, true> = {
+	grep: true,
+	egrep: true,
+	fgrep: true,
+	rg: true,
+	pgrep: true,
+	pkill: true,
+	ps: true,
+	wc: true,
+	head: true,
+	tail: true,
+	cut: true,
+	sort: true,
+	uniq: true,
+	ls: true,
+	cat: true,
+	echo: true,
+	printf: true,
+	git: true,
+	diff: true,
+	jq: true,
+};
 /** Words that run the next word as the command (their own options are skipped). */
 const WRAPPERS: Record<string, true> = {
 	sudo: true,
@@ -76,23 +104,146 @@ function editHeaders(body: string): string[] {
 	return [...body.matchAll(/^\[([^\]#\n]+)#[0-9A-Fa-f]{4}\]\s*$/gm)].map(m => m[1]!.trim());
 }
 
-/** Does a command of this shell line run a KiCad program (by name or path, e.g. /nix/store/…/bin/kicad-cli)? */
-function runsKicadProgram(cmd: string): boolean {
-	for (const segment of cmd.split(COMMAND_START)) {
-		const words = segment.trim().split(/\s+/).filter(Boolean);
-		let i = 0;
-		let wrapped = false;
-		// env assignments, wrappers, and the wrappers' options and numbers (timeout 30, nice -n 5)
-		while (i < words.length) {
-			const w = words[i]!;
-			if (ASSIGNMENT.test(w) || Object.hasOwn(WRAPPERS, w)) wrapped = Object.hasOwn(WRAPPERS, w) || wrapped;
-			else if (!(wrapped && (w.startsWith("-") || /^\d+[smhd]?$/.test(w)))) break;
-			i++;
-		}
-		const word = words[i]?.replace(/^["'\\]+|["']+$/g, "");
-		if (word && Object.hasOwn(KICAD_PROGS, word.slice(word.lastIndexOf("/") + 1))) return true;
+/** A shell word with its quotes removed; `quoted` when any part of it was quoted or escaped. */
+interface Word {
+	text: string;
+	quoted: boolean;
+}
+
+/** Index of the next `close` after i (or the end of the text). */
+function closeAt(src: string, i: number, close: string): number {
+	const j = src.indexOf(close, i + 1);
+	return j < 0 ? src.length : j;
+}
+
+/** Index of the `)` that closes a `$(` whose body starts at i, skipping quoted text. */
+function closeParen(src: string, i: number): number {
+	let depth = 1;
+	for (; i < src.length; i++) {
+		const c = src[i];
+		if (c === "\\") i++;
+		else if (c === "'") i = closeAt(src, i, "'");
+		else if (c === '"') i = doubleQuoted(src, i).end;
+		else if (c === "(") depth++;
+		else if (c === ")" && --depth === 0) return i;
 	}
-	return false;
+	return src.length;
+}
+
+/** The double-quoted string opening at i: its closing index, text, and the bodies of its command substitutions. */
+function doubleQuoted(src: string, i: number): { end: number; text: string; subs: string[] } {
+	let text = "";
+	const subs: string[] = [];
+	for (let j = i + 1; j < src.length; j++) {
+		const c = src[j]!;
+		if (c === '"') return { end: j, text, subs };
+		if (c === "\\") {
+			const n = src[j + 1] ?? "";
+			text += '$`"\\\n'.includes(n) ? n : `\\${n}`;
+			j++;
+		} else if (c === "$" && src[j + 1] === "(") {
+			const e = closeParen(src, j + 2);
+			subs.push(src.slice(j + 2, e));
+			j = e;
+		} else if (c === "`") {
+			const e = closeAt(src, j, "`");
+			subs.push(src.slice(j + 1, e));
+			j = e;
+		} else text += c;
+	}
+	return { end: src.length, text, subs };
+}
+
+/**
+ * The simple commands of a shell line as words with quotes removed, split at separators outside
+ * quotes (newline ; & | ( ) and { } groups); the bodies of command substitutions, `$(…)` and
+ * backticks (also inside double quotes), come out as commands of their own. Comments are dropped.
+ */
+function commands(src: string): Word[][] {
+	const out: Word[][] = [];
+	let cmd: Word[] = [];
+	let word: Word | undefined;
+	const add = (text: string, quoted: boolean) => {
+		word ??= { text: "", quoted: false };
+		word.text += text;
+		word.quoted ||= quoted;
+	};
+	const endWord = () => {
+		if (word) cmd.push(word);
+		word = undefined;
+	};
+	const endCommand = () => {
+		endWord();
+		if (cmd.length) out.push(cmd);
+		cmd = [];
+	};
+	for (let i = 0; i < src.length; i++) {
+		const c = src[i]!;
+		if (c === "\\") {
+			if (src[i + 1] !== "\n") add(src[i + 1] ?? "", true);
+			i++;
+		} else if (c === "'") {
+			const e = closeAt(src, i, "'");
+			add(src.slice(i + 1, e), true);
+			i = e;
+		} else if (c === '"') {
+			const d = doubleQuoted(src, i);
+			add(d.text, true);
+			for (const s of d.subs) out.push(...commands(s));
+			i = d.end;
+		} else if (c === "$" && src[i + 1] === "(") {
+			const e = closeParen(src, i + 2);
+			out.push(...commands(src.slice(i + 2, e)));
+			add("$(…)", false);
+			i = e;
+		} else if (c === "$" && src[i + 1] === "{") {
+			const e = closeAt(src, i, "}");
+			add(src.slice(i, e + 1), false);
+			i = e;
+		} else if (c === "`") {
+			const e = closeAt(src, i, "`");
+			out.push(...commands(src.slice(i + 1, e)));
+			add("`…`", false);
+			i = e;
+		} else if (c === "#" && !word) {
+			i = closeAt(src, i, "\n") - 1;
+		} else if ("\n;&|()".includes(c) || ((c === "{" || c === "}") && !word && /^[\s;]?$/.test(src[i + 1] ?? ""))) {
+			endCommand();
+		} else if (/\s/.test(c)) {
+			endWord();
+		} else add(c, false);
+	}
+	endCommand();
+	return out;
+}
+
+/** Does this simple command run a KiCad program, itself (by name or path) or through a command option or `eval`? */
+function runsKicad(words: Word[]): boolean {
+	let i = 0;
+	let wrapped = false;
+	// env assignments, wrappers, and the wrappers' options and numbers (timeout 30, nice -n 5)
+	while (i < words.length) {
+		const w = words[i]!.text;
+		if (ASSIGNMENT.test(w) || Object.hasOwn(WRAPPERS, w)) wrapped = Object.hasOwn(WRAPPERS, w) || wrapped;
+		else if (!(wrapped && (w.startsWith("-") || /^\d+[smhd]?$/.test(w)))) break;
+		i++;
+	}
+	const cmd = words[i]?.text;
+	if (!cmd) return false;
+	const name = cmd.slice(cmd.lastIndexOf("/") + 1);
+	if (Object.hasOwn(KICAD_PROGS, name)) return true;
+	const args = words.slice(i + 1);
+	if (name === "eval") return runsKicadProgram(args.map(w => w.text).join(" "));
+	if (Object.hasOwn(PLAIN_TOOLS, name)) return false;
+	// the command option's argument: a shell line when quoted (sh -c '…'), else the command of the rest
+	return args.some(
+		(w, j) => !w.quoted && COMMAND_OPTION.test(w.text) && j + 1 < args.length && (runsKicadProgram(args[j + 1]!.text) || runsKicad(args.slice(j + 1))),
+	);
+}
+
+/** Does a command of this shell line run a KiCad program (by name or path, e.g. /nix/store/…/bin/kicad-cli)? */
+function runsKicadProgram(line: string): boolean {
+	return commands(line).some(runsKicad);
 }
 
 /** The reason to block this call, or undefined to let it run. */

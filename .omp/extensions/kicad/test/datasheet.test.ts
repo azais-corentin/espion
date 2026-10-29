@@ -35,7 +35,7 @@ describe.skipIf(!HAS_KICAD)("kicad_datasheet", () => {
 			fetch(req) {
 				const p = new URL(req.url).pathname;
 				hits[p] = (hits[p] ?? 0) + 1;
-				if (p === "/ds.pdf") return new Response(bytes, { headers: { "content-type": "application/pdf" } });
+				if (p === "/ds.pdf" || p === "/lcsc/ds.pdf") return new Response(bytes, { headers: { "content-type": "application/pdf" } });
 				if (p === "/moved") return Response.redirect("/ds.pdf", 302);
 				return new Response("<!DOCTYPE html><html>login</html>", { headers: { "content-type": "text/html" } });
 			},
@@ -119,5 +119,39 @@ describe.skipIf(!HAS_KICAD)("kicad_datasheet", () => {
 		await expect(readDatasheet(root, { url: pdf, page: 1, box: [0.5, 0, 0.4, 1] })).rejects.toThrow(/box must be/);
 		await expect(readDatasheet(root, { url: pdf, box: [0, 0, 1, 1] })).rejects.toThrow(/give page/);
 		await expect(readDatasheet(root, { url: path.join(root, PROJECT, "espion-cam.kicad_pro") })).rejects.toThrow(/is not a PDF/);
+	});
+
+	test("an LCSC code or lcsc.com page resolves to the part's PDF through LCSC's product data", async () => {
+		const real = globalThis.fetch;
+		const asked: string[] = [];
+		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input);
+			asked.push(url);
+			if (url.startsWith("https://wmsc.lcsc.com/")) {
+				const code = new URL(url).searchParams.get("productCode");
+				const result =
+					code === "C9196"
+						? { productCode: code, productModel: "TPS54202DDCR", stockNumber: 5, productPriceList: [], pdfUrl: `${server.url}lcsc/ds.pdf?productCode=C9196` }
+						: null;
+				return new Response(JSON.stringify({ result }), { headers: { "content-type": "application/json" } });
+			}
+			if (new URL(url).hostname.endsWith("lcsc.com")) throw new Error(`unexpected request ${url}`);
+			return real(input, init);
+		}) as typeof fetch;
+		try {
+			const r = await readDatasheet(root, { url: "https://www.lcsc.com/datasheet/C9196.pdf" });
+			expect(r.text).toStartWith(`Datasheet https://www.lcsc.com/datasheet/C9196.pdf (LCSC C9196 TPS54202DDCR): ${server.url}lcsc/ds.pdf\n`);
+			expect(r.text.match(/^p\d+: /gm)?.length).toBe(pages);
+			const local = r.text.split("\n")[1]!;
+			expect((await readDatasheet(root, { url: "c9196", pages: "1" })).text).toContain(local);
+			expect(hits["/lcsc/ds.pdf"]).toBe(1);
+			expect(asked.filter(u => u.includes("www.lcsc.com"))).toEqual([]);
+			await expect(readDatasheet(root, { url: "C1" })).rejects.toThrow("LCSC C1: LCSC has no product C1");
+			await expect(readDatasheet(root, { url: `${server.url}login` })).rejects.toThrow(
+				/give its LCSC code as url, e\.g\. "C9196", or get its datasheet URL from kicad_query lcsc/,
+			);
+		} finally {
+			globalThis.fetch = real;
+		}
 	});
 });

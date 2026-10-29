@@ -2,13 +2,15 @@
  * Datasheets for kicad_datasheet: a PDF from a URL (downloaded once into the user cache, outside
  * the repo) or a local path, read with poppler from the dev shell: a page index, one page's text
  * and an image of the page or a region of it, the text of a page list, or the lines matching a
- * regex with their page numbers.
+ * regex with their page numbers. An LCSC code or lcsc.com datasheet/product page (HTML) resolves
+ * to the part's PDF through LCSC's product data on every call.
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as cli from "./cli";
+import { lcscCodeOf, lcscDatasheet } from "./queries/lcsc";
 
 export interface DatasheetRequest {
 	url: string;
@@ -66,7 +68,8 @@ async function localPdf(url: string, repoRoot: string, signal?: AbortSignal): Pr
 	if (!isPdf(data)) {
 		const start = Buffer.from(data.subarray(0, 60)).toString("latin1").replace(/\s+/g, " ");
 		throw new Error(
-			`${url}${res.url !== url ? ` (redirected to ${res.url})` : ""} is not a PDF (${res.headers.get("content-type") ?? "no content type"}, starts with ${JSON.stringify(start)}); find the direct PDF link`,
+			`${url}${res.url !== url ? ` (redirected to ${res.url})` : ""} is not a PDF (${res.headers.get("content-type") ?? "no content type"}, starts with ${JSON.stringify(start)}); ` +
+				'find the direct PDF link (for an LCSC part, give its LCSC code as url, e.g. "C9196", or get its datasheet URL from kicad_query lcsc)',
 		);
 	}
 	fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -144,11 +147,18 @@ export async function readDatasheet(repoRoot: string, req: DatasheetRequest, sig
 			throw new Error(`find is not a valid regex: ${(e as Error).message}`);
 		}
 	}
-	const file = await localPdf(req.url, repoRoot, signal);
+	// an LCSC code or lcsc.com page: the part's datasheet PDF from LCSC's product data
+	const code = lcscCodeOf(req.url);
+	const lcsc = code ? await lcscDatasheet(code, { signal }) : undefined;
+	const file = await localPdf(lcsc?.pdf ?? req.url, repoRoot, signal);
 	const info = await poppler(["pdfinfo", file], repoRoot, signal);
 	const pages = Number(infoField(info, "Pages") ?? "0");
 	const title = infoField(info, "Title");
-	const head = [`Datasheet ${req.url}`, `Local PDF: ${file} (${pages} pages)`, ...(title ? [`Title: ${title}`] : [])];
+	const head = [
+		`Datasheet ${req.url}${lcsc ? ` (LCSC ${code} ${lcsc.part.mpn}): ${lcsc.pdf}` : ""}`,
+		`Local PDF: ${file} (${pages} pages)`,
+		...(title ? [`Title: ${title}`] : []),
+	];
 
 	if (req.pages !== undefined || re) {
 		const list = req.pages !== undefined ? parsePages(req.pages, pages) : Array.from({ length: pages }, (_, i) => i + 1);

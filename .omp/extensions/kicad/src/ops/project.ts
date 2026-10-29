@@ -218,6 +218,32 @@ const removeBomPreset: OpDef = {
 
 // ---- design rules -------------------------------------------------------------------------------
 
+/**
+ * The `#` comment lines directly above the top-level list starting at `start`: where the first one
+ * starts and their text, one line each without the `#` and the space after it. A list that
+ * doesn't start its line has none.
+ */
+function commentAbove(src: string, start: number): { from: number; text: string } {
+	let from = src.lastIndexOf("\n", start - 1) + 1;
+	if (src.slice(from, start).trim()) return { from: start, text: "" };
+	const lines: string[] = [];
+	while (from > 0) {
+		const prev = src.lastIndexOf("\n", from - 2) + 1;
+		const m = /^\s*#[ \t]?(.*?)\s*$/.exec(src.slice(prev, from - 1));
+		if (!m) break;
+		lines.unshift(m[1]!);
+		from = prev;
+	}
+	return { from, text: lines.join("\n") };
+}
+
+/** The rules of a .kicad_dru text, each with the comment lines directly above it (see commentAbove); throws on syntax problems. */
+export function druRules(src: string): { node: List; comment?: string }[] {
+	const { items, problems } = scanDru(src);
+	if (problems.length) throw new Error(problems.join("; "));
+	return items.filter(it => head(it.node) === "rule").map(it => ({ node: it.node, comment: commentAbove(src, it.start).text || undefined }));
+}
+
 const setRule: OpDef = {
 	op: "set_rule",
 	group: "rules",
@@ -227,6 +253,10 @@ const setRule: OpDef = {
 			t: "string",
 			req: true,
 			doc: `one complete rule, e.g. (rule "USB spacing" (condition "A.NetClass == 'USB'") (constraint clearance (min 0.3mm)))`,
+		},
+		comment: {
+			t: "string",
+			doc: 'why the rule exists (one or more lines, each written as a "# " line directly above the rule). Replacing a rule: given replaces the comment lines above it ("" removes them), omitted keeps them',
 		},
 	},
 	apply(ctx, args) {
@@ -241,15 +271,33 @@ const setRule: OpDef = {
 		const problems = itemProblems(node);
 		if (problems.length) throw new Error(`rule: ${problems.join("; ")}`);
 		const name = text(node, 1)!;
+		const comment = args.comment as string | undefined;
+		const commentLines = (indent: string) =>
+			comment
+				? comment
+						.split(/\r?\n/)
+						.map(l => `${`${indent}# ${l}`.trimEnd()}\n`)
+						.join("")
+				: "";
 		const old = ctx.project.fileText(ctx.project.druFile);
 		if (old === undefined) {
-			ctx.project.setFile(ctx.project.druFile, `(version 1)\n\n${src}\n`);
+			ctx.project.setFile(ctx.project.druFile, `(version 1)\n\n${commentLines("")}${src}\n`);
 			ctx.notes.push(`created ${ctx.project.rel(ctx.project.druFile)} with rule "${name}"`);
 		} else {
 			const same = scanDru(old).items.filter(it => head(it.node) === "rule" && text(it.node, 1) === name);
 			if (same.length > 1) throw new Error(`${same.length} rules are named "${name}": remove_rule it first, then set_rule once`);
 			const hit = same[0];
-			ctx.project.setFile(ctx.project.druFile, hit ? old.slice(0, hit.start) + src + old.slice(hit.end) : `${old.trimEnd()}\n\n${src}\n`);
+			let out: string;
+			if (!hit) out = `${old.trimEnd()}\n\n${commentLines("")}${src}\n`;
+			else if (comment === undefined) out = old.slice(0, hit.start) + src + old.slice(hit.end);
+			else {
+				// replaces the old comment lines and the rule's indent; a rule not starting its line gets a line break first
+				const { from } = commentAbove(old, hit.start);
+				const indent = old.slice(old.lastIndexOf("\n", hit.start - 1) + 1, hit.start);
+				const lead = indent.trim() ? (comment ? `\n${commentLines("")}` : "") : commentLines(indent) + indent;
+				out = old.slice(0, from) + lead + src + old.slice(hit.end);
+			}
+			ctx.project.setFile(ctx.project.druFile, out);
 			ctx.notes.push(`rule "${name}" ${hit ? "replaced" : "added"}`);
 		}
 		const classes = new Set(netSettings(ctx.project).classes.map(c => c.name));
@@ -272,14 +320,8 @@ const removeRule: OpDef = {
 		if (hits.length === 0) throw new Error(`no rule "${name}"; rules: ${rules.map(it => text(it.node, 1)).join(", ") || "none"}`);
 		let src = old;
 		for (const it of hits.reverse()) {
-			let start = src.lastIndexOf("\n", it.start - 1) + 1;
-			for (;;) {
-				const prev = src.lastIndexOf("\n", start - 2) + 1;
-				if (start === 0 || !/^\s*#/.test(src.slice(prev, start))) break;
-				start = prev;
-			}
 			const nl = src.indexOf("\n", it.end);
-			const before = src.slice(0, start);
+			const before = src.slice(0, commentAbove(src, it.start).from);
 			let after = nl < 0 ? "" : src.slice(nl + 1);
 			if ((before.endsWith("\n\n") || before === "") && after.startsWith("\n")) after = after.slice(1);
 			src = before + after;

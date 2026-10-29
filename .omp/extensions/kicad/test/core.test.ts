@@ -247,6 +247,15 @@ describe("hook", () => {
 		expect(blocked("bash", { command: "cp /tmp/a.kicad_sch hardware/espion-cam/" })).toBe(true);
 		expect(blocked("bash", { command: "python3 fix.py hardware/espion-cam/mcu.kicad_sch" })).toBe(true);
 		expect(blocked("bash", { command: "bun test test/core.test.ts" })).toBe(false);
+		// quoted payloads that a shell runs still count
+		expect(blocked("bash", { command: "sh -c \"echo start; kicad-cli version\"" })).toBe(true);
+		expect(blocked("bash", { command: 'nix-shell --run "eeschema x"' })).toBe(true);
+		expect(blocked("bash", { command: "xargs 'kicad-cli' version" })).toBe(true);
+		expect(blocked("bash", { command: 'env FOO=1 timeout 10 "pcbnew"' })).toBe(true);
+		expect(blocked("bash", { command: 'eval "kicad-cli version"' })).toBe(true);
+		expect(blocked("bash", { command: 'echo "$(kicad-cli version)"' })).toBe(true);
+		expect(blocked("bash", { command: "find . -name x -exec eeschema {} \\;" })).toBe(true);
+		expect(blocked("bash", { command: "{ kicad-cli version; }" })).toBe(true);
 	});
 
 	test("paths and words that only name KiCad are not runs of a KiCad program", () => {
@@ -254,6 +263,13 @@ describe("hook", () => {
 		expect(blocked("bash", { command: "ls ~/.config/kicad ~/.local/share/kicad" })).toBe(false);
 		expect(blocked("bash", { command: "grep -rn kicad-cli .omp/extensions/kicad/src" })).toBe(false);
 		expect(blocked("bash", { command: 'git commit -m "kicad toolkit: fix the hook"' })).toBe(false);
+		expect(blocked("bash", { command: "pgrep -a -f 'kicad|eeschema'" })).toBe(false);
+		expect(blocked("bash", { command: 'ps aux | grep -E "kicad|eeschema"' })).toBe(false);
+		expect(blocked("bash", { command: "bash -lc \"pgrep -f 'kicad|eeschema'\"" })).toBe(false);
+		expect(blocked("bash", { command: "rg -c 'kicad' src; printf 'eeschema\\n'" })).toBe(false);
+		expect(blocked("bash", { command: "ls ${HOME}/kicad # not eeschema" })).toBe(false);
+		// stopping KiCad is not running it
+		expect(blocked("bash", { command: "pkill eeschema" })).toBe(false);
 	});
 
 	test("eval cells are not inspected", () => {
