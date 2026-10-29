@@ -9,7 +9,7 @@
     };
     # SolidCraft CAD; its MCP server (solidcraft-cli mcp) builds the 3D models in hardware/lib.
     solidcraft = {
-      url = "github:tangency-labs/solidcraft/v0.25.1";
+      url = "github:tangency-labs/solidcraft/v0.26.1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # KiCad library tooling (KLC check scripts in library_utils/klc-check, symbol and
