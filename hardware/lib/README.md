@@ -26,7 +26,9 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `3d-src/` | SolidCraft scripts the 3D models are built from |
 
 Each project registers them in its `sym-lib-table` / `fp-lib-table` with
-`${KIPRJMOD}`-relative paths, so the project opens on any machine. Edit them in KiCad;
+`${KIPRJMOD}`-relative paths, so the project opens on any machine, and a description
+ending in "(espion project library)" (the toolkit's `libraryDescriptionSuffix` in
+`.omp/kicad.json`; `lib_set_library` changes it). Edit them in KiCad;
 agents use the KiCad toolkit's library ops (`kicad_edit` `lib_*`, skill
 `kicad-library-part`), which build parts with the official KiCad generators and re-save
 them through KiCad.

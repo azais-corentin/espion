@@ -9,5 +9,5 @@
 	(lib (name "Converter_DCDC_SDAPO") (type "KiCad") (uri "${KIPRJMOD}/../lib/Converter_DCDC_SDAPO.pretty") (options "") (descr "SDAPO DC/DC and PoE PD modules (espion project library)"))
 	(lib (name "LED_SMD_Amicc") (type "KiCad") (uri "${KIPRJMOD}/../lib/LED_SMD_Amicc.pretty") (options "") (descr "Amicc SMD LEDs (espion project library)"))
 	(lib (name "Package_SON_TI") (type "KiCad") (uri "${KIPRJMOD}/../lib/Package_SON_TI.pretty") (options "") (descr "TI SON packages with TI land patterns (espion project library)"))
-	(lib (name "Package_DFN_QFN_TI") (type "KiCad") (uri "${KIPRJMOD}/../lib/Package_DFN_QFN_TI.pretty") (options "") (descr ""))
+	(lib (name "Package_DFN_QFN_TI") (type "KiCad") (uri "${KIPRJMOD}/../lib/Package_DFN_QFN_TI.pretty") (options "") (descr "TI DFN/QFN packages with TI land patterns (espion project library)"))
 )
