@@ -78,17 +78,31 @@ class Draw {
 	}
 
 	wire(...pts: [number, number][]): this {
+		return this.segs("wire", pts);
+	}
+
+	bus(...pts: [number, number][]): this {
+		return this.segs("bus", pts);
+	}
+
+	private segs(kind: "wire" | "bus", pts: [number, number][]): this {
 		for (let i = 1; i < pts.length; i++) {
 			const [a, b] = [pts[i - 1]!, pts[i]!];
 			this.sch.insert(
 				L(
-					"wire",
+					kind,
 					L("pts", L("xy", this.x(a[0]), this.y(a[1])), L("xy", this.x(b[0]), this.y(b[1]))),
 					L("stroke", L("width", 0), L("type", "default")),
 					L("uuid", str(newUuid())),
 				),
 			);
 		}
+		return this;
+	}
+
+	/** A wire-to-bus entry from (x, y) by (dx, dy). */
+	entry(x: number, y: number, dx: number, dy: number): this {
+		this.sch.insert(L("bus_entry", L("at", this.x(x), this.y(y)), L("size", dx, dy), L("stroke", L("width", 0), L("type", "default")), L("uuid", str(newUuid()))));
 		return this;
 	}
 
@@ -259,6 +273,30 @@ describe("style rules on synthetic sheets", () => {
 		const d = new Draw().sym("Device:R", "R1", 0, 0, 90).wire([3.81, 0], [12.7, 0]).label("B", 5.08, 0);
 		expect(keys(await d.findings())).toEqual(["style|wiring|dangling|T|net B"]);
 		expect(await d.block("Sub", "B", 12.7, 0).findings()).toEqual([]);
+	});
+
+	test("wiring: a bus entry joins a labelled wire to a bus without a junction; a bus T needs one", async () => {
+		// R1.2 → wire labelled A → entry from the bus at (15.24, 2.54) up-left to the wire end (12.7, 0)
+		const d = () =>
+			new Draw()
+				.sym("Device:R", "R1", 0, 0, 90)
+				.wire([3.81, 0], [12.7, 0])
+				.label("A", 6.35, 0)
+				.bus([15.24, -5.08], [15.24, 10.16])
+				.label("{X}", 15.24, -5.08, 90)
+				.entry(15.24, 2.54, -2.54, -2.54);
+		expect(await d().findings()).toEqual([]);
+		const onBus = [X + 15.24, Y + 2.54] as const;
+		const sch = d().sch;
+		expect(sch.junctionDegree(onBus)).toBe(3);
+		expect(sch.needsJunction(onBus)).toBe(false);
+		const tee = d().bus([15.24, 5.08], [25.4, 5.08]);
+		const fs = await tee.findings();
+		expect(fs.map(f => [f.key, f.severity])).toEqual([["style|wiring|missing_junction|T|bus net {X}", "error"]]);
+		expect(tee.sch.needsJunction([X + 15.24, Y + 5.08])).toBe(true);
+		expect(await tee.junction(15.24, 5.08).findings()).toEqual([]);
+		const unlabeled = new Draw().sym("Device:R", "R1", 0, 0, 90).wire([3.81, 0], [12.7, 0]).bus([15.24, -5.08], [15.24, 10.16]).entry(15.24, 2.54, -2.54, -2.54);
+		expect(keys(await unlabeled.findings())).toEqual(["style|wiring|unlabeled_bus_wire|T|wire at R1.2"]);
 	});
 
 	test("unknown rule names are rejected", async () => {

@@ -9,9 +9,10 @@ import { CHAR_W, TEXT_H } from "../analysis";
 import { placementRefs, refPrefix } from "../annotate";
 import * as cli from "../cli";
 import { type Box, bbox, key, onInterior, overlap, type Pt, pt, r3, type Seg, samePt, xform } from "../geom";
+import { druRules } from "../ops/project";
 import type { Project, SheetInst } from "../project";
 import { at, isHidden, type Label, propValue, type Sch } from "../sch";
-import { child, children, flag, head, isList, type List, num, parseMany, text } from "../sexpr";
+import { child, children, flag, head, isList, type List, num, text } from "../sexpr";
 import type { QueryDef } from "../types";
 
 // ---- shared helpers ----------------------------------------------------------------------------
@@ -159,7 +160,15 @@ const hierarchy: QueryDef = {
 
 const SYMBOL_COLUMNS = ["ref", "value", "lib_id", "footprint", "sheet", "at", "rot", "notes"];
 
-type SymRow = [ref: string, value: string, libId: string, footprint: string, sheet: string, at: Pt, rot: number, notes: string];
+type SymRow = [ref: string, value: string, libId: string, footprint: string, sheet: string, at: Pt, rot: number, notes: string, ...shown: string[]];
+
+/** A placed symbol's field by name (case-insensitive; Reference as on the sheet instance), undefined when it has none. */
+function fieldOf(sym: List, name: string, ref: string): string | undefined {
+	const n = name.toLowerCase();
+	if (n === "reference") return ref;
+	const p = children(sym, "property").find(q => text(q)?.toLowerCase() === n);
+	return p && (text(p, 2) ?? "");
+}
 
 /** Mirror, unit of a multi-unit part, and attributes that differ from a normal part. */
 function symNotes(sch: Sch, sym: List, mirror: string | undefined): string {
@@ -178,17 +187,33 @@ function symNotes(sch: Sch, sym: List, mirror: string | undefined): string {
 
 const symbols: QueryDef = {
 	what: "symbols",
-	doc: "Placed symbols, one row per unit sorted by reference, as columns ref, value, lib_id, footprint, sheet, at, rot, notes (mirror, unit of a multi-unit part, dnp, not_in_bom, not_on_board). Power symbols and PWR_FLAGs (#PWR, #FLG) are left out unless `power` is true or `ref` starts with #.",
+	doc:
+		"Placed symbols, one row per unit sorted by reference, as columns ref, value, lib_id, footprint, sheet, at, rot, notes (mirror, unit of a multi-unit part, dnp, not_in_bom, not_on_board), then one column per `show` field. Power symbols and PWR_FLAGs (#PWR, #FLG) are left out unless `power` is true or `ref` starts with #. " +
+		"Find parts by any field, e.g. every part with an LCSC number: fields {\"LCSC\": \"C25744\"}, show [\"MPN\", \"LCSC\"].",
 	fields: {
 		sheet: { t: "string", doc: "Only this sheet." },
 		ref: { t: "string", doc: "Reference pattern, e.g. \"R*\" or \"U1?\" (* and ?, case-insensitive)." },
 		value: { t: "string", doc: "Value pattern." },
 		lib_id: { t: "string", doc: "Library id pattern, e.g. \"Device:C*\"." },
+		fields: {
+			t: "object",
+			doc: "Field patterns {Name: pattern}, e.g. {\"LCSC\": \"C25744\", \"MPN\": \"RC0402*\"}: * and ?, case-insensitive (names too), all must match; a part without the field matches only \"\".",
+		},
+		show: { t: "strings", doc: "Fields to add as columns after notes, e.g. [\"MPN\", \"LCSC\"] (\"\" where a part has none)." },
 		power: { t: "boolean", doc: "Include power symbols and PWR_FLAGs." },
 		limit: { t: "integer", doc: "Most rows to return (default 100)." },
 	},
 	async run({ project }, args) {
 		const [refOk, valOk, libOk] = [matcher(args.ref), matcher(args.value), matcher(args.lib_id)];
+		const fieldOk = Object.entries((args.fields as Record<string, unknown> | undefined) ?? {}).map(([name, pattern]) => {
+			if (typeof pattern !== "string") throw new Error(`fields.${name} must be a pattern string, got ${JSON.stringify(pattern)}`);
+			const ok = matcher(pattern);
+			return (sym: List, ref: string) => {
+				const v = fieldOf(sym, name, ref);
+				return v === undefined ? pattern === "" : ok(v);
+			};
+		});
+		const show = (args.show as string[] | undefined) ?? [];
 		const withPower = args.power === true || (typeof args.ref === "string" && args.ref.startsWith("#"));
 		const rows: SymRow[] = [];
 		for (const inst of typeof args.sheet === "string" ? [project.sheet(args.sheet)] : project.hierarchy()) {
@@ -197,14 +222,24 @@ const symbols: QueryDef = {
 				const ref = sch.refOf(sym, inst.path);
 				const value = propValue(sym, "Value") ?? "";
 				const libId = sch.libId(sym);
-				if ((ref.startsWith("#") && !withPower) || !refOk(ref) || !valOk(value) || !libOk(libId)) continue;
+				if ((ref.startsWith("#") && !withPower) || !refOk(ref) || !valOk(value) || !libOk(libId) || !fieldOk.every(ok => ok(sym, ref))) continue;
 				const pose = sch.pose(sym);
-				rows.push([ref, value, libId, propValue(sym, "Footprint") ?? "", inst.name, [pose.x, pose.y], pose.rot, symNotes(sch, sym, pose.mirror)]);
+				rows.push([
+					ref,
+					value,
+					libId,
+					propValue(sym, "Footprint") ?? "",
+					inst.name,
+					[pose.x, pose.y],
+					pose.rot,
+					symNotes(sch, sym, pose.mirror),
+					...show.map(name => fieldOf(sym, name, ref) ?? ""),
+				]);
 			}
 		}
 		rows.sort((a, b) => refCmp(a[0], b[0]) || (a[7] < b[7] ? -1 : a[7] > b[7] ? 1 : 0));
 		const limit = limitArg(args.limit, 100);
-		return { total: rows.length, shown: Math.min(limit, rows.length), columns: SYMBOL_COLUMNS, rows: rows.slice(0, limit) };
+		return { total: rows.length, shown: Math.min(limit, rows.length), columns: [...SYMBOL_COLUMNS, ...show], rows: rows.slice(0, limit) };
 	},
 };
 
@@ -559,26 +594,20 @@ function words(l: List): string {
 
 const rules: QueryDef = {
 	what: "rules",
-	doc: "Custom design rules from the .kicad_dru: name, layer, condition, severity and constraints (one line each).",
+	doc: "Custom design rules from the .kicad_dru: name, comment (the # lines directly above it), layer, condition, severity and constraints (one line each).",
 	fields: {},
 	async run({ project }) {
 		if (!fs.existsSync(project.druFile)) return { file: null, rules: [] };
-		const src = fs
-			.readFileSync(project.druFile, "utf8")
-			.split("\n")
-			.filter(l => !l.trimStart().startsWith("#"))
-			.join("\n");
 		return {
 			file: project.rel(project.druFile),
-			rules: parseMany(src)
-				.filter(r => head(r) === "rule")
-				.map(r => ({
-					name: text(r) ?? "",
-					layer: text(child(r, "layer")),
-					condition: text(child(r, "condition")),
-					severity: text(child(r, "severity")),
-					constraints: children(r, "constraint").map(words),
-				})),
+			rules: druRules(fs.readFileSync(project.druFile, "utf8")).map(({ node: r, comment }) => ({
+				name: text(r) ?? "",
+				comment,
+				layer: text(child(r, "layer")),
+				condition: text(child(r, "condition")),
+				severity: text(child(r, "severity")),
+				constraints: children(r, "constraint").map(words),
+			})),
 		};
 	},
 };
@@ -616,7 +645,7 @@ function parseCsv(src: string): string[][] {
 
 const bom: QueryDef = {
 	what: "bom",
-	doc: "Bill of materials from `kicad-cli sch export bom` with a BOM preset (default: the project's first preset, else KiCad's default): header and rows.",
+	doc: "Bill of materials from `kicad-cli sch export bom` with a BOM preset (default: the project's first preset, else KiCad's default): header and rows. To find the parts with a given field value (LCSC, MPN), use `symbols` with `fields` and `show` instead.",
 	fields: { preset: { t: "string", doc: "BOM preset name from the project's schematic settings." } },
 	async run({ project, analysis }, args) {
 		const presets = records(record(project.proJson.data.schematic).bom_presets).map(p => String(p.name));

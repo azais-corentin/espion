@@ -1,6 +1,6 @@
 /**
- * Schematic edit ops: symbols and their fields, wires, labels, power symbols, junctions,
- * no-connects, text and annotation, on one sheet at a time.
+ * Schematic edit ops: symbols and their fields, wires, buses and bus entries, labels, power
+ * symbols, junctions, no-connects, text and annotation, on one sheet at a time.
  *
  * New items take the shape KiCad 10 writes (see the espion sheets); field placement follows the
  * kisch.py autoplace (Reference/Value stacked on a pin-free side, text horizontal on the sheet).
@@ -8,10 +8,10 @@
 import { CHAR_W } from "../analysis";
 import { nextRef, placementRefs, refPrefix } from "../annotate";
 import { dragWireEnds, gridPt, sheetArg } from "../edit-util";
-import { bbox, type Box, isOrthogonal, key, type Mirror, onInterior, type Pt, samePt, type Seg, touches, xform } from "../geom";
+import { bbox, type Box, isOrthogonal, key, type Mirror, onInterior, type Pt, pt, samePt, type Seg, touches, xform } from "../geom";
 import { describeLibSymbol } from "../libs";
 import type { FoundSymbol, SheetInst } from "../project";
-import { at, isHidden, type LabelKind, libGeom, newUuid, prop, propValue, type Sch } from "../sch";
+import { at, isHidden, type LabelKind, libGeom, newUuid, prop, propValue, type Sch, type Wire } from "../sch";
 import { child, children, clone, head, isList, L, type List, print, removeChild, setChild, str, text } from "../sexpr";
 import type { Field } from "../spec";
 import type { OpContext, OpDef } from "../types";
@@ -296,23 +296,28 @@ function junctionNode(p: Pt): List {
 	return L("junction", L("at", p[0], p[1]), L("diameter", 0), L("color", 0, 0, 0, 0), L("uuid", str(newUuid())));
 }
 
+/** The two drawing layers wiring lives on: KiCad's `wire` and `bus` items share one shape. */
+type Layer = "wire" | "bus";
+
 /**
- * kisch.py `auto_junctions`, limited to the points the new wires touch: a junction where 3+
- * connections meet (Sch.junctionDegree) on a new wire's end, or where a wire end or pin lands on
- * a new wire's interior.
+ * kisch.py `auto_junctions`, limited to the points the new segments of `layer` touch: a junction
+ * where KiCad needs one (Sch.needsJunction) on a new segment's end, or where a segment end, or on
+ * wires a pin, lands on a new segment's interior.
  */
-function autoJunctions(sch: Sch, added: readonly Seg[]): Pt[] {
+function autoJunctions(sch: Sch, added: readonly Seg[], layer: Layer = "wire"): Pt[] {
 	const c = sch.junctionContext();
 	const have = new Set(sch.points("junction").map(j => key(j.at)));
 	const cands = new Map<string, Pt>();
 	const onNew = (p: Pt) => added.some(s => onInterior(p, s));
 	for (const s of added) for (const p of [s.a, s.b]) cands.set(key(p), p);
-	for (const w of c.wires) for (const p of [w.a, w.b]) if (onNew(p)) cands.set(key(p), p);
-	for (const s of sch.symbols()) for (const p of sch.pins(s)) if (onNew(p.at)) cands.set(key(p.at), p.at);
-	for (const b of sch.sheets()) for (const p of b.pins) if (onNew(p.at)) cands.set(key(p.at), p.at);
+	for (const w of layer === "wire" ? c.wires : c.buses) for (const p of [w.a, w.b]) if (onNew(p)) cands.set(key(p), p);
+	if (layer === "wire") {
+		for (const s of sch.symbols()) for (const p of sch.pins(s)) if (onNew(p.at)) cands.set(key(p.at), p.at);
+		for (const b of sch.sheets()) for (const p of b.pins) if (onNew(p.at)) cands.set(key(p.at), p.at);
+	}
 	const out: Pt[] = [];
 	for (const [k, p] of cands) {
-		if (have.has(k) || sch.junctionDegree(p, c) < 3) continue;
+		if (have.has(k) || !sch.needsJunction(p, c)) continue;
 		sch.insert(junctionNode(p));
 		out.push(p);
 	}
@@ -344,27 +349,27 @@ function droppedNote(pts: readonly Pt[]): string {
 }
 
 /**
- * Pins, labels, sheet pins and wire ends on `seg` that connect to nothing any more (after an edit
- * removed wiring there), each with its position; references as on sheet instance `inst`. Points
- * with a no-connect flag are left out.
+ * Pins, labels, sheet pins, bus entries and segment ends of `layer` on `seg` that connect to
+ * nothing any more (after an edit removed wiring there), each with its position; references as
+ * on sheet instance `inst`. Points with a no-connect flag are left out.
  */
-function leftOpen(inst: SheetInst, seg: Seg): string[] {
-	const wires = inst.sch.wires();
+function leftOpen(inst: SheetInst, seg: Seg, layer: Layer = "wire"): string[] {
+	const segs = layer === "wire" ? inst.sch.wires() : inst.sch.buses();
 	const conn = inst.sch.connectionPoints(inst.path);
 	const pts = new Map<string, Pt>();
 	for (const k of conn.keys()) {
 		const p = k.split(",").map(Number) as [number, number];
 		if (touches(p, seg)) pts.set(k, p);
 	}
-	for (const w of wires) for (const e of [w.a, w.b]) if (touches(e, seg)) pts.set(key(e), e);
+	for (const w of segs) for (const e of [w.a, w.b]) if (touches(e, seg)) pts.set(key(e), e);
 	const out: string[] = [];
 	for (const [k, p] of pts) {
 		const items = conn.get(k) ?? [];
 		if (items.includes("no-connect")) continue;
 		const things = items.filter(x => x !== "junction");
-		const ends = wires.filter(w => samePt(w.a, p) || samePt(w.b, p)).length;
-		const through = wires.some(w => onInterior(p, w));
-		if (!through && things.length + ends === 1) out.push(`${things[0] ?? "wire end"} ${fmtPt(p)}`);
+		const ends = segs.filter(w => samePt(w.a, p) || samePt(w.b, p)).length;
+		const through = segs.some(w => onInterior(p, w));
+		if (!through && things.length + ends === 1) out.push(`${things[0] ?? `${layer} end`} ${fmtPt(p)}`);
 	}
 	return out;
 }
@@ -409,14 +414,18 @@ function labelNode(kind: LabelKind, name: string, p: Pt, rot: number, shape: str
 const setFields: OpDef = {
 	op: "set_fields",
 	group: "schematic",
-	doc: "Set, add or remove (null) fields on every unit of a symbol. New fields are hidden at the symbol origin unless listed in show; show/hide toggle visibility of any field.",
+	doc: "Set, add or remove (null) fields on every unit of a symbol, or the same fields on each of several symbols (refs). New fields are hidden at the symbol origin unless listed in show; show/hide toggle visibility of any field.",
 	fields: {
-		ref: REF,
+		ref: { t: "string", doc: "reference, e.g. \"R12\" (or refs)" },
+		refs: { t: "strings", doc: "several references getting the same fields, e.g. [\"R12\", \"R13\"] (instead of ref)" },
 		fields: { t: "object", req: true, doc: "{Name: value | null}; null removes the field (Reference: use rename_ref)" },
 		show: { t: "strings", doc: "fields to make visible (placed below the lowest visible field)" },
 		hide: { t: "strings", doc: "fields to hide" },
 	},
 	apply(ctx, args) {
+		if ((args.ref === undefined) === (args.refs === undefined)) throw new Error("give exactly one of ref and refs");
+		const refs = args.ref !== undefined ? [String(args.ref)] : [...new Set(args.refs as string[])];
+		if (!refs.length) throw new Error("refs: give at least one reference");
 		const fields = args.fields as Record<string, unknown>;
 		const show = (args.show as string[] | undefined) ?? [];
 		const hide = (args.hide as string[] | undefined) ?? [];
@@ -428,44 +437,51 @@ const setFields: OpDef = {
 			if (v === null && MANDATORY[name]) throw new Error(`${name} is a mandatory field; set it to "" instead of removing it`);
 			if (name === "Footprint" && typeof v === "string") checkFootprint(ctx, v);
 		}
-		for (const { sheet, sym } of units(ctx, args.ref)) {
-			const sch = sheet.sch;
-			const origin = at(sym).p;
-			for (const [name, v] of Object.entries(fields)) {
-				const p = prop(sym, name);
-				if (v === null) {
-					if (!p) throw new Error(`${args.ref} has no field ${name}`);
-					sym.splice(sym.indexOf(p), 1);
-				} else if (p) p[2] = str(v as string);
-				else sym.push(fieldNode(name, v as string, origin, true));
-			}
-			for (const name of [...show, ...hide]) {
-				if (!prop(sym, name)) throw new Error(`${args.ref} has no field ${name}; fields: ${children(sym, "property").map(p => text(p)).join(", ")}`);
-			}
-			for (const name of hide) setHidden(prop(sym, name)!, true);
-			for (const name of show) {
-				const p = prop(sym, name)!;
-				if (!isHidden(p)) continue;
-				const vis = children(sym, "property").filter(q => !isHidden(q));
-				setHidden(p, false);
-				if (!vis.length) {
-					autoplace(sch, sym, ctx.project.settings.grid);
-					continue;
-				}
-				const low = vis.reduce((a, b) => (at(b).p[1] > at(a).p[1] ? b : a));
-				const la = at(low);
-				setAt(p, la.p[0], la.p[1] + FIELD_PITCH, la.rot);
-				setJustify(p, justifyOf(low));
-			}
-			ctx.project.touch(sch);
-			ctx.touch(sheet, symBox(sch, sym));
-		}
+		const missing = refs.filter(r => !ctx.project.findUnits(r).length);
+		if (missing.length) throw new Error(`no symbol with reference ${missing.join(", ")}`);
+		for (const ref of refs) setFieldsOn(ctx, ref, fields, show, hide);
 		const what = Object.entries(fields).map(([k, v]) => (v === null ? `-${k}` : `${k}=${JSON.stringify(v)}`));
 		if (show.length) what.push(`shown ${show.join(", ")}`);
 		if (hide.length) what.push(`hidden ${hide.join(", ")}`);
-		ctx.notes.push(`${args.ref}: ${what.join(", ")}`);
+		ctx.notes.push(`${refs.join(", ")}: ${what.join(", ")}`);
 	},
 };
+
+/** set_fields on every unit of one symbol. */
+function setFieldsOn(ctx: OpContext, ref: string, fields: Record<string, unknown>, show: string[], hide: string[]): void {
+	for (const { sheet, sym } of units(ctx, ref)) {
+		const sch = sheet.sch;
+		const origin = at(sym).p;
+		for (const [name, v] of Object.entries(fields)) {
+			const p = prop(sym, name);
+			if (v === null) {
+				if (!p) throw new Error(`${ref} has no field ${name}`);
+				sym.splice(sym.indexOf(p), 1);
+			} else if (p) p[2] = str(v as string);
+			else sym.push(fieldNode(name, v as string, origin, true));
+		}
+		for (const name of [...show, ...hide]) {
+			if (!prop(sym, name)) throw new Error(`${ref} has no field ${name}; fields: ${children(sym, "property").map(p => text(p)).join(", ")}`);
+		}
+		for (const name of hide) setHidden(prop(sym, name)!, true);
+		for (const name of show) {
+			const p = prop(sym, name)!;
+			if (!isHidden(p)) continue;
+			const vis = children(sym, "property").filter(q => !isHidden(q));
+			setHidden(p, false);
+			if (!vis.length) {
+				autoplace(sch, sym, ctx.project.settings.grid);
+				continue;
+			}
+			const low = vis.reduce((a, b) => (at(b).p[1] > at(a).p[1] ? b : a));
+			const la = at(low);
+			setAt(p, la.p[0], la.p[1] + FIELD_PITCH, la.rot);
+			setJustify(p, justifyOf(low));
+		}
+		ctx.project.touch(sch);
+		ctx.touch(sheet, symBox(sch, sym));
+	}
+}
 
 const renameRef: OpDef = {
 	op: "rename_ref",
@@ -865,105 +881,184 @@ const moveSymbol: OpDef = {
 	},
 };
 
-const addWire: OpDef = {
-	op: "add_wire",
+/** add_wire / add_bus: KiCad 10 writes both as `(pts (xy …) (xy …)) (stroke (width 0) (type default)) (uuid …)`. */
+function drawOp(layer: Layer): OpDef {
+	return {
+		op: `add_${layer}`,
+		group: "schematic",
+		doc:
+			layer === "wire"
+				? "Draw a wire through grid points (orthogonal segments only). Adds junctions where a new wire end lands on another wire's interior or the new wire passes over a wire end or pin (none where a bus entry ends: KiCad joins those without a dot)."
+				: "Draw a bus through grid points (orthogonal segments only), e.g. a branch off an existing `{IMU}` bus. A bus carries the members its bus label (add_label \"{IMU}\"), hierarchical label or sheet pin names; wires join it only through add_bus_entry. Adds junctions where a new bus end lands on another bus's interior or the new bus passes over a bus end.",
+		fields: {
+			sheet: SHEET,
+			points: { t: "points", req: true, doc: "polyline corners [[x,y],…] in mm, on the connection grid" },
+			junctions: { t: "boolean", doc: `add the junctions the new ${layer} needs (default true)` },
+		},
+		apply(ctx, args) {
+			const inst = sheetArg(ctx, args.sheet);
+			const sch = inst.sch;
+			const pts = (args.points as unknown[]).map((v, i) => gridPt(ctx, v, `points[${i}]`));
+			const segs: { a: Pt; b: Pt }[] = [];
+			for (let i = 0; i + 1 < pts.length; i++) {
+				const a = pts[i]!;
+				const b = pts[i + 1]!;
+				if (samePt(a, b)) throw new Error(`points[${i}] and points[${i + 1}] are the same point ${fmtPt(a)}`);
+				if (!isOrthogonal({ a, b })) {
+					throw new Error(`segment ${i} ${fmtPt(a)}-${fmtPt(b)} is diagonal; add a corner point such as ${fmtPt([b[0], a[1]])}`);
+				}
+				segs.push({ a, b });
+			}
+			for (const s of segs) {
+				sch.insert(
+					L(layer, L("pts", L("xy", s.a[0], s.a[1]), L("xy", s.b[0], s.b[1])), L("stroke", L("width", 0), L("type", "default")), L("uuid", str(newUuid()))),
+				);
+			}
+			const js = args.junctions === false ? [] : autoJunctions(sch, segs, layer);
+			ctx.project.touch(sch);
+			ctx.touch(inst, bbox(pts));
+			ctx.notes.push(`${layer} ${pts.map(fmtPt).join("-")} on ${inst.name}${js.length ? `; junctions at ${js.map(fmtPt).join(", ")}` : ""}`);
+		},
+	};
+}
+
+function removeSegOp(layer: Layer): OpDef {
+	const plural = layer === "wire" ? "wires" : "buses";
+	return {
+		op: `remove_${layer}`,
+		group: "schematic",
+		doc:
+			`Delete a stretch of ${layer}: the whole segment containing \`at\`, or from \`from\` to \`to\` — two points on one segment, its ends or any grid points inside it (the rest of the segment stays as new ${plural}). ` +
+			`Junctions left joining fewer than 3 connections go too; the note names ${layer === "wire" ? "pins, labels" : "labels, sheet pins, bus entries"} and ${layer} ends left unconnected.`,
+		fields: {
+			sheet: SHEET,
+			at: { t: "point", doc: "a point on the segment (must identify exactly one); removes the whole segment" },
+			from: { t: "point", doc: "one end of the stretch to remove (with to), on the segment" },
+			to: { t: "point", doc: "the other end of the stretch (with from), on the same segment" },
+		},
+		apply(ctx, args) {
+			const inst = sheetArg(ctx, args.sheet);
+			const sch = inst.sch;
+			const segs = layer === "wire" ? sch.wires() : sch.buses();
+			const show = (ws: Wire[]) => ws.map(w => `${fmtPt(w.a)}-${fmtPt(w.b)}`).join(", ") || "none";
+			let hit: Wire;
+			let cut: Seg;
+			if (args.at !== undefined) {
+				if (args.from !== undefined || args.to !== undefined) throw new Error("give either at, or from and to");
+				const p = gridPt(ctx, args.at, "at");
+				const hits = segs.filter(w => touches(p, w));
+				if (!hits.length) throw new Error(`no ${layer} at ${fmtPt(p)} on ${inst.name}`);
+				if (hits.length > 1) throw new Error(`${hits.length} ${plural} meet at ${fmtPt(p)}: ${show(hits)}; pick one with from/to or a point inside it`);
+				hit = hits[0]!;
+				cut = hit;
+			} else {
+				if (args.from === undefined || args.to === undefined) throw new Error("give either at, or from and to");
+				const a = gridPt(ctx, args.from, "from");
+				const b = gridPt(ctx, args.to, "to");
+				if (samePt(a, b)) throw new Error(`from and to are the same point ${fmtPt(a)}`);
+				const exact = segs.find(w => (samePt(w.a, a) && samePt(w.b, b)) || (samePt(w.a, b) && samePt(w.b, a)));
+				const hits = exact ? [exact] : segs.filter(w => touches(a, w) && touches(b, w));
+				if (!hits.length) {
+					throw new Error(
+						`${fmtPt(a)} and ${fmtPt(b)} don't lie on one ${layer} segment on ${inst.name}; ${plural} at from: ${show(segs.filter(w => touches(a, w)))}; ` +
+							`${plural} at to: ${show(segs.filter(w => touches(b, w)))}`,
+					);
+				}
+				if (hits.length > 1) throw new Error(`${hits.length} overlapping ${plural} contain ${fmtPt(a)}-${fmtPt(b)}: ${show(hits)}; remove them by their ends`);
+				hit = hits[0]!;
+				cut = { a, b };
+			}
+			// what stays of the segment: hit.a up to the nearer cut point, the farther one up to hit.b
+			const dist = (p: Pt) => Math.abs(p[0] - hit.a[0]) + Math.abs(p[1] - hit.a[1]);
+			const [near, far] = dist(cut.a) <= dist(cut.b) ? [cut.a, cut.b] : [cut.b, cut.a];
+			const rest: Seg[] = [];
+			if (!samePt(hit.a, near)) rest.push({ a: hit.a, b: near });
+			if (!samePt(far, hit.b)) rest.push({ a: far, b: hit.b });
+			const nodes = rest.map(r => {
+				const n = clone(hit.node);
+				setChild(n, L("pts", L("xy", r.a[0], r.a[1]), L("xy", r.b[0], r.b[1])));
+				setChild(n, L("uuid", str(newUuid())));
+				return n;
+			});
+			sch.tree.splice(sch.tree.indexOf(hit.node), 1, ...nodes);
+			const dropped = dropStaleJunctions(sch, [hit]);
+			const open = leftOpen(inst, cut, layer);
+			ctx.project.touch(sch);
+			ctx.touch(inst, bbox([hit.a, hit.b]));
+			const notes = [
+				rest.length
+					? `removed ${fmtPt(near)}-${fmtPt(far)} of ${layer} ${fmtPt(hit.a)}-${fmtPt(hit.b)} on ${inst.name}, keeping ${rest.map(r => `${fmtPt(r.a)}-${fmtPt(r.b)}`).join(" and ")}`
+					: `removed ${layer} ${fmtPt(hit.a)}-${fmtPt(hit.b)} on ${inst.name}`,
+			];
+			if (open.length) notes.push(`left unconnected: ${open.join(", ")}`);
+			if (dropped.length) notes.push(droppedNote(dropped));
+			ctx.notes.push(notes.join("; "));
+		},
+	};
+}
+
+/** KiCad's wire-to-bus entry: one 2.54 mm grid step diagonally. */
+const ENTRY_STEP = 2.54;
+
+/** A bus entry's bus-side end (the one on a bus; `a` when neither or both are) and wire-side end. */
+function entrySides(sch: Sch, e: Seg): { bus: Pt; wire: Pt } {
+	const buses = sch.buses();
+	const onBus = (p: Pt) => buses.some(s => touches(p, s));
+	return onBus(e.b) && !onBus(e.a) ? { bus: e.b, wire: e.a } : { bus: e.a, wire: e.b };
+}
+
+const addBusEntry: OpDef = {
+	op: "add_bus_entry",
 	group: "schematic",
-	doc: "Draw a wire through grid points (orthogonal segments only). Adds junctions where a new wire end lands on another wire's interior or the new wire passes over a wire end or pin.",
+	doc:
+		"Add a wire-to-bus entry: a 2.54 mm diagonal from a point on a bus to the wire side. Then draw a wire from the wire side and put a local label naming the bus member on it (e.g. IMU_SDA for a `{IMU}` bus); the entry joins the bus without a junction.",
 	fields: {
 		sheet: SHEET,
-		points: { t: "points", req: true, doc: "polyline corners [[x,y],…] in mm, on the connection grid" },
-		junctions: { t: "boolean", doc: "add the junctions the new wire needs (default true)" },
+		at: { ...AT, doc: "the bus-side end in mm: a point on a bus (end or middle), on the connection grid" },
+		dir: { t: "string", req: true, values: ["UR", "DR", "UL", "DL"], doc: "where the wire-side end lies from at: up/down and left/right (\"UR\": 2.54 mm up and right)" },
 	},
 	apply(ctx, args) {
 		const inst = sheetArg(ctx, args.sheet);
 		const sch = inst.sch;
-		const pts = (args.points as unknown[]).map((v, i) => gridPt(ctx, v, `points[${i}]`));
-		const segs: { a: Pt; b: Pt }[] = [];
-		for (let i = 0; i + 1 < pts.length; i++) {
-			const a = pts[i]!;
-			const b = pts[i + 1]!;
-			if (samePt(a, b)) throw new Error(`points[${i}] and points[${i + 1}] are the same point ${fmtPt(a)}`);
-			if (!isOrthogonal({ a, b })) {
-				throw new Error(`segment ${i} ${fmtPt(a)}-${fmtPt(b)} is diagonal; add a corner point such as ${fmtPt([b[0], a[1]])}`);
-			}
-			segs.push({ a, b });
-		}
-		for (const s of segs) {
-			sch.insert(
-				L("wire", L("pts", L("xy", s.a[0], s.a[1]), L("xy", s.b[0], s.b[1])), L("stroke", L("width", 0), L("type", "default")), L("uuid", str(newUuid()))),
-			);
-		}
-		const js = args.junctions === false ? [] : autoJunctions(sch, segs);
+		const p = gridPt(ctx, args.at, "at");
+		const dir = String(args.dir);
+		const size: Pt = [dir[1] === "R" ? ENTRY_STEP : -ENTRY_STEP, dir[0] === "D" ? ENTRY_STEP : -ENTRY_STEP];
+		const end = pt(p[0] + size[0], p[1] + size[1]);
+		if (!sch.buses().some(s => touches(p, s))) throw new Error(`no bus at ${fmtPt(p)} on ${inst.name}; at is the entry's bus-side end, on a bus`);
+		const dup = sch.busEntries().find(e => (samePt(e.a, p) && samePt(e.b, end)) || (samePt(e.a, end) && samePt(e.b, p)));
+		if (dup) throw new Error(`there is already a bus entry ${fmtPt(p)}-${fmtPt(end)} on ${inst.name}`);
+		// (at) is the bus side and (size) the step to the wire side, as KiCad's "unfold from bus" places it
+		sch.insert(L("bus_entry", L("at", p[0], p[1]), L("size", size[0], size[1]), L("stroke", L("width", 0), L("type", "default")), L("uuid", str(newUuid()))));
 		ctx.project.touch(sch);
-		ctx.touch(inst, bbox(pts));
-		ctx.notes.push(`wire ${pts.map(fmtPt).join("-")} on ${inst.name}${js.length ? `; junctions at ${js.map(fmtPt).join(", ")}` : ""}`);
+		ctx.touch(inst, bbox([p, end]));
+		const notes = [`bus entry on ${inst.name}: bus side ${fmtPt(p)}, wire side ${fmtPt(end)}`];
+		if (!sch.wires().some(w => touches(end, w))) notes.push(`no wire at ${fmtPt(end)} yet: draw one from there and label it with the bus member's name`);
+		ctx.notes.push(notes.join("; "));
 	},
 };
 
-const removeWire: OpDef = {
-	op: "remove_wire",
+const removeBusEntry: OpDef = {
+	op: "remove_bus_entry",
 	group: "schematic",
-	doc: "Delete a stretch of wire: the whole segment containing `at`, or from `from` to `to` — two points on one segment, its ends or any grid points inside it (the rest of the segment stays as new wires). Junctions left joining fewer than 3 connections go too; the note names pins, labels and wire ends left unconnected.",
-	fields: {
-		sheet: SHEET,
-		at: { t: "point", doc: "a point on the segment (must identify exactly one); removes the whole segment" },
-		from: { t: "point", doc: "one end of the stretch to remove (with to), on the segment" },
-		to: { t: "point", doc: "the other end of the stretch (with from), on the same segment" },
-	},
+	doc: "Delete the bus entry with an end at `at`. Junctions left joining fewer than 3 connections go too; the note names the entry's two ends and what is left unconnected there.",
+	fields: { sheet: SHEET, at: { ...AT, doc: "either end of the entry (bus side or wire side), in mm" } },
 	apply(ctx, args) {
 		const inst = sheetArg(ctx, args.sheet);
 		const sch = inst.sch;
-		const wires = sch.wires();
-		const show = (ws: typeof wires) => ws.map(w => `${fmtPt(w.a)}-${fmtPt(w.b)}`).join(", ") || "none";
-		let hit: (typeof wires)[number];
-		let cut: Seg;
-		if (args.at !== undefined) {
-			if (args.from !== undefined || args.to !== undefined) throw new Error("give either at, or from and to");
-			const p = gridPt(ctx, args.at, "at");
-			const hits = wires.filter(w => touches(p, w));
-			if (!hits.length) throw new Error(`no wire at ${fmtPt(p)} on ${inst.name}`);
-			if (hits.length > 1) throw new Error(`${hits.length} wires meet at ${fmtPt(p)}: ${show(hits)}; pick one with from/to or a point inside it`);
-			hit = hits[0]!;
-			cut = hit;
-		} else {
-			if (args.from === undefined || args.to === undefined) throw new Error("give either at, or from and to");
-			const a = gridPt(ctx, args.from, "from");
-			const b = gridPt(ctx, args.to, "to");
-			if (samePt(a, b)) throw new Error(`from and to are the same point ${fmtPt(a)}`);
-			const exact = wires.find(w => (samePt(w.a, a) && samePt(w.b, b)) || (samePt(w.a, b) && samePt(w.b, a)));
-			const hits = exact ? [exact] : wires.filter(w => touches(a, w) && touches(b, w));
-			if (!hits.length) {
-				throw new Error(
-					`${fmtPt(a)} and ${fmtPt(b)} don't lie on one wire segment on ${inst.name}; wires at from: ${show(wires.filter(w => touches(a, w)))}; ` +
-						`wires at to: ${show(wires.filter(w => touches(b, w)))}`,
-				);
-			}
-			if (hits.length > 1) throw new Error(`${hits.length} overlapping wires contain ${fmtPt(a)}-${fmtPt(b)}: ${show(hits)}; remove them by their ends`);
-			hit = hits[0]!;
-			cut = { a, b };
+		const p = gridPt(ctx, args.at, "at");
+		const hits = sch.busEntries().filter(e => samePt(e.a, p) || samePt(e.b, p));
+		if (!hits.length) throw new Error(`no bus entry ends at ${fmtPt(p)} on ${inst.name}`);
+		if (hits.length > 1) {
+			throw new Error(`${hits.length} bus entries end at ${fmtPt(p)}: ${hits.map(e => `${fmtPt(e.a)}-${fmtPt(e.b)}`).join(", ")}; give the other end of the one to remove`);
 		}
-		// what stays of the segment: hit.a up to the nearer cut point, the farther one up to hit.b
-		const dist = (p: Pt) => Math.abs(p[0] - hit.a[0]) + Math.abs(p[1] - hit.a[1]);
-		const [near, far] = dist(cut.a) <= dist(cut.b) ? [cut.a, cut.b] : [cut.b, cut.a];
-		const rest: Seg[] = [];
-		if (!samePt(hit.a, near)) rest.push({ a: hit.a, b: near });
-		if (!samePt(far, hit.b)) rest.push({ a: far, b: hit.b });
-		const nodes = rest.map(r => {
-			const n = clone(hit.node);
-			setChild(n, L("pts", L("xy", r.a[0], r.a[1]), L("xy", r.b[0], r.b[1])));
-			setChild(n, L("uuid", str(newUuid())));
-			return n;
-		});
-		sch.tree.splice(sch.tree.indexOf(hit.node), 1, ...nodes);
-		const dropped = dropStaleJunctions(sch, [hit]);
-		const open = leftOpen(inst, cut);
+		const e = hits[0]!;
+		const side = entrySides(sch, e);
+		sch.remove(e.node);
+		const dropped = dropStaleJunctions(sch, [], [e.a, e.b]);
+		const open = [...leftOpen(inst, { a: side.wire, b: side.wire }, "wire"), ...leftOpen(inst, { a: side.bus, b: side.bus }, "bus")];
 		ctx.project.touch(sch);
-		ctx.touch(inst, bbox([hit.a, hit.b]));
-		const notes = [
-			rest.length
-				? `removed ${fmtPt(near)}-${fmtPt(far)} of wire ${fmtPt(hit.a)}-${fmtPt(hit.b)} on ${inst.name}, keeping ${rest.map(r => `${fmtPt(r.a)}-${fmtPt(r.b)}`).join(" and ")}`
-				: `removed wire ${fmtPt(hit.a)}-${fmtPt(hit.b)} on ${inst.name}`,
-		];
+		ctx.touch(inst, bbox([e.a, e.b]));
+		const notes = [`removed bus entry on ${inst.name}: bus side ${fmtPt(side.bus)}, wire side ${fmtPt(side.wire)}`];
 		if (open.length) notes.push(`left unconnected: ${open.join(", ")}`);
 		if (dropped.length) notes.push(droppedNote(dropped));
 		ctx.notes.push(notes.join("; "));
@@ -1258,8 +1353,12 @@ export const ops: OpDef[] = [
 	removeSymbol,
 	changeSymbol,
 	moveSymbol,
-	addWire,
-	removeWire,
+	drawOp("wire"),
+	removeSegOp("wire"),
+	drawOp("bus"),
+	removeSegOp("bus"),
+	addBusEntry,
+	removeBusEntry,
 	addLabel,
 	removeLabel,
 	renameNet,

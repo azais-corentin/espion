@@ -69,6 +69,28 @@ describe("project queries", () => {
 		expect(byLib.rows.map((r: string[]) => r[0])).toContain("D4");
 	});
 
+	test("symbols filter on any field and add fields as columns", async () => {
+		const base = ["ref", "value", "lib_id", "footprint", "sheet", "at", "rot", "notes"];
+		const lcsc = await q("symbols", { fields: { LCSC: "C25744" }, show: ["MPN", "LCSC"] });
+		expect(lcsc.columns).toEqual([...base, "MPN", "LCSC"]);
+		expect(lcsc.total).toBe(12);
+		expect(lcsc.rows.map((r: string[]) => r[0])).toContain("R1");
+		for (const r of lcsc.rows) expect(r.slice(8)).toEqual(["0402WGF1002TCE", "C25744"]);
+		// names and values case-insensitive, wildcards, every filter must match
+		const both = await q("symbols", { fields: { lcsc: "c2574?", mpn: "*1002*" } });
+		expect(both.rows.map((r: string[]) => r[0])).toEqual(lcsc.rows.map((r: string[]) => r[0]));
+		expect(both.columns).toEqual(base);
+		expect((await q("symbols", { fields: { LCSC: "C25744", Value: "1k" } })).total).toBe(0);
+		// a part without the field matches only ""
+		const all = await q("symbols", { limit: 1000 });
+		expect((await q("symbols", { fields: { NoSuchField: "*" } })).total).toBe(0);
+		expect((await q("symbols", { fields: { NoSuchField: "" }, limit: 1000 })).total).toBe(all.total);
+		// shown fields a part lacks are ""; Reference is the instance's
+		const r1 = await q("symbols", { ref: "R1", show: ["NoSuchField", "Reference"] });
+		expect(r1.rows[0].slice(8)).toEqual(["", "R1"]);
+		await expect(q("symbols", { fields: { LCSC: 1 } })).rejects.toThrow(/must be a pattern string/);
+	});
+
 	test("wires lists a region's segments with what sits at their ends and on their middle", async () => {
 		const box: Box = [165, 50, 200, 80];
 		const res = await q("wires", { sheet: "Power", box });

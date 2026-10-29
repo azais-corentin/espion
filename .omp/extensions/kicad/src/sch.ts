@@ -468,12 +468,20 @@ export class Sch {
 	/**
 	 * Connections a junction at p joins, per layer (wires with pins, buses with bus entries; the
 	 * larger counts): each segment end and pin once, a segment passing through twice. Below 3 the
-	 * junction is redundant. The edit ops add and drop junctions by this count, and the style
-	 * check reports junctions below it.
+	 * junction is redundant. The edit ops drop junctions and the style check reports them below
+	 * this count; see `needsJunction` for where the ops add one.
 	 */
 	junctionDegree(p: Pt, c: JunctionContext = this.junctionContext()): number {
 		const k = key(p);
 		const along = (segs: readonly Seg[]) => segs.reduce((n, s) => n + (samePt(s.a, p) || samePt(s.b, p) ? 1 : onInterior(p, s) ? 2 : 0), 0);
 		return Math.max((c.pins.get(k) ?? 0) + along(c.wires), (c.entries.get(k) ?? 0) + along(c.buses));
+	}
+
+	/**
+	 * KiCad's IsExplicitJunctionNeeded: 3+ connections meet at p (junctionDegree) and no bus entry
+	 * ends there (a bus entry joins the wire or bus it ends on without a dot).
+	 */
+	needsJunction(p: Pt, c: JunctionContext = this.junctionContext()): boolean {
+		return !c.entries.has(key(p)) && this.junctionDegree(p, c) >= 3;
 	}
 }

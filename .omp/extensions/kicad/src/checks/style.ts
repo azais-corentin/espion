@@ -100,7 +100,7 @@ export const checks: CheckDef[] = [
 			"Drawing rules per sheet (those listed in style.rules of .omp/kicad.json): pin_stub (every wired pin leaves on ≥ 1.27 mm of straight wire, no connection inside it), " +
 			"power (upright power symbols, straight or L-shaped 1.27 mm off a single pin), underline (a horizontal local label sits on a wire running under its whole text), " +
 			"overlap (bodies, pins, visible fields of different symbols), off_grid (connection points on the grid), frame (inside the border, off the title block) and " +
-			"wiring (pins on wire interiors, missing junctions, pin collisions, no-connects on wired pins, bus entries and labels; dangling ends, wires over bodies and redundant junctions — joining fewer than 3 connections — as warnings).",
+			"wiring (pins on wire interiors, missing junctions on wires and buses, pin collisions, no-connects on wired pins, bus entries and labels; dangling ends, wires over bodies and redundant junctions — joining fewer than 3 connections — as warnings).",
 		byDefault: true,
 		run: ctx => styleFindings(ctx.analysis, ctx.sheets ?? ctx.project.hierarchy()),
 	},
@@ -555,6 +555,12 @@ function wiring(g: Geo): Finding[] {
 			const subj = subject(g, at, g.wires);
 			add("missing_junction", subj, `a wire ends on the middle of another wire without a junction (${subj})`, at);
 		}
+	}
+	const busTees = new Map<string, Pt>();
+	for (const s of g.buses) for (const p of [s.a, s.b]) if (!g.junctions.has(key(p)) && g.buses.some(b => onInterior(p, b))) busTees.set(key(p), p);
+	for (const p of busTees.values()) {
+		const subj = `bus ${subject(g, p, g.buses)}`;
+		add("missing_junction", subj, `a bus ends on the middle of another bus without a junction (${subj})`, p);
 	}
 
 	const jc = g.sch.junctionContext();

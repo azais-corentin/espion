@@ -11,6 +11,7 @@ import { OPS } from "../src/registry";
 import { propValue } from "../src/sch";
 import { child, children, print, text } from "../src/sexpr";
 import { validate } from "../src/spec";
+import { runEdit } from "../src/txn";
 import type { OpContext } from "../src/types";
 import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
 
@@ -303,6 +304,69 @@ describe("schematic ops in memory", () => {
 		}
 	});
 
+	test("set_fields with refs sets the same fields on each part; missing refs fail, naming them", async () => {
+		const ctx = await context(root);
+		const lcsc = (ref: string) => propValue(ctx.project.findSymbol(ref).sym, "LCSC");
+		await apply(ctx, "set_fields", { refs: ["R1", "R2"], fields: { LCSC: "C99", Note: "x" } });
+		expect([lcsc("R1"), lcsc("R2")]).toEqual(["C99", "C99"]);
+		expect(propValue(ctx.project.findSymbol("R2").sym, "Note")).toBe("x");
+		expect(ctx.notes.at(-1)).toBe('R1, R2: LCSC="C99", Note="x"');
+		await expect(apply(ctx, "set_fields", { refs: ["R1", "R999", "R998"], fields: { LCSC: "C1" } })).rejects.toThrow("no symbol with reference R999, R998");
+		expect(lcsc("R1")).toBe("C99");
+		await expect(apply(ctx, "set_fields", { ref: "R1", refs: ["R2"], fields: { LCSC: "C1" } })).rejects.toThrow(/exactly one of ref and refs/);
+		await expect(apply(ctx, "set_fields", { fields: { LCSC: "C1" } })).rejects.toThrow(/exactly one of ref and refs/);
+	});
+
+	test("add_bus puts a junction on a bus T; add_bus_entry needs a bus and adds none; remove_bus_entry names both ends", async () => {
+		// the root's {IMU} bus runs down x = 187.96 from (187.96, 106.68) to (187.96, 144.78)
+		const ctx = await context(root);
+		const sch = ctx.project.sheet("root").sch;
+		const hasJunction = (p: Pt) => sch.points("junction").some(j => samePt(j.at, p));
+		const [old] = sch.buses();
+		await apply(ctx, "add_bus", { sheet: "root", points: [[187.96, 127], [177.8, 127]] });
+		expect(ctx.notes.at(-1)).toBe("bus (187.96, 127)-(177.8, 127) on root; junctions at (187.96, 127)");
+		expect(hasJunction([187.96, 127])).toBe(true);
+		const added = sch.buses().find(b => samePt(b.a, [187.96, 127]))!;
+		const heads = (n: typeof added.node) => n.slice(1).map(x => (Array.isArray(x) ? x[0] : x));
+		expect(heads(added.node)).toEqual(heads(old!.node));
+
+		await expect(apply(ctx, "add_bus_entry", { sheet: "root", at: [170.18, 127], dir: "DL" })).rejects.toThrow(/no bus at \(170\.18, 127\)/);
+		await apply(ctx, "add_bus_entry", { sheet: "root", at: [180.34, 127], dir: "DL" });
+		expect(ctx.notes.at(-1)).toStartWith("bus entry on root: bus side (180.34, 127), wire side (177.8, 129.54); no wire at (177.8, 129.54) yet");
+		const entry = sch.busEntries().find(e => samePt(e.a, [180.34, 127]))!;
+		expect(entry.b).toEqual([177.8, 129.54]);
+		expect(print(child(entry.node, "size")!)).toBe("(size -2.54 2.54)");
+		expect(hasJunction([180.34, 127])).toBe(false);
+		expect(sch.junctionDegree([180.34, 127])).toBe(3);
+		await expect(apply(ctx, "add_bus_entry", { sheet: "root", at: [180.34, 127], dir: "DL" })).rejects.toThrow(/already a bus entry/);
+		await apply(ctx, "remove_bus_entry", { sheet: "root", at: [177.8, 129.54] });
+		expect(ctx.notes.at(-1)).toBe("removed bus entry on root: bus side (180.34, 127), wire side (177.8, 129.54)");
+		expect(sch.busEntries().some(e => samePt(e.a, [180.34, 127]))).toBe(false);
+
+		// an existing entry on the IMU sheet, by its wire side: its wire is left hanging
+		await apply(ctx, "remove_bus_entry", { sheet: "IMU", at: [121.92, 104.14] });
+		expect(ctx.notes.at(-1)).toBe("removed bus entry on IMU: bus side (119.38, 106.68), wire side (121.92, 104.14); left unconnected: wire end (121.92, 104.14)");
+		await expect(apply(ctx, "remove_bus_entry", { sheet: "IMU", at: [121.92, 104.14] })).rejects.toThrow(/no bus entry ends at/);
+	});
+
+	test("remove_bus from/to inside one segment removes just that stretch and keeps the rest", async () => {
+		const ctx = await context(root);
+		const sch = ctx.project.sheet("root").sch;
+		const vertical = () => sch.buses().filter(b => b.a[0] === 187.96 && b.b[0] === 187.96);
+		expect(vertical().map(b => [b.a, b.b])).toEqual([[[187.96, 106.68], [187.96, 144.78]]]);
+		await apply(ctx, "remove_bus", { sheet: "root", from: [187.96, 127], to: [187.96, 121.92] });
+		expect(vertical().map(b => [b.a, b.b])).toEqual([
+			[[187.96, 106.68], [187.96, 121.92]],
+			[[187.96, 127], [187.96, 144.78]],
+		]);
+		const note = ctx.notes.at(-1)!;
+		expect(note).toContain("removed (187.96, 121.92)-(187.96, 127) of bus (187.96, 106.68)-(187.96, 144.78) on root, keeping (187.96, 106.68)-(187.96, 121.92) and (187.96, 127)-(187.96, 144.78)");
+		expect(note).toContain("left unconnected: bus end (187.96, 121.92), bus end (187.96, 127)");
+		await expect(apply(ctx, "remove_bus", { sheet: "root", from: [187.96, 110.49], to: [187.96, 129.54] })).rejects.toThrow(/don't lie on one bus segment/);
+		await apply(ctx, "remove_bus", { sheet: "root", at: [187.96, 110.49] });
+		expect(ctx.notes.at(-1)).toBe("removed bus (187.96, 106.68)-(187.96, 121.92) on root; left unconnected: bus end (187.96, 106.68)");
+	});
+
 	test("next_ref previews exactly what add_symbol then assigns", async () => {
 		const ctx = await context(root);
 		const q = queries.find(d => d.what === "next_ref")!;
@@ -322,4 +386,39 @@ describe("schematic ops in memory", () => {
 			analysis.dispose();
 		}
 	});
+});
+
+/** On the root: a bus branch off the {IMU} bus, an entry, and R66.1 on a wire labelled with the member IMU_SDA. */
+const BUS_OPS = [
+	{ op: "add_bus", sheet: "root", points: [[187.96, 127], [177.8, 127]] },
+	{ op: "add_bus_entry", sheet: "root", at: [180.34, 127], dir: "DL" },
+	{ op: "add_symbol", sheet: "root", lib_id: "Device:R", at: [165.1, 137.16], value: "10k", footprint: "Resistor_SMD:R_0402_1005Metric" },
+	{ op: "add_wire", sheet: "root", points: [[177.8, 129.54], [165.1, 129.54], [165.1, 133.35]] },
+	{ op: "add_label", sheet: "root", name: "IMU_SDA", at: [175.26, 129.54], rot: 180 },
+	{ op: "add_wire", sheet: "root", points: [[165.1, 140.97], [165.1, 142.24]] },
+	{ op: "add_power", sheet: "root", net: "GND", at: [165.1, 142.24] },
+];
+
+describe.skipIf(!HAS_KICAD)("bus ops through kicad_edit (kicad-cli)", () => {
+	let root = "";
+	beforeAll(() => {
+		root = stageFixture();
+	});
+	afterAll(() => cleanup(root));
+
+	test(
+		"a pin wired through a new bus entry and a member label joins the bus member's net, ERC and style clean",
+		async () => {
+			const want = { added_parts: ["R66"], nets: [{ name: "/MCU/IMU_SDA", added: ["R66.1"] }, { name: "GND", added: ["R66.2"] }] };
+			const r = await runEdit({ ops: BUS_OPS, expect: want, dry_run: true }, root, undefined);
+			expect(r.report).toStartWith("Dry run: all checks pass");
+			expect(r.report).toContain("bus entry on root: bus side (180.34, 127), wire side (177.8, 129.54)");
+			// KiCad joins the member by its label name; without the entry the wire end hangs in the air
+			const bare = await runEdit({ ops: BUS_OPS.filter(o => o.op !== "add_bus_entry"), expect: want, dry_run: true }, root, undefined);
+			expect(bare.report).toContain("NOT APPLIED");
+			expect(bare.report).toContain("unconnected_wire_endpoint");
+			expect(bare.report).toContain("a wire end connects to nothing (net IMU_SDA)");
+		},
+		240_000,
+	);
 });
