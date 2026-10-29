@@ -1,7 +1,8 @@
 /**
  * Datasheets for kicad_datasheet: a PDF from a URL (downloaded once into the user cache, outside
- * the repo) or a local path, read with poppler from the dev shell: a page index, or one page's
- * text and an image of the page or a region of it.
+ * the repo) or a local path, read with poppler from the dev shell: a page index, one page's text
+ * and an image of the page or a region of it, the text of a page list, or the lines matching a
+ * regex with their page numbers.
  */
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -12,6 +13,10 @@ import * as cli from "./cli";
 export interface DatasheetRequest {
 	url: string;
 	page?: number;
+	/** Text only, of these pages: "4-18", "4,6,10-12". */
+	pages?: string;
+	/** Case-insensitive regex: matching lines with page numbers and context. */
+	find?: string;
 	dpi?: number;
 	box?: number[];
 	size?: number;
@@ -26,6 +31,9 @@ const MAX_DPI = 600;
 /** Lines of each page's text in the index. */
 const INDEX_LINES = 3;
 const INDEX_CHARS = 200;
+/** Matching lines `find` reports at most, and the lines of context around each. */
+const MAX_FIND_HITS = 100;
+const FIND_CONTEXT = 1;
 /** Some datasheet hosts answer non-browser clients with an HTML page. */
 const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 
@@ -78,9 +86,63 @@ function infoField(info: string, key: string): string | undefined {
 	return new RegExp(`^${key}:\\s*(.*)$`, "m").exec(info)?.[1]?.trim();
 }
 
+/** Page numbers of a list like "4-18" or "4,6,10-12", ascending and unique, checked against the page count. */
+export function parsePages(spec: string, total: number): number[] {
+	const out = new Set<number>();
+	for (const part of spec.split(",").map(s => s.trim())) {
+		const m = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(part);
+		if (!m) throw new Error(`pages must be like "4-18" or "4,6,10-12", got ${JSON.stringify(spec)}`);
+		const [a, b] = [Number(m[1]), Number(m[2] ?? m[1])];
+		if (a < 1 || b > total || a > b) throw new Error(`pages ${part} is outside 1..${total} or reversed`);
+		for (let p = a; p <= b; p++) out.add(p);
+	}
+	return [...out].sort((x, y) => x - y);
+}
+
+/** Text of every page (index 0 = page 1), as pdftotext -layout lays it out. */
+async function pageTexts(file: string, pages: number, repoRoot: string, signal?: AbortSignal): Promise<string[]> {
+	return (await poppler(["pdftotext", "-layout", file, "-"], repoRoot, signal)).split("\f").slice(0, pages);
+}
+
+/**
+ * grep-style hits of `re` on the given pages: "p12:34: line" for a match, "p12:33- line" for
+ * context, "--" between groups. Lines are trimmed and wide layout gaps narrowed to two spaces.
+ */
+function findLines(texts: string[], pageList: number[], re: RegExp): string[] {
+	const out: string[] = [];
+	let hits = 0;
+	for (const p of pageList) {
+		const lines = (texts[p - 1] ?? "").split("\n").map(l => l.trim().replace(/\s{3,}/g, "  "));
+		// line index -> is a match, for the matches and their context
+		const shown = new Map<number, boolean>();
+		lines.forEach((l, i) => {
+			if (!re.test(l) || ++hits > MAX_FIND_HITS) return;
+			for (let j = Math.max(0, i - FIND_CONTEXT); j <= Math.min(lines.length - 1, i + FIND_CONTEXT); j++) shown.set(j, shown.get(j) || j === i);
+		});
+		let prev = -2;
+		for (const j of [...shown.keys()].sort((a, b) => a - b)) {
+			if (out.length && j !== prev + 1) out.push("--");
+			out.push(`p${p}:${j + 1}${shown.get(j) ? ":" : "-"} ${lines[j]}`.trimEnd());
+			prev = j;
+		}
+	}
+	const head = hits > MAX_FIND_HITS ? `${hits} matching lines; the first ${MAX_FIND_HITS}:` : `${hits} matching line${hits === 1 ? "" : "s"}:`;
+	return [head, ...out];
+}
+
 export async function readDatasheet(repoRoot: string, req: DatasheetRequest, signal?: AbortSignal): Promise<DatasheetResult> {
 	if (req.page === undefined) {
 		for (const k of ["dpi", "box", "size"] as const) if (req[k] !== undefined) throw new Error(`${k} applies to a page only (give page)`);
+	} else if (req.pages !== undefined || req.find !== undefined) {
+		throw new Error("page gives one page's text and image; pages and find give text only: use page, or pages and/or find");
+	}
+	let re: RegExp | undefined;
+	if (req.find !== undefined) {
+		try {
+			re = new RegExp(req.find, "i");
+		} catch (e) {
+			throw new Error(`find is not a valid regex: ${(e as Error).message}`);
+		}
 	}
 	const file = await localPdf(req.url, repoRoot, signal);
 	const info = await poppler(["pdfinfo", file], repoRoot, signal);
@@ -88,21 +150,36 @@ export async function readDatasheet(repoRoot: string, req: DatasheetRequest, sig
 	const title = infoField(info, "Title");
 	const head = [`Datasheet ${req.url}`, `Local PDF: ${file} (${pages} pages)`, ...(title ? [`Title: ${title}`] : [])];
 
+	if (req.pages !== undefined || re) {
+		const list = req.pages !== undefined ? parsePages(req.pages, pages) : Array.from({ length: pages }, (_, i) => i + 1);
+		const texts = await pageTexts(file, pages, repoRoot, signal);
+		if (re) {
+			const where = req.pages !== undefined ? `pages ${req.pages}` : "all pages";
+			return { text: [...head, "", `Lines matching /${req.find}/i on ${where} (p<page>:<line>: match, p<page>:<line>- context):`, ...findLines(texts, list, re)].join("\n") };
+		}
+		return { text: [...head, ...list.flatMap(p => ["", `--- page ${p} ---`, (texts[p - 1] ?? "").trimEnd()])].join("\n") };
+	}
+
 	if (req.page === undefined) {
-		const all = await poppler(["pdftotext", "-layout", file, "-"], repoRoot, signal);
-		const index = all
-			.split("\f")
-			.slice(0, pages)
-			.map((t, i) => {
-				const lines = t
-					.split("\n")
-					.map(l => l.trim().replace(/\s+/g, " "))
-					.filter(Boolean)
-					.slice(0, INDEX_LINES)
-					.join(" | ");
-				return `p${i + 1}: ${lines.length > INDEX_CHARS ? `${lines.slice(0, INDEX_CHARS)}…` : lines}`;
-			});
-		return { text: [...head, "", "Pages (first lines):", ...index, "", "Give page (1-based) for its text and image; box [x0, y0, x1, y1] (page fractions, y down) crops."].join("\n") };
+		const index = (await pageTexts(file, pages, repoRoot, signal)).map((t, i) => {
+			const lines = t
+				.split("\n")
+				.map(l => l.trim().replace(/\s+/g, " "))
+				.filter(Boolean)
+				.slice(0, INDEX_LINES)
+				.join(" | ");
+			return `p${i + 1}: ${lines.length > INDEX_CHARS ? `${lines.slice(0, INDEX_CHARS)}…` : lines}`;
+		});
+		return {
+			text: [
+				...head,
+				"",
+				"Pages (first lines):",
+				...index,
+				"",
+				'Give page (1-based) for its text and image (box [x0, y0, x1, y1] in page fractions, y down, crops); pages ("4-18", "4,6,10-12") for the text of several pages; find (regex, case-insensitive) for the matching lines with page numbers.',
+			].join("\n"),
+		};
 	}
 
 	const page = req.page;

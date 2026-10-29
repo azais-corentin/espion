@@ -142,7 +142,7 @@ export function checkExpect(d: ConnDiff, e: Expect): string[] {
 	}
 
 	const wantNets = e.nets ?? [];
-	const before = (name: string) => d.gone.find(g => nameMatches(g.name, name));
+	const before = (name: string) => d.gone.find(g => g.name === name) ?? d.gone.find(g => nameMatches(g.name, name));
 	/** Final pin list an entry stands for, or a reason it can't be resolved. */
 	const target = (w: ExpectNet): string[] | string => {
 		if (w.pins) return w.pins;
@@ -194,4 +194,27 @@ export function summarize(d: ConnDiff): string[] {
 	if (d.disconnected.length) out.push(`now unconnected: ${d.disconnected.join(", ")}`);
 	for (const f of d.fieldChanges) out.push(`${f.ref} ${f.field}: "${f.from}" -> "${f.to}"`);
 	return out;
+}
+
+/**
+ * The `expect` that declares exactly this change, in kicad_edit's input format: nets that existed
+ * by the same name as deltas, other nets with their final pins (automatic names omitted, they
+ * follow references). `checkExpect(d, expectFromDiff(d))` is always [].
+ */
+export function expectFromDiff(d: ConnDiff): Expect {
+	const e: Expect = {};
+	if (d.addedParts.length) e.added_parts = d.addedParts;
+	if (d.removedParts.length) e.removed_parts = d.removedParts;
+	if (d.renamed.length) e.renamed_nets = d.renamed.map(r => ({ from: r.from, to: r.to }));
+	if (d.changed.length) {
+		e.nets = d.changed.map((c): ExpectNet => {
+			const b = d.gone.find(g => g.name === c.name);
+			if (!b) return AUTO.test(c.name) ? { pins: c.pins } : { name: c.name, pins: c.pins };
+			const added = c.pins.filter(p => !b.pins.includes(p));
+			const removed = b.pins.filter(p => !c.pins.includes(p));
+			return { name: c.name, ...(added.length ? { added } : {}), ...(removed.length ? { removed } : {}) };
+		});
+	}
+	if (d.disconnected.length) e.unconnected = d.disconnected;
+	return e;
 }

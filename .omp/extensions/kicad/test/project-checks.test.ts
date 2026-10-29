@@ -6,8 +6,9 @@ import { checks as connectivityChecks } from "../src/checks/connectivity";
 import { checks as partChecks } from "../src/checks/parts";
 import { druProblems, checks as rulesChecks } from "../src/checks/rules";
 import { Project } from "../src/project";
+import { runEdit } from "../src/txn";
 import type { CheckDef, Finding } from "../src/types";
-import { cleanup, FIXTURE_COMMIT, HAS_KICAD, PROJECT, REPO, stageFixture } from "./helpers";
+import { cleanup, FIXTURE_COMMIT, HAS_KICAD, PROJECT, REPO, stageFixture, TEST_SHEET_EXPECT, TEST_SHEET_OPS } from "./helpers";
 
 const CHECKS = new Map<string, CheckDef>([...connectivityChecks, ...partChecks, ...rulesChecks].map(c => [c.name, c]));
 
@@ -158,5 +159,58 @@ describe.skipIf(!HAS_KICAD)("project checks on a broken fixture", () => {
 		fs.writeFileSync(project.druFile, druOriginal.replace("A.NetClass == 'MDI'", "A.NetClass == 'MDI_TYPO'"));
 		const f = await run("rules", project, analysis);
 		expect(f.map(x => [x.severity, x.key])).toEqual([["warning", "rules|netclass|MDI spacing|MDI_TYPO"]]);
+	});
+});
+
+describe.skipIf(!HAS_KICAD)("connectivity: compact report, detail and sheets", () => {
+	let root: string;
+	let project: Project;
+	let analysis: Analysis;
+	const conn = (args: Record<string, unknown>, sheets?: string[]) =>
+		CHECKS.get("connectivity")!.run({ project, analysis, baseline: FIXTURE_COMMIT, args, sheets: sheets?.map(s => project.sheet(s)) });
+	const keys = (f: Finding[]) => f.map(x => x.key).sort();
+
+	beforeAll(async () => {
+		root = stageGitFixture();
+		const dir = path.join(root, PROJECT);
+		// three pure renames: two local nets on Power, one on LED driver
+		for (const [file, from, to] of [
+			["power.kicad_sch", "FB_3V3", "FB_3V3_X"],
+			["power.kicad_sch", "SW_3V3", "SW_3V3_X"],
+			["led_driver.kicad_sch", "BST_COMP", "BST_COMP_X"],
+		] as const) {
+			const f = path.join(dir, file);
+			fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace(`(label "${from}"`, `(label "${to}"`));
+		}
+		// a new sheet "Test": R66/R67 on a new net A and on GND
+		const r = await runEdit({ ops: TEST_SHEET_OPS, expect: TEST_SHEET_EXPECT }, root, undefined);
+		expect(r.applied).toBe(true);
+		project = Project.open(PROJECT, root);
+		analysis = new Analysis(project);
+	}, 120_000);
+	afterAll(() => cleanup(root));
+
+	test("default: renames collapse into one count line; a net that kept its name shows its pin delta", async () => {
+		const f = await conn({});
+		expect(keys(f)).toEqual(["connectivity|added|R66", "connectivity|added|R67", "connectivity|net|/Test/A", "connectivity|net|GND", "connectivity|renamed"]);
+		expect(f.find(x => x.key === "connectivity|renamed")!.message).toStartWith("3 nets renamed");
+		expect(f.find(x => x.key === "connectivity|net|GND")!.message).toMatch(/^net GND: added \[R66\.2, R67\.2\], removed \[\] \(\d+ pins now\)$/);
+		expect(f.find(x => x.key === "connectivity|net|/Test/A")!.message).toBe("net /Test/A [R66.1, R67.1] (new net)");
+	});
+
+	test("detail: every rename and full pin lists", async () => {
+		const f = await conn({ detail: true });
+		expect(keys(f)).toContain("connectivity|renamed|/Power/FB_3V3|/Power/FB_3V3_X");
+		expect(keys(f)).toContain("connectivity|renamed|/LED driver/BST_COMP|/LED driver/BST_COMP_X");
+		expect(keys(f)).not.toContain("connectivity|renamed");
+		expect(f.find(x => x.key === "connectivity|net|GND")!.message).toStartWith("net GND is now [");
+	});
+
+	test("sheets: only parts on them and nets with a pin on or named under them", async () => {
+		expect(keys(await conn({}, ["Test"]))).toEqual(["connectivity|added|R66", "connectivity|added|R67", "connectivity|net|/Test/A", "connectivity|net|GND"]);
+		const power = await conn({}, ["Power"]);
+		expect(keys(power)).toEqual(["connectivity|net|GND", "connectivity|renamed"]);
+		expect(power.find(x => x.key === "connectivity|renamed")!.message).toStartWith("2 nets renamed");
+		expect(keys(await conn({}, ["IMU"]))).toEqual(["connectivity|net|GND"]);
 	});
 });

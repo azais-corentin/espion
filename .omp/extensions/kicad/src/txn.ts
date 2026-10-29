@@ -12,7 +12,8 @@
  *
  * Only when every gate passes are KiCad's re-saved bytes copied over the real files, each
  * replaced atomically; if a copy fails midway the files already replaced are restored. The real
- * files never hold unverified content.
+ * files never hold unverified content. Dry runs and refused edits end with the actual
+ * connectivity change as a paste-ready `expect`.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -22,9 +23,10 @@ import { druProblems } from "./checks/rules";
 import { klcFindings } from "./checks/klc";
 import { styleFindings } from "./checks/style";
 import * as cli from "./cli";
+import { compactJson } from "./format";
 import type { Box } from "./geom";
 import type { Libraries } from "./libs";
-import { type Expect, checkExpect, diffNetlists, summarize } from "./netdiff";
+import { type Expect, checkExpect, diffNetlists, expectFromDiff, summarize } from "./netdiff";
 import { Project, type SheetInst } from "./project";
 import { OPS } from "./registry";
 import { type LabelledImage, type Rasterize, renderPart, renderRegions } from "./render";
@@ -250,6 +252,12 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 			}
 		}
 
+		// the change as made, in `expect`'s input format, for the agent to check and pass back
+		const expectBlock = [
+			"",
+			"Actual connectivity change as `expect` (check it against what the edit is meant to do before passing it; a pin you didn't mean to move is a bug, not something to declare):",
+			compactJson(expectFromDiff(diff)),
+		];
 		if (problems.length) {
 			return {
 				applied: false,
@@ -264,11 +272,12 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 						: []),
 					"",
 					...lines,
+					...expectBlock,
 				].join("\n"),
 				images,
 			};
 		}
-		if (req.dry_run) return { applied: false, report: ["Dry run: all checks pass; nothing written.", ...lines].join("\n"), images };
+		if (req.dry_run) return { applied: false, report: ["Dry run: all checks pass; nothing written.", ...lines, ...expectBlock].join("\n"), images };
 
 		// 5. copy KiCad's re-saved bytes over the real files
 		const late = findLocks(s.lockDirs);

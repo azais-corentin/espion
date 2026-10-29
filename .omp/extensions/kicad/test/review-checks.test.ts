@@ -1,10 +1,12 @@
 /**
  * decoupling, pulls, bom_lines and the erc exclusion rule on small hand-built netlists and ERC
- * reports (the checks only read KiCad's netlist / ERC report and the project settings).
+ * reports (the checks only read KiCad's netlist / ERC report and the project settings), and the
+ * mm translation of KLC symbol positions.
  */
 import { describe, expect, test } from "bun:test";
 import type { Analysis } from "../src/analysis";
 import type { Component, ErcViolation, Net, Netlist } from "../src/cli";
+import { symbolDetailMm } from "../src/checks/klc";
 import { parseValue } from "../src/checks/parts";
 import { DEFAULTS, type ProjectConfig } from "../src/config";
 import type { Project, SheetInst } from "../src/project";
@@ -285,5 +287,16 @@ describe("bom_lines", () => {
 		});
 		expect(keys(f)).toEqual(["info bom_lines|merge|R|R_0402|1000|2200"]);
 		expect(f[0]!.refs).toEqual(["R1", "R2"]);
+	});
+});
+
+describe("klc positions", () => {
+	test("symbol checker mils (y up) are also given in mm (y down); S3.1 says the shift that centres the symbol", () => {
+		const s31 = symbolDetailMm("S3.1", "Center calculated @ (0, -50)");
+		expect(s31).toContain("@ (0, -50) mil = (0, 1.27) mm");
+		expect(s31).toContain("is at (0, 1.27) mm");
+		expect(s31).toContain("by (0, -1.27) mm centres it");
+		expect(symbolDetailMm("S4.1", "Pin VIN (1) @ (-300,150)")).toBe("Pin VIN (1) @ (-300,150) mil = (-7.62, -3.81) mm");
+		expect(symbolDetailMm("S4.2", "no position here")).toBe("no position here");
 	});
 });

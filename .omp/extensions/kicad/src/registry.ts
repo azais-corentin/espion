@@ -10,6 +10,7 @@ import { ops as libraryOps } from "./ops/library";
 import { ops as projectOps } from "./ops/project";
 import { ops as schematicOps } from "./ops/schematic";
 import { queries as diffQueries } from "./queries/diff";
+import { queries as lcscQueries } from "./queries/lcsc";
 import { queries as libraryQueries } from "./queries/library";
 import { queries as projectQueries } from "./queries/project";
 import { describe } from "./spec";
@@ -26,7 +27,7 @@ function byName<T>(items: T[], name: (t: T) => string, what: string): Map<string
 }
 
 export const OPS = byName<OpDef>([...schematicOps, ...hierarchyOps, ...projectOps, ...libraryOps], o => o.op, "op");
-export const QUERIES = byName<QueryDef>([...projectQueries, ...libraryQueries, ...diffQueries], q => q.what, "query");
+export const QUERIES = byName<QueryDef>([...projectQueries, ...libraryQueries, ...diffQueries, ...lcscQueries], q => q.what, "query");
 export const CHECKS = byName<CheckDef>(
 	[...connectivityChecks, ...styleChecks, ...partChecks, ...circuitChecks, ...rulesChecks, ...klcChecks],
 	c => c.name,

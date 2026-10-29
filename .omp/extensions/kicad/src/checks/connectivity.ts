@@ -95,38 +95,72 @@ async function baselineNetlist(project: Project, ref: string, signal?: AbortSign
 	}
 }
 
+const AUTO_NET = /^Net-\(/;
+
 const connectivity: CheckDef = {
 	name: "connectivity",
-	doc: "Netlist now vs the baseline git ref (default HEAD): added/removed parts, renamed and changed nets, disconnected pins, value/footprint/field/DNP changes (info); one info finding when nothing changed.",
+	doc:
+		"Netlist now vs the baseline git ref (default HEAD), as info: added/removed parts, changed nets (a net that kept its name as added/removed pins, others with their pins and the nets they came from), disconnected pins, value/footprint/field/DNP changes; nets renamed without a pin change (incl. automatic Net-(…) names that got a name) collapse into one count line; one finding when nothing changed. " +
+		"With `sheets`: only parts on those sheets and nets with a pin on them or named under them. args {detail: true}: every rename, and every changed net with its full pin lists now and at the baseline.",
 	byDefault: true,
 	async run(ctx) {
 		const ref = ctx.baseline;
+		const detail = ctx.args.detail === true;
 		const [before, after] = await Promise.all([baselineNetlist(ctx.project, ref, ctx.signal), ctx.analysis.netlist()]);
 		const d = diffNetlists(before, after);
+
+		// sheet filter: parts by their sheet (before or after), nets by a pin's part or the name's sheet path
+		const paths = ctx.sheets ? new Set(ctx.sheets.map(s => s.namePath)) : undefined;
+		const sheetOf = (ref_: string) => (after.components.get(ref_) ?? before.components.get(ref_))?.sheetName;
+		const partIn = (r: string) => !paths || paths.has(sheetOf(r) ?? "");
+		const pinIn = (p: string) => partIn(p.slice(0, p.lastIndexOf(".")));
+		const netIn = (name: string, pins: string[]) =>
+			!paths || pins.some(pinIn) || paths.has(name.slice(0, name.lastIndexOf("/") + 1));
+
 		const out: Finding[] = [];
 		const add = (f: Omit<Finding, "check" | "severity">) => out.push({ check: "connectivity", severity: "info", ...f });
-		for (const r of d.addedParts) {
+		for (const r of d.addedParts.filter(partIn)) {
 			const c = after.components.get(r)!;
 			add({ message: `part ${r} (${c.value}) added since ${ref}`, key: `connectivity|added|${r}`, refs: [r], sheet: sheetOfPath(c.sheetName) });
 		}
-		for (const r of d.removedParts) {
+		for (const r of d.removedParts.filter(partIn)) {
 			const c = before.components.get(r)!;
 			add({ message: `part ${r} (${c.value}) removed since ${ref}`, key: `connectivity|removed|${r}`, refs: [r], sheet: sheetOfPath(c.sheetName) });
 		}
-		for (const r of d.renamed) {
-			add({ message: `net ${r.from} renamed to ${r.to} (${r.pins.length} pins)`, key: `connectivity|renamed|${r.from}|${r.to}`, net: r.to });
-		}
-		for (const c of d.changed) {
-			const was = d.gone.filter(g => g.pins.some(p => c.pins.includes(p)));
+		const renamed = d.renamed.filter(r => netIn(r.to, r.pins) || netIn(r.from, r.pins));
+		if (detail) {
+			for (const r of renamed) {
+				add({ message: `net ${r.from} renamed to ${r.to} (${r.pins.length} pins)`, key: `connectivity|renamed|${r.from}|${r.to}`, net: r.to });
+			}
+		} else if (renamed.length) {
+			const named = renamed.filter(r => AUTO_NET.test(r.from)).length;
 			add({
 				message:
-					`net ${c.name} is now [${c.pins.join(", ")}]` +
-					(was.length ? `; at ${ref}: ${was.map(g => `${g.name} [${g.pins.join(", ")}]`).join("; ")}` : " (new net)"),
-				key: `connectivity|net|${c.name}`,
-				net: c.name,
+					`${renamed.length} net${renamed.length === 1 ? "" : "s"} renamed since ${ref} without a pin change` +
+					`${named ? ` (${named} of them automatic Net-(…) names that got a name)` : ""}; args {detail: true} lists them`,
+				key: "connectivity|renamed",
 			});
 		}
-		for (const p of d.disconnected) {
+		for (const c of d.changed) {
+			const was = d.gone.filter(g => g.pins.some(p => c.pins.includes(p)) || g.name === c.name);
+			if (!netIn(c.name, [...c.pins, ...was.flatMap(g => g.pins)])) continue;
+			const same = was.find(g => g.name === c.name);
+			let message: string;
+			if (detail) {
+				message = `net ${c.name} is now [${c.pins.join(", ")}]` + (was.length ? `; at ${ref}: ${was.map(g => `${g.name} [${g.pins.join(", ")}]`).join("; ")}` : " (new net)");
+			} else if (same) {
+				const added = c.pins.filter(p => !same.pins.includes(p));
+				const removed = same.pins.filter(p => !c.pins.includes(p));
+				const others = was.filter(g => g !== same).map(g => g.name);
+				message =
+					`net ${c.name}: added [${added.join(", ")}], removed [${removed.join(", ")}] (${c.pins.length} pins now)` +
+					(others.length ? `; joined ${others.join(", ")}` : "");
+			} else {
+				message = `net ${c.name} [${c.pins.join(", ")}]` + (was.length ? `; from ${was.map(g => g.name).join(", ")} at ${ref}` : " (new net)");
+			}
+			add({ message, key: `connectivity|net|${c.name}`, net: c.name });
+		}
+		for (const p of d.disconnected.filter(pinIn)) {
 			const was = d.gone.find(g => g.pins.includes(p));
 			add({
 				message: `pin ${p} is no longer connected (was on ${was?.name ?? "a net"} at ${ref})`,
@@ -134,10 +168,12 @@ const connectivity: CheckDef = {
 				refs: [p.slice(0, p.lastIndexOf("."))],
 			});
 		}
-		for (const f of d.fieldChanges) {
+		for (const f of d.fieldChanges.filter(x => partIn(x.ref))) {
 			add({ message: `${f.ref} ${f.field}: "${f.from}" -> "${f.to}"`, key: `connectivity|field|${f.ref}|${f.field}`, refs: [f.ref] });
 		}
-		if (out.length === 0) add({ message: `connectivity unchanged since ${ref}`, key: "connectivity|unchanged" });
+		if (out.length === 0) {
+			add({ message: `connectivity unchanged since ${ref}${ctx.sheets ? ` on ${ctx.sheets.map(s => s.name).join(", ")}` : ""}`, key: "connectivity|unchanged" });
+		}
 		return out;
 	},
 };

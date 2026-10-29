@@ -4,7 +4,7 @@ import * as path from "node:path";
 import * as cli from "../src/cli";
 import { touches } from "../src/geom";
 import { blockReason } from "../src/hook";
-import { checkExpect, diffNetlists } from "../src/netdiff";
+import { checkExpect, diffNetlists, expectFromDiff } from "../src/netdiff";
 import { Project } from "../src/project";
 import { parsePro, stringifyPro } from "../src/projson";
 import { inline, L, parse, print, Str, str, Sym } from "../src/sexpr";
@@ -170,6 +170,44 @@ describe("netdiff", () => {
 		expect(checkExpect(d, { nets: [{ pins: ["R1.1", "R2.1"] }] }).length).toBe(1);
 		expect(checkExpect(d, { nets: [{ pins: ["R1.1", "R2.1"] }], unconnected: ["R3.1"] })).toEqual([]);
 	});
+
+	test("expectFromDiff declares exactly the change: deltas for existing nets, pins for new ones", () => {
+		const gnd = Array.from({ length: 20 }, (_, i) => `C${i + 1}.2`);
+		const caps = gnd.map(p => p.split(".")[0]!);
+		const a = nl(
+			[
+				["GND", gnd],
+				["/A", ["R1.1", "R2.1", "R3.1"]],
+				["/OLD", ["R4.1", "R5.1"]],
+				["Net-(R6-Pad1)", ["R6.1", "R7.1"]],
+			],
+			[...caps, "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"],
+		);
+		const b = nl(
+			[
+				["GND", [...gnd.slice(1), "R9.2"]],
+				["/A", ["R1.1", "R2.1"]],
+				["/NEW", ["R4.1", "R5.1"]],
+				["Net-(R9-Pad1)", ["R9.1", "R6.1", "R7.1"]],
+			],
+			[...caps, "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R9"],
+		);
+		const d = diffNetlists(a, b);
+		const e = expectFromDiff(d);
+		expect(e).toEqual({
+			added_parts: ["R9"],
+			removed_parts: ["R8"],
+			renamed_nets: [{ from: "/OLD", to: "/NEW" }],
+			nets: [
+				{ name: "/A", removed: ["R3.1"] },
+				{ name: "GND", added: ["R9.2"], removed: ["C1.2"] },
+				{ pins: ["R6.1", "R7.1", "R9.1"] },
+			],
+			unconnected: ["C1.2", "R3.1"],
+		});
+		expect(checkExpect(d, JSON.parse(JSON.stringify(e)))).toEqual([]);
+		expect(expectFromDiff(diffNetlists(a, a))).toEqual({});
+	});
 });
 
 describe("hook", () => {
@@ -194,8 +232,16 @@ describe("hook", () => {
 
 	test("KiCad programs and shell writes to KiCad files are blocked", () => {
 		expect(blocked("bash", { command: "kicad-cli sch erc hardware/espion-cam/espion-cam.kicad_sch" })).toBe(true);
+		expect(blocked("bash", { command: "kicad-cli sch export pdf -o /tmp/x.pdf" })).toBe(true);
 		expect(blocked("bash", { command: "cd hardware/espion-cam && kicad-cli sch export netlist x" })).toBe(true);
 		expect(blocked("bash", { command: "nix develop -c kicad-cli version" })).toBe(true);
+		expect(blocked("bash", { command: "/nix/store/abc-kicad-10.0.7/bin/kicad-cli version" })).toBe(true);
+		expect(blocked("bash", { command: "eeschema foo" })).toBe(true);
+		expect(blocked("bash", { command: "FOO=1 sudo -E kicad" })).toBe(true);
+		expect(blocked("bash", { command: "timeout 30 pcbnew" })).toBe(true);
+		expect(blocked("bash", { command: "echo $(kicad-cli version)" })).toBe(true);
+		expect(blocked("bash", { command: "bash -lc 'kicad-cli version'" })).toBe(true);
+		expect(blocked("bash", { command: "ls | xargs eeschema" })).toBe(true);
 		expect(blocked("bash", { command: "sed -i s/10k/4k7/ hardware/espion-cam/power.kicad_sch" })).toBe(true);
 		expect(blocked("bash", { command: "echo x > hardware/espion-cam/power.kicad_sch" })).toBe(true);
 		expect(blocked("bash", { command: "cp /tmp/a.kicad_sch hardware/espion-cam/" })).toBe(true);
@@ -203,9 +249,15 @@ describe("hook", () => {
 		expect(blocked("bash", { command: "bun test test/core.test.ts" })).toBe(false);
 	});
 
-	test("eval cells touching KiCad files or programs are blocked", () => {
-		expect(blocked("eval", { code: "open('hardware/espion-cam/power.kicad_sch').read()" })).toBe(true);
-		expect(blocked("eval", { code: "import pcbnew" })).toBe(true);
+	test("paths and words that only name KiCad are not runs of a KiCad program", () => {
+		expect(blocked("bash", { command: "cd .omp/extensions/kicad && bun test" })).toBe(false);
+		expect(blocked("bash", { command: "ls ~/.config/kicad ~/.local/share/kicad" })).toBe(false);
+		expect(blocked("bash", { command: "grep -rn kicad-cli .omp/extensions/kicad/src" })).toBe(false);
+		expect(blocked("bash", { command: 'git commit -m "kicad toolkit: fix the hook"' })).toBe(false);
+	});
+
+	test("eval cells are not inspected", () => {
+		expect(blocked("eval", { code: "Notes on power.kicad_sch: U4 is replaced." })).toBe(false);
 		expect(blocked("eval", { code: "print(1 + 1)" })).toBe(false);
 	});
 

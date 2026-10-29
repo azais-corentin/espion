@@ -81,6 +81,37 @@ describe.skipIf(!HAS_KICAD)("kicad_datasheet", () => {
 		expect(Math.abs(ch - fh / 2)).toBeLessThanOrEqual(1);
 	});
 
+	test("pages: the text of a page list, no image", async () => {
+		const r = await readDatasheet(root, { url: pdf, pages: "3, 1-2,2" });
+		expect(r.png).toBeUndefined();
+		expect(r.text.match(/^--- page \d+ ---$/gm)).toEqual(["--- page 1 ---", "--- page 2 ---", "--- page 3 ---"]);
+		expect(r.text).toContain("File: power.kicad_sch");
+		expect(r.text).not.toContain("Sheet: /IMU/");
+	});
+
+	test("find: matching lines with page and line numbers and context, on all pages or the given ones", async () => {
+		const all = await readDatasheet(root, { url: pdf, find: "^d\\s+file: [\\w-]+\\.KICAD_SCH" });
+		expect(all.png).toBeUndefined();
+		expect(all.text).toContain(`${pages} matching lines:`);
+		const hits = all.text.split("\n").filter(l => /^p\d+:\d+: /.test(l));
+		expect(hits.map(l => Number(/^p(\d+):/.exec(l)![1]))).toEqual(Array.from({ length: pages }, (_, i) => i + 1));
+		expect(all.text).toMatch(/^p\d+:\d+- Sheet: \/Power\/$/m);
+		expect(all.text).toContain("\n--\n");
+		const some = await readDatasheet(root, { url: pdf, find: "file: power\\.kicad_sch", pages: "3-4" });
+		expect(some.text).toContain("on pages 3-4");
+		expect(some.text).toContain("1 matching line:");
+		expect(some.text).toMatch(/^p3:\d+: D {2}File: power\.kicad_sch {2}D$/m);
+	});
+
+	test("pages, find and page don't mix; bad page lists and regexes are refused", async () => {
+		await expect(readDatasheet(root, { url: pdf, page: 1, pages: "1-2" })).rejects.toThrow(/pages and find give text only/);
+		await expect(readDatasheet(root, { url: pdf, page: 1, find: "x" })).rejects.toThrow(/pages and find give text only/);
+		await expect(readDatasheet(root, { url: pdf, pages: "2-x" })).rejects.toThrow(/pages must be like/);
+		await expect(readDatasheet(root, { url: pdf, pages: `1-${pages + 1}` })).rejects.toThrow(`outside 1..${pages}`);
+		await expect(readDatasheet(root, { url: pdf, pages: "3-2" })).rejects.toThrow(/reversed/);
+		await expect(readDatasheet(root, { url: pdf, find: "(" })).rejects.toThrow(/find is not a valid regex/);
+	});
+
 	test("refuses non-PDF data, bad pages and boxes", async () => {
 		await expect(readDatasheet(root, { url: `${server.url}login` })).rejects.toThrow(/is not a PDF \(text\/html/);
 		expect(fs.readdirSync(datasheetCacheDir()).length).toBe(1);

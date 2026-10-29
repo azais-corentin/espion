@@ -234,24 +234,44 @@ describe("klc", () => {
 		expect(findings.filter(f => f.key.startsWith("klc|S5.1|"))).toEqual([]);
 	}, 60_000);
 
-	test.skipIf(!HAS_KICAD)("check: only parts changed since the baseline, or all of them", async () => {
+	test.skipIf(!HAS_KICAD)("check: only parts changed since the baseline (untracked libraries too), or all of them, naming the parts checked", async () => {
 		const git = (...args: string[]) => Bun.spawnSync(["git", "-C", root, ...args], { stdout: "pipe", stderr: "pipe" });
 		git("init", "-q");
 		git("add", "-A");
 		expect(git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "base").exitCode).toBe(0);
+		const project = Project.open(PROJECT, root);
+		const run = (args: Record<string, unknown>) => checks[0]!.run({ project: Project.open(PROJECT, root), analysis: new Analysis(project), baseline: "HEAD", args });
+		const checked = (f: { key: string; message: string }[]) => f.find(x => x.key === "klc|checked")?.message;
+
+		const none = await run({});
+		expect(none.map(f => [f.severity, f.key])).toEqual([["info", "klc|nothing"]]);
+		expect(none[0]!.message).toContain("nothing checked");
+
 		await commit(root, [
 			{ op: "lib_edit_footprint", library: "Module_Waveshare", name: "Waveshare_ESP32-P4-Core", tags: "Waveshare ESP32-P4 module edited" },
 			{ op: "lib_edit_symbol", library: "Connector_HanRun", name: "HR871150C", properties: { Description: "edited" } },
 		]);
-		const project = Project.open(PROJECT, root);
-		const run = (args: Record<string, unknown>) => checks[0]!.run({ project, analysis: new Analysis(project), baseline: "HEAD", args });
 		const changed = await run({});
-		expect(new Set(changed.map(f => f.key.split("|").slice(2).join("|")))).toEqual(
+		expect(checked(changed)).toBe("checked 2 parts changed since HEAD: Connector_HanRun:HR871150C, Module_Waveshare:Waveshare_ESP32-P4-Core");
+		const violations = changed.filter(f => f.key !== "klc|checked");
+		expect(new Set(violations.map(f => f.key.split("|").slice(2).join("|")))).toEqual(
 			new Set(["Module_Waveshare:Waveshare_ESP32-P4-Core", "Connector_HanRun:HR871150C"]),
 		);
+
+		// a new, untracked library registered in the project's table is checked as changed
+		const lib = path.join(root, "hardware/lib");
+		fs.copyFileSync(path.join(lib, "Connector_HanRun.kicad_sym"), path.join(lib, "Connector_Test.kicad_sym"));
+		const table = path.join(root, PROJECT, "sym-lib-table");
+		fs.writeFileSync(
+			table,
+			fs.readFileSync(table, "utf8").replace("(version 7)", '(version 7)\n\t(lib (name "Connector_Test") (type "KiCad") (uri "${KIPRJMOD}/../lib/Connector_Test.kicad_sym") (options "") (descr ""))'),
+		);
+		expect(checked(await run({}))).toContain("Connector_Test:HR871150C");
+
 		const all = await run({ all: true });
+		expect(checked(all)).toMatch(/^checked \d+ parts \(all project library parts\): /);
 		expect(all.length).toBeGreaterThan(changed.length);
-	}, 60_000);
+	}, 120_000);
 });
 
 describe("library queries", () => {

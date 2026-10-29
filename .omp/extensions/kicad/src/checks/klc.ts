@@ -87,10 +87,26 @@ async function footprintDir(project: Project): Promise<string> {
 	return dir;
 }
 
+const MIL = 0.0254;
+const mmText = (v: number) => String(Number((v * MIL).toFixed(4)) || 0);
+
+/**
+ * check_symbol reports positions in mils in KiCad's library orientation (y up): add them in mm in
+ * the toolkit's orientation (x right, y down), and for S3.1 the shift that centres the symbol.
+ */
+export function symbolDetailMm(rule: string, line: string): string {
+	const out = line.replace(/@ \((-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)/g, (m, x: string, y: string) => `${m} mil = (${mmText(Number(x))}, ${mmText(-Number(y))}) mm`);
+	const c = rule === "S3.1" ? /Center calculated @ \((-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)/.exec(line) : null;
+	if (!c) return out;
+	const [x, y] = [Number(c[1]), -Number(c[2])];
+	return `${out} (the centre of the body rectangle, or of the pins without one, is at (${mmText(x)}, ${mmText(y)}) mm, x right, y down; moving every pin and shape by (${mmText(-x)}, ${mmText(-y)}) mm centres it)`;
+}
+
 /**
  * KLC findings for these .kicad_sym / .kicad_mod files: one per violated rule per part, keyed
  * `klc|<rule>|<Library:Part>`. Rules in the project's `klcExpected`, or waived for that part in
- * `klcWaivers`, are info (with the waiver's reason); others are errors.
+ * `klcWaivers`, are info (with the waiver's reason); others are errors. Symbol positions are given
+ * in mils (as the checker prints them) and in mm.
  */
 export async function klcFindings(project: Project, files: string[], signal?: AbortSignal): Promise<Finding[]> {
 	const syms = files.filter(f => f.endsWith(".kicad_sym"));
@@ -103,7 +119,8 @@ export async function klcFindings(project: Project, files: string[], signal?: Ab
 			(async () => {
 				const fpDir = await footprintDir(project);
 				try {
-					return parseJunit(await runChecker(project, "check_symbol.py", ["--footprints", fpDir, ...syms], signal), n => n);
+					const vs = parseJunit(await runChecker(project, "check_symbol.py", ["--footprints", fpDir, ...syms], signal), n => n);
+					return vs.map(v => ({ ...v, details: v.details.map(l => symbolDetailMm(v.rule, l)) }));
 				} finally {
 					fs.rmSync(fpDir, { recursive: true, force: true });
 				}
@@ -182,22 +199,50 @@ async function changedParts(project: Project, files: { sym: Map<string, string>;
 	return out;
 }
 
+/** The info finding naming the parts a run checked. */
+function checkedLine(parts: string[], what: string): Finding {
+	const sorted = [...parts].sort();
+	return {
+		check: "klc",
+		severity: "info",
+		message: `checked ${sorted.length} part${sorted.length === 1 ? "" : "s"} ${what}: ${sorted.join(", ")}`,
+		key: "klc|checked",
+	};
+}
+
 const klc: CheckDef = {
 	name: "klc",
-	doc: "KiCad Library Convention (kicad-library-utils check_symbol / check_footprint) on the project's own library parts changed since the baseline (git), or on all of them with args {all: true}. Rules in klcExpected (all parts) or klcWaivers (one part, with a reason) in .omp/kicad.json are info, others errors.",
+	doc:
+		"KiCad Library Convention (kicad-library-utils check_symbol / check_footprint) on the project's own library parts changed since the baseline (git; new untracked libraries count as changed), or on all of them with args {all: true}. Rules in klcExpected (all parts) or klcWaivers (one part, with a reason) in .omp/kicad.json are info, others errors. " +
+		'Always one info line naming the parts checked ("checked 1 part changed since HEAD: Lib:Name"), or saying no part changed and nothing was checked. Symbol positions are in mils as the checker prints them, then in mm (x right, y down); S3.1 also gives the shift that centres the symbol.',
 	byDefault: false,
 	async run(ctx) {
 		const files = await projectLibFiles(ctx.project);
 		const all = [...files.sym.keys(), ...files.mods.keys()];
-		if (ctx.args.all === true) return klcFindings(ctx.project, all, ctx.signal);
+		if (ctx.args.all === true) {
+			const names = [
+				...[...files.sym].flatMap(([f, nick]) => [...symbolTexts(fs.readFileSync(f, "utf8")).keys()].map(n => `${nick}:${n}`)),
+				...files.mods.values(),
+			];
+			return [checkedLine(names, "(all project library parts)"), ...(await klcFindings(ctx.project, all, ctx.signal))];
+		}
 		const parts = await changedParts(ctx.project, files, ctx.baseline, ctx.signal);
-		if (!parts.size) return [];
+		if (!parts.size) {
+			return [
+				{
+					check: "klc",
+					severity: "info",
+					message: `no project library part changed since ${ctx.baseline} (tracked or untracked): nothing checked; args {all: true} checks every part`,
+					key: "klc|nothing",
+				},
+			];
+		}
 		const touched = all.filter(f => {
 			const part = files.mods.get(f);
 			return part ? parts.has(part) : [...parts].some(p => p.startsWith(`${files.sym.get(f)}:`));
 		});
 		const findings = await klcFindings(ctx.project, touched, ctx.signal);
-		return findings.filter(f => parts.has(f.key.split("|").slice(2).join("|")));
+		return [checkedLine([...parts], `changed since ${ctx.baseline}`), ...findings.filter(f => parts.has(f.key.split("|").slice(2).join("|")))];
 	},
 };
 

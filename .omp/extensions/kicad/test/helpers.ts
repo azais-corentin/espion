@@ -6,6 +6,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Expect } from "../src/netdiff";
 
 export const REPO = path.resolve(import.meta.dir, "../../../..");
 /** "Re-save the espion-cam sheets in KiCad's canonical form": canonical sheets, IMU sheet present. */
@@ -33,3 +34,25 @@ export function cleanup(root: string): void {
 
 /** kicad-cli integration tests need the dev shell; they are skipped outside it. */
 export const HAS_KICAD = !!Bun.which("kicad-cli");
+
+/** kicad_edit ops for a new sheet "Test" with R66/R67 on net A and both on GND through upright power symbols. */
+export const TEST_SHEET_OPS = [
+	{ op: "create_sheet", parent: "root", name: "Test", file: "test.kicad_sch", at: [137.16, 144.78], size: [25.4, 10.16] },
+	{ op: "add_symbol", sheet: "Test", lib_id: "Device:R", at: [101.6, 101.6], value: "10k" },
+	{ op: "add_symbol", sheet: "Test", lib_id: "Device:R", at: [111.76, 101.6], value: "10k" },
+	{ op: "add_wire", sheet: "Test", points: [[101.6, 97.79], [101.6, 95.25], [111.76, 95.25], [111.76, 97.79]] },
+	{ op: "add_label", sheet: "Test", name: "A", at: [104.14, 95.25] },
+	{ op: "add_wire", sheet: "Test", points: [[101.6, 105.41], [101.6, 106.68]] },
+	{ op: "add_wire", sheet: "Test", points: [[111.76, 105.41], [111.76, 106.68]] },
+	{ op: "add_power", sheet: "Test", net: "GND", at: [101.6, 106.68] },
+	{ op: "add_power", sheet: "Test", net: "GND", at: [111.76, 106.68] },
+];
+
+/** The connectivity change of TEST_SHEET_OPS. */
+export const TEST_SHEET_EXPECT: Expect = {
+	added_parts: ["R66", "R67"],
+	nets: [
+		{ name: "A", pins: ["R66.1", "R67.1"] },
+		{ name: "GND", added: ["R66.2", "R67.2"] },
+	],
+};

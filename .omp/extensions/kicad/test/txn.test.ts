@@ -4,27 +4,7 @@ import * as path from "node:path";
 import * as cli from "../src/cli";
 import type { Expect } from "../src/netdiff";
 import { runEdit } from "../src/txn";
-import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
-
-/** A new sheet "Test" with R66/R67 on net A and both on GND through upright power symbols. */
-const OPS = [
-	{ op: "create_sheet", parent: "root", name: "Test", file: "test.kicad_sch", at: [137.16, 144.78], size: [25.4, 10.16] },
-	{ op: "add_symbol", sheet: "Test", lib_id: "Device:R", at: [101.6, 101.6], value: "10k" },
-	{ op: "add_symbol", sheet: "Test", lib_id: "Device:R", at: [111.76, 101.6], value: "10k" },
-	{ op: "add_wire", sheet: "Test", points: [[101.6, 97.79], [101.6, 95.25], [111.76, 95.25], [111.76, 97.79]] },
-	{ op: "add_label", sheet: "Test", name: "A", at: [104.14, 95.25] },
-	{ op: "add_wire", sheet: "Test", points: [[101.6, 105.41], [101.6, 106.68]] },
-	{ op: "add_wire", sheet: "Test", points: [[111.76, 105.41], [111.76, 106.68]] },
-	{ op: "add_power", sheet: "Test", net: "GND", at: [101.6, 106.68] },
-	{ op: "add_power", sheet: "Test", net: "GND", at: [111.76, 106.68] },
-];
-const EXPECT: Expect = {
-	added_parts: ["R66", "R67"],
-	nets: [
-		{ name: "A", pins: ["R66.1", "R67.1"] },
-		{ name: "GND", added: ["R66.2", "R67.2"] },
-	],
-};
+import { cleanup, HAS_KICAD, PROJECT, stageFixture, TEST_SHEET_EXPECT as EXPECT, TEST_SHEET_OPS as OPS } from "./helpers";
 
 function snapshot(dir: string): Map<string, string> {
 	return new Map(fs.readdirSync(dir).map(f => [f, fs.readFileSync(path.join(dir, f), "utf8")]));
@@ -59,6 +39,23 @@ describe.skipIf(!HAS_KICAD)("kicad_edit transaction", () => {
 		expect(r.report).toContain("NOT APPLIED");
 		expect(r.report).toContain("[connectivity] net GND");
 		expect(snapshot(dir)).toEqual(before);
+	});
+
+	test("a refused edit and a dry run end with the actual change as a paste-ready expect", async () => {
+		root = stageFixture();
+		const dir = path.join(root, PROJECT);
+		const before = snapshot(dir);
+		const pasted = (report: string): Expect => JSON.parse(report.slice(report.indexOf("{", report.indexOf("Actual connectivity change as `expect`"))));
+		const wrong = await runEdit({ ops: OPS, expect: { added_parts: ["R66"] } }, root, undefined);
+		expect(wrong.applied).toBe(false);
+		expect(wrong.report).toContain("NOT APPLIED");
+		const e = pasted(wrong.report);
+		expect(e).toEqual({ added_parts: ["R66", "R67"], nets: [{ name: "/Test/A", pins: ["R66.1", "R67.1"] }, { name: "GND", added: ["R66.2", "R67.2"] }] });
+		const dry = await runEdit({ ops: OPS, dry_run: true }, root, undefined);
+		expect(pasted(dry.report)).toEqual(e);
+		expect(snapshot(dir)).toEqual(before);
+		const r = await runEdit({ ops: OPS, expect: e }, root, undefined);
+		expect(r.report).toStartWith("Applied.");
 	});
 
 	test("a new drawing-rule violation is not written", async () => {
