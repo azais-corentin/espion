@@ -10,7 +10,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, Ethernet/UDP, PTP, PPS capture via ETM) | `cargo build --release` in that directory |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
-| `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values); `BOM.md` the selected parts | KiCad; ERC: `kicad-cli sch erc hardware/espion-cam/espion-cam.kicad_sch` |
+| `hardware/espion-cam/` | KiCad project. `SCHEMATIC.md` is the schematic's design (sheets, buses, pins, values, part notes); the BOM is exported from the schematic with the `Order` preset | KiCad; ERC: `kicad-cli sch erc hardware/espion-cam/espion-cam.kicad_sch`; BOM: `kicad-cli sch export bom --preset Order -o espion-cam-bom.csv espion-cam.kicad_sch` in `hardware/espion-cam/` |
 | `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad; KLC checks and model rebuild in `hardware/lib/README.md` |
 | `.omp/` | Agent config: the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its vendored skills | — |
 | `docs/` | Architecture, wire protocol, timing | — |
@@ -51,12 +51,15 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 
 ## Hardware
 
-- Never edit KiCad files (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, `.kicad_sym`,
-  footprints) by hand. Changes go through KiCad.
+- Never edit KiCad files (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, `.kicad_dru`,
+  `.kicad_sym`, footprints) by hand. Changes go through KiCad.
 - `hardware/espion-cam/SCHEMATIC.md` is the plan the schematic follows. A schematic change
-  updates it (sheets, buses, hierarchical pins, parts, values) in the same commit, and
-  `BOM.md` and the board list in `hardware/espion-cam/README.md` when a part changes. Keep
-  ERC at 0 violations.
+  updates it (sheets, buses, hierarchical pins, parts, values) in the same commit, and the
+  board list in `hardware/espion-cam/README.md` when a part changes. Keep ERC at 0
+  violations.
+- There is no hand-kept BOM file. Every sourced symbol carries Manufacturer, MPN and LCSC
+  fields; set them when you add or change a part. The BOM comes from the project's `Order`
+  preset and is never committed (see Hygiene).
 - Library parts follow `hardware/lib/README.md`: KLC naming, `${KIPRJMOD}`-relative paths,
   a Parts entry per part (say there when a board stops using it), and the KLC check
   scripts. `hardware/lib/.gitattributes` keeps the library files at LF line endings.

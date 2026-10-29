@@ -3128,7 +3128,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "139a6453-eac8-4891-96e9-4a19a356866e")
 		(property "Reference" "R37"
@@ -3174,6 +3174,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 172.72 25.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 172.72 25.4 0)
 			(hide yes)
 			(show_name no)
@@ -3288,6 +3299,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "FOJAN"
+			(at 152.4 78.74 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "FRC0201P000 TS"
 			(at 152.4 78.74 0)
 			(hide yes)
@@ -3382,6 +3404,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 162.56 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "FOJAN"
 			(at 162.56 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -3564,6 +3597,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 142.24 43.18 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 142.24 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -3835,6 +3879,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "FOJAN"
+			(at 162.56 81.28 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "FRC0201P000 TS"
 			(at 162.56 81.28 0)
 			(hide yes)
@@ -3927,6 +3982,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 134.62 125.73 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 134.62 125.73 0)
 			(hide yes)
 			(show_name no)
@@ -4109,6 +4175,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 205.74 133.35 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 205.74 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -4457,6 +4534,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 212.09 30.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL21A106KAYNNNE"
 			(at 212.09 30.48 0)
 			(hide yes)
@@ -4561,6 +4649,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 193.04 30.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL05B104KB54PNC"
 			(at 193.04 30.48 0)
 			(hide yes)
@@ -4655,6 +4754,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 142.24 58.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 142.24 58.42 0)
 			(hide yes)
 			(show_name no)
@@ -4837,6 +4947,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 162.56 73.66 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "FOJAN"
 			(at 162.56 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5107,6 +5228,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 157.48 151.13 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF1002TCE"
 			(at 157.48 151.13 0)
 			(hide yes)
@@ -5201,6 +5333,17 @@
 			)
 		)
 		(property "Description" "Generic connectable mounting pin connector, single row, 01x15, script generated (kicad-library-utils/schlib/autogen/connector/)"
+			(at 193.04 73.66 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "JUSHUO"
 			(at 193.04 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5592,6 +5735,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 142.24 25.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF1801TCE"
 			(at 142.24 25.4 0)
 			(hide yes)
@@ -5686,6 +5840,17 @@
 			)
 		)
 		(property "Description" "Single Power Supply, Single Buffer GATE, CMOS Logic, Level Shifter, SOT-23-5"
+			(at 193.04 146.05 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "TI"
 			(at 193.04 146.05 0)
 			(hide yes)
 			(show_name no)
@@ -5885,6 +6050,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 168.91 63.5 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0805W8F0000T5E"
 			(at 168.91 63.5 0)
 			(hide yes)
@@ -5989,6 +6165,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "FOJAN"
+			(at 152.4 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "FRC0201P000 TS"
 			(at 152.4 86.36 0)
 			(hide yes)
@@ -6083,6 +6270,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 152.4 71.12 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "FOJAN"
 			(at 152.4 71.12 0)
 			(hide yes)
 			(show_name no)
@@ -6265,6 +6463,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 142.24 130.81 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 142.24 130.81 0)
 			(hide yes)
 			(show_name no)
@@ -6522,6 +6731,17 @@
 			)
 		)
 		(property "Description" "Generic connectable mounting pin connector, single row, 01x04, script generated (kicad-library-utils/schlib/autogen/connector/)"
+			(at 172.72 128.27 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "JST"
 			(at 172.72 128.27 0)
 			(hide yes)
 			(show_name no)

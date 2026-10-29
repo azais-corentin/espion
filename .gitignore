@@ -23,6 +23,7 @@ fp-info-cache
 hardware/**/fab/
 hardware/**/gerbers/
 hardware/**/production/
+hardware/**/*-bom.csv
 
 # Editors / OS
 .vscode/

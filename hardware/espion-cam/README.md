@@ -27,12 +27,32 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   HR871150C MagJack with both centre taps and the spare pairs brought out, PPS test point
 - Power: SDAPO DP1435-5V IEEE 802.3af PoE PD module (isolated 5.15 V, LCSC C5380097)
   through an LC filter, OR-ed with USB-C 5 V by a TPS2116; TLV62569 buck to 3.3 V
-- USB-C straight to the P4's USB Serial/JTAG (no hub), with ESD protection and a VBUS TVS
+- USB-C straight to the P4's USB Serial/JTAG (no hub), with ESD protection and a TI
+  TSD05DYFR VBUS TVS. VBUS is sensed on GPIO20 (`VBUS_SENSE`, 47 kΩ / 75 kΩ divider):
+  firmware turns the D+ pull-up off while no USB host supplies VBUS
 - WS2812B-2020-V6 RGB status LED; BOOT and RESET buttons
+- 4 × M3 plated mounting holes (H1–H4), each pad on GND, ≥ 2 mm from the PoE cable-side
+  copper
 
-Selected parts and LCSC numbers: `BOM.md`. Schematic design (sheets, buses, hierarchical
-pins, pin-level connections, component values and the checks still open for the first
-boards): `SCHEMATIC.md`.
+Schematic design (sheets, buses, hierarchical pins, pin-level connections, component values
+and the checks still open for the first boards): `SCHEMATIC.md`. The notes on the selected
+parts are in its "Bill of materials" section.
+
+The BOM itself comes from the schematic: every sourced symbol carries Manufacturer, MPN
+and LCSC fields, and the project's BOM preset `Order` exports them. Generate it for each
+order (from this directory) and don't commit it:
+
+```sh
+kicad-cli sch export bom --preset Order -o espion-cam-bom.csv espion-cam.kicad_sch
+```
+
+The CSV has the columns Reference, Qty, Value, Footprint, Manufacturer, MPN, LCSC and DNP,
+one row per group of identical parts, without DNP parts or parts excluded from the BOM.
+
+Net classes (track widths, clearances, diff-pair geometry) are set in `espion-cam.kicad_pro`
+for the JLCPCB JLC04161H-7628 stack-up (4 layers, 1.6 mm). The spacing rules that net
+classes can't express (PoE isolation, MIPI CSI, MDI and USB spacing) are in the custom
+rules file `espion-cam.kicad_dru`.
 
 Signal list, module pin notes, Ethernet pin map and hardware tasks: see
 `../../docs/architecture.md`. Timing requirements for XVS, STROBE and PPS: see
@@ -42,7 +62,8 @@ Signal list, module pin notes, Ethernet pin map and hardware tasks: see
 
 - Edit only with KiCad (the dev shell provides KiCad 10). Never hand-edit `.kicad_*` files.
 - `SCHEMATIC.md` is the plan the schematic follows: a schematic change updates it in the
-  same commit, and `BOM.md` (and the board list above) when a part changes.
+  same commit. A part change also updates the symbol's Manufacturer, MPN and LCSC fields
+  and the board list above. There is no committed BOM file.
 - Keep ERC at 0 violations: `kicad-cli sch erc espion-cam.kicad_sch` (from this directory).
 - Project-specific symbols, footprints and 3D models go in `../lib/` (conventions and KLC
   checks in `../lib/README.md`), not in global libraries.

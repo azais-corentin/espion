@@ -2311,7 +2311,7 @@
 		)
 	)
 	(junction
-		(at 238.76 63.5)
+		(at 241.3 63.5)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "0d1a6e40-f5c3-49e4-aca8-c0cb6ee4b191")
@@ -2872,7 +2872,7 @@
 	)
 	(wire
 		(pts
-			(xy 238.76 73.66) (xy 238.76 74.93)
+			(xy 241.3 73.66) (xy 241.3 74.93)
 		)
 		(stroke
 			(width 0)
@@ -3232,7 +3232,7 @@
 	)
 	(wire
 		(pts
-			(xy 238.76 66.04) (xy 238.76 63.5)
+			(xy 241.3 66.04) (xy 241.3 63.5)
 		)
 		(stroke
 			(width 0)
@@ -3598,6 +3598,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 63.5 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL21A106KAYNNNE"
 			(at 63.5 135.89 0)
 			(hide yes)
@@ -3935,6 +3946,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "cjiang"
+			(at 130.81 129.54 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "FXL0630-2R2-M"
 			(at 130.81 129.54 0)
 			(hide yes)
@@ -3974,7 +3996,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 238.76 69.85 0)
+		(at 241.3 69.85 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3985,7 +4007,7 @@
 		(fields_autoplaced yes)
 		(uuid "2ec88946-3482-482a-bfce-014fc35f537f")
 		(property "Reference" "C18"
-			(at 242.57 68.58 0)
+			(at 245.11 68.58 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3996,7 +4018,7 @@
 			)
 		)
 		(property "Value" "100nF 50V"
-			(at 242.57 71.12 0)
+			(at 245.11 71.12 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4007,7 +4029,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 238.76 69.85 0)
+			(at 241.3 69.85 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4018,7 +4040,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 238.76 69.85 0)
+			(at 241.3 69.85 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4029,7 +4051,18 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 238.76 69.85 0)
+			(at 241.3 69.85 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
+			(at 241.3 69.85 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4040,7 +4073,7 @@
 			)
 		)
 		(property "MPN" "CL05B104KB54PNC"
-			(at 238.76 69.85 0)
+			(at 241.3 69.85 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4051,7 +4084,7 @@
 			)
 		)
 		(property "LCSC" "C307331"
-			(at 238.76 69.85 0)
+			(at 241.3 69.85 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4133,6 +4166,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 76.2 62.23 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 76.2 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -4237,6 +4281,17 @@
 			)
 		)
 		(property "Description" "Polarized capacitor"
+			(at 119.38 62.23 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "JIERR"
 			(at 119.38 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -4441,7 +4496,7 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:C")
+		(lib_id "Device:C_Polarized")
 		(at 220.98 69.85 0)
 		(unit 1)
 		(body_style 1)
@@ -4463,7 +4518,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "47uF 10V"
+		(property "Value" "100uF 25V"
 			(at 224.79 71.12 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4474,7 +4529,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_1206_3216Metric"
+		(property "Footprint" "Capacitor_SMD:CP_Elec_6.3x5.8"
 			(at 220.98 69.85 0)
 			(hide yes)
 			(show_name no)
@@ -4496,7 +4551,7 @@
 				)
 			)
 		)
-		(property "Description" "Unpolarized capacitor"
+		(property "Description" "Polarized capacitor"
 			(at 220.98 69.85 0)
 			(hide yes)
 			(show_name no)
@@ -4507,7 +4562,7 @@
 				)
 			)
 		)
-		(property "MPN" "CL31A476MPHNNNE"
+		(property "Manufacturer" "JIERR"
 			(at 220.98 69.85 0)
 			(hide yes)
 			(show_name no)
@@ -4518,7 +4573,18 @@
 				)
 			)
 		)
-		(property "LCSC" "C96123"
+		(property "MPN" "MA25V100M6x6"
+			(at 220.98 69.85 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C46550465"
 			(at 220.98 69.85 0)
 			(hide yes)
 			(show_name no)
@@ -4645,7 +4711,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "SMBJ5.0A"
+		(property "Value" "TSD05DYFR"
 			(at 167.64 93.98 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4656,7 +4722,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Diode_SMD:D_SMB"
+		(property "Footprint" "Diode_SMD:D_SOD-323_HandSoldering"
 			(at 165.1 92.71 0)
 			(hide yes)
 			(show_name no)
@@ -4689,7 +4755,7 @@
 				)
 			)
 		)
-		(property "MPN" "SMBJ5.0A"
+		(property "Manufacturer" "TI"
 			(at 165.1 92.71 0)
 			(hide yes)
 			(show_name no)
@@ -4700,7 +4766,18 @@
 				)
 			)
 		)
-		(property "LCSC" "C19077558"
+		(property "MPN" "TSD05DYFR"
+			(at 165.1 92.71 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C22396185"
 			(at 165.1 92.71 0)
 			(hide yes)
 			(show_name no)
@@ -4783,6 +4860,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 139.7 62.23 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 139.7 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -4911,7 +4999,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 238.76 74.93 0)
+		(at 241.3 74.93 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4922,7 +5010,7 @@
 		(fields_autoplaced yes)
 		(uuid "41e44676-4da5-4670-bb41-1031b9f9bf26")
 		(property "Reference" "#PWR315"
-			(at 238.76 81.28 0)
+			(at 241.3 81.28 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4933,7 +5021,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 238.76 78.74 0)
+			(at 241.3 78.74 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -4943,7 +5031,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 238.76 74.93 0)
+			(at 241.3 74.93 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4954,7 +5042,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 238.76 74.93 0)
+			(at 241.3 74.93 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4965,7 +5053,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 238.76 74.93 0)
+			(at 241.3 74.93 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5044,6 +5132,17 @@
 			)
 		)
 		(property "Description" "test point"
+			(at 53.34 78.74 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "ronghe"
 			(at 53.34 78.74 0)
 			(hide yes)
 			(show_name no)
@@ -5143,6 +5242,17 @@
 			)
 		)
 		(property "Description" "2 Channnels Power Mux with Manual and Priority Switchover, 1.6-5.5V Input Voltage, 2.5A Output Current, Ron 40 mOhm, SOT-583-8"
+			(at 187.96 68.58 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "TI"
 			(at 187.96 68.58 0)
 			(hide yes)
 			(show_name no)
@@ -5431,6 +5541,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 157.48 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF1003TCE"
 			(at 157.48 60.96 0)
 			(hide yes)
@@ -5613,6 +5734,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 187.96 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL05B104KB54PNC"
 			(at 187.96 135.89 0)
 			(hide yes)
@@ -5707,6 +5839,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 203.2 69.85 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 203.2 69.85 0)
 			(hide yes)
 			(show_name no)
@@ -5977,6 +6120,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 142.24 146.05 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF1003TCE"
 			(at 142.24 146.05 0)
 			(hide yes)
@@ -6159,6 +6313,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "HWA CHN"
+			(at 157.48 72.39 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "HRC0402F3602DNTO"
 			(at 157.48 72.39 0)
 			(hide yes)
@@ -6263,6 +6428,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "GiantOhm"
+			(at 142.24 134.62 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "GR0402F453KTAG00"
 			(at 142.24 134.62 0)
 			(hide yes)
@@ -6357,6 +6533,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 149.86 134.62 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "FH"
 			(at 149.86 134.62 0)
 			(hide yes)
 			(show_name no)
@@ -6861,6 +7048,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "AISHI"
+			(at 99.06 62.23 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "SVZ1CM331E09E00RAXXX"
 			(at 99.06 62.23 0)
 			(hide yes)
@@ -6955,6 +7153,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 81.28 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 81.28 135.89 0)
 			(hide yes)
 			(show_name no)
@@ -7305,6 +7514,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 170.18 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL21A106KAYNNNE"
 			(at 170.18 135.89 0)
 			(hide yes)
@@ -7399,6 +7619,17 @@
 			)
 		)
 		(property "Description" "test point"
+			(at 99.06 144.78 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "ronghe"
 			(at 99.06 144.78 0)
 			(hide yes)
 			(show_name no)
@@ -7658,6 +7889,17 @@
 			)
 		)
 		(property "Description" "High Efficiency Synchronous Buck Converter, Adjustable Output 0.6V-5.5V, 2A, SOT-23-5"
+			(at 111.76 132.08 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "TI"
 			(at 111.76 132.08 0)
 			(hide yes)
 			(show_name no)
@@ -8408,6 +8650,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "SDAPO"
+			(at 60.96 58.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "DP1435-5V"
 			(at 60.96 58.42 0)
 			(hide yes)
@@ -8602,6 +8855,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 142.24 92.71 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL21A475KAQNNNE"
 			(at 142.24 92.71 0)
 			(hide yes)
@@ -8694,6 +8958,17 @@
 			)
 		)
 		(property "Description" "Inductor"
+			(at 85.09 55.88 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "cjiang"
 			(at 85.09 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -8819,5 +9094,15 @@
 				)
 			)
 		)
+	)
+	(label "SW_3V3"
+		(at 119.38 129.54 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ca6ea0da-0b9a-4a7d-8398-293b9f3ae2d8")
 	)
 )

@@ -35,7 +35,7 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | 5 V OR-ing (TI TPS2116) | PoE 5 V and USB-C VBUS, either one powers the board, PoE has priority, no back-feed into USB |
 | 3.3 V buck (TI TLV62569) | 5 V → ESP_3V3 for the module, the PHY and the camera module |
 | 850 nm LED ring: 12 × Amicc A-SC880IR3C-P03-1T (LCSC C5355470), plus driver (TI TPS22918 load switch, TPS61170 boost to 32 V, 1 A op-amp current sink) | Lights passive retroreflective markers at 2–5 m (room scale): 4.6 W/sr on axis, 90° beam. On only while `STROBE ∧ LED_EN`, for at most ≈ 1 ms per pulse. See [LED ring](#led-ring) |
-| USB-C | 5 V on the bench; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub) |
+| USB-C | 5 V on the bench, through a TI TSD05DYFR VBUS TVS into the TPS2116; flashing, logs and JTAG through the P4's USB Serial/JTAG (no hub). VBUS is also sensed on GPIO20 (`VBUS_SENSE`) |
 | WS2812B-2020-V6 RGB LED | Status, on +3V3, driven by an RMT channel |
 
 The schematic's sheets, nets, pin-level connections and component values are in
@@ -54,6 +54,7 @@ The schematic's sheets, nets, pin-level connections and component values are in
 | BST_EN | P4 → TPS61170 CTRL | Starts the 32 V LED boost after the load switch has ramped. Pulled low: the rail stays off until firmware enables it |
 | CAM_EN | P4 → OV9281 module | Enables the module's regulators (FPC pin 11). Pulled low |
 | PWR_SRC | TPS2116 → P4 | High when PoE powers the board; firmware keeps the LED rail off on USB |
+| VBUS_SENSE | USB-C VBUS → P4 GPIO20 (ADC1_CH4) | VBUS through a 47 kΩ / 75 kΩ divider (10 nF filter). Reads high as a digital input from VBUS ≈ 4.4 V; ADC1 (ATTEN3) reads VBUS up to ≈ 5.3 V. Firmware turns the USB Serial/JTAG D+ pull-up off while VBUS is absent (USB 2.0 §7.1.5.1), since the board also runs on PoE alone. PWR_SRC can't replace it: with PoE present it says nothing about USB |
 | VLED_SENSE, NTC_SENSE | LED driver → P4 ADC1 | +32V rail and sink-MOSFET temperature |
 | STATUS_LED | P4 → RGB LED | One-wire status LED data (RMT) |
 | RMII (REF_CLK, CRS_DV, RXD0–1, TX_EN, TXD0–1) | P4 ↔ IP101GRI | Ethernet frames |
@@ -94,7 +95,8 @@ Sizing:
 - **Placement:** close around the lens holder and evenly spaced. Retroreflectors send
   the light back in a narrow cone around its source.
 
-Driver (parts and LCSC numbers: `hardware/espion-cam/BOM.md`):
+Driver (parts, values and part notes: the LED driver section and "Bill of materials" in
+[`hardware/espion-cam/SCHEMATIC.md`](../hardware/espion-cam/SCHEMATIC.md)):
 - **Rail.** One string: 23 V typ, 27.6 V max at 1 A. A TI TPS61170 boost (40 V switch,
   0.96 A minimum current limit, 10 µH) takes 5 V to 32 V and charges 2 × 220 µF/50 V
   electrolytics. 32 V covers the max-V_F string plus 0.1 V on the shunt, ≈ 1 V for the
@@ -309,7 +311,7 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 | MCPWM / PCNT / LEDC | ❌ | Not needed: STROBE gates the LEDs |
 | SYSTIMER, TIMG | ⚒ | Local timebase, embassy time driver |
 | PSRAM | ⚒ | Frame buffers (CSI DMA target) and non-per-frame data; see [Memory](#memory) |
-| USB Serial/JTAG | ⚒ | Flashing and logs |
+| USB Serial/JTAG | ⚒ | Flashing and logs. Firmware also turns the D+ pull-up off while `VBUS_SENSE` is low (see [Board signals](#board-signals)); check whether esp-hal exposes the pull-up or it needs a PAC write |
 | Chip revision | v3.0+ only | The ESP32-P4-Core carries ESP32-P4NRW32X (rev v3.x) |
 
 Tooling: esp-generate 1.4.0 has no ESP32-P4 template. `cam-p4` was adapted from the C5

@@ -573,6 +573,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Amicc"
+			(at 116.84 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
 			(at 116.84 60.96 0)
 			(hide yes)
@@ -676,6 +687,17 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
+			(at 152.4 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Amicc"
 			(at 152.4 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -799,6 +821,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Amicc"
+			(at 99.06 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
 			(at 99.06 60.96 0)
 			(hide yes)
@@ -902,6 +935,17 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
+			(at 241.3 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Amicc"
 			(at 241.3 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1025,6 +1069,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Amicc"
+			(at 45.72 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
 			(at 45.72 60.96 0)
 			(hide yes)
@@ -1128,6 +1183,17 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
+			(at 205.74 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Amicc"
 			(at 205.74 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1251,6 +1317,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Amicc"
+			(at 170.18 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
 			(at 170.18 60.96 0)
 			(hide yes)
@@ -1354,6 +1431,17 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
+			(at 134.62 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Amicc"
 			(at 134.62 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1555,6 +1643,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Amicc"
+			(at 223.52 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
 			(at 223.52 60.96 0)
 			(hide yes)
@@ -1658,6 +1757,17 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
+			(at 63.5 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Amicc"
 			(at 63.5 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -1781,6 +1891,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Amicc"
+			(at 81.28 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "A-SC880IR3C-P03-1T"
 			(at 81.28 60.96 0)
 			(hide yes)
@@ -1884,6 +2005,17 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
+			(at 187.96 60.96 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Amicc"
 			(at 187.96 60.96 0)
 			(hide yes)
 			(show_name no)

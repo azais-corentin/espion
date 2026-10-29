@@ -280,6 +280,177 @@
         "via_diameter": 0.6,
         "via_drill": 0.3,
         "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.2,
+        "diff_pair_gap": 0.25,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.2,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "POE_CABLE",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 0,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.4,
+        "tuning_profile": "",
+        "via_diameter": 0.6,
+        "via_drill": 0.3,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.2,
+        "diff_pair_gap": 0.25,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.2,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "LED_PWR",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 1,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 1.0,
+        "tuning_profile": "",
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.2,
+        "diff_pair_gap": 0.25,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.2,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "PWR_5V",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 2,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 1.0,
+        "tuning_profile": "",
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.2,
+        "diff_pair_gap": 0.25,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.2,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "PWR_3V3",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 3,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.5,
+        "tuning_profile": "",
+        "via_diameter": 0.6,
+        "via_drill": 0.3,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.15,
+        "diff_pair_gap": 0.15,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.18,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "MIPI_CSI",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 4,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.18,
+        "tuning_profile": "",
+        "via_diameter": 0.6,
+        "via_drill": 0.3,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.15,
+        "diff_pair_gap": 0.15,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.18,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "MDI",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 5,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.18,
+        "tuning_profile": "",
+        "via_diameter": 0.6,
+        "via_drill": 0.3,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.15,
+        "diff_pair_gap": 0.15,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.245,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "USB",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 6,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.245,
+        "tuning_profile": "",
+        "via_diameter": 0.6,
+        "via_drill": 0.3,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.2,
+        "diff_pair_gap": 0.25,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.2,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "RMII_CLK",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 7,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.3,
+        "tuning_profile": "",
+        "via_diameter": 0.6,
+        "via_drill": 0.3,
+        "wire_width": 6
+      },
+      {
+        "bus_width": 12,
+        "clearance": 0.2,
+        "diff_pair_gap": 0.25,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.2,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "RMII",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 8,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.36,
+        "tuning_profile": "",
+        "via_diameter": 0.6,
+        "via_drill": 0.3,
+        "wire_width": 6
       }
     ],
     "meta": {
@@ -287,7 +458,116 @@
     },
     "net_colors": {},
     "netclass_assignments": {},
-    "netclass_patterns": []
+    "netclass_patterns": [
+      {
+        "netclass": "POE_CABLE",
+        "pattern": "/Ethernet/POE_*"
+      },
+      {
+        "netclass": "POE_CABLE",
+        "pattern": "/Ethernet/ETH_SHIELD*"
+      },
+      {
+        "netclass": "LED_PWR",
+        "pattern": "+32V"
+      },
+      {
+        "netclass": "LED_PWR",
+        "pattern": "/LED driver/LED_K"
+      },
+      {
+        "netclass": "LED_PWR",
+        "pattern": "/LED driver/ISNS"
+      },
+      {
+        "netclass": "LED_PWR",
+        "pattern": "Net-(D?-K)"
+      },
+      {
+        "netclass": "LED_PWR",
+        "pattern": "Net-(D1?-K)"
+      },
+      {
+        "netclass": "LED_PWR",
+        "pattern": "Net-(D10-A)"
+      },
+      {
+        "netclass": "PWR_5V",
+        "pattern": "+5V"
+      },
+      {
+        "netclass": "PWR_5V",
+        "pattern": "VBUS"
+      },
+      {
+        "netclass": "PWR_5V",
+        "pattern": "/Power/+5V_POE*"
+      },
+      {
+        "netclass": "PWR_5V",
+        "pattern": "/LED driver/+5V_BST"
+      },
+      {
+        "netclass": "PWR_3V3",
+        "pattern": "+3V3"
+      },
+      {
+        "netclass": "PWR_3V3",
+        "pattern": "/Ethernet/PHY_3V3"
+      },
+      {
+        "netclass": "PWR_3V3",
+        "pattern": "/Camera/CAM_3V3"
+      },
+      {
+        "netclass": "MIPI_CSI",
+        "pattern": "/Camera/CSI_*"
+      },
+      {
+        "netclass": "MIPI_CSI",
+        "pattern": "/Camera/CAM_CLK_?"
+      },
+      {
+        "netclass": "MIPI_CSI",
+        "pattern": "/Camera/CAM_D?_?"
+      },
+      {
+        "netclass": "MDI",
+        "pattern": "/Ethernet/ETH_TD_?"
+      },
+      {
+        "netclass": "MDI",
+        "pattern": "/Ethernet/ETH_RD_?"
+      },
+      {
+        "netclass": "USB",
+        "pattern": "/MCU/USB_C_D_?"
+      },
+      {
+        "netclass": "USB",
+        "pattern": "/MCU/USB_D_?"
+      },
+      {
+        "netclass": "RMII_CLK",
+        "pattern": "/Ethernet/RMII_REF_CLK*"
+      },
+      {
+        "netclass": "RMII",
+        "pattern": "/Ethernet/RMII_TX*"
+      },
+      {
+        "netclass": "RMII",
+        "pattern": "/Ethernet/RMII_RXD?"
+      },
+      {
+        "netclass": "RMII",
+        "pattern": "/Ethernet/RMII_CRS_DV"
+      },
+      {
+        "netclass": "RMII",
+        "pattern": "Net-(U6-RXD*"
+      }
+    ]
   },
   "pcbnew": {
     "last_paths": {
@@ -317,7 +597,67 @@
       "ref_range_delimiter": "",
       "string_delimiter": "\""
     },
-    "bom_presets": [],
+    "bom_presets": [
+      {
+        "name": "Order",
+        "exclude_dnp": true,
+        "include_excluded_from_bom": false,
+        "filter_string": "",
+        "group_symbols": true,
+        "sort_asc": true,
+        "sort_field": "Reference",
+        "fields_ordered": [
+          {
+            "group_by": false,
+            "label": "Reference",
+            "name": "Reference",
+            "show": true
+          },
+          {
+            "group_by": false,
+            "label": "Qty",
+            "name": "${QUANTITY}",
+            "show": true
+          },
+          {
+            "group_by": true,
+            "label": "Value",
+            "name": "Value",
+            "show": true
+          },
+          {
+            "group_by": true,
+            "label": "Footprint",
+            "name": "Footprint",
+            "show": true
+          },
+          {
+            "group_by": true,
+            "label": "Manufacturer",
+            "name": "Manufacturer",
+            "show": true
+          },
+          {
+            "group_by": true,
+            "label": "MPN",
+            "name": "MPN",
+            "show": true
+          },
+          {
+            "group_by": true,
+            "label": "LCSC",
+            "name": "LCSC",
+            "show": true
+          },
+          {
+            "group_by": true,
+            "label": "DNP",
+            "name": "${DNP}",
+            "show": true
+          }
+        ]
+      }
+    ],
     "bom_settings": {
       "exclude_dnp": false,
       "fields_ordered": [

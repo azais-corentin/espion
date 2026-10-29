@@ -3672,7 +3672,7 @@
 	)
 	(wire
 		(pts
-			(xy 170.18 86.36) (xy 180.34 86.36)
+			(xy 170.18 86.36) (xy 205.74 86.36)
 		)
 		(stroke
 			(width 0)
@@ -3812,7 +3812,7 @@
 	)
 	(wire
 		(pts
-			(xy 33.02 88.9) (xy 33.02 90.17)
+			(xy 33.02 91.44) (xy 33.02 92.71)
 		)
 		(stroke
 			(width 0)
@@ -4092,7 +4092,7 @@
 	)
 	(wire
 		(pts
-			(xy 33.02 78.74) (xy 33.02 81.28)
+			(xy 33.02 78.74) (xy 33.02 83.82)
 		)
 		(stroke
 			(width 0)
@@ -4302,7 +4302,7 @@
 	)
 	(wire
 		(pts
-			(xy 187.96 86.36) (xy 265.43 86.36)
+			(xy 213.36 86.36) (xy 265.43 86.36)
 		)
 		(stroke
 			(width 0)
@@ -4909,6 +4909,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 184.15 106.68 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF5101TCE"
 			(at 184.15 106.68 0)
 			(hide yes)
@@ -5182,7 +5193,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 33.02 85.09 0)
+		(at 33.02 87.63 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5193,17 +5204,6 @@
 		(fields_autoplaced yes)
 		(uuid "30c828f8-92a5-4c0d-9588-cf3234d5e4d8")
 		(property "Reference" "R16"
-			(at 35.56 83.82 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "499k"
 			(at 35.56 86.36 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5214,8 +5214,19 @@
 				(justify left)
 			)
 		)
+		(property "Value" "499k"
+			(at 35.56 88.9 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
 		(property "Footprint" "Resistor_SMD:R_1206_3216Metric"
-			(at 33.02 85.09 90)
+			(at 33.02 87.63 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5226,7 +5237,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 33.02 85.09 0)
+			(at 33.02 87.63 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5237,7 +5248,18 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 33.02 85.09 0)
+			(at 33.02 87.63 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "YAGEO"
+			(at 33.02 87.63 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5248,7 +5270,7 @@
 			)
 		)
 		(property "MPN" "RV1206FR-07499KL"
-			(at 33.02 85.09 0)
+			(at 33.02 87.63 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5259,7 +5281,7 @@
 			)
 		)
 		(property "LCSC" "C309667"
-			(at 33.02 85.09 0)
+			(at 33.02 87.63 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5341,6 +5363,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 196.85 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 196.85 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -5533,6 +5566,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 104.14 124.46 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL21A106KAYNNNE"
 			(at 104.14 124.46 0)
 			(hide yes)
@@ -5627,6 +5671,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 45.72 74.93 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "FH"
 			(at 45.72 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -5741,6 +5796,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 171.45 48.26 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL05B104KB54PNC"
 			(at 171.45 48.26 0)
 			(hide yes)
@@ -5835,6 +5901,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 33.02 74.93 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "YAGEO"
 			(at 33.02 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -5949,6 +6026,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "FH"
+			(at 93.98 107.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402CG180J500NT"
 			(at 93.98 107.95 0)
 			(hide yes)
@@ -6043,6 +6131,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 86.36 91.44 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 86.36 91.44 0)
 			(hide yes)
 			(show_name no)
@@ -6177,6 +6276,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Epson"
+			(at 102.87 102.87 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "X1E0000210139"
 			(at 102.87 102.87 0)
 			(hide yes)
@@ -6222,7 +6332,7 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 184.15 86.36 90)
+		(at 209.55 86.36 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -6233,7 +6343,7 @@
 		(fields_autoplaced yes)
 		(uuid "659e8882-786b-4be0-bd80-5c1e89c9c3f5")
 		(property "Reference" "R11"
-			(at 183.51 83.82 90)
+			(at 208.91 83.82 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -6244,7 +6354,7 @@
 			)
 		)
 		(property "Value" "22 1%"
-			(at 184.79 83.82 90)
+			(at 210.19 83.82 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -6255,7 +6365,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 184.15 86.36 90)
+			(at 209.55 86.36 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6266,7 +6376,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 184.15 86.36 0)
+			(at 209.55 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6277,7 +6387,18 @@
 			)
 		)
 		(property "Description" "Resistor"
-			(at 184.15 86.36 0)
+			(at 209.55 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 209.55 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6288,7 +6409,7 @@
 			)
 		)
 		(property "MPN" "0402WGF220JTCE"
-			(at 184.15 86.36 0)
+			(at 209.55 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6299,7 +6420,7 @@
 			)
 		)
 		(property "LCSC" "C25092"
-			(at 184.15 86.36 0)
+			(at 209.55 86.36 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6459,6 +6580,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 132.08 43.18 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 132.08 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -6651,6 +6783,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "FH"
+			(at 111.76 107.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402CG180J500NT"
 			(at 111.76 107.95 0)
 			(hide yes)
@@ -6745,6 +6888,17 @@
 			)
 		)
 		(property "Description" "Resistor"
+			(at 196.85 96.52 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 196.85 96.52 0)
 			(hide yes)
 			(show_name no)
@@ -6926,6 +7080,17 @@
 			)
 		)
 		(property "Description" "RJ45 10/100Base-T jack with magnetics, 1CT:1CT, PoE centre taps and spare pairs brought out (VC1/VC2), Bob-Smith termination, yellow/green LEDs, shielded, THT right angle"
+			(at 45.72 45.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "HanRun"
 			(at 45.72 45.72 0)
 			(hide yes)
 			(show_name no)
@@ -7154,6 +7319,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 209.55 48.26 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL21A106KAYNNNE"
 			(at 209.55 48.26 0)
 			(hide yes)
@@ -7326,6 +7502,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 152.4 48.26 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 152.4 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -7674,6 +7861,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 184.15 93.98 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF220JTCE"
 			(at 184.15 93.98 0)
 			(hide yes)
@@ -7778,6 +7976,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 215.9 109.22 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF1501TCE"
 			(at 215.9 109.22 0)
 			(hide yes)
@@ -7817,7 +8026,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 33.02 90.17 0)
+		(at 33.02 92.71 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -7828,7 +8037,7 @@
 		(fields_autoplaced yes)
 		(uuid "a590dea5-44d4-4513-afc4-32e9b2efea45")
 		(property "Reference" "#PWR202"
-			(at 33.02 96.52 0)
+			(at 33.02 99.06 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7839,7 +8048,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 33.02 93.98 0)
+			(at 33.02 96.52 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -7849,7 +8058,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 33.02 90.17 0)
+			(at 33.02 92.71 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7860,7 +8069,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 33.02 90.17 0)
+			(at 33.02 92.71 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7871,7 +8080,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 33.02 90.17 0)
+			(at 33.02 92.71 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7950,6 +8159,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 124.46 124.46 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8064,6 +8284,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 118.11 83.82 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF5101TCE"
 			(at 118.11 83.82 0)
 			(hide yes)
@@ -8159,6 +8390,17 @@
 			)
 		)
 		(property "Description" "10/100 Mbps Ethernet PHY, MII/RMII, 25 MHz crystal or 50 MHz RMII clock, 3.3 V, 2.5/3.3 V I/O, -40 to +85 °C, QFN-32"
+			(at 149.86 93.98 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "IC Plus"
 			(at 149.86 93.98 0)
 			(hide yes)
 			(show_name no)
@@ -8522,6 +8764,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "FH"
+			(at 71.12 83.82 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "RC-02K6191FT"
 			(at 71.12 83.82 0)
 			(hide yes)
@@ -8616,6 +8869,17 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
+			(at 101.6 43.18 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "Samsung"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -8886,6 +9150,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 180.34 124.46 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "0402WGF1002TCE"
 			(at 180.34 124.46 0)
 			(hide yes)
@@ -9068,6 +9343,17 @@
 				)
 			)
 		)
+		(property "Manufacturer" "Samsung"
+			(at 190.5 48.26 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(property "MPN" "CL21A106KAYNNNE"
 			(at 190.5 48.26 0)
 			(hide yes)
@@ -9104,5 +9390,131 @@
 				)
 			)
 		)
+	)
+	(wire
+		(pts
+			(xy 33.02 81.28) (xy 17.78 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "dc5c7745-5946-4c0a-aff8-a73b7d68c2c1")
+	)
+	(junction
+		(at 33.02 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e5d2fba4-b40b-429e-bf9c-8a66814690a4")
+	)
+	(label "ETH_SHIELD"
+		(at 34.29 69.85 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "066ecf89-d5a2-4b0f-b6a1-0cfec4bd2c42")
+	)
+	(label "ETH_TD_P"
+		(at 72.39 30.48 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "a56fdd37-2d06-4ea3-bd2c-cdea10932d5e")
+	)
+	(label "ETH_TD_N"
+		(at 72.39 35.56 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "9eb85ff1-0102-45ee-a7c5-cb7ad15950aa")
+	)
+	(label "ETH_CT"
+		(at 72.39 38.1 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "581b822b-a8d0-431e-a448-e9d3e2186f8b")
+	)
+	(label "ETH_RD_P"
+		(at 72.39 40.64 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "b093753a-d9fc-4de5-a011-d7b24f661798")
+	)
+	(label "ETH_RD_N"
+		(at 72.39 45.72 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "63057414-0f8e-46a3-9246-e34ebd826aa2")
+	)
+	(label "PHY_REGOUT"
+		(at 105.41 119.38 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "5c7a1e3f-c802-4988-8627-b42fc86370d8")
+	)
+	(label "XTAL_X1"
+		(at 95.25 91.44 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "954691b0-0fc2-4155-ad31-1ecdf172022f")
+	)
+	(label "XTAL_X2"
+		(at 113.03 93.98 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "3c098d72-3744-4a0a-8da5-7593aa2977d4")
+	)
+	(label "RMII_REF_CLK_SRC"
+		(at 171.45 86.36 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "557fa355-d662-4532-a776-31486214c5ae")
+	)
+	(label "ETH_SHIELD_R"
+		(at 17.78 81.28 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ff550107-ee8b-4ae6-9f09-da296ad430d4")
 	)
 )
