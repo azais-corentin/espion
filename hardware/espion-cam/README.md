@@ -24,7 +24,8 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   TLV9061 + IRLR024N sink at a fixed 1 A, gated by `STROBE ∧ LED_EN` (SN74LVC1G97) with a
   ≈ 1 ms hardware timeout per pulse. No continuous-on mode
 - IP101GRI Ethernet PHY on RMII (25 MHz crystal, PHY supplies the 50 MHz REF_CLK), HanRun
-  HR871150C MagJack with both centre taps and the spare pairs brought out, PPS test point
+  HR871150C MagJack with both centre taps and the spare pairs brought out, its LEDs driven
+  by the PHY (green link/activity, yellow 100 Mb/s), PPS test point
 - Power: SDAPO DP1435-5V IEEE 802.3af PoE PD module (isolated 5.15 V, LCSC C5380097)
   through an LC filter, OR-ed with USB-C 5 V by a TPS2121 priority mux; TLV62569 buck to 3.3 V
 - USB-C straight to the P4's USB Serial/JTAG (no hub), with ESD protection and a TI

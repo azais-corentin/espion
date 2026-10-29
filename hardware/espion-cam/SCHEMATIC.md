@@ -28,7 +28,7 @@ ones from KiCad's annotation, in every section.
 | VBUS sense | `VBUS` through a 47 kΩ / 75 kΩ divider (R62/R63, 100 nF C49) into GPIO20 (`VBUS_SENSE`, ADC1 CH4). Firmware drops the USB D+ pull-up while VBUS is absent ([firmware rule 10](#firmware-rules-from-the-schematic)); `PWR_SRC` cannot tell whether USB is plugged in |
 | LED boost input | A TPS22918 load switch (U8) with a ≈ 27 ms ramp, on `LED_PWR_EN`, feeds the boost. Without it, the boost's inductor-diode path charges the 440 µF storage at every power-up (≈ 1.6 A inrush, over the USB limit). The boost (U9) has its own enable, `BST_EN`, which firmware raises only after the switch has ramped |
 | RJ45 shield | To GND through 1 nF/2 kV (C12) ∥ 1 MΩ (R15 + R16, 2 × 499 kΩ) |
-| Indicators | One addressable RGB status LED (WS2812B-2020-V6, D1, on +3V3) on a P4 GPIO. The MagJack's LEDs are not used; the PHY's LED pins are straps only |
+| Indicators | One addressable RGB status LED (WS2812B-2020-V6, D1, on +3V3) on a P4 GPIO. The MagJack's two LEDs are driven by the PHY in LED mode 2: green = link/activity (LED0), yellow = 100 Mb/s link (LED3). See [Jack LEDs](#jack-leds) |
 | Debug and sense | Test points on XVS, STROBE, gate output, LED_EN, PPS, the LED current shunt (`ISNS`), +5V, +3V3, +32V and GND. +32V sense divider and an NTC at the sink MOSFET, both into ADC1 pins. No UART header, no JTAG pads |
 | IMU | ST LSM6DS3TR-C 6-axis IMU (U12) on its own I2C bus (GPIO3/4, `IMU_SDA`/`IMU_SCL`), with INT1 on GPIO54 (`IMU_INT1`). Uses: wake-on-motion flags a camera that was bumped (stale extrinsics), the accelerometer gives the gravity vector for rig calibration, the rest is spare. INT2 is not connected. See [IMU](#imu-imukicad_sch) |
 | GPIO numbers | Fixed for Ethernet ([Ethernet pin map](../../docs/architecture.md#ethernet-pin-map)). The rest are assigned during PCB placement, within the groups in [GPIO groups](#gpio-groups) |
@@ -41,7 +41,7 @@ ones from KiCad's annotation, in every section.
 | `espion-cam.kicad_sch` (root) | Sheet symbols with the buses between them, mounting holes H1–H4. The wired sheet symbols serve as the block diagram |
 | `power.kicad_sch` | DP1435-5V PoE PD, LC filter, TPS2121 priority mux, TLV62569 3.3 V buck, VBUS TVS (TSD05DYFR) |
 | `mcu.kicad_sch` | ESP32-P4-Core module, EN/RESET, BOOT, USB-C (ESD, CC), VBUS sense divider, RGB status LED, PPS loop-back and test point |
-| `ethernet.kicad_sch` | IP101GRI PHY, 25 MHz crystal, HR871150C MagJack, shield RC |
+| `ethernet.kicad_sch` | IP101GRI PHY, 25 MHz crystal, HR871150C MagJack, shield RC, jack LED resistors and the LEDMOD strap |
 | `camera.kicad_sch` | 15-pin FPC, JST-SH aux (XVS/STROBE), SCCB pull-ups, CAM_EN, XVS divider, STROBE buffer |
 | `led_driver.kicad_sch` | TPS22918 load switch, TPS61170 boost, storage caps, '1G97 gate and timeout RC, TLV9061/IRLR024N sink, NTC, +32V sense |
 | `led_ring.kicad_sch` | 12 × A-SC880IR3C (D4–D15) in series between +32V and `LED_K` |
@@ -70,7 +70,7 @@ Global power symbols carry the rails; local nets stay on one sheet.
 | `GND` | global | — | everything, including the mounting holes H1–H4. Isolated from the cable side by the DP1435 |
 | `VBUS` | global | USB-C J1 (mcu) | TPS2121 IN2 (U4), TSD05DYFR TVS (D2), 100 kΩ bleeder (R25), VBUS sense divider (R62/R63) |
 | `+5V` | global | TPS2121 U4 OUT (power) | TLV62569 (U5), TPS22918 (U8, led_driver), TLV9061 (U11) |
-| `+3V3` | global | TLV62569 U5 (power) | P4 module, PHY (via `PHY_3V3`), camera (via `CAM_3V3`), logic, RGB LED, IMU, pull-ups, NTC divider |
+| `+3V3` | global | TLV62569 U5 (power) | P4 module, PHY (via `PHY_3V3`), camera (via `CAM_3V3`), logic, RGB LED, MagJack green LED, IMU, pull-ups, NTC divider |
 | `+32V` | global | TPS61170 U9 via D3 (led_driver) | LED ring, boost feedback divider (R45/R46), sense divider (R60/R61). Stock `power:+36V` symbol with Value `+32V` (stock KiCad has no `+32V`; the net name follows the Value) |
 | `+5V_POE`, `+5V_POE_F` | local, power | DP1435 (U3) VOUT; after the LC filter (L1) | LC filter; TPS2121 IN1 and the PR1 divider |
 | `+5V_BST` | local, led_driver | TPS22918 (U8) VOUT | TPS61170 VIN, boost inductor (L3) |
@@ -466,7 +466,7 @@ Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `ki
 - **PR1** ratio k = R18/(R17 + R18) = 47/147 = 0.320 (0.315–0.324 with 1 % parts).
 - **Threshold** V_th = V_CP2 / k: **3.91 V** nominal. Worst case, the CP2 window ± 40 mV V_OFST: **3.55–4.29 V**; adding ±0.1 µA of leakage into 32 kΩ (PR1 node) and 38 kΩ (CP2 node): **3.53–4.31 V**.
 - **Upper bound** (PoE must never be rejected while USB is present): worst DP1435 output 4.64 V (both 5 % bands), minus 0.2 V step dip and 0.03 V DCR, leaves 4.41 V: **0.10 V** above 4.31 V.
-- **Lower bound**: the buck must still regulate when IN1 sags to the threshold. V_IN(min) = V_OUT + I·(R_DS(on),HS + DCR) = 3.3 + 0.77 × (0.100 + 0.015) = 3.39 V (SLVSDG1C §7.3.2 Eq. 1; R_DS(on) EC table; DCR 15 mΩ from the FXL0630 table), plus 0.77 A × 90 mΩ across U4 = **3.46 V** at IN1: **0.07 V** below 3.53 V. The 5 µs fast switchover adds a 5 µs × 2 A / 124 µF ≈ 0.08 V dip (Eq. 3–4, p. 15), so at the lowest corner the buck input touches ≈ 3.38 V for ≈ 5 µs, 0.01 V under its regulation bound; accepted.
+- **Lower bound**: the buck must still regulate when IN1 sags to the threshold. V_IN(min) = V_OUT + I·(R_DS(on),HS + DCR) = 3.3 + 0.78 × (0.100 + 0.015) = 3.39 V (SLVSDG1C §7.3.2 Eq. 1; R_DS(on) EC table; DCR 15 mΩ from the FXL0630 table), plus 0.78 A × 90 mΩ across U4 = **3.46 V** at IN1: **0.07 V** below 3.53 V. The 5 µs fast switchover adds a 5 µs × 2 A / 124 µF ≈ 0.08 V dip (Eq. 3–4, p. 15), so at the lowest corner the buck input touches ≈ 3.38 V for ≈ 5 µs, 0.01 V under its regulation bound; accepted.
 - 62 kΩ instead of 60.4 kΩ would give 3.61–4.35 V and only 0.06 V at the upper bound; 60.4 kΩ balances the two margins.
 - Divider currents: PR1 5.15 V / 147 kΩ = 35 µA; CP2 3.32 V / 160.4 kΩ = 21 µA. PR1 stays ≤ 5.67 V × 0.324 = 1.84 V and CP2 ≤ 1.31 V, inside the 5.5 V control-pin rating (p. 6).
 - **No hysteresis resistor.** TI's XREF example puts a 1 MΩ "Hyst" resistor from PR1 to ST (SLVSEA3F Fig. 10-12, p. 27); this design omits it, and SLVSEA3F specifies no hysteresis of its own for the PR1/CP2 comparator. Any hysteresis widens the threshold window, and the window above has only 0.10 V (upper) and 0.07 V (lower) of margin left, so there is no room for it. Accepted consequence: with USB present and PoE overloaded or in hiccup, the mux can cycle between IN1 and IN2 (handing the load to USB unloads the DP1435, IN1 recovers above the threshold and the mux hands back). Every handover is current-limited (below), so this stresses nothing. It needs a PoE fault: the normal `+5V` load, ≤ 2 A, is within the DP1435's 2 A typ / 2.6 A max rating.
@@ -507,7 +507,7 @@ Stock libraries checked: KiCad 10.0.7 dev shell (`kicad-symbols-1b2b42d49b`, `ki
 
 - With −20 % tolerance on C17 and on the MLCCs, the 5.67 V total is still ≥ 97 µF.
 - The earlier 2 × 47 µF/10 V 1206 gave only ≈ 42 µF on the rail by the same curves (18.3 µF each), not the ≈ 45–50 µF estimated before.
-- **C17 ripple and rating**: the worst-case ripple into the `+5V` bulk is the buck's input ripple, I_out·√(D(1−D)) = 0.77 A × 0.47 ≈ 0.37 A rms at 1.5 MHz, most of it taken by C21 [INFERENCE]. That is < 15 % of the 2.65 A rating (MA p.3; ripple multiplier 1.0 from 100 kHz up, p.2). C17 is rated 25 V, 4.4× the 5.67 V worst case.
+- **C17 ripple and rating**: the worst-case ripple into the `+5V` bulk is the buck's input ripple, I_out·√(D(1−D)) = 0.78 A × 0.47 ≈ 0.37 A rms at 1.5 MHz, most of it taken by C21 [INFERENCE]. That is < 15 % of the 2.65 A rating (MA p.3; ripple multiplier 1.0 from 100 kHz up, p.2). C17 is rated 25 V, 4.4× the 5.67 V worst case.
 - **Soft start at USB attach** (USB alone): the mux waits t_SET on C52, then ramps OUT at the C_SS slew rate, 780 V/s typ at 5 V for 100 nF (Table 9-1, p. 13; TI's own 100 µF example stays under 100 mA, Eq. 10–11, p. 24). The ≈ 124 µF on `+5V` draws 124 µF × 780 V/s ≈ **0.10 A** for 5 V / 780 V/s ≈ **6.4 ms**; the earlier mux's fixed 1.7 ms ramp drew ≈ 0.36 A. The buck's start-up load adds to it once `+5V` passes its UVLO [INFERENCE, unquantified]. SLVSEA3F shows t_SET only as a timing diagram (Fig. 9-3), with no value for C_SS.
   - The same soft start applies at PoE power-up without USB (IN1 is then the first valid input), so the DP1435 also sees only ≈ 0.1 A into the `+5V` caps.
   - Soft start lowers the peak current, not the charge: Q = C·V ≈ 0.62 mC, ≈ 12× the 50 µC that 10 µF at 5 V would take at USB attach. Accepted: the peak is ≈ 0.1 A and ramped, and USB is the bench supply.
@@ -545,11 +545,11 @@ Everything on `+3V3` that the TLV62569 sees, against TI's 10–47 µF (SLVSDG1C 
 
 **Inductor current**
 - ΔI_L = V_OUT(1 − V_OUT/V_IN)/(L f_SW) = 3.3 × (1 − 3.3/5.15)/(2.2 µH × 1.5 MHz) = 0.36 A (0.45 A at L − 20 %).
-- At the 0.77 A budget, I_L,max = 0.77 + 0.22 = 0.99 A (§8.2.2.4 Eq. 3).
-- L2 FXL0630-2R2-M: DCR 15 mΩ max, I_sat 10.5 A, I_rms 8.5 A (catalog table; LCSC lists 9.5 A). 10.5/0.99 ≈ 10×, far above TI's recommended 1.2–1.3×.
+- At the 0.78 A budget, I_L,max = 0.78 + 0.22 = 1.00 A (§8.2.2.4 Eq. 3).
+- L2 FXL0630-2R2-M: DCR 15 mΩ max, I_sat 10.5 A, I_rms 8.5 A (catalog table; LCSC lists 9.5 A). 10.5/1.00 ≈ 10×, far above TI's recommended 1.2–1.3×.
 - The inductor no longer limits the buck: the usable output is the IC's 2 A. (The earlier FNR3015S, I_sat 1.60 A, capped it at ≈ 1.05 A.)
 - I_LIM (DBV) = 3 A min (EC), well below I_sat: under a +3V3 short the current limit trips before the inductor saturates.
-- DCR loss at 0.77 A: 0.77² × 0.015 Ω ≈ 9 mW. The catalog gives no core loss at the buck's 1.5 MHz; with ≈ 1 A peak in a part rated 8.5 A rms it is taken as small and accepted [INFERENCE].
+- DCR loss at 0.78 A: 0.78² × 0.015 Ω ≈ 9 mW. The catalog gives no core loss at the buck's 1.5 MHz; with ≈ 1 A peak in a part rated 8.5 A rms it is taken as small and accepted [INFERENCE].
 
 **`+3V3` load budget** (design allowances):
 | Load | Allowance | Source |
@@ -559,15 +559,16 @@ Everything on `+3V3` that the TLV62569 sees, against TI's 10–47 µF (SLVSDG1C 
 | OV9281 module (on J3) | 150 mA | Sensor 156 mW active (OV9281 PB v1.4). From 3.3 V through the module's LDOs: worst case all at the 1.2 V rail is 130 mA; 150 mA allowance [INFERENCE] |
 | RGB status LED (D1, WS2812B-2020-V6) | 60 mA | Allowance; 37 mA at full white ([RGB status LED](#rgb-status-led)) |
 | SN74LV1T34 (U7), '1G97 (U10), pull-ups, dividers, ADC dividers | 10 mA | [INFERENCE] |
-| **Total** | **≈ 0.77 A** | 38 % of the TLV62569's 2 A (the FXL0630 does not limit it) |
+| MagJack LEDs (J2, through R69/R70) | 14 mA | ≤ 2 × 6.8 mA at the strongest LED_DRIVE setting, ≈ 2 × 1.6 mA at the default ([Jack LEDs](#jack-leds)). The yellow LED's current comes through the PHY pad, so it is drawn from `PHY_3V3` |
+| **Total** | **≈ 0.78 A** | 39 % of the TLV62569's 2 A (the FXL0630 does not limit it) |
 
-Buck loss at ≈ 90 % efficiency [INFERENCE, not on a TI curve for 3.3 V out] is ≈ 0.28 W × R_θJA 188.2 °C/W (DBV, §6.4) = +53 °C worst case. Give it copper (Layout).
+Buck loss at ≈ 90 % efficiency [INFERENCE, not on a TI curve for 3.3 V out] is ≈ 0.29 W × R_θJA 188.2 °C/W (DBV, §6.4) = +54 °C worst case. Give it copper (Layout).
 
 **`+5V` budget**
-- Buck: 3.3 × 0.77 / 0.9 / 5.0 = 0.56 A.
+- Buck: 3.3 × 0.78 / 0.9 / 5.0 = 0.57 A.
 - LED boost: 2.3 W average = 0.46 A (architecture.md "Power"); peak input = TPS61170 (U9) I_LIM max 1.44 A (SLVS789D) while recharging the +32V caps for 70–120 ms.
 - **Average ≈ 1.0 A (5.3 W), peak ≈ 2.0 A (10.3 W).** Within the DP1435's 2 A typ / 2.6 A max, the TPS2121's 4.5 A continuous and ≥ 2.5 A current limit, and 802.3af's ≈ 10.9 W usable (architecture.md).
-- USB-only: firmware keeps LED_PWR_EN low, so only the buck draws: ≤ 0.56 A budget, ≈ 0.25 A realistic (Table 5-7 + PHY + camera + LED). The budget is above the 500 mA of a USB 2.0 default port and the realistic draw below it; accepted for a bench port. The P4 allowance is Espressif's supply-capability figure, not a measurement, and the OV9281 module's draw is an estimate (budget table).
+- USB-only: firmware keeps LED_PWR_EN low, so only the buck draws: ≤ 0.57 A budget, ≈ 0.25 A realistic (Table 5-7 + PHY + camera + LED). The budget is above the 500 mA of a USB 2.0 default port and the realistic draw below it; accepted for a bench port. The P4 allowance is Espressif's supply-capability figure, not a measurement, and the OV9281 module's draw is an estimate (budget table).
 
 **VBUS TVS**
 - D2 TSD05DYFR (SLVSH43C §5.7 EC table, p.6): VRWM 5.5 V, defined as leakage < 50 nA across the operating temperature range; I_LEAK 5 nA typ / 50 nA max at 5.5 V; VBR ≥ 6.0 V at 1 mA; C_L 19 pF.
@@ -1048,7 +1049,7 @@ Ordering: D1 is the only in-stock addressable LED rated for 3.3 V, which is why 
 
 ## Ethernet (`ethernet.kicad_sch`)
 
-The IC Plus IP101GRI PHY (U6) on a 25 MHz crystal (Y1), strapped for RMII. The PHY makes the 50 MHz RMII reference clock and drives it into the P4 (GPIO50) and back into its own 50M_CLKI pin. Behind it sits the HanRun HR871150C MagJack (J2), which contains the 1CT:1CT magnetics, the common-mode chokes, the Bob-Smith termination and a 1 nF/2 kV shield capacitor. The four line-side centre-tap and spare-pair nets of the jack leave this sheet for the PoE PD. The jack LEDs are not used. The shield goes to GND through C12 (1 nF/2 kV) ∥ R15 + R16 (2 × 499 kΩ). All PHY logic is on `+3V3`, through a local `PHY_3V3` net.
+The IC Plus IP101GRI PHY (U6) on a 25 MHz crystal (Y1), strapped for RMII. The PHY makes the 50 MHz RMII reference clock and drives it into the P4 (GPIO50) and back into its own 50M_CLKI pin. Behind it sits the HanRun HR871150C MagJack (J2), which contains the 1CT:1CT magnetics, the common-mode chokes, the Bob-Smith termination and a 1 nF/2 kV shield capacitor. The four line-side centre-tap and spare-pair nets of the jack leave this sheet for the PoE PD. The PHY drives the jack's two LEDs directly (green = link/activity, yellow = 100 Mb/s; [Jack LEDs](#jack-leds)). The shield goes to GND through C12 (1 nF/2 kV) ∥ R15 + R16 (2 × 499 kΩ). All PHY logic is on `+3V3`, through a local `PHY_3V3` net.
 
 Sources used below:
 - **[DS]** IP101G datasheet IP101G-DS-R01 (LCSC PDF in `hardware/lib/README.md`).
@@ -1080,7 +1081,7 @@ Sheet labels: `{PHY}` (bus, bidirectional) and `{POE}` (bus, passive). The rows 
 | `POE_VB1` | passive | cable side, isolated | power, U3 (DP1435) VB1 | J2 VC2+ (P9) = pins 4/5 |
 | `POE_VB2` | passive | cable side, isolated | power, U3 (DP1435) VB2 | J2 VC2− (P10) = pins 7/8 |
 
-Power symbols: `+3V3`, `GND`. Labelled local nets: `PHY_3V3`, `PHY_REGOUT`, `XTAL_X1`, `XTAL_X2`, `ETH_CT`, `ETH_TD_P/N`, `ETH_RD_P/N`, `ETH_SHIELD`, `ETH_SHIELD_R` (mid-point of R15/R16), `RMII_REF_CLK_SRC` (U6 pin 14 → R11), and the PHY-side ends of the RX series resistors `RMII_CRS_DV_PHY` (U6 pin 19 → R12), `RMII_RXD0_PHY` (pin 18 → R13) and `RMII_RXD1_PHY` (pin 17 → R14). Unnamed nets: the three strap nets and ISET.
+Power symbols: `+3V3`, `GND`. Labelled local nets: `PHY_3V3`, `PHY_REGOUT`, `XTAL_X1`, `XTAL_X2`, `ETH_CT`, `ETH_TD_P/N`, `ETH_RD_P/N`, `ETH_SHIELD`, `ETH_SHIELD_R` (mid-point of R15/R16), `RMII_REF_CLK_SRC` (U6 pin 14 → R11), the PHY-side ends of the RX series resistors `RMII_CRS_DV_PHY` (U6 pin 19 → R12), `RMII_RXD0_PHY` (pin 18 → R13) and `RMII_RXD1_PHY` (pin 17 → R14), the PHY LED pins `PHY_LED0` (U6 pin 11, R6, R69) and `PHY_LED3` (pin 12, R7, R70), and the jack sides of the LED resistors `ETH_LED_G` (R69 → J2 pin 14) and `ETH_LED_Y` (R70 → J2 pin 11). Unnamed nets: the COL/RMII and CRS/LEDMOD strap nets and ISET.
 
 ### Parts
 
@@ -1097,8 +1098,9 @@ LCSC stock and lowest-break unit price were read from the product pages on 2026-
 | C8 | Bulk on `PHY_REGOUT` | 10 µF 25 V X5R 0805, CL21A106KAYNNNE (Samsung) | C15850 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
 | C9 | Bulk on `PHY_3V3` (AVDD33 and VDDIO together) | 4.7 µF 25 V X5R 0805, CL21A475KAQNNNE (Samsung) | C1779 | `Device:C` | `Capacitor_SMD:C_0805_2012Metric` |
 | R5 | `+3V3` → `PHY_3V3` link (ferrite option) | 0 Ω 0805 jumper, 0805W8F0000T5E | C17477 | `Device:R` | `Resistor_SMD:R_0805_2012Metric` |
-| R8, R6 | Straps: COL/RMII pull-up (R8), LED0/PHY_AD0 pull-up (R6) | 5.1 kΩ 1 % 0402, 0402WGF5101TCE | C25905 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R8, R6, R71 | Straps: COL/RMII pull-up (R8), LED0/PHY_AD0 pull-up (R6), CRS/LEDMOD pull-up → LED mode 2 (R71) | 5.1 kΩ 1 % 0402, 0402WGF5101TCE | C25905 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | R7 | Strap: LED3/PHY_AD3 pull-down | 5.1 kΩ 1 % 0402, 0402WGF5101TCE | C25905 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
+| R69, R70 | Jack LED series resistors: LED0 → green (R69), LED3 → yellow (R70) | 220 Ω 1 % 0402, 0402WGF2200TCE (the R28 part) | C25091 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | R9 | MDIO pull-up | 1.5 kΩ 1 % 0402, 0402WGF1501TCE | C25867 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | R10 | PHY_RST_N pull-down | 10.0 kΩ 1 % 0402, FOJAN FRC0402F1002TS | C2906861 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
 | R11, R12, R13, R14 | Source series termination: REF_CLK (R11), CRS_DV (R12), RXD0 (R13), RXD1 (R14) | 22 Ω 1 % 0402, 0402WGF220JTCE | C25092 | `Device:R` | `Resistor_SMD:R_0402_1005Metric` |
@@ -1126,8 +1128,8 @@ Alternative for the bleeder: one YAGEO RV1206FR-071ML (1 MΩ, 500 V working / 1 
 | 8 | TXD1 | `RMII_TXD1` (hier) | P4 GPIO35. No pull on this sheet (BOOT strap; R2 pull-up on the mcu sheet) |
 | 9 | TXD0 | `RMII_TXD0` (hier) | P4 GPIO34 |
 | 10 | TXCLK/50M_CLKI | `RMII_REF_CLK` (the same net as GPIO50, on the far side of R11) | In RMII the PHY needs 50 MHz on this input even when it makes the clock itself: [DS] p.16 pin 10 text; [DS] Fig. 8 (p.44) ties 50M_CLKO to 50M_CLKI and to the MAC REFCLK with no buffer. [EV] (R139/R142) and [WS] tie pins 10 and 14 together to GPIO50 |
-| 11 | LED0/PHY_AD0 | R6 (5.1 kΩ) to `PHY_3V3` | PHY_AD0 = 1 → address 1. LED output not used; no LED on the pin |
-| 12 | LED3/PHY_AD3 | R7 (5.1 kΩ) to GND | PHY_AD3 = 0. [DS] Table 4 note: "Do not let these PHY address pins floating" |
+| 11 | LED0/PHY_AD0 | `PHY_LED0`: R6 (5.1 kΩ) to `PHY_3V3`; R69 (220 Ω) → `ETH_LED_G` → J2 pin 14 (green cathode) | PHY_AD0 = 1 → address 1. LED0 = link/activity in mode 2; sinks the green LED, whose anode is on `+3V3` ([Jack LEDs](#jack-leds)) |
+| 12 | LED3/PHY_AD3 | `PHY_LED3`: R7 (5.1 kΩ) to GND; R70 (220 Ω) → `ETH_LED_Y` → J2 pin 11 (yellow anode) | PHY_AD3 = 0. [DS] Table 4 note: "Do not let these PHY address pins floating". LED3 = 100 Mb/s link in mode 2; sources the yellow LED, whose cathode is on GND |
 | 13 | VDDIO | `PHY_3V3`; with pin 31, decoupled by C5, C7 (100 nF) and C9 (4.7 µF) to GND | 3.3 V I/O, the same level as the P4 ([DS] Table 11) |
 | 14 | RXCLK/50M_CLKO | `RMII_REF_CLK_SRC` → R11 (22 Ω) → `RMII_REF_CLK` | 50 MHz RMII reference clock output ([DS] p.17 pin 14; §5.1.4) |
 | 15 | RXD3 | NC | MII-only output |
@@ -1135,7 +1137,7 @@ Alternative for the bleeder: one YAGEO RV1206FR-071ML (1 MΩ, 500 V working / 1 
 | 17 | RXD1 | R14 (22 Ω) → `RMII_RXD1` | Source termination |
 | 18 | RXD0 | R13 (22 Ω) → `RMII_RXD0` | Source termination |
 | 19 | RXDV/CRS_DV/FX_HEN | R12 (22 Ω) → `RMII_CRS_DV` | Strap FX_HEN = 0 (TP) comes from the internal 104 kΩ PD. The P4's GPIO28 has no pull at reset ([P4DS] IO MUX table: "–"), and PHY reset is held by R10 until firmware runs. Firmware must not turn on a GPIO28 pull-up before the strap latches ([firmware rule 3](#firmware-rules-from-the-schematic)). No external part, as on [EV] and [WS] |
-| 20 | CRS/LEDMOD | NC | LEDMOD strap only changes LED behaviour. Internal PD → LED mode 1. LEDs are not used |
+| 20 | CRS/LEDMOD | R71 (5.1 kΩ) to `PHY_3V3` | LEDMOD strap = 1 → LED mode 2 ([DS] §5.4). The CRS output is not used in RMII (CRS_DV carries it) |
 | 21 | RXER/INTR_32 | NC | Default function is RXER, a push-pull output (P16R29[2] SEL_INTR32 = 0, R/W, not latched: [DS] p.28). The P4's RMII_RXER input (GPIO31) is MDC here, so RXER is not routed. The pin is not a strap: [DS] p.17 lists it as type O/OD with no latched-input flag, although [EV] sheet 5 annotates it like one. A PHY interrupt would need one more GPIO |
 | 22 | MDC | `MDC` (hier) | |
 | 23 | MDIO | `MDIO` (hier), R9 (1.5 kΩ) to `PHY_3V3` | Internal PU is only 222 kΩ ([DS] p.12, p.16) |
@@ -1177,17 +1179,18 @@ The pinout matches `Device:Crystal_GND24` (pins 1/3 crystal, 2/4 G). [Epson] p.1
 | 8 | VC1− | Line-side centre tap of pair 3/6 | `POE_VA2` (hier) |
 | 9 | VC2+ | Contacts 4 + 5 (spare pair 4/5) | `POE_VB1` (hier) |
 | 10 | VC2− | Contacts 7 + 8 (spare pair 7/8) | `POE_VB2` (hier) |
-| 11 | LEDY+ | Yellow LED anode | NC (jack LEDs unused), with a no-connect flag |
-| 12 | LEDY− | Yellow LED cathode | NC |
-| 13 | LEDG+ | Green LED anode | NC |
-| 14 | LEDG− | Green LED cathode | NC |
+| 11 | LEDY+ | Yellow LED anode (left LED, front view, [HR] p.2) | `ETH_LED_Y` → R70 (220 Ω) → U6 pin 12 (`PHY_LED3`) |
+| 12 | LEDY− | Yellow LED cathode | GND |
+| 13 | LEDG+ | Green LED anode (right LED) | `+3V3` |
+| 14 | LEDG− | Green LED cathode | `ETH_LED_G` → R69 (220 Ω) → U6 pin 11 (`PHY_LED0`) |
 | SH (2 pads) | SH | Shell. Inside, the Bob-Smith common node couples to it through 1000 pF/2 kV | `ETH_SHIELD` → C12 (1 nF/2 kV) ∥ (R15 + R16, 2 × 499 kΩ in series via `ETH_SHIELD_R`) → GND |
 
 [HR] p.1 names the RJ45 contacts J1–J8; this table calls them contacts 1–8 so they don't read as board refs. The TD/RD mapping follows the MDI convention (PHY transmits on 1/2, receives on 3/6). Auto-MDIX ([DS] §5.1.6) also handles swapped pairs. The DP1435 (U3) mapping VA1/VA2 = centre taps of 1/2 and 3/6 and VB1/VB2 = 4/5 and 7/8 matches `docs/architecture.md` (Hardware tasks, PoE PD and MagJack bullets).
 
 #### Passive network summary
 
-- `+3V3` → R5 (0 Ω, 0805) → `PHY_3V3`. `PHY_3V3` feeds U6 pins 13 and 31, the COL and AD0 straps (R8, R6) and the MDIO pull-up (R9).
+- `+3V3` → R5 (0 Ω, 0805) → `PHY_3V3`. `PHY_3V3` feeds U6 pins 13 and 31, the COL, AD0 and LEDMOD straps (R8, R6, R71) and the MDIO pull-up (R9).
+- Green jack LED: `+3V3` → J2 pin 13 → LED → J2 pin 14 → R69 (220 Ω) → U6 pin 11, which sinks it. Yellow jack LED: U6 pin 12 → R70 (220 Ω) → J2 pin 11 → LED → J2 pin 12 → GND.
 - `RMII_REF_CLK` net: U6 pin 14 → `RMII_REF_CLK_SRC` → R11 (22 Ω) → star point at R11 pin 2. From the star point, one branch goes to the hier pin (GPIO50, U1 pin 68) and one to U6 pin 10. The two branches must have equal length (see layout).
 - The net has exactly two loads, U1 pin 68 and U6 pin 10. [DS] Fig. 10 (p.45, "IP101GR need add a buffer if RXCLK/50M_CLK push over two device") limits the unbuffered loop to that: any further load on `RMII_REF_CLK` (another PHY or clock consumer) needs a buffer.
 - `PHY_RST_N`: hier pin → U6 pin 32, plus R10 (10 kΩ) to GND.
@@ -1208,8 +1211,8 @@ The pinout matches `Device:Crystal_GND24` (pins 1/3 crystal, 2/4 G). [Epson] p.1
   - Power is about 150 mW ([DS] Table 1), roughly 45 mA at 3.3 V.
 - **Ferrite on AVDD33: none.** [DS] asks only that AVDD33 be "decoupled carefully" (p.18). Neither reference design has a ferrite: [EV] R213 and [WS] R71 are 0 Ω links ESP_3V3 → PHY_3V3. This sheet keeps one 0805 0 Ω link (R5) in the same place (the same jumper part as the camera supply link R37; 0805 is easy to lift for rework). R5 is fitted. It allows a current measurement, and an 0805 ferrite can be fitted if EMI testing calls for one.
 - **Straps.** All straps latch at the rising edge of RESET_N. Setup is 10 µs and hold is 2.63 ms ([DS] Table 15). [DS] Table 13 gives 5.1 kΩ as the latch resistor.
-  - COL/RMII with R8 (5.1 kΩ) up against the internal 104 kΩ PD gives 3.3 · 104/109.1 = 3.15 V. That is above V_IH min = 0.8·VDDIO = 2.64 V ([DS] Table 12).
-  - The straps match [EV] ("PHY MODE CONFIG": R149 COL pull-up, R141 AD0 pull-up, R140 AD3 pull-down, all 5.1 kΩ) and [WS] (R49, R65, R63).
+  - COL/RMII with R8 (5.1 kΩ) up against the internal 104 kΩ PD gives 3.3 · 104/109.1 = 3.15 V. That is above V_IH min = 0.8·VDDIO = 2.64 V ([DS] Table 12). CRS/LEDMOD with R71 has the same internal PD and reads the same 3.15 V.
+  - The COL and address straps match [EV] ("PHY MODE CONFIG": R149 COL pull-up, R141 AD0 pull-up, R140 AD3 pull-down, all 5.1 kΩ) and [WS] (R49, R65, R63). The LEDMOD strap (R71) is this board's own, for the jack LEDs.
 - **PHY address = 1.** [DS] Table 4 (32-pin): AD0 = 1 (R6) → address 1, with AD3 as don't-care but held low (R7) so it never floats. The other options:
   - AD3 = 0 / AD0 = 0 → address 0.
   - AD3 = 1 / AD0 = 0 → "respond to any address 2–31", which this design avoids.
@@ -1285,8 +1288,25 @@ The pinout matches `Device:Crystal_GND24` (pins 1/3 crystal, 2/4 G). [Epson] p.1
 - **Decoupling:** each 100 nF (C5, C6, C7) goes at its pin (13, 28, 31) with a short via to GND; C8 (10 µF) sits next to C6 at pin 28 and C9 (4.7 µF) between pins 13 and 31.
 - **QFN EP:** the only GND connection. The footprint is the `_ThermalVias` variant; otherwise stitch at least 4–5 vias to the GND plane.
 - **RX series resistors** R12–R14 (and R11 on the clock) within ≈ 3 mm of the PHY pins.
+- **Jack LEDs:** R69 and R70 next to U6 pins 11 and 12, so the long trace to the jack sits behind the 220 Ω; R71 next to pin 20. The LED nets are Default class. J2 pads 11–14 are on the board side, ≈ 8.6 mm edge to edge from the nearest `POE_*` pad (pad 10), and the "PoE isolation" rule keeps their traces ≥ 2 mm from `POE_*` copper. Keep them clear of the MDI pairs ("MDI spacing") and the `RMII_CLK` traces.
 
 `PHY_3V3` (R5, 0 Ω from `+3V3`, as on both reference boards) is fed through a passive part, so it carries its own `PWR_FLAG` on this sheet.
+
+### Jack LEDs
+
+LED mode 2: green = LED0 link/activity, yellow = LED3 100 Mb/s link.
+
+- Only LED0 (pin 11) and LED3 (pin 12) exist on the 32-pin package ([DS] p.18). R71 pulls CRS/LEDMOD up, which selects mode 2: LED0 = Link/ACT (on with link, blinking on TX/RX at 10 and 100 Mb/s), LED3 = 100BT ([DS] §5.4 Table 8). Mode 1, the default with the internal PD, would show activity only at 100 Mb/s, on LED3. The blink is 26 ms on, 78 ms off ([DS] Table 9).
+- R71 is 5.1 kΩ, the [DS] Table 13 latch resistor that the other straps use, instead of the 4.7 kΩ named in [DS] §5.4. Both are far stronger than the 104 kΩ PD (3.15 V, see Straps under Values and derivations). When the CRS output drives low, R71 draws 0.65 mA.
+- **Polarity follows the address straps** ([DS] Fig. 12, p.47): a pin strapped 1 sinks its LED (anode to 3.3 V), a pin strapped 0 sources it (cathode to GND). Pin 11 (AD0 = 1, R6 up) sinks the green LED; pin 12 (AD3 = 0, R7 down) sources the yellow one. The PHY sets each pin's active level opposite to its latched strap [INFERENCE: Fig. 12 implies it, the text does not say it]. Check on the first boards that the LEDs light with link rather than without.
+- **The straps still latch correctly.** The LED pins are Hi-Z during reset ([DS] p.18). The green LED path pulls pin 11 the same way R6 does (toward 3.3 V) and the yellow path pulls pin 12 the same way R7 does (toward GND). Neither LED conducts, because each has ≈ 0 V across it.
+- **Green anode on `+3V3`, not `PHY_3V3`.** The LED's switching current stays off the PHY supply, which R5 may one day turn into a ferrite. The two rails are the same voltage, so the green LED stays dark while pin 11 is high (VDDIO).
+- **Current.** P16R28[11:9] LED_DRIVE sets the pad drive: 1.62 mA by default, up to 22.68 mA, specified with 0.4 V on the pad ([DS] §4.6, p.35). The jack LEDs are rated 20 mA, Vf 1.8–2.8 V ([HR] p.2).
+  - Default setting: the pad limits the current to ≈ 1.6 mA [INFERENCE: the pad's current beyond the 0.4 V test point is not specified].
+  - Upper bound, set by R69/R70 alone: (3.3 − 1.8)/220 = 6.8 mA, inside the LED and pad ratings at every LED_DRIVE setting.
+  - At the Vf corner of 2.8 V: (3.3 − 2.8 − 0.4)/220 = 0.45 mA. The datasheet's 510 Ω would give 0.2 mA there.
+  - Firmware may brighten the LEDs by writing LED_DRIVE (page 16, register 28) after every PHY reset; 3'b010–3'b011 (4.86–6.48 mA) is the useful range with 220 Ω. Default operation needs no register write.
+- **The PHY cannot turn the LEDs off.** They are green (568 nm) and yellow (585 nm), and the OV9281 sees visible light. If they show up in another camera's image, leave R69/R70 unfitted. The straps (R6, R7) keep working without them.
 
 ### PHY crystal
 

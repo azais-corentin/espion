@@ -31,7 +31,7 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | [Waveshare ESP32-P4-Core](https://docs.waveshare.com/ESP32-P4-Core), 16 MB flash (SKU 36096) | ESP32-P4NRW32X (silicon **rev v3.x**: esp-hal does not support older revisions), 32 MB in-package PSRAM, 16 MB NOR flash, 40 MHz and 32.768 kHz crystals, VDD_HP DC-DC on the module. Sensor control, MIPI CSI capture, blob detection, XVS trigger, LED gating, Ethernet MAC with IEEE 1588 clock |
 | OV9281 camera module ([AliExpress](https://fr.aliexpress.com/item/1005012566040263.html)) | 1 MP monochrome global-shutter sensor, MIPI CSI-2 2-lane. Mode: 640×400 2×2 binned, RAW8, 120 fps, external trigger on XVS, STROBE output. 15-pin 1.0 mm Raspberry Pi camera FPC to the board; XVS and STROBE come from pads on the module's back over a JST-SH 4-pin pigtail |
 | IP101GRI | 10/100 Ethernet PHY on RMII, 25 MHz crystal. Drives the 50 MHz RMII reference clock into the P4. The PHY of Espressif's and Waveshare's P4 Ethernet boards |
-| RJ45 MagJack (HanRun HR871150C) | Integrated magnetics and Bob-Smith termination. Brings out both centre taps and the spare pairs (4/5, 7/8) for the PoE PD |
+| RJ45 MagJack (HanRun HR871150C) | Integrated magnetics and Bob-Smith termination. Brings out both centre taps and the spare pairs (4/5, 7/8) for the PoE PD. Its LEDs are driven by the PHY: green = link/activity, yellow = 100 Mb/s |
 | [SDAPO DP1435-5V](https://www.lcsc.com/product-detail/C5380097.html) (LCSC C5380097) | IEEE 802.3af PoE PD module: bridge rectifiers, isolated flyback (1.5 kV), 5.15 V out. Class 0 (no class pin brought out). Through-hole SIP-6 |
 | 5 V OR-ing (TI TPS2121) | PoE 5 V and USB-C VBUS, either one powers the board, PoE has priority, no back-feed into USB. Current-limited switchover and soft start |
 | 3.3 V buck (TI TLV62569) | 5 V → ESP_3V3 for the module, the PHY and the camera module |
@@ -186,9 +186,9 @@ Hardware tasks for the KiCad project:
   ≈ 10.9 W out. Budget ≈ 10.5 W (≈ 2 A at 5.15 V). The LED ring takes ≈ 2.3 W of it on
   average; its 23 W pulses come from the driver's storage capacitors. The datasheet's
   12.4 W rating is more than 802.3af delivers.
-- IP101GRI straps (PHY address 1, RMII with the PHY driving REF_CLK) and the RMII series
-  resistors: chosen in `hardware/espion-cam/SCHEMATIC.md`. Keep RMII traces short; REF_CLK
-  is 50 MHz.
+- IP101GRI straps (PHY address 1, RMII with the PHY driving REF_CLK, LED mode 2) and the
+  RMII series resistors: chosen in `hardware/espion-cam/SCHEMATIC.md`. Keep RMII traces
+  short; REF_CLK is 50 MHz.
 - LED driver: boost divider and compensation, op-amp loop compensation and the timeout RC
   are derived in `hardware/espion-cam/SCHEMATIC.md` from models. On the first boards, check
   the boost loop (440 µF is outside the TPS61170's tested range), the current pulse at the
