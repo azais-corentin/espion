@@ -25,6 +25,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Button_Switch_SMD_XKB.pretty/` | XKB SMD switches |
 | `Package_SON_TI.pretty/` | TI SON packages with TI's land patterns |
 | `Package_DFN_QFN_TI.pretty/` | TI DFN/QFN packages with TI's land patterns |
+| `Module_SZYTF.3dshapes/` | 3D models of off-board modules (no symbol or footprint) |
 | `<Library>.3dshapes/` | 3D models (STEP) for the footprints above |
 | `3d-src/` | SolidCraft scripts the 3D models are built from |
 
@@ -326,3 +327,33 @@ JUSHUO AFA07-S15ECA-00 15-pin 1.0 mm FFC/FPC connector, top contact, slide lock,
   nail width are scaled from the drawing; the nail sheet thickness (0.20 mm) and its hidden
   rear web are assumed. The F.Fab rectangle in front of the latch (y 3.475–4.475) is the
   latch pulled open (+1.65 mm, section A-A); the model shows it closed.
+
+### SZYTF OV9281 camera module, 79° lens (3D model only)
+
+SZYTF OV9281 camera module with the 79° lens (drawing WX-1M-9281-79-V1.0), the camera on
+espion-cam's 15-pin FFC. It is an off-board part: it mounts in the 3D-printed enclosure
+10 mm behind the espion-cam PCB, so it has no symbol or footprint. The model is for the
+enclosure assembly.
+
+- Sources: mechanical drawing WX-1M-9281-79-V1.0
+  ([listing image](https://ae-pic-a1.aliexpress-media.com/kf/Sc05f84c44d8340139f90cdb8f6d23030K.jpg):
+  top, side and bottom views), the
+  [product photo](https://ae-pic-a1.aliexpress-media.com/kf/S55ea7644d5a34637b0eb6633bdcac8e03.jpg_960x960q75.jpg_.avif)
+  (front and back) and the [listing](https://fr.aliexpress.com/item/1005012566040263.html).
+  Drawn for this project; CERN-OHL-P-2.0.
+- 3D model: `Module_SZYTF.3dshapes/SZYTF_OV9281_WX-1M-9281-79.step`, from
+  `3d-src/SZYTF_OV9281_WX-1M-9281-79.json` (rebuild command above). It doesn't use the KiCad
+  footprint frame. The origin is on the optical axis at the PCB's lens-side surface, +Z
+  points toward the scene (lens direction), X runs along the 25 mm edge, and the FFC edge
+  is toward −Y. Overall 25 × 23.86 × 7.135 mm (Z −1.635 to 5.5).
+- From the drawing: the 25 × 23.86 × 1.6 mm board; 4 × Ø2.2 holes on 21 × 12.5 mm, centred
+  on the lens axis; the 6.5 mm square lens holder; the Ø5 lens, 5.5 mm above the PCB; the
+  FFC connector, 2.5 mm high, with 15 contacts at 1.0 mm.
+- Estimated (scaled from the drawing or the photo): how far the hole pattern sits from the
+  board edges (far edge 8.3 mm from the lens axis); the 1.0 mm corner radius; the gold
+  rings (Ø3.8 and Ø3.0); the two small holes (Ø1.8 at X ±9.0 on the lens centre line); the
+  holder block height (4.5 mm, barrel above it); the connector depth (5.8 mm, of which the
+  latch is 2.1 mm, reading the side view's 2.1 as the latch); the housing and latch widths
+  (21.0 and 22.0 mm); the back pads (Ø1.8: XVS, STROBE, IL_PWM and GPIO2 at Y +6.7 mm on a
+  3.0 mm pitch, since the photo measures 3.07 rather than 2.54; 3V3 and GND at X ±8.55,
+  Y −9.65); and the white silkscreen frame. The small SMD parts are left out.
