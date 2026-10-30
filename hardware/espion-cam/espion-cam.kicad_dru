@@ -6,13 +6,13 @@
 # MIPI CSI-2: >= 2W (0.36 mm) to everything except the pair's own partner; this also keeps GND
 # pour >= 0.30 mm away, which the 100 ohm geometry (0.18/0.15 mm) assumes.
 (rule "MIPI_CSI spacing"
-	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R38') && B.memberOfFootprint('R38')) && !(A.memberOfFootprint('R39') && B.memberOfFootprint('R39')) && !(A.memberOfFootprint('R40') && B.memberOfFootprint('R40')) && !(A.memberOfFootprint('R41') && B.memberOfFootprint('R41')) && !(A.memberOfFootprint('R42') && B.memberOfFootprint('R42')) && !(A.memberOfFootprint('R43') && B.memberOfFootprint('R43'))")
+	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R45') && B.memberOfFootprint('R45')) && !(A.memberOfFootprint('R46') && B.memberOfFootprint('R46')) && !(A.memberOfFootprint('R47') && B.memberOfFootprint('R47')) && !(A.memberOfFootprint('R49') && B.memberOfFootprint('R49')) && !(A.memberOfFootprint('R50') && B.memberOfFootprint('R50')) && !(A.memberOfFootprint('R51') && B.memberOfFootprint('R51'))")
 	(constraint clearance (min 0.36mm)))
 
 # Ethernet MDI: 3x spacing (0.55 mm) to other nets (IP101G DS 6.2).
-# Exempt inside U6's courtyard: its 0.4 mm pitch QFN pads (0.2 mm gap) can't hold 0.55 mm.
+# Exempt inside U1's courtyard: its 0.4 mm pitch QFN pads (0.2 mm gap) can't hold 0.55 mm.
 (rule "MDI spacing"
-	(condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !A.intersectsCourtyard('U6')")
+	(condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !A.intersectsCourtyard('U1')")
 	(constraint clearance (min 0.55mm)))
 
 # USB 2.0: keep GND and other nets >= 0.30 mm from the 90 ohm pair (0.245/0.15 mm).
@@ -21,7 +21,7 @@
 	(constraint clearance (min 0.3mm)))
 
 (rule "PoE isolation"
-	(condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J2') && B.memberOfFootprint('J2'))")
+	(condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J1') && B.memberOfFootprint('J1'))")
 	(constraint clearance (min 2mm)))
 
 (rule "MIPI_CSI intra-pair skew"

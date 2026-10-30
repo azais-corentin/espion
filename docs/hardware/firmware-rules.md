@@ -4,44 +4,44 @@ The board's hardware relies on what firmware does with the P4's pins. `firmware/
 
 ## GPIO map
 
-From the schematic (U1, the Waveshare ESP32-P4-Core module). The Ethernet pins are fixed (EMAC IO MUX). The others may still swap within their group at placement, as long as they follow the rules below.
+From the schematic (U6, the Waveshare ESP32-P4-Core module). The Ethernet pins are fixed (EMAC IO MUX). The others may still swap within their group at placement, as long as they follow the rules below.
 
 | Signal | GPIO | Dir | Pull/default | Notes |
 |---|---|---|---|---|
 | — | 0, 1 | — | NC | The module's 32.768 kHz crystal |
-| `PWR_SRC` | 2 | in | R26 10 kΩ pull-up (TPS2121 ST, open drain) | High = PoE powers +5V, low = USB. GPIO2's reset pull-up only adds to R26. Rules 4, 10 |
-| `IMU_SDA` | 3 | I2C | R65 10 kΩ pull-up | JTAG MTDI pad, input after reset: safe for an open-drain bus. Rules 11, 12 |
-| `IMU_SCL` | 4 | I2C | R64 10 kΩ pull-up | JTAG MTMS pad, input after reset. Rules 11, 12 |
+| `PWR_SRC` | 2 | in | R29 10 kΩ pull-up (TPS2121 ST, open drain) | High = PoE powers +5V, low = USB. GPIO2's reset pull-up only adds to R29. Rules 4, 10 |
+| `IMU_SDA` | 3 | I2C | R74 10 kΩ pull-up | JTAG MTDI pad, input after reset: safe for an open-drain bus. Rules 11, 12 |
+| `IMU_SCL` | 4 | I2C | R73 10 kΩ pull-up | JTAG MTMS pad, input after reset. Rules 11, 12 |
 | spare | 5 | — | NC | JTAG MTDO, an output: not for the I2C bus |
-| `LED_PWR_EN` | 6 | out | R44 100 kΩ pull-down | TPS22918 load switch ON. Rule 4 |
-| `LED_EN` | 7 | out | R49 100 kΩ pull-down | Lets STROBE light the ring; low for dark frames. Rules 4, 5 |
-| `SCCB_SDA` | 8 | I2C | R33 1.8 kΩ pull-up to +3V3 | Camera registers. Rule 12 |
-| `SCCB_SCL` | 9 | I2C | R34 1.8 kΩ pull-up to +3V3 | Rule 12 |
-| `CAM_EN` | 10 | out | R35 47 kΩ pull-down | Camera module regulators. Rules 1, 12 |
-| `XVS` | 11 | out (RMT) | Low through R31 1.5 kΩ + R32 1.8 kΩ (the level divider) | Frame trigger. Rules 1, 7 |
-| `STROBE` | 12 | in (ETM) | Driven by buffer U7; R30 10 kΩ holds the camera side low | High during exposure; firmware timestamps it with a GPIO ETM event |
-| `STATUS_LED` | 13 | out (RMT) | R29 10 kΩ pull-down on the LED's DIN (behind R28 220 Ω) | One-wire RGB LED. Rule 7 |
-| `VBUS_SENSE` | 20 | in, ADC1 CH4 | R62 47 kΩ / R63 75 kΩ divider, C49 100 nF | Read as digital or analog. Rule 10 |
+| `LED_PWR_EN` | 6 | out | R57 100 kΩ pull-down | TPS22918 load switch ON. Rule 4 |
+| `LED_EN` | 7 | out | R56 100 kΩ pull-down | Lets STROBE light the ring; low for dark frames. Rules 4, 5 |
+| `SCCB_SDA` | 8 | I2C | R41 1.8 kΩ pull-up to +3V3 | Camera registers. Rule 12 |
+| `SCCB_SCL` | 9 | I2C | R42 1.8 kΩ pull-up to +3V3 | Rule 12 |
+| `CAM_EN` | 10 | out | R43 47 kΩ pull-down | Camera module regulators. Rules 1, 12 |
+| `XVS` | 11 | out (RMT) | Low through R40 1.5 kΩ + R44 1.8 kΩ (the level divider) | Frame trigger. Rules 1, 7 |
+| `STROBE` | 12 | in (ETM) | Driven by buffer U7; R48 10 kΩ holds the camera side low | High during exposure; firmware timestamps it with a GPIO ETM event |
+| `STATUS_LED` | 13 | out (RMT) | R26 10 kΩ pull-down on the LED's DIN (behind R30 220 Ω) | One-wire RGB LED. Rule 7 |
+| `VBUS_SENSE` | 20 | in, ADC1 CH4 | R27 47 kΩ / R28 75 kΩ divider, C26 100 nF | Read as digital or analog. Rule 10 |
 | spare | 21 | — | NC | ADC1 CH5: the only spare analog input |
-| `VLED_SENSE` | 22 | ADC1 CH6 | +32V × 10/265 (R60/R61), 0–1.51 V | Rule 6 |
-| `NTC_SENSE` | 23 | ADC1 CH7 | NTC divider (TH1, R59 10 kΩ) | Rule 5 |
-| USB D− / D+ | 24 / 25 | USB | R24 / R23 22 Ω in series | USB Serial/JTAG (USB1P1): flashing, logs, JTAG. GPIO25 gets the D+ pull-up after every reset. Rule 10 |
+| `VLED_SENSE` | 22 | ADC1 CH6 | +32V × 10/265 (R71/R72), 0–1.51 V | Rule 6 |
+| `NTC_SENSE` | 23 | ADC1 CH7 | NTC divider (TH1, R70 10 kΩ) | Rule 5 |
+| USB D− / D+ | 24 / 25 | USB | R32 / R31 22 Ω in series | USB Serial/JTAG (USB1P1): flashing, logs, JTAG. GPIO25 gets the D+ pull-up after every reset. Rule 10 |
 | spare | 26, 27 | — | NC | USB FS OTG D−/D+ by default. GPIO27's reset state is documented inconsistently: measure before use |
 | `RMII_CRS_DV` | 28 | in | None on the P4 side; the PHY's 104 kΩ pull-down (FX_HEN strap) | No P4 pull-up, ever. Rule 3 |
 | `RMII_RXD0`, `RMII_RXD1` | 29, 30 | in | None | 22 Ω series resistors at the PHY |
 | `MDC` | 31 | out | None | GPIO matrix. Rule 9 |
-| `PPS` | 32 | out | None | EMAC PTP pulse, GPIO matrix signal 243 `emac_ptp_pps_pad_out` (TRM Table 10.12-1). Goes to TP1 and through R27 (0 Ω) to GPIO33 |
-| `PPS_IN` | 33 | in (ETM) | Driven by `PPS` | Keep it an input. With R27 removed, capture on GPIO32 instead (see [mcu.md](mcu.md)) |
-| `RMII_TXD0` | 34 | out | Floats (no pull anywhere) | Strap. 22 Ω series resistor R73 at the P4. Rule 8 |
-| `RMII_TXD1` | 35 | out | R2 10 kΩ pull-up; BOOT button through R3 1 kΩ (both on the P4 side of R74) | Boot strap. 22 Ω series resistor R74 at the P4 |
-| — | 36 | — | NC; module pull-up R46 10 kΩ | Strap |
+| `PPS` | 32 | out | None | EMAC PTP pulse, GPIO matrix signal 243 `emac_ptp_pps_pad_out` (TRM Table 10.12-1). Goes to TP6 and through R34 (0 Ω) to GPIO33 |
+| `PPS_IN` | 33 | in (ETM) | Driven by `PPS` | Keep it an input. With R34 removed, capture on GPIO32 instead (see [mcu.md](mcu.md)) |
+| `RMII_TXD0` | 34 | out | Floats (no pull anywhere) | Strap. 22 Ω series resistor R35 at the P4. Rule 8 |
+| `RMII_TXD1` | 35 | out | R38 10 kΩ pull-up; BOOT button through R39 1 kΩ (both on the P4 side of R36) | Boot strap. 22 Ω series resistor R36 at the P4 |
+| — | 36 | — | NC; module pull-up R66 10 kΩ | Strap |
 | — | 37, 38 | — | NC | Straps. UART0 TX/RX by default: GPIO37 carries the ROM log |
 | — | 39–48 | — | NC | Unusable: their I/O domain (VDD_IO_5) is fed by ESP_LDO_VO4, which is 0 V until firmware sets it |
-| `RMII_TX_EN` | 49 | out | None | 22 Ω series resistor R75 at the P4. Rule 9 |
-| `RMII_REF_CLK` | 50 | in | None | 50 MHz from the PHY through R11 22 Ω. See Clocks |
-| `PHY_RST_N` | 51 | out | R10 10 kΩ pull-down | Rule 3 |
-| `MDIO` | 52 | in/out | R9 1.5 kΩ pull-up to PHY_3V3 | GPIO matrix |
-| `BST_EN` | 53 | out | R48 100 kΩ pull-down | TPS61170 CTRL. Rule 4 |
+| `RMII_TX_EN` | 49 | out | None | 22 Ω series resistor R37 at the P4. Rule 9 |
+| `RMII_REF_CLK` | 50 | in | None | 50 MHz from the PHY through R13 22 Ω. See Clocks |
+| `PHY_RST_N` | 51 | out | R8 10 kΩ pull-down | Rule 3 |
+| `MDIO` | 52 | in/out | R14 1.5 kΩ pull-up to +3V3 | GPIO matrix |
+| `BST_EN` | 53 | out | R59 100 kΩ pull-down | TPS61170 CTRL. Rule 4 |
 | `IMU_INT1` | 54 | in | None: U12 drives it low from power-up | Wake-on-motion interrupt. Rule 11 |
 
 - All used pins are in 3.3 V I/O domains. Inputs need a 3.3 V push-pull or a pulled-up open drain: V_IH is 0.75 × VDD = 2.48 V, so a 1.8 V signal does not read high. (P4 DS Table 5-4)
@@ -54,7 +54,7 @@ From the schematic (U1, the Waveshare ESP32-P4-Core module). The Ethernet pins a
 
 The P4 reads these at reset. (TRM §12.2, Tables 12.2-1, 12.2-2, 12.2-4; P4 DS §3)
 
-- **GPIO35 (boot mode):** 1 = boot from flash, 0 (with GPIO36 = 1) = download mode over USB Serial/JTAG, UART0 or SPI slave. R2 holds it at 1; the BOOT button pulls it to 0. The PHY's TXD1 is an input with no pull, so it never fights the strap. It must stay valid for t_H ≥ 3 ms after CHIP_PU rises. (P4 DS Table 3-2)
+- **GPIO35 (boot mode):** 1 = boot from flash, 0 (with GPIO36 = 1) = download mode over USB Serial/JTAG, UART0 or SPI slave. R38 holds it at 1; the BOOT button pulls it to 0. The PHY's TXD1 is an input with no pull, so it never fights the strap. It must stay valid for t_H ≥ 3 ms after CHIP_PU rises. (P4 DS Table 3-2)
 - **GPIO34 (JTAG source):** ignored while EFUSE_JTAG_SEL_ENABLE = 0 (the default); JTAG then comes from USB Serial/JTAG. It floats on this board. See rule 8.
 - **GPIO36:** NC, 1 through the module's R46. It also selects UART0 ROM printing, but only when EFUSE_UART_PRINT_CONTROL ≠ 0. (TRM Table 12.2-3)
 - **GPIO37, GPIO38:** NC, floating. They matter only when GPIO35 = 0 and GPIO36 = 0 (SPI download; 0/0/0/0 is invalid), which R46 prevents.
@@ -82,8 +82,8 @@ The P4 reads these at reset. (TRM §12.2, Tables 12.2-1, 12.2-2, 12.2-4; P4 DS �
    - The status LED driver is `esp-hal-smartled` 0.18.0 (targets esp-hal ~1.2) with its `esp32p4` feature. If RMT channels run short, SPI MOSI or PARLIO can send the same waveform on the same pin, with no hardware change (estimate).
 8. **Never burn `EFUSE_JTAG_SEL_ENABLE`.** Why: GPIO34 (`RMII_TXD0`) floats at reset (the PHY's TXD0 is an input with no pull), so it would pick the JTAG source at random. (TRM Table 12.2-4; IP101G DS §3.2 p.16)
 9. **Outputs at boot.** Write each output's level before enabling its driver. Why: the P4's pins float through the ROM, the bootloader and every RESET press, so every output that reaches an active part has an external default (see the GPIO map) that a glitch must not undo.
-   - `RMII_TX_EN`, `RMII_TXD0` and `MDC` have no default: R10 holds the PHY in reset until firmware releases `PHY_RST_N`, so they are ignored. `PPS` reaches only TP1 and, through R27, the P4's own GPIO33.
-   - A glitch on `LED_EN` alone cannot light the ring: the gate also needs STROBE, which R30 holds low until firmware configures the sensor.
+   - `RMII_TX_EN`, `RMII_TXD0` and `MDC` have no default: R8 holds the PHY in reset until firmware releases `PHY_RST_N`, so they are ignored. `PPS` reaches only TP6 and, through R34, the P4's own GPIO33.
+   - A glitch on `LED_EN` alone cannot light the ring: the gate also needs STROBE, which R48 holds low until firmware configures the sensor.
    - No pull-ups to 3.3 V sit on RMII inputs, so nothing back-powers the PHY.
 10. **USB D+ pull-up follows VBUS.** Read `VBUS_SENSE` (GPIO20). While VBUS is absent, turn the USB Serial/JTAG D+ pull-up off (`USB_SERIAL_JTAG_CONF0_REG`: `PAD_PULL_OVERRIDE` = 1, `DP_PULLUP` = 0; P4 TRM Register 54.3); turn it back on when VBUS returns. Why: USB 2.0 §7.1.5.1 forbids a powered D+ pull-up without VBUS, and the board can run from PoE alone with a cable to an unpowered host. `PWR_SRC` can't stand in: it is high on PoE whether USB is plugged in or not. The pin reads high for VBUS ≥ 4.4 V; ADC1 CH4 at ATTEN3 (0–3.3 V) reads VBUS up to ≈ 5.3 V. ([mcu.md](mcu.md))
 11. **IMU setup.** Keep U12's INT1 push-pull (`CTRL3_C.PP_OD` = 0, the default). Why: `IMU_INT1` has no pull resistor, so open drain would leave GPIO54 floating. U12 answers at I2C address 0x6A (SA0 tied low) on GPIO3/4, at up to 400 kHz. Wait ≥ 35 ms after power-up before the first access, and retry a NACK. Why: turn-on time T_on is 35 ms typical with no maximum given. (LSM6DS3TR-C DS Table 4 p.24)

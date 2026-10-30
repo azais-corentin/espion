@@ -65,7 +65,7 @@ board's state. To check in statime: changing clockClass and priority2 at runtime
 - **The P4 captures PPS edges in hardware through ETM**: the GPIO edge event triggers a timer capture, so
   interrupt latency doesn't matter. esp-hal 1.2.2 has no ETM driver on the P4, so `cam-p4` drives ETM at the
   PAC level. To confirm in the TRM: which timer has the capture task (TIMG/GPTimer or SYSTIMER), and whether
-  the event fires on a pad the EMAC drives as an output. The board loops PPS back into GPIO33 through R27,
+  the event fires on a pad the EMAC drives as an output. The board loops PPS back into GPIO33 through R34,
   so either way works ([hardware/mcu.md](hardware/mcu.md)).
 - The P4 fits `network ↔ SYSTIMER` (offset + rate) over a sliding window of edges. Both clocks share the 40 MHz
   crystal, so their ratio changes only when statime steers the PTP clock. A PTP step shows as a PPS phase

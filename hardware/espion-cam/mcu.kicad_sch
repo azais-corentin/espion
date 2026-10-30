@@ -4082,18 +4082,7 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "R27: PPS loop-back into GPIO33\n(ETM capture of the PPS edge);\nGPIO33 stays an input."
-		(exclude_from_sim no)
-		(at 198.12 55.88 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "9df5112a-94af-4c2e-9f41-703b798b494f")
-	)
-	(text "U2 pin 5 (VBUS) is on +3V3:\non J1 VBUS, the P4's D+ pull-up\n(USB_PU) would hold an unplugged\nVBUS at ~2.7 V, not vSafe0V.\nD2 clamps VBUS instead."
+	(text "U5 pin 5 (VBUS) is on +3V3:\non J2 VBUS, the P4's D+ pull-up\n(USB_PU) would hold an unplugged\nVBUS at ~2.7 V, not vSafe0V.\nD2 clamps VBUS instead."
 		(exclude_from_sim no)
 		(at 53.34 96.52 0)
 		(effects
@@ -4102,7 +4091,18 @@
 			)
 			(justify left bottom)
 		)
-		(uuid "f503ca11-a913-4847-8fc1-801331cf690f")
+		(uuid "bb521ad0-6fe8-4bdc-8503-2ec8598a3e1b")
+	)
+	(text "R34: PPS loop-back into GPIO33\n(ETM capture of the PPS edge);\nGPIO33 stays an input."
+		(exclude_from_sim no)
+		(at 198.12 55.88 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "f42ade5b-412b-45ee-bd92-1847e07135c9")
 	)
 	(junction
 		(at 105.41 140.97)

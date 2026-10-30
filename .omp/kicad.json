@@ -28,13 +28,13 @@
         "Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder": { "F6.1": "hand-soldering variant: its pads carry no F.Paste so the stencil has no apertures for it (docs/hardware/mcu.md)" },
         "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal": { "F6.2": "pads and anchor unchanged from stock Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal, whose generator puts the anchor there; only name, description, tags and 3D model differ" }
       },
-      "fieldExempt": { "LCSC": ["U1"] },
-      "powerSymbols": { "PHY_3V3": "power:+3V3", "+32V": "power:+36V" },
+      "fieldExempt": { "LCSC": ["U6"] },
+      "powerSymbols": { "+32V": "power:+36V" },
       "decouplingExempt": {
-        "U3.1": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
-        "U3.2": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
-        "U3.3": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
-        "U3.4": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)"
+        "U2.1": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
+        "U2.2": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
+        "U2.3": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
+        "U2.4": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)"
       }
     }
   }

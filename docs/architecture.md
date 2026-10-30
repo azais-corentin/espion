@@ -158,5 +158,5 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 | USB Serial/JTAG | ⚒ | Flashing and logs. Firmware also turns the D+ pull-up off while `VBUS_SENSE` is low ([hardware/firmware-rules.md](hardware/firmware-rules.md)); check whether esp-hal exposes the pull-up or it needs a PAC write |
 | Chip revision | v3.0+ only | The ESP32-P4-Core carries an ESP32-P4NRW32X, rev v3.x |
 
-Tooling: esp-generate 1.4.0 has no ESP32-P4 template. `cam-p4` was adapted from the C5 template
+Tooling: esp-generate 1.4.0 has no ESP32-P4 template. `cam-p4` was adapted from the C9 template
 and the esp-hal 1.2.2 examples.
