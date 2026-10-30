@@ -3244,121 +3244,6 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "power:PWR_FLAG"
-			(power global)
-			(pin_numbers
-				(hide yes)
-			)
-			(pin_names
-				(offset 0)
-				(hide yes)
-			)
-			(exclude_from_sim no)
-			(in_bom yes)
-			(on_board yes)
-			(in_pos_files yes)
-			(duplicate_pin_numbers_are_jumpers no)
-			(property "Reference" "#FLG"
-				(at 0 1.905 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Value" "PWR_FLAG"
-				(at 0 3.81 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Footprint" ""
-				(at 0 0 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Datasheet" ""
-				(at 0 0 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Description" "Special symbol for telling ERC where power comes from"
-				(at 0 0 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "ki_keywords" "flag power"
-				(at 0 0 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(symbol "PWR_FLAG_0_0"
-				(pin power_out line
-					(at 0 0 90)
-					(length 0)
-					(name ""
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-					(number "1"
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-				)
-			)
-			(symbol "PWR_FLAG_0_1"
-				(polyline
-					(pts
-						(xy 0 0) (xy 0 1.27) (xy -1.016 1.905) (xy 0 2.54) (xy 1.016 1.905) (xy 0 1.27)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-			)
-			(embedded_fonts no)
-		)
 	)
 	(junction
 		(at 172.72 78.74)
@@ -3391,12 +3276,6 @@
 		(uuid "4bb270f9-d6ae-4a61-9d83-e829f3d25620")
 	)
 	(junction
-		(at 139.7 43.18)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "548801dc-ba40-40f4-ae93-f63dbe724b11")
-	)
-	(junction
 		(at 144.78 53.34)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3413,12 +3292,6 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "aa1abd29-e69f-453e-8279-bebb49213ec9")
-	)
-	(junction
-		(at 167.64 43.18)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "aed4ea69-f485-4b63-a7c7-c8a76e6550c6")
 	)
 	(junction
 		(at 198.12 119.38)
@@ -3632,7 +3505,7 @@
 	)
 	(wire
 		(pts
-			(xy 187.96 104.14) (xy 199.39 104.14)
+			(xy 187.96 104.14) (xy 204.47 104.14)
 		)
 		(stroke
 			(width 0)
@@ -3742,23 +3615,13 @@
 	)
 	(wire
 		(pts
-			(xy 139.7 43.18) (xy 144.78 43.18)
+			(xy 127 43.18) (xy 144.78 43.18)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "172fd174-15e1-45aa-adc9-0102424bdd3f")
-	)
-	(wire
-		(pts
-			(xy 167.64 43.18) (xy 167.64 41.91)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "1d8d1702-a822-4983-885a-cde7dccfc1c6")
 	)
 	(wire
 		(pts
@@ -3962,7 +3825,7 @@
 	)
 	(wire
 		(pts
-			(xy 170.18 111.76) (xy 208.28 111.76)
+			(xy 170.18 111.76) (xy 210.82 111.76)
 		)
 		(stroke
 			(width 0)
@@ -3972,7 +3835,7 @@
 	)
 	(wire
 		(pts
-			(xy 187.96 106.68) (xy 196.85 106.68)
+			(xy 187.96 106.68) (xy 204.47 106.68)
 		)
 		(stroke
 			(width 0)
@@ -4262,16 +4125,6 @@
 	)
 	(wire
 		(pts
-			(xy 139.7 41.91) (xy 139.7 43.18)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "7cb62b96-83d0-4a89-88e8-d7f922092dff")
-	)
-	(wire
-		(pts
 			(xy 93.98 102.87) (xy 93.98 104.14)
 		)
 		(stroke
@@ -4289,16 +4142,6 @@
 			(type default)
 		)
 		(uuid "84eb2827-4a49-427f-9706-67a5e257e33b")
-	)
-	(wire
-		(pts
-			(xy 147.32 43.18) (xy 152.4 43.18)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "86d3118e-9d5c-4805-9760-e220934c28a8")
 	)
 	(wire
 		(pts
@@ -4592,16 +4435,6 @@
 	)
 	(wire
 		(pts
-			(xy 199.39 104.14) (xy 204.47 104.14)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "bfc552dc-ba4e-40c6-a919-a1adb5ff5bee")
-	)
-	(wire
-		(pts
 			(xy 20.32 33.02) (xy 19.05 33.02)
 		)
 		(stroke
@@ -4682,16 +4515,6 @@
 	)
 	(wire
 		(pts
-			(xy 208.28 111.76) (xy 210.82 111.76)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "d0780904-49be-4709-8f3d-48cbce5384fd")
-	)
-	(wire
-		(pts
 			(xy 111.76 93.98) (xy 111.76 102.87)
 		)
 		(stroke
@@ -4762,16 +4585,6 @@
 	)
 	(wire
 		(pts
-			(xy 128.27 43.18) (xy 127 43.18)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "e1731755-4b9b-4ed2-9108-f666e019747d")
-	)
-	(wire
-		(pts
 			(xy 147.32 59.69) (xy 167.64 59.69)
 		)
 		(stroke
@@ -4779,16 +4592,6 @@
 			(type default)
 		)
 		(uuid "e1782886-fee7-4ebe-8344-79723ab7c2ae")
-	)
-	(wire
-		(pts
-			(xy 135.89 43.18) (xy 139.7 43.18)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "e197797e-f78e-422f-a0ac-683d95aaea13")
 	)
 	(wire
 		(pts
@@ -4872,16 +4675,6 @@
 	)
 	(wire
 		(pts
-			(xy 204.47 106.68) (xy 196.85 106.68)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ef20c251-0c41-42fd-8d72-c7f3a90e6c7f")
-	)
-	(wire
-		(pts
 			(xy 180.34 128.27) (xy 180.34 129.54)
 		)
 		(stroke
@@ -4932,7 +4725,7 @@
 	)
 	(wire
 		(pts
-			(xy 144.78 43.18) (xy 147.32 43.18)
+			(xy 144.78 43.18) (xy 152.4 43.18)
 		)
 		(stroke
 			(width 0)
@@ -5353,84 +5146,6 @@
 		(uuid "abae8bcc-e7aa-4160-912f-e02b032aa5a3")
 	)
 	(symbol
-		(lib_id "power:+3V3")
-		(at 167.64 41.91 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "062f7721-568e-4737-9531-b69985609eec")
-		(property "Reference" "#PWR219"
-			(at 167.64 45.72 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "PHY_3V3"
-			(at 167.64 38.354 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 167.64 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 167.64 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"+3V3\""
-			(at 167.64 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "8f0962b1-76ea-4140-82c6-4c3b5f5d54f4")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#PWR219")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:R")
 		(at 184.15 106.68 90)
 		(unit 1)
@@ -5547,7 +5262,7 @@
 	)
 	(symbol
 		(lib_id "power:+3V3")
-		(at 204.47 102.87 0)
+		(at 30.48 109.22 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -5556,9 +5271,9 @@
 		(in_pos_files yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "1c51255f-d8dc-4c8d-8e3b-b289dc5b2db0")
-		(property "Reference" "#PWR221"
-			(at 204.47 106.68 0)
+		(uuid "1db70656-d99d-4e53-869b-ced179a489e7")
+		(property "Reference" "#PWR0220"
+			(at 30.48 113.03 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5568,8 +5283,8 @@
 				)
 			)
 		)
-		(property "Value" "PHY_3V3"
-			(at 204.47 99.314 0)
+		(property "Value" "+3V3"
+			(at 30.48 105.664 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -5579,7 +5294,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 204.47 102.87 0)
+			(at 30.48 109.22 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5590,7 +5305,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 204.47 102.87 0)
+			(at 30.48 109.22 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5601,7 +5316,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"+3V3\""
-			(at 204.47 102.87 0)
+			(at 30.48 109.22 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5612,12 +5327,12 @@
 			)
 		)
 		(pin "1"
-			(uuid "be27b4ea-fe0c-4233-81ee-6f050fcea3a9")
+			(uuid "ce33e234-33a8-426e-aa61-3af240bb1c06")
 		)
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#PWR221")
+					(reference "#PWR0220")
 					(unit 1)
 				)
 			)
@@ -5967,6 +5682,84 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
 					(reference "R16")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+3V3")
+		(at 215.9 104.14 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "30c9a145-bdde-4de2-9bf1-9a2a2b39f7c6")
+		(property "Reference" "#PWR0221"
+			(at 215.9 107.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+3V3"
+			(at 215.9 100.584 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 215.9 104.14 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 215.9 104.14 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3V3\""
+			(at 215.9 104.14 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "bea470d1-2c60-4726-8e51-407c2ca5add7")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
+					(reference "#PWR0221")
 					(unit 1)
 				)
 			)
@@ -7223,8 +7016,8 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:R")
-		(at 132.08 43.18 90)
+		(lib_id "power:+3V3")
+		(at 204.47 102.87 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -7233,31 +7026,9 @@
 		(in_pos_files yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "674f2205-c8fe-4768-abab-5b0494747296")
-		(property "Reference" "R5"
-			(at 131.44 45.72 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "0"
-			(at 132.72 45.72 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0805_2012Metric"
-			(at 132.08 43.18 90)
+		(uuid "6a5cb3b3-c601-4ce6-bb11-c1f75607919b")
+		(property "Reference" "#PWR0219"
+			(at 204.47 106.68 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7267,8 +7038,18 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
-			(at 132.08 43.18 0)
+		(property "Value" "+3V3"
+			(at 204.47 99.314 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 204.47 102.87 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7278,8 +7059,8 @@
 				)
 			)
 		)
-		(property "Description" "Resistor"
-			(at 132.08 43.18 0)
+		(property "Datasheet" ""
+			(at 204.47 102.87 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7289,30 +7070,8 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
-			(at 132.08 43.18 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "0805W8F0000T5E"
-			(at 132.08 43.18 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C17477"
-			(at 132.08 43.18 0)
+		(property "Description" "Power symbol creates a global label with name \"+3V3\""
+			(at 204.47 102.87 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7323,15 +7082,12 @@
 			)
 		)
 		(pin "1"
-			(uuid "b3c3f8a7-e497-4797-9abf-a02a4c1a48a3")
-		)
-		(pin "2"
-			(uuid "41d1ca9b-6a73-4b34-8059-4ec7fee8c52e")
+			(uuid "d3a82db6-8b0d-4a95-9c6a-e69a92e5405b")
 		)
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "R5")
+					(reference "#PWR0219")
 					(unit 1)
 				)
 			)
@@ -8955,84 +8711,6 @@
 		)
 	)
 	(symbol
-		(lib_id "power:+3V3")
-		(at 30.48 109.22 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "b4a177a9-923d-4c66-b05b-1b9f21e251af")
-		(property "Reference" "#PWR220"
-			(at 30.48 113.03 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "PHY_3V3"
-			(at 30.48 105.664 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 30.48 109.22 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 30.48 109.22 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"+3V3\""
-			(at 30.48 109.22 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "1900ebce-7f92-4187-b32a-251df34f4080")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#PWR220")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:C")
 		(at 124.46 124.46 0)
 		(unit 1)
@@ -9742,84 +9420,6 @@
 	)
 	(symbol
 		(lib_id "power:+3V3")
-		(at 215.9 104.14 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "d455191b-5ea5-4109-9ee3-6a926125f8b4")
-		(property "Reference" "#PWR222"
-			(at 215.9 107.95 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "PHY_3V3"
-			(at 215.9 100.584 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 215.9 104.14 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 215.9 104.14 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"+3V3\""
-			(at 215.9 104.14 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "10aee952-1fe2-4d76-a764-f565d489553f")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#PWR222")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:+3V3")
 		(at 19.05 38.1 90)
 		(unit 1)
 		(body_style 1)
@@ -10199,84 +9799,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
 					(reference "#PWR206")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:PWR_FLAG")
-		(at 139.7 41.91 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "edd45f78-2fb3-40b0-95c0-4f48e2b6d1eb")
-		(property "Reference" "#FLG01"
-			(at 139.7 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "PWR_FLAG"
-			(at 139.7 37.465 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 139.7 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 139.7 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Special symbol for telling ERC where power comes from"
-			(at 139.7 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "32580352-bab3-4192-a667-0ef76fc7e377")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#FLG01")
 					(unit 1)
 				)
 			)
