@@ -529,7 +529,7 @@
       },
       {
         "netclass": "PWR_3V3",
-        "pattern": "/Ethernet/PHY_3V3"
+        "pattern": "PHY_3V3"
       },
       {
         "netclass": "PWR_3V3",

@@ -71,7 +71,8 @@ These are the worst-case ranges the block docs derive; reviews use this table.
 
 `+5V` above 5.5 V (the stacked-band PoE corner) is over the recommended input of the buck,
 load switch and op-amp but under their 6 V maximum; accepted ([power.md](power.md), [led.md](led.md)).
-`+32V` uses the stock `power:+36V` symbol with Value `+32V`; the net takes its name from the Value.
+`+32V` uses the stock `power:+36V` symbol with Value `+32V`, and `PHY_3V3` the stock `power:+3V3` with Value
+`PHY_3V3`; each net takes its name from the Value (`.omp/kicad.json` `powerSymbols` maps them for `add_power`).
 
 ## Parts not from LCSC
 

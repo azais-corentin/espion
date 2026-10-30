@@ -36,6 +36,7 @@ All straps latch on the rising edge of RESET_N (setup 10 µs, hold 2.63 ms) and 
 ## Supply
 
 - `PHY_3V3` comes from `+3V3` through a 0 Ω 0805 link (R5), as on both reference boards (no ferrite there either). The DS only asks for careful decoupling of AVDD33 (p.18). R5 allows a current measurement and can become an 0805 ferrite if EMI tests call for one.
+- `PHY_3V3` is a rail, drawn with power symbols (the stock `power:+3V3` with Value `PHY_3V3`, mapped in `.omp/kicad.json` `powerSymbols`), so it is a global net named `PHY_3V3`. Only this sheet uses it. R5 is a passive, so the net carries its own `PWR_FLAG` here.
 - AVDD33 and VDDIO: 3.135–3.465 V; VDDIO matches the P4's 3.3 V RMII I/O. Both on one net, so the 30 ms start-up skew limit is met by design. About 150 mW, 45 mA. (DS Tables 1, 11, 15)
 - Decoupling: 100 nF at each pin (C5 VDDIO, C7 AVDD33) and one shared 4.7 µF (C9). Deviation: the reference boards fit 10 µF per pin; this keeps the total on the buck output down, and the `+3V3` bulk is a few cm away ([power.md](power.md)).
 - REGOUT (1.1 V, internal only) gets 10 µF + 100 nF (C8, C6) and no load (DS p.18, Table 1 note 1). The 10 µF keeps nearly its full value at 1.1 V (estimate, X5R bias curves).

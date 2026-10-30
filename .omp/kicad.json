@@ -27,6 +27,7 @@
         "Connector_HanRun:HR871150C": { "S4.5": "the part has no pin 6 (HanRun datasheet p. 2, \"Remove Pin#6\")" }
       },
       "fieldExempt": { "LCSC": ["U1"] },
+      "powerSymbols": { "PHY_3V3": "power:+3V3", "+32V": "power:+36V" },
       "decouplingExempt": {
         "U3.1": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
         "U3.2": "DP1435 PoE input: isolated cable side; a capacitor to board GND would bridge the 1.5 kV barrier (DS p.4 typical application has none)",
