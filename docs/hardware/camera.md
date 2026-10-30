@@ -30,7 +30,7 @@ Layout: see [layout.md](layout.md). Firmware: [firmware rules](firmware-rules.md
 | Top contact | A | Top: AFA07-S15ECA-00 |
 
 - **Cable type: not yet checked.** Record it here, and buy spares of the same type: the other type only connects when twisted, and is then mirrored. The contact side only changes J3's MPN and can wait until parts are ordered.
-- JUSHUO's E (top) and F (bottom) drawings (rev A) share outline, land pattern and circuit-1 position, so one stock footprint fits both (its 3D model shows the F body). JUSHUO wants 0.30 ± 0.03 mm FFC; the Pi cable's nominal 0.309 mm fits.
+- JUSHUO's E (top) and F (bottom) drawings (rev A) share outline, land pattern and circuit-1 position, so one footprint fits both: `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_…`, KiCad's stock FCA footprint copied unchanged to carry a project 3D model of the E body (KiCad ships none). JUSHUO wants 0.30 ± 0.03 mm FFC; the Pi cable's nominal 0.309 mm fits.
 - Every top-contact part on LCSC is a slide lock. Second source: Yuandi FPC-1.0LS-15PH25 (top) / FPC-1.0LX-15PH25 (bottom), but it needs a project footprint and has pin 1 at the other end (pad n = camera pin n). TE 1-84953-5 and Amphenol SFW15R-2STE1LF had too little stock.
 - The mounting pads (`MP`) go to GND so ERC sees no floating pin. The XFCN footprint library in `hardware/lib` is no longer used.
 

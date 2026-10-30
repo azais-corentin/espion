@@ -1,0 +1,62 @@
+{"commands":[
+ {"command":"parameters.add","params":{"name":"body_w","expression":"5.1 mm","comment":"Datasheet top view: body 5.1 +-0.05 x 5.1 +-0.05 (square)"}},
+ {"command":"parameters.add","params":{"name":"flat","expression":"1.25 mm","comment":"Half-length of each full-width body side between the corner notches (top view, scaled; approx.)"}},
+ {"command":"parameters.add","params":{"name":"notch","expression":"1.975 mm","comment":"Corner notch: inner step of the body outline from the centre (top view, scaled; approx.)"}},
+ {"command":"parameters.add","params":{"name":"notch_ch","expression":"1.575 mm","comment":"Corner notch: ends of the 45 deg chamfer between the steps (top view, scaled; approx.)"}},
+ {"command":"parameters.add","params":{"name":"base_h","expression":"0.3 mm","comment":"LCP base (3) height under the cover (side view, scaled; approx.)"}},
+ {"command":"parameters.add","params":{"name":"cover_h","expression":"0.9 mm","comment":"Datasheet side view: 0.9, board to the top of the cover (2) flange"}},
+ {"command":"parameters.add","params":{"name":"step_h","expression":"1.2 mm","comment":"Datasheet side view: 1.2, board to the top of the raised octagonal cover boss"}},
+ {"command":"parameters.add","params":{"name":"H","expression":"1.5 mm","comment":"Datasheet height table: Code-X A = 1.5 (TS-1187A-B-A-B), board to actuator top, H +-0.05"}},
+ {"command":"parameters.add","params":{"name":"step_w","expression":"3.7 mm","comment":"Raised octagonal cover boss across flats (top view, scaled; approx.)"}},
+ {"command":"parameters.add","params":{"name":"step_ch","expression":"1.0 mm","comment":"Octagon corner chamfer leg (top view, scaled; approx.)"}},
+ {"command":"parameters.add","params":{"name":"act_d","expression":"2.0 mm","comment":"Datasheet side view: actuator (1) diameter 2.0"}},
+ {"command":"parameters.add","params":{"name":"act_r","expression":"0.1 mm","comment":"Actuator top edge round (side view, not dimensioned; approx.)"}},
+ {"command":"parameters.add","params":{"name":"term_pitch","expression":"3.7 mm","comment":"Datasheet top view: terminal centre lines 3.7 +-0.05 apart"}},
+ {"command":"parameters.add","params":{"name":"term_w","expression":"0.5 mm","comment":"Datasheet top view: terminal width 0.5"}},
+ {"command":"parameters.add","params":{"name":"term_span","expression":"6.5 mm","comment":"Datasheet top view: 6.5 +-0.25 over the terminal tips"}},
+ {"command":"parameters.add","params":{"name":"term_t","expression":"0.30 mm","comment":"Datasheet parts table: terminal (5) brass 0.30t"}},
+ {"command":"parameters.add","params":{"name":"term_in","expression":"3.8 mm","comment":"Inner 45 deg end of each terminal at |x| + |y| = term_in, beside the body notch (top view, scaled; approx.)"}},
+
+ {"command":"sketch.create","params":{"plane":"XY","name":"BaseSketch"}},
+ {"command":"sketch.line","params":{"points":[["-flat","body_w/2"],["flat","body_w/2"],["flat","notch"],["notch_ch","notch"],["notch","notch_ch"],["notch","flat"],["body_w/2","flat"],["body_w/2","-flat"],["notch","-flat"],["notch","-notch_ch"],["notch_ch","-notch"],["flat","-notch"],["flat","-body_w/2"],["-flat","-body_w/2"],["-flat","-notch"],["-notch_ch","-notch"],["-notch","-notch_ch"],["-notch","-flat"],["-body_w/2","-flat"],["-body_w/2","flat"],["-notch","flat"],["-notch","notch_ch"],["-notch_ch","notch"],["-flat","notch"]],"closed":true}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.extrude","params":{"sketch":"BaseSketch","distance":"base_h","operation":"new","body_name":"Base","name":"BaseBody"}},
+
+ {"command":"sketch.create","params":{"plane":"XY","offset":"base_h","name":"CoverSketch"}},
+ {"command":"sketch.line","params":{"points":[["-flat","body_w/2"],["flat","body_w/2"],["flat","notch"],["notch_ch","notch"],["notch","notch_ch"],["notch","flat"],["body_w/2","flat"],["body_w/2","-flat"],["notch","-flat"],["notch","-notch_ch"],["notch_ch","-notch"],["flat","-notch"],["flat","-body_w/2"],["-flat","-body_w/2"],["-flat","-notch"],["-notch_ch","-notch"],["-notch","-notch_ch"],["-notch","-flat"],["-body_w/2","-flat"],["-body_w/2","flat"],["-notch","flat"],["-notch","notch_ch"],["-notch_ch","notch"],["-flat","notch"]],"closed":true}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.extrude","params":{"sketch":"CoverSketch","distance":"cover_h - base_h","operation":"new","body_name":"Cover","name":"CoverFlange"}},
+
+ {"command":"sketch.create","params":{"plane":"XY","offset":"cover_h","name":"BossSketch"}},
+ {"command":"sketch.line","params":{"points":[["-(step_w/2 - step_ch)","step_w/2"],["step_w/2 - step_ch","step_w/2"],["step_w/2","step_w/2 - step_ch"],["step_w/2","-(step_w/2 - step_ch)"],["step_w/2 - step_ch","-step_w/2"],["-(step_w/2 - step_ch)","-step_w/2"],["-step_w/2","-(step_w/2 - step_ch)"],["-step_w/2","step_w/2 - step_ch"]],"closed":true}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.extrude","params":{"sketch":"BossSketch","distance":"step_h - cover_h","operation":"join","targets":["Cover"],"name":"CoverBoss"}},
+
+ {"command":"solid.cylinder","params":{"diameter":"act_d","height":"H - step_h","base":[0,0,"step_h"],"operation":"new","body_name":"Actuator","name":"ActuatorBody"}},
+ {"command":"solid.fillet","params":{"edges":[[1.0,0,1.5]],"radius":"act_r","body":"Actuator","name":"ActuatorRound"}},
+
+ {"command":"sketch.create","params":{"plane":"XY","name":"Term1RSketch"}},
+ {"command":"sketch.line","params":{"points":[["term_in - (term_pitch/2 + term_w/2)","term_pitch/2 + term_w/2"],["term_in - (term_pitch/2 - term_w/2)","term_pitch/2 - term_w/2"],["term_span/2","term_pitch/2 - term_w/2"],["term_span/2","term_pitch/2 + term_w/2"]],"closed":true}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.extrude","params":{"sketch":"Term1RSketch","distance":"term_t","operation":"new","body_name":"Term_1R","name":"Term1R"}},
+
+ {"command":"sketch.create","params":{"plane":"XY","name":"Term1LSketch"}},
+ {"command":"sketch.line","params":{"points":[["-(term_in - (term_pitch/2 + term_w/2))","term_pitch/2 + term_w/2"],["-(term_in - (term_pitch/2 - term_w/2))","term_pitch/2 - term_w/2"],["-term_span/2","term_pitch/2 - term_w/2"],["-term_span/2","term_pitch/2 + term_w/2"]],"closed":true}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.extrude","params":{"sketch":"Term1LSketch","distance":"term_t","operation":"new","body_name":"Term_1L","name":"Term1L"}},
+
+ {"command":"sketch.create","params":{"plane":"XY","name":"Term2RSketch"}},
+ {"command":"sketch.line","params":{"points":[["term_in - (term_pitch/2 + term_w/2)","-(term_pitch/2 + term_w/2)"],["term_in - (term_pitch/2 - term_w/2)","-(term_pitch/2 - term_w/2)"],["term_span/2","-(term_pitch/2 - term_w/2)"],["term_span/2","-(term_pitch/2 + term_w/2)"]],"closed":true}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.extrude","params":{"sketch":"Term2RSketch","distance":"term_t","operation":"new","body_name":"Term_2R","name":"Term2R"}},
+
+ {"command":"sketch.create","params":{"plane":"XY","name":"Term2LSketch"}},
+ {"command":"sketch.line","params":{"points":[["-(term_in - (term_pitch/2 + term_w/2))","-(term_pitch/2 + term_w/2)"],["-(term_in - (term_pitch/2 - term_w/2))","-(term_pitch/2 - term_w/2)"],["-term_span/2","-(term_pitch/2 - term_w/2)"],["-term_span/2","-(term_pitch/2 + term_w/2)"]],"closed":true}},
+ {"command":"sketch.finish","params":{}},
+ {"command":"solid.extrude","params":{"sketch":"Term2LSketch","distance":"term_t","operation":"new","body_name":"Term_2L","name":"Term2L"}},
+
+ {"command":"appearance.assign","params":{"bodies":["Base"],"color":"#1E1E1E"}},
+ {"command":"appearance.assign","params":{"bodies":["Cover"],"color":"#C4C6C8"}},
+ {"command":"appearance.assign","params":{"bodies":["Actuator"],"color":"#C9A44A"}},
+ {"command":"appearance.assign","params":{"bodies":["Term_1R","Term_1L","Term_2R","Term_2L"],"color":"#E2E2E2"}}
+]}

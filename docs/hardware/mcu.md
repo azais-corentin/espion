@@ -71,7 +71,7 @@ The MCU sheet (`mcu.kicad_sch`) holds the ESP32-P4 module and everything local t
 - R29 10 kΩ pulls DIN low. GPIO6–13 have no pull at reset, so a floating DIN could latch noise; held low, the LED can't clock in data. Keep the LED on GPIO6–13 if placement swaps pins. DIN high with R29 is still ≥ 2.58 V.
 - Current at full white: ≈ 37 mA, ≈ 0.12 W from +3V3 (estimate; the IC's own current isn't given). The WS2812C variant draws 15 mA. Firmware should cap brightness (e.g. ≤ 25 %).
 - RMT encoding: 50 ns tick (80 MHz ÷ 4); 0 = 350/950 ns, 1 = 650/650 ns, so every timing keeps ≥ 30 ns margin. A 100 ns tick has no valid encoding. Idle low; ≥ 280 µs low between frames. If the XVS channel moves the RMT clock off 80 MHz, re-pick the LED channel divider. Channel split: firmware rule 7. (V6 DS p.5; TRM §60.3)
-- Footprint: the stock `LED_WS2812B-2020` pads match the V6 drawing; its pad numbering is the datasheet top view rotated 180°. The symbol's Datasheet field points to the V6 PDF, not the stock V1.3 link.
+- Footprint: `LED_SMD_Worldsemi:LED_WS2812B-2020_PLCC4_2.0x2.0mm`, the stock `LED_WS2812B-2020` copied unchanged to carry a project 3D model (KiCad ships none). Its pads match the V6 drawing; its pad numbering is the datasheet top view rotated 180°. The symbol's Datasheet field points to the V6 PDF, not the stock V1.3 link.
 - No TVS: no cable reaches it. If the enclosure has an opening over it, use a closed light pipe (estimate). MSL 5a (24 h floor life): bake 70–75 °C ≥ 24 h before reflow if the bag was opened. (V6 DS p.8)
 
 ## Deviations from Espressif's hardware design guidelines

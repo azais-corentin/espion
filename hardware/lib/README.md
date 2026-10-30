@@ -17,9 +17,12 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Transistor_FET_Infineon.kicad_sym` | Infineon MOSFETs |
 | `Capacitor_SMD_AISHI.pretty/`, `Capacitor_SMD_JIERR.pretty/` | Aluminium SMD can capacitors |
 | `Connector_FFC-FPC_XFCN.pretty/` | XFCN FFC/FPC connectors (not used by espion-cam any more) |
+| `Connector_FFC-FPC_JUSHUO.pretty/` | JUSHUO FFC/FPC connectors |
 | `Connector_RJ_HanRun.pretty/` | HanRun RJ45 jacks |
 | `Connector_USB_HRO.pretty/` | Korean Hroparts USB connectors |
 | `LED_SMD_Amicc.pretty/` | Amicc SMD LEDs |
+| `LED_SMD_Worldsemi.pretty/` | Worldsemi SMD LEDs |
+| `Button_Switch_SMD_XKB.pretty/` | XKB SMD switches |
 | `Package_SON_TI.pretty/` | TI SON packages with TI's land patterns |
 | `Package_DFN_QFN_TI.pretty/` | TI DFN/QFN packages with TI's land patterns |
 | `<Library>.3dshapes/` | 3D models (STEP) for the footprints above |
@@ -55,6 +58,11 @@ Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part
 - **F6.1** (waiver) and **F6.3 "missing Paste"** on
   `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder`: the hand-soldering variant has no
   paste on its pads, so the stencil has no apertures for it.
+- **F6.3 "Rectangular SMD pad"** on `LED_SMD_Worldsemi:LED_WS2812B-2020_PLCC4_2.0x2.0mm` and
+  `Button_Switch_SMD_XKB:SW_Push_1P1T_XKB_TS-1187A`: their pads are unchanged from the stock
+  footprints, which get the same message.
+- **F6.2** on `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal`
+  (waiver): the anchor is kept where KiCad's stock footprint has it.
 
 ## 3D models
 
@@ -265,3 +273,56 @@ Aluminium SMD can footprints for `Device:C_Polarized` (pad 1 = +): AISHI VZ poly
   a different land: always use the library prefix.
 - 3D models: AISHI from `3d-src/` (`Capacitor_SMD_AISHI.3dshapes/`); JIERR uses KiCad's stock
   `CP_Elec_8x10.5` model (same can).
+
+### `LED_SMD_Worldsemi:LED_WS2812B-2020_PLCC4_2.0x2.0mm`
+
+Worldsemi WS2812B-2020-V6 addressable RGB LED, 2.0 × 2.2 mm (LCSC C52917434), for the stock
+`LED:WS2812B-2020` symbol.
+
+- Source: [WS2812B-2020-V6 datasheet](https://datasheet.lcsc.com/datasheet/pdf/a29e59ba4bc7e47e236b4d50b6c26345.pdf)
+  p. 2 (back, top and side views, pin table).
+- Unchanged copy of KiCad's footprint of the same name (CC-BY-SA 4.0 with the KiCad library
+  exception), which references a model KiCad doesn't ship. Only the description (V6
+  datasheet) and the model path differ. Its pad numbering is the datasheet top view turned
+  180°, and so is the model.
+- 3D model: `LED_SMD_Worldsemi.3dshapes/`, from `3d-src/` (CERN-OHL-P-2.0). The width of the
+  clear top block, terminal length, notch radius, the bottom polarity bar and the chips inside
+  are scaled from the drawing. KiCad draws the clear block opaque, so the chips (the only
+  polarity mark visible from the top) don't show.
+
+### `Button_Switch_SMD_XKB:SW_Push_1P1T_XKB_TS-1187A`
+
+XKB TS-1187A-B-A-B 5.1 × 5.1 mm SMD tactile switch, 1.5 mm high, 160 gf (LCSC C318884), for
+the stock `Switch:SW_Push` symbol.
+
+- Source: [XKB TS-1187A drawing](https://datasheet.lcsc.com/datasheet/pdf/56c8799ae5193945a16a1ffbe378246a.pdf)
+  (side and top views, height table, materials).
+- Unchanged copy of KiCad's footprint of the same name (CC-BY-SA 4.0 with the KiCad library
+  exception), which references a model KiCad doesn't ship. Only the description (datasheet
+  URL) and the model path differ.
+- 3D model: `Button_Switch_SMD_XKB.3dshapes/`, from `3d-src/` (CERN-OHL-P-2.0). Base height,
+  corner notches and the octagonal cover boss are scaled from the drawing; the terminals are
+  flat strips (the small step inside the body is left out).
+
+### `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal`
+
+JUSHUO AFA07-S15ECA-00 15-pin 1.0 mm FFC/FPC connector, top contact, slide lock, 2.5 mm high
+(LCSC C262742), for the camera FFC (`../../docs/hardware/camera.md`). Symbol:
+`Connector_Generic_MountingPin:Conn_01x15_MountingPin`.
+
+- Sources: JUSHUO drawings rev A, [AFA07-S15ECA-00](https://datasheet.lcsc.com/datasheet/pdf/0bfd48b78181b65482fe0787b860af72.pdf)
+  (top, front and side views, section A-A, DIM table, recommended PCB pattern) and
+  [AFA07-S15FCA-00](https://datasheet.lcsc.com/datasheet/pdf/b01391708457137d9b8d8b493bdc4f0c.pdf)
+  (compared).
+- Copy of KiCad's `Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal`
+  (CC-BY-SA 4.0 with the KiCad library exception), which references a model KiCad doesn't
+  ship. Pads and drawings are unchanged: the E (top) and F (bottom) parts share outline, land
+  pattern and circuit-1 position, so the footprint fits the bottom-contact FCA too. Renamed
+  after the fitted part, with its datasheet and the project model. The stock anchor breaks KLC
+  F6.2 (waived: kept as KiCad's generator places it).
+- 3D model: `Connector_FFC-FPC_JUSHUO.3dshapes/`, from `3d-src/` (CERN-OHL-P-2.0), the E part
+  with the latch closed. The F part only differs in front: its FFC opening and latch notch sit
+  low instead of high. Latch depth, FFC opening height, side arms, tail thickness and fitting
+  nail width are scaled from the drawing; the nail sheet thickness (0.20 mm) and its hidden
+  rear web are assumed. The F.Fab rectangle in front of the latch (y 3.475–4.475) is the
+  latch pulled open (+1.65 mm, section A-A); the model shows it closed.
