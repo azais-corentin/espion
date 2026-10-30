@@ -3,7 +3,8 @@
 KiCad project for the espion camera board: a baseboard for the Waveshare ESP32-P4-Core
 module. The schematic is captured and ERC clean: a root sheet and seven hierarchical sheets
 (power, mcu, ethernet, camera, led_driver, led_ring, imu), with the multi-signal interfaces
-crossing sheets as buses. PCB layout has not started (`espion-cam.kicad_pcb` is empty).
+crossing sheets as buses. The board is set up (outline, stack-up, rules) and placement has
+started; nothing is routed yet.
 Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 
 ## Board
@@ -66,7 +67,7 @@ System view: `../../docs/architecture.md`. Timing requirements for XVS, STROBE a
 
 - Edit only with KiCad (the dev shell provides KiCad 10). Never hand-edit `.kicad_*` files.
   Agents work through the KiCad toolkit instead (`kicad_query`, `kicad_edit`,
-  `kicad_check`, `kicad_render`; see `../../AGENTS.md`).
+  `kicad_check`, `kicad_render`, `kicad_export`; see `../../AGENTS.md`).
 - The schematic is the source of truth. A change that alters a decision, a derived value,
   a layout constraint, a firmware rule or a part updates `../../docs/hardware/` in the same
   commit. A part change also updates the symbol's Manufacturer, MPN and LCSC fields and the
@@ -75,4 +76,5 @@ System view: `../../docs/architecture.md`. Timing requirements for XVS, STROBE a
 - Project-specific symbols, footprints and 3D models go in `../lib/` (conventions and KLC
   checks in `../lib/README.md`), not in global libraries.
 - Fabrication outputs (Gerbers, drill files, BOM/CPL exports) and KiCad's `.history/` are
-  not committed. Generate the outputs for each release.
+  not committed. Generate the outputs for each release (`kicad_export` writes them to
+  `fab/`).
