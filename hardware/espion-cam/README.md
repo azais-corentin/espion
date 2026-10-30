@@ -14,13 +14,14 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder` (`../lib/`; hand-soldered, not on
   the stencil)
 - OV9281 global-shutter mono camera module (Raspberry Pi style) on a 15-pin 1.0 mm FPC
-  (MIPI CSI-2, 2 lanes), mounted on the back with the lens through a cutout. The board's
-  FPC connector (JUSHUO AFA07-S15ECA-00) is single contact, so a face-flipped cable makes
-  no contact. XVS and STROBE (level not known: 1.8, 2.8 or 3.3 V) come from pads on the
+  (MIPI CSI-2, 2 lanes), held by the enclosure 10 mm behind the board and looking through a
+  Ø16 mm cutout; its FFC wraps round the bottom edge through a notch into the board's FPC
+  connector (JUSHUO AFA07-S15ECA-00, single contact, so a face-flipped cable makes
+  no contact). XVS and STROBE (level not known: 1.8, 2.8 or 3.3 V) come from pads on the
   module over a JST-SH 4-pin pigtail: XVS through a resistor divider set as an assembly
   option, STROBE through an SN74LV1T34 to the LED gate and a P4 GPIO (ETM capture)
 - 850 nm LED ring for passive retroreflective markers at 2–5 m: 12 × Amicc
-  A-SC880IR3C-P03-1T (90°) in one string, on the front around the lens cutout. TPS22918
+  A-SC880IR3C-P03-1T (90°) in one string, on r = 11.5 mm around the lens cutout. TPS22918
   load switch (`LED_PWR_EN`) and TPS61170 boost to 32 V (`BST_EN`) into 2 × 220 µF storage,
   TLV9061 + IRLR024N sink at a fixed 1 A, gated by `STROBE ∧ LED_EN` (SN74LVC1G97) with a
   0.78–1.32 ms hardware timeout per pulse behind the 0.75 ms firmware exposure cap. No
