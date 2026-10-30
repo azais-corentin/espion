@@ -10,9 +10,9 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, Ethernet/UDP, PTP, PPS capture via ETM) | `cargo build --release` in that directory |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
-| `hardware/espion-cam/` | KiCad project; its design (decisions, values, layout constraints, firmware rules) is in `docs/hardware/`; the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, decoupling, pulls, BOM lines, rules, `drc` on the board); board set-up with the `kicad_edit` board ops (stack-up, board rules, outline, update from schematic, placement); BOM: `kicad_query` `bom` (preset `Order`) |
+| `hardware/espion-cam/` | KiCad project; its design (decisions, values, layout constraints, firmware rules) is in `docs/hardware/`; the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, decoupling, pulls, BOM lines, rules; on the board `drc`, track widths, return paths and vias, decoupling and footprint placement, `layout` constraints); board set-up and layout with the `kicad_edit` board ops (stack-up, board rules, outline, update from schematic, placement, tracks, diff pairs, vias, zones, rule areas, board text); fab outputs (Gerbers, JLCPCB BOM/CPL, STEP): `kicad_export`; BOM: `kicad_query` `bom` (preset `Order`) |
 | `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad toolkit: `kicad_edit` library ops, `kicad_check` `klc`; model rebuild in `hardware/lib/README.md` |
-| `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`) and its `kicad-*` skills; the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its `solidcraft-*` skills, which the dev shell links from the flake input (`solidcraftSkills` in `flake.nix`) | `bun test` in `.omp/extensions/kicad` |
+| `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`, including the board's `layout` constraints) and its `kicad-*` skills (including `kicad-pcb-layout` and `kicad-pcb-review` for the board); the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its `solidcraft-*` skills, which the dev shell links from the flake input (`solidcraftSkills` in `flake.nix`) | `bun test` in `.omp/extensions/kicad` |
 | `docs/` | Architecture, wire protocol, timing; `hardware/`: the camera board's design (per block, layout, firmware rules) | — |
 
 - Enter the environment with `direnv allow` or `nix develop`. Don't install toolchains
@@ -53,15 +53,16 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 
 - KiCad files (`.kicad_pro`, `.kicad_sch`, `.kicad_pcb`, `.kicad_dru`, `.kicad_sym`,
   `.kicad_mod`, the lib tables) are **toolkit-only for changes**. Change and check them only
-  with the KiCad toolkit: `kicad_query`, `kicad_edit`, `kicad_check`, `kicad_render`, and
-  `kicad_datasheet` for the datasheets (skills `kicad-schematic-edit`,
-  `kicad-schematic-review`, `kicad-part-sourcing`, `kicad-library-part`,
-  `kicad-library-review`). Reading them with `read`/`grep` is allowed, but prefer the
-  queries: they answer with nets, pins and positions KiCad computes. Never write them with
-  other tools (write, edit, shell, eval) and never run `kicad-cli`, `kicad`, `eeschema` or
-  `pcbnew` yourself; a hook blocks the shell and file tools, and eval is on you. If the
-  toolkit can't do something, stop, tell the user what is missing and use the `ask` tool
-  to ask whether it should be added to the toolkit.
+  with the KiCad toolkit: `kicad_query`, `kicad_edit`, `kicad_check`, `kicad_render`,
+  `kicad_export` for the fab outputs, and `kicad_datasheet` for the datasheets (skills
+  `kicad-schematic-edit`, `kicad-schematic-review`, `kicad-pcb-layout`, `kicad-pcb-review`,
+  `kicad-part-sourcing`, `kicad-library-part`, `kicad-library-review`). Reading them with
+  `read`/`grep` is allowed, but prefer the queries: they answer with nets, pins and
+  positions KiCad computes. Never write them with other tools (write, edit, shell, eval)
+  and never run `kicad-cli`, `kicad`, `eeschema` or `pcbnew` yourself; a hook blocks the
+  shell and file tools, and eval is on you. If the toolkit can't do something, stop, tell
+  the user what is missing and use the `ask` tool to ask whether it should be added to the
+  toolkit.
 - `kicad_edit` checks for KiCad's lock files itself: it ignores a stale one (this host and
   user, no KiCad running) and refuses while KiCad has the project open. Then ask the user
   to close it; never delete lock files.
@@ -98,6 +99,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
     in a firmware crate)
   - the build (and `cargo test --workspace` for host/shared crates)
   - for hardware: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields,
-    decoupling, pulls, BOM lines, rules, DRC with schematic parity), with `klc` for changed
-    library parts
+    decoupling, pulls, BOM lines, rules, DRC with schematic parity, and for a board change
+    track widths, return paths, return vias, decoupling and footprint placement and the
+    `layout` constraints), with `klc` for changed library parts
   - for the KiCad toolkit: `bun test` in `.omp/extensions/kicad`
