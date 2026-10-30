@@ -50,7 +50,7 @@ flowchart LR
 - **mcu**: P4 module, reset and BOOT, USB-C with ESD and VBUS clamp, VBUS sense, status LED, PPS loop-back.
 - **ethernet**: 10/100 PHY, its crystal, MagJack with PoE taps, shield RC, jack LEDs.
 - **camera**: FPC and aux connectors, I2C pull-ups, camera enable, XVS divider, STROBE buffer.
-- **led_driver**: load switch, 5 V → 32 V boost, storage caps, gate and timeout, 1 A current sink, NTC, +32V sense.
+- **led_driver**: load switch, 5 V → 32 V boost, storage caps, gate and timeout, ≈ 0.9 A current sink, NTC, +32V sense.
 - **led_ring**: 12 IR LEDs (850 nm) in series from +32V to the sink.
 - **imu**: 6-axis IMU with its decoupling and pull-ups.
 
@@ -62,7 +62,7 @@ These are the worst-case ranges the block docs derive; reviews use this table.
 |---|---|---|---|
 | `VBUS` | USB-C | 4.4–5.5 V (USB 2.0 low-power port minimum to Type-C maximum) | Mux USB input, VBUS sense divider, 100 kΩ bleeder |
 | `+5V_POE` | PoE module U2 | 4.64–5.67 V, 5.15 V typ (both 5 % bands stacked; 4.89–5.41 V with one) | LC filter, then the mux PoE input |
-| `+5V` | Mux U4 | On PoE: `+5V_POE_F` (4.41–5.67 V; low end after a 0.2 V load-step dip and 0.03 V in L1) less the mux drop (≤ 90 mΩ × load, ≤ 0.18 V at 2 A). On USB: VBUS less the same drop | 3.3 V buck, LED load switch, sink op-amp |
+| `+5V` | Mux U4 | On PoE: `+5V_POE_F` (4.38–5.67 V; low end after a 0.23 V load-step dip and 0.03 V in L1) less the mux drop (≤ 90 mΩ × load, ≤ 0.18 V at 2 A). On USB: VBUS less the same drop | 3.3 V buck, LED load switch, sink op-amp |
 | `+3V3` | Buck U3 | 3.20–3.44 V, 3.32 V typ (≈ 3.19–3.45 V with drift over temperature and input) | P4 module, PHY, camera, logic, status LED, IMU |
 | `CAM_3V3` | `+3V3` through 0 Ω R53 (lift it to measure the camera's current) | as `+3V3` | Camera module |
 | `+5V_BST` | Load switch U8 | as `+5V`, only while firmware enables it | Boost |
@@ -106,7 +106,7 @@ holes, the net tie and pad test points are left out; the loop GND test points TP
 3. After a minute, touch or IR-check. Warm is fine for the buck U3, the P4 module and the PHY U1. Everything else should stay near room temperature on USB, including the mux U4, U8, U10, Q1 and the LEDs.
 4. Measure `+5V`, `+3V3` and `CAM_3V3` (TP10) against the Rails table.
 5. Unplug USB and power from an 802.3af PoE switch. Measure `+5V` again; the PoE module U2 may run warm (estimate).
-6. On PoE, have firmware enable the LED rail (sequence in [led.md](led.md)) and measure `+32V` at TP13: 31.3–33.9 V. The boost draws 0.8–1.3 A from `+5V` for 50–120 ms while it charges, then ≈ 0.46 A average with the LEDs pulsing. Q1 and the LEDs then get warm (Q1 junction ≈ ambient + 49 °C at its 0.8 W average).
+6. On PoE, have firmware enable the LED rail (sequence in [led.md](led.md)) and measure `+32V` at TP13: 31.3–33.9 V. The boost draws 0.8–1.3 A from `+5V` for 50–120 ms while it charges, then ≈ 0.41 A average with the LEDs pulsing. Q1 and the LEDs then get warm (Q1 junction ≈ ambient + 45 °C at its 0.73 W average).
 7. `+32V` stays charged for minutes after the boost stops (τ ≈ 58 s: still ≈ 12 V after one minute); discharge it before touching the LED side.
 
 ## Docs

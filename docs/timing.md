@@ -97,8 +97,8 @@ board's state. To check in statime: changing clockClass and priority2 at runtime
   duty at 120 Hz.
 - Firmware caps exposure at **0.75 ms**. A hardware timeout in the gate ends each pulse 0.78–1.32 ms after
   STROBE rises, whatever STROBE does; it only acts if firmware fails. Exposures longer than the timeout are lit
-  only for their first 0.78–1.32 ms. The boost can sustain only ≈ 0.8 ms of light per frame at 120 fps
-  ([hardware/led.md](hardware/led.md)).
+  only for their first 0.78–1.32 ms. The boost can sustain only ≈ 0.75 ms of light per frame at 120 fps at its
+  minimum input, ≈ 0.85 ms from 5 V ([hardware/led.md](hardware/led.md)).
 
 ## 5. Startup sequence
 

@@ -34,7 +34,7 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | SDAPO DP1435-5V | 802.3af PoE PD module, isolated, 5.15 V out |
 | TI TPS2121 | Picks PoE 5 V or USB-C VBUS, PoE first, no back-feed into USB |
 | TI TLV62569 | 3.3 V buck for the module, the PHY and the camera |
-| 850 nm LED ring and driver | 12 LEDs at 1 A, lit only while `STROBE ∧ LED_EN`, ≤ ≈ 1 ms per pulse |
+| 850 nm LED ring and driver | 12 LEDs at ≈ 0.9 A, lit only while `STROBE ∧ LED_EN`, ≤ ≈ 1 ms per pulse |
 | USB-C | Bench power, flashing, logs and JTAG (P4 USB Serial/JTAG, no hub) |
 | WS2812B-2020 RGB LED | Status LED, driven by RMT |
 | ST LSM6DS3TR-C IMU | Detects bumps (rig calibration may be stale) and gives the gravity vector |

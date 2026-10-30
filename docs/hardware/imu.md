@@ -19,7 +19,7 @@ The gyroscope is spare. Chosen because it was the cheapest in-stock part with a 
 
 ## Values
 
-- **Supply:** Vdd and Vdd_IO both on +3V3 (3.20–3.44 V worst case). Limits are Vdd 1.71–3.6 V and Vdd_IO 1.62 V to Vdd + 0.1 V, so both hold. Draw ≤ 0.9 mA. (DS Table 4)
+- **Supply:** Vdd and Vdd_IO both on +3V3 (3.20–3.44 V worst case). Limits are Vdd 1.71–3.6 V and Vdd_IO 1.62 V to Vdd + 0.1 V, so both hold. Draw 0.90 mA typical (gyro + accelerometer in high-performance mode, 1.6 kHz); no maximum is given. (DS Table 4 p.24)
 - **Decoupling:** 100 nF on each supply pin (C50, C51), as close as possible. (DS §7.1, Fig. 15)
 - **Pull-ups:** 10.0 kΩ on SCL (R73) and SDA (R74), as in the datasheet's example. Sink current 0.33 mA, far inside the 4 mA the pin is rated for at V_OL ≤ 0.2 V. (DS Fig. 15, Table 4)
 - **Rise time:** about 15 pF of bus (estimate) gives 0.8473 × 10 kΩ × 15 pF ≈ 127 ns. Even 30 pF gives 254 ns, under the 300 ns Fast-mode limit, so 400 kHz works. (UM10204)

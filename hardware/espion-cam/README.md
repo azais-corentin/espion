@@ -24,7 +24,7 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - 850 nm LED ring for passive retroreflective markers at 2–5 m: 12 × Amicc
   A-SC880IR3C-P03-1T (90°) in one string, on r = 11.5 mm around the lens cutout. TPS22918
   load switch (`LED_PWR_EN`) and TPS61170 boost to 32 V (`BST_EN`) into 2 × 220 µF storage,
-  TLV9061 + IRLR024N sink at a fixed 1 A, gated by `STROBE ∧ LED_EN` (SN74LVC1G97) with a
+  TLV9061 + IRLR024N sink at a fixed ≈ 0.9 A, gated by `STROBE ∧ LED_EN` (SN74LVC1G97) with a
   0.78–1.32 ms hardware timeout per pulse behind the 0.75 ms firmware exposure cap. No
   continuous-on mode
 - IP101GRI Ethernet PHY on RMII (25 MHz crystal, PHY supplies the 50 MHz REF_CLK), HanRun

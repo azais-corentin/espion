@@ -8,7 +8,7 @@ All straps latch on the rising edge of RESET_N (setup 10 µs, hold 2.63 ms) and 
 
 - **RMII, PHY drives REF_CLK:** COL/RMII pulled up (R10). With a crystal on X1/X2 this selects RMII and puts 50 MHz out on pin 14. The internal pull-down would select MII. (DS §5.1.4, Table 3)
 - **PHY address 1:** AD0 pulled up (R1), AD3 pulled down (R7) so it never floats; AD3 = 1 with AD0 = 0 would answer every address 2–31. Address 1 is what both reference boards strap, so their configs work unchanged; esp-hal `GenericPhy::new_auto()` and ESP-IDF `ethernet_init` (address −1) scan anyway. Avoiding 0 sidesteps PHYs that treat 0 as broadcast (the DS doesn't say whether the IP101G does). Firmware can move it via P16R29[12:8]. (DS Table 4, p.28)
-- **LED mode 2:** CRS/LEDMOD pulled up (R9), this board's own strap (not on the reference boards); see Jack LEDs. 5.1 kΩ like the other straps instead of the 4.7 kΩ in DS §5.4; both swamp the 104 kΩ. R9 draws 0.65 mA when CRS drives low.
+- **LED mode 2:** CRS/LEDMOD pulled up (R9), as on [EV] (5.1 kΩ, its R155); see Jack LEDs. 5.1 kΩ like the other straps instead of the 4.7 kΩ in DS §5.4; both swamp the 104 kΩ. R9 draws 0.65 mA when CRS drives low.
 - **FX_HEN = 0 (twisted pair):** set only by the internal 104 kΩ pull-down on pin 19, which shares the `RMII_CRS_DV` net with GPIO28. No external part, as on both reference boards. GPIO28 has no pull at reset; firmware must not add one before the strap latches ([firmware rule 3](firmware-rules.md)).
 - `RMII_TXD1` (GPIO35) is the P4's BOOT strap, so it gets no pull-down here ([mcu.md](mcu.md)).
 
@@ -57,8 +57,8 @@ All straps latch on the rising edge of RESET_N (setup 10 µs, hold 2.63 ms) and 
 
 ## Shield
 
-- Shell → C1 (1 nF, 2 kV) ∥ R2 + R3 (2 × 499 kΩ ≈ 1 MΩ) → GND. The resistors see the capacitor's voltage. A plain 1206 is rated about 200 V (estimate); YAGEO RV1206 is 500 V working, 1 kV overload, so two in series give 1 kV working, 2 kV overload, matching C1.
-- In use the shell sits near 0 V; the ratings matter for surge, ESD and hipot. One RV1206FR-071ML (1 MΩ, 1 kV overload) is acceptable if space is short.
+- Shell → C1 (1 nF, 2 kV) ∥ R2 + R3 (2 × 499 kΩ ≈ 1 MΩ) → GND. The resistors see the capacitor's voltage. A plain 1206 is rated about 200 V (estimate). YAGEO RV1206 (1/4 W) is rated √(P·R) working, up to 500 V, and 2.5× that for 5 s, up to 1 kV: at 499 kΩ that is 353 V working, 883 V overload each, so the pair takes ≈ 706 V working, ≈ 1.77 kV for 5 s. That is below C1's 2 kV and not a 60 s hipot rating. (RV DS Table 2 p.5, p.6, p.8)
+- In use the shell sits near 0 V; the ratings matter for surge, ESD and hipot. One RV1206FR-071ML (1 MΩ: 500 V working, 1 kV overload) is acceptable if space is short.
 - At high frequency the cable's common-mode path to GND is the jack's 1 nF in series with C1, about 500 pF.
 
 ## Jack LEDs
@@ -79,5 +79,5 @@ All straps latch on the rising edge of RESET_N (setup 10 µs, hold 2.63 ms) and 
 - EV: Espressif ESP32-P4-Function-EV-Board schematic v1.5.2, sheets 2 and 5
 - WS: Waveshare ESP32-P4-ETH schematic, p.1
 - ESP32-P4 datasheet (IO MUX table) and ESP32-P4 Hardware Design Guidelines §1.3.14
-- YAGEO RV series datasheet V.12, Table 2; IEEE 802.3u-1995 Clause 22
+- RV DS: YAGEO RV series datasheet (PYU-RV_51) version 14, Table 2 p.5, p.6, p.8; IEEE 802.3u-1995 Clause 22
 - esp-hal 1.2.2 (`src/ethernet/`), esp-eth-drivers `ethernet_init`

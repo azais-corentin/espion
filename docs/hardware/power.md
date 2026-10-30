@@ -26,11 +26,13 @@ every switchover, soft-starts, and blocks back-feed. Its status pin is `PWR_SRC`
   and a lower peak (the DS order gives 100–172 mΩ).
 - C14 damps the filter. With the polymer alone (5.9 kHz, Z₀ 82 mΩ, Q ≈ 2) the output impedance peaks at 151 mΩ
   and the 120 Hz strobe steps could make it ring. C14's ESR (0.1–0.64 Ω) brings the peak to 91–123 mΩ at
-  4.1–5.0 kHz, ≤ 129 mΩ with tolerances: close to the Middlebrook optimum R_d ≈ 1.45 Z₀ ≈ 0.12 Ω. (JVE table)
+  4.1–5.0 kHz; with tolerances up to 141 mΩ (L1 +20 %) and 158 mΩ at ≈ 4.9 kHz (L1 +20 %, C13/C14 −20 %);
+  nominal close to the Middlebrook optimum R_d ≈ 1.45 Z₀ ≈ 0.12 Ω. (JVE table; estimate)
 - Stability: the converters behind it draw ≈ 10 W worst case and look like −V²/P ≈ −2.5 Ω, ≈ 20× the 123 mΩ peak
-  (19× at 129 mΩ), which meets Middlebrook's |Z_out| ≪ |Z_in|. (Erickson & Maksimović)
-- Load step: the boost starting at 1.44 A × 0.12 Ω dips `+5V_POE_F` by ≈ 0.2 V. The module's own step response
-  is not specified; the mux threshold keeps 0.10 V above this; accepted.
+  (16× at 158 mΩ), which meets Middlebrook's |Z_out| ≪ |Z_in|. (Erickson & Maksimović)
+- Load step: the boost starting at 1.44 A dips `+5V_POE_F` by ≈ 0.18 V (× 0.123 Ω), up to ≈ 0.23 V with
+  tolerances (× 0.158 Ω). The module's own step response is not specified; the mux threshold keeps 0.07 V above
+  this; accepted.
 - Ripple at 250 kHz: −46 dB modelled, ≥ 30 dB with real ESL (estimate), so ≤ 6 mVpp. Model: ideal source;
   L1 + 15 mΩ; C13 + 25 mΩ; C15 ≈ 7 µF; C14 + ESR; mux ≈ 60 mΩ; `+5V` ≈ 124 µF (C22 + 30 mΩ).
 
@@ -39,11 +41,11 @@ every switchover, soft-starts, and blocks back-feed. Its status pin is `PWR_SRC`
 - The mux switches from PoE (IN1) to USB (IN2) when PoE drops below 3.91 V (3.53–4.31 V worst case). It compares
   PR1 = IN1 × 47/147 (R18, R19; 0.315–0.324) with CP2 = `+3V3` × 60.4/160.4 (R20, R21) = 1.249 V (1.190–1.312 V
   over the buck's 3.20–3.44 V), ±40 mV offset, ±0.1 µA pin leakage. (TPS2121 DS Table 9-3 p.18, EC p.8)
-- Upper margin 0.10 V: the lowest PoE output, 4.64 V, minus the 0.2 V load-step dip and 0.03 V in L1 is 4.41 V.
+- Upper margin 0.07 V: the lowest PoE output, 4.64 V, minus the 0.23 V load-step dip and 0.03 V in L1 is 4.38 V.
 - Lower margin 0.07 V: the buck needs 3.39 V to regulate 0.78 A (3.3 V + 0.78 A × 115 mΩ), 3.46 V at IN1 after
   90 mΩ in U4. The 5 µs switchover adds a 0.08 V dip (2 A × 5 µs / 124 µF): at the lowest corner the buck input
   touches 3.38 V, 0.01 V short, for 5 µs; accepted. (TLV62569 DS §7.3.2 Eq. 1; TPS2121 DS Eq. 3–4 p.15)
-- 60.4 kΩ balances the margins; 62 kΩ gives 3.61–4.35 V and only 0.06 V at the top.
+- 60.4 kΩ balances the margins; 62 kΩ gives 3.61–4.35 V and only 0.03 V at the top.
 - CP2 above V_REF (1.10 V max) selects XREF mode and the 5 µs fast switchover; with CP2 grounded it takes 100 µs,
   a 1.6 V dip that drops `+3V3` out. Until `+3V3` passes 2.65–2.96 V the mux runs in VREF mode (IN1 while above
   ≈ 3.1–3.5 V, else the higher input, 100 µs switchover). Only at start-up with both inputs present; accepted.
@@ -107,8 +109,8 @@ every switchover, soft-starts, and blocks back-feed. Its status pin is `PWR_SRC`
 - `+3V3` ≈ 0.78 A, 39 % of the buck's 2 A: P4 module 500 mA (Espressif's required supply; 150 mA measured, P4 DS
   Tables 5-2, 5-7; Waveshare gives none), PHY 45, camera 150 (estimate from the brief's 156 mW; [camera.md](camera.md)'s
   ≤ 250 mA is a conservative trace-sizing bound), status LED 60, logic 10, jack LEDs 14 mA.
-- `+5V`: buck 0.57 A; boost 0.46 A average, 0.8–1.3 A while recharging `+32V` (50–120 ms), at most its 1.44 A switch
-  limit. **Average ≈ 1.0 A (5.3 W), peak ≈ 2.0 A (10.3 W)**: within the module's 2.6 A max, the mux limit and 802.3af.
+- `+5V`: buck 0.57 A; boost 0.41 A average, 0.8–1.3 A while recharging `+32V` (50–120 ms), at most its 1.44 A switch
+  limit. **Average ≈ 1.0 A (5.0 W), peak ≈ 2.0 A (10.3 W)**: within the module's 2.6 A max, the mux limit and 802.3af.
 - USB only: the LED rail is off: ≤ 0.57 A by budget, ≈ 0.25 A realistic, against a 500 mA port; accepted (bench).
 
 ## PWR_SRC
@@ -119,7 +121,7 @@ ST wants 6–20 kΩ (DS p.6, Table 9-3). Used by [firmware rules](firmware-rules
 
 ## Accepted risks
 
-- No hysteresis (PoE ↔ USB cycling on a PoE fault); thin margins (0.10 V, 0.07 V; buck 0.01 V short for 5 µs).
+- No hysteresis (PoE ↔ USB cycling on a PoE fault); thin margins (0.07 V, 0.07 V; buck 0.01 V short for 5 µs).
 - CP2 from `+3V3` (deviation from TI Fig. 10-12); no PoE undervoltage lockout without USB.
 - TLV62569 at 5.67 V; `+3V3` 25 mV under the PHY maximum; `+3V3` caps near TI's limit; VBUS at 1.9 V hot.
 - Not measured: module start-up and step response (watch `+5V_POE_F` and `PWR_SRC` when PoE arrives on USB and

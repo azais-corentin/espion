@@ -6478,7 +6478,7 @@
 				)
 			)
 		)
-		(property "Value" "47k 1%"
+		(property "Value" "51.1k 1%"
 			(at 120.65 116.459 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6532,7 +6532,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF4702TCE"
+		(property "MPN" "0402WGF5112TCE"
 			(at 120.65 119.38 0)
 			(hide yes)
 			(show_name no)
@@ -6543,7 +6543,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25792"
+		(property "LCSC" "C25904"
 			(at 120.65 119.38 0)
 			(hide yes)
 			(show_name no)

@@ -96,7 +96,7 @@ DRC checks every rule in the table (check: DRC).
 - R35 (TXD0), R36 (TXD1) and R37 (TX_EN) within ≈ 3 mm of U6 pins 46, 47 and 67: they terminate the P4-driven RMII lines at the source (check: layout near).
 - R39 (and R38) sit directly on the `RMII_TXD1_MCU` trace between U6 pin 47 and R36, keeping the BOOT stub to a few mm: TXD1 is synchronous to the 50 MHz REF_CLK. SW2 can sit anywhere after R39.
 - USB pairs: 90 Ω, in parallel with equal lengths, GND around and underneath, few vias (Espressif HDG). R31/R32 at U6. U5 (USBLC6) at J2, flow-through, with short GND and pin 5 connections (USBLC6 DS §2.3). (check: layout near, R31, R32 and U5)
-- D2 (VBUS TVS) within 5 mm of J2's VBUS pins, before `VBUS` branches to U5, R24 and R27, with a short via to GND (check: layout near, to both VBUS pad pairs). Not at U4; C16 stays at U4 IN2.
+- D2 (VBUS TVS) within 5 mm of J2's VBUS pins, before `VBUS` branches to R24 and R27, with a short via to GND (check: layout near, to both VBUS pad pairs). Not at U4; C16 stays at U4 IN2.
 - `VBUS_SENSE`: R28 and C26 at U6 pin 16, C26 closest. It is a 29 kΩ node: keep it short and away from the USB pair and the switch nodes. R27 sits at the pin too, on its own thin tap from `VBUS` (45 µA). (check: layout near)
 - PPS: the loop uses adjacent pins 44/45 (GPIO32/33) with R34 between them. TP6 on the PPS side, GND loop TP7 within ≈ 5 mm so a probe ground spring reaches it (check: layout near).
 - GPIO numbers outside Ethernet may still be swapped at placement, within the groups in [firmware-rules.md](firmware-rules.md).
@@ -132,13 +132,13 @@ DRC checks every rule in the table (check: DRC).
 
 ## LED driver and ring
 
-- Pulse loop (1 A, µs edges): C46/C47 (+ C43/C45) → `+32V` → ring → `LED_K` → Q1 → R69 → GND → C46/C47. C46/C47 at the ring's anode end (D4), Q1/R69 at its cathode end (D15). Both ends sit in the ring's gap at the upper right (toward the P4 module), the string running counter-clockwise from D4.
+- Pulse loop (≈ 0.9 A, µs edges): C46/C47 (+ C43/C45) → `+32V` → ring → `LED_K` → Q1 → R69 → GND → C46/C47. C46/C47 at the ring's anode end (D4), Q1/R69 at its cathode end (D15). Both ends sit in the ring's gap at the upper right (toward the P4 module), the string running counter-clockwise from D4.
 - Run the ring trace over solid GND (inner or bottom layer) so the return follows it around the cutout. Edges are ≥ 1 µs, so 200 nH of loop gives ≤ 0.2 V: no snubber.
 - The 12 LEDs sit evenly on r = 11.5 mm, pads in a row along the ring, each cathode pad facing the next LED of the string, so every `RING_*` link is a short hop: retroreflectors send the light back in a narrow cone around its source, so the ring stays as tight as the courtyards allow.
-- Enlarge each LED's anode/centre-pad copper for heat (≈ 0.12 W average each). The ring has no GND connection, so its heat copper stays on the LED anode nets.
+- Enlarge each LED's anode/centre-pad copper for heat (≈ 0.10 W average each). The ring has no GND connection, so its heat copper stays on the LED anode nets.
 - Kelvin sense: `ISNS_K` leaves R69's source-side pad through NT1 (at the pad), as a thin trace to R64 only. Return U11 V−, C44, R61, C40 and C48 to GND next to R69's GND pad.
 - Keep `ISNS_K`, `ISET` and `SINK_G` short and away from `BST_SW` and `LED_K`. R67 at Q1's gate; C42 and R64 at U11 (check: layout near).
-- Q1 (DPAK): ≥ 600 mm² of `LED_K` copper on the component side plus a matching pour on the other side, tied with ≥ 12 × 0.3 mm vias: the datasheet's 1 in² rating (R_θJA 50 K/W, +40 °C at 0.8 W) (check: layout copperArea, within 15 mm of Q1; via drill by hand). `LED_K` is a slow node, so the area is no EMI concern. TH1 within 1 mm of the tab copper edge, on a GND-connected pad (not on the drain copper).
+- Q1 (DPAK): ≥ 600 mm² of `LED_K` copper on the component side plus a matching pour on the other side, tied with ≥ 12 × 0.3 mm vias: the datasheet's 1 in² rating (R_θJA 50 K/W, +37 °C at 0.73 W) (check: layout copperArea, within 15 mm of Q1; via drill by hand). `LED_K` is a slow node, so the area is no EMI concern. TH1 within 1 mm of the tab copper edge, on a GND-connected pad (not on the drain copper).
 - Boost: smallest loops for C36/C38 → VIN/GND and SW → D3 → C43/C45 → U10 GND; C43/C45 next to D3's cathode (check: layout near). `BST_SW` is Default class but carries 1.44 A peak: draw it short, wide and small by hand.
 - R65/R66 and R62/C41/C39 at U10's FB/COMP pins (check: layout near), away from SW and L3. U10's exposed pad to GND through the footprint's two 0.2 mm vias (SLVS789D layout example).
 - Timeout RC: C33, R55 and R58 at U9, R54 right at C33 (check: layout near). `STROBE` reaches R54 from U7 on the camera sheet.

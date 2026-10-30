@@ -13,7 +13,7 @@ captured in KiCad (hierarchical, wired, ERC clean); PCB layout has not started.
 A custom KiCad baseboard for a Waveshare ESP32-P4-Core module (ESP32-P4 rev v3, 32 MB
 in-package PSRAM, 16 MB flash). The P4 does the vision: it captures an OV9281 (1 MP
 monochrome global shutter, MIPI CSI-2, 640×400 binned at 120 fps) triggered on its XVS pin,
-and runs blob detection. An 850 nm LED ring (12 × 90° LEDs, 1 A pulses) lights passive
+and runs blob detection. An 850 nm LED ring (12 × 90° LEDs, ≈ 0.9 A pulses) lights passive
 retroreflective markers at room scale (2–5 m). It is gated by the sensor's STROBE output,
 with a P4 enable line for dark frames. The P4's own Ethernet MAC with an IP101GRI PHY
 (100 Mbit/s) sends UDP to the host and keeps the boards' clocks in sync with PTP (IEEE 1588,
