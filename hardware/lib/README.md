@@ -95,10 +95,11 @@ Waveshare ESP32-P4-Core, 16 MB and 32 MB flash versions (same pinout and outline
   Boot). `GPIO0/XTAL_32K_N` and `GPIO1/XTAL_32K_P` are wired to the module's 32.768 kHz
   crystal. The MIPI CSI/DSI pins are bidirectional, as the datasheet's Table 2-10 types
   them.
-- **Provisional land pattern.** Waveshare publishes the outline and pad pitch, not the pad
-  size. The pads are 0.6 × 1.5 mm, reaching 1.0 mm under the body and 0.5 mm past its
-  edge, like KiCad's castellated Espressif module footprints. Check them against a real
-  module before ordering boards. There are no pads under the module.
+- **Provisional land pattern, for hand soldering.** Waveshare publishes the outline and pad
+  pitch, not the pad size. The pads are 0.6 × 2.5 mm, reaching 1.0 mm under the body (like
+  KiCad's castellated Espressif module footprints) and 1.5 mm past its edge, so an iron tip
+  reaches each castellation. Check them against a real module before ordering boards.
+  There are no pads under the module.
 - 3D model: `Module_Waveshare.3dshapes/`, from `3d-src/`. A 24 × 20 × 0.85 mm PCB with
   76 castellated half-holes on the footprint pads, under a shield can up to the published
   3.30 mm overall height (the components under the can aren't modelled). The can size
