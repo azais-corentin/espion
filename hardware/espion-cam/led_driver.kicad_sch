@@ -9663,7 +9663,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Package_SON_TI:Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm_ThermalVias"
+		(property "Footprint" "Package_SON_TI:Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm"
 			(at 137.16 40.64 0)
 			(hide yes)
 			(show_name no)

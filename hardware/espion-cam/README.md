@@ -3,8 +3,8 @@
 KiCad project for the espion camera board: a baseboard for the Waveshare ESP32-P4-Core
 module. The schematic is captured and ERC clean: a root sheet and seven hierarchical sheets
 (power, mcu, ethernet, camera, led_driver, led_ring, imu), with the multi-signal interfaces
-crossing sheets as buses. The board is set up (outline, stack-up, rules) and placement has
-started; nothing is routed yet.
+crossing sheets as buses. The board is set up (outline, stack-up, rules), every part is
+placed and the keep-out rule areas are drawn; nothing is routed yet.
 Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 
 ## Board

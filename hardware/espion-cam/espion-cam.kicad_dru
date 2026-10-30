@@ -28,3 +28,10 @@
 	(condition "A.NetClass == 'MIPI_CSI'")
 	(constraint skew (max 0.254mm) (within_diff_pairs)))
 
+# LSM6DS3TR-C LGA-14: its land pattern puts pads 0.15-0.175 mm apart, under the 0.2 mm class
+# clearance (JLCPCB's minimum is 0.1 mm). Pad pairs inside U12 only; tracks keep the class clearance.
+(rule "U12 LGA pads" (condition "A.memberOfFootprint('U12') && B.memberOfFootprint('U12')") (constraint clearance (min 0.15mm)))
+
+# USB-C receptacle: its CC and SBU pins sit 0.2 mm from the D+/D- pins, under the 0.3 mm
+# 'USB spacing'. Pad pairs inside J2 only; must stay after 'USB spacing' (the last matching rule wins).
+(rule "J2 USB pins" (condition "A.NetClass == 'USB' && A.memberOfFootprint('J2') && B.memberOfFootprint('J2')") (constraint clearance (min 0.2mm)))

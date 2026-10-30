@@ -173,8 +173,9 @@ TI TPS61170 1.2 A, 40 V boost converter (LCSC C15163), the 5 V → 32 V LED boos
 - The symbol is a copy of KiCad's `Driver_LED:TPS61165DRV` (same pinout), renamed. The
   footprints are KiCad's `WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm` with TI's land pattern: pads
   0.45 × 0.3 mm on 1.95 mm row centres, EP 1 × 1.6 mm, two paste openings. The
-  `_ThermalVias` variant adds TI's two optional 0.2 mm vias. CC-BY-SA 4.0 with the KiCad
-  library exception.
+  `_ThermalVias` variant adds TI's two optional 0.2 mm vias; espion-cam stopped using it
+  (0.2 mm holes cost extra at JLCPCB) and uses the plain one as U10. CC-BY-SA 4.0 with the
+  KiCad library exception.
 - 3D model: KiCad's stock WSON-6 model (same body).
 
 ### `Power_Management_TI:TPS2121RUX`, `Package_DFN_QFN_TI:Texas_RUX0012A_VQFN-HR-12_2x2.5mm_P0.5mm`

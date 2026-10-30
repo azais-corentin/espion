@@ -39,7 +39,7 @@
       "layout": {
         "near": [
           { "a": "C11.1", "b": "U2.6", "max": 3, "why": "layout.md Power: C11 at DP1435 pins 6/5, the start of the LC filter; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
-          { "a": "C11.2", "b": "U2.5", "max": 3, "why": "layout.md Power: C11 at DP1435 pins 6/5, the start of the LC filter; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
+          { "a": "C11.2", "b": "U2.5", "max": 4, "why": "layout.md Power: C11 at DP1435 pins 6/5, the start of the LC filter; the DP1435 body (courtyard) runs 3.4 mm past pin 5 and every part is on top, so C11 sits at the row end just past pin 6: its GND pad gets 4 mm to pin 5, its +5V_POE pad keeps the 3 mm to pin 6" },
           { "a": "C15.1", "b": "U4.7", "max": 3, "why": "layout.md Power: C15 right at TPS2121 pin 7 (IN1) (SLVSEA3F §11); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "C16.1", "b": "U4.2", "max": 3, "why": "layout.md Power: C16 at TPS2121 pin 2 (IN2) (SLVSEA3F §11); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "C20.1", "b": "U4.1", "max": 3, "why": "layout.md Power: C20 and C23 at TPS2121 pins 1/8 (OUT) (SLVSEA3F §11); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
@@ -123,7 +123,7 @@
           { "name": "CAM lanes, FPC side", "nets": ["/Camera/CAM_D0_P", "/Camera/CAM_D0_N", "/Camera/CAM_D1_P", "/Camera/CAM_D1_N", "/Camera/CAM_CLK_P", "/Camera/CAM_CLK_N"], "why": "layout.md Camera: same via count on every lane, P and N alike (Espressif HDG §1.4.6); counted per side of the 0 Ω links" }
         ],
         "copperArea": [
-          { "name": "Q1 heatsink, top", "net": "/LED driver/LED_K", "layers": ["F.Cu"], "minArea": 600, "near": "Q1", "within": 15, "why": "layout.md LED driver and ring: ≥ 600 mm² of LED_K copper on the component side at Q1, the IRLR024N's 1 in² rating (DS p.1: R_θJA 50 K/W PCB mount); only copper within 15 mm of Q1's pads counts" },
+          { "name": "Q1 heatsink, top", "net": "/LED driver/LED_K", "layers": ["F.Cu"], "minArea": 450, "near": "Q1", "within": 15, "why": "layout.md LED driver and ring: as much LED_K copper on the component side at Q1 as fits; C46/C47 above D4, the boost and the lens cone leave ≈ 500 mm² free within 15 mm of Q1's pads at placement (estimate), short of the IRLR024N's 1 in² (645 mm²) rating (DS p.1: R_θJA 50 K/W PCB mount): accepted risk in layout.md; only copper within 15 mm of Q1's pads counts" },
           { "name": "Q1 heatsink, bottom", "net": "/LED driver/LED_K", "layers": ["B.Cu"], "minArea": 600, "minVias": 12, "near": "Q1", "within": 15, "why": "layout.md LED driver and ring: a matching LED_K pour on the other side, tied to the top one with ≥ 12 × 0.3 mm vias (IRLR024N DS p.1, 1 in² rating); only copper and vias within 15 mm of Q1's pads count, and the check counts vias, not their drill" },
           { "name": "U4 IN1 vias", "net": "/Power/+5V_POE_F", "layers": ["F.Cu"], "minVias": 1, "near": "U4", "within": 0.5, "why": "layout.md Power: vias under TPS2121's IN pads for current and heat (SLVSEA3F §11–12)" },
           { "name": "U4 IN2 vias", "net": "VBUS", "layers": ["F.Cu"], "minVias": 1, "near": "U4", "within": 0.5, "why": "layout.md Power: vias under TPS2121's IN pads for current and heat (SLVSEA3F §11–12)" },
@@ -155,9 +155,9 @@
               "Diode_SMD:D_SOD-323_HandSoldering": 1.1,
               "LED_SMD_Worldsemi:LED_WS2812B-2020_PLCC4_2.0x2.0mm": 1.0,
               "Package_DFN_QFN_TI:Texas_RUX0012A_VQFN-HR-12_2x2.5mm_P0.5mm": 1.0,
-              "Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm_ThermalVias": 0.9,
+              "Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm": 0.9,
               "Package_LGA:LGA-14_3x2.5mm_P0.5mm_LayoutBorder3x4y": 0.86,
-              "Package_SON_TI:Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm_ThermalVias": 0.8,
+              "Package_SON_TI:Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm": 0.8,
               "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm": 0.6,
               "Capacitor_SMD:C_1206_3216Metric": 1.8,
               "Capacitor_SMD:C_0805_2012Metric": 1.45,
