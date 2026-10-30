@@ -39,10 +39,10 @@ Coated microstrip on L1 over the L2 plane. W = drawn base width, S = gap inside 
 | `MDI` | `/Ethernet/ETH_TD_?`, `/Ethernet/ETH_RD_?` | 0.18 | 0.15 | 0.18 / 0.15 | 0.6 / 0.3 |
 | `USB` | `/MCU/USB_C_D_?`, `/MCU/USB_D_?` | 0.245 | 0.15 | 0.245 / 0.15 | 0.6 / 0.3 |
 | `RMII_CLK` | `/Ethernet/RMII_REF_CLK*` | 0.3 | 0.2 | — | 0.6 / 0.3 |
-| `RMII` | `/Ethernet/RMII_TX*`, `/Ethernet/RMII_RXD*`, `/Ethernet/RMII_CRS_DV*` | 0.36 | 0.2 | — | 0.6 / 0.3 |
+| `RMII` | `/Ethernet/RMII_TX*`, `/Ethernet/RMII_RXD*`, `/Ethernet/RMII_CRS_DV*`, `/MCU/RMII_TX*` | 0.36 | 0.2 | — | 0.6 / 0.3 |
 
 - The diff-pair classes have a 0.15 mm clearance so the pair's own gap passes DRC; their wider spacing to other nets comes from the custom rules.
-- Every pattern matches a labelled net name, so re-annotation can't move a net out of its class. `RMII` also takes the PHY-side RX nets between U6 and R12–R14.
+- Every pattern matches a labelled net name, so re-annotation can't move a net out of its class. `RMII` also takes the PHY-side RX nets between U6 and R12–R14 and the P4-side TX nets between U1 and R73–R75 (`RMII_TX_EN_MCU`, `RMII_TXD0_MCU`, `RMII_TXD1_MCU`).
 - Widths: `POE_CABLE` carries up to 57 V and 350 mA per centre tap (HR871150C DS p.1), ample at 0.4 mm (estimate). `PWR_5V` at 1.0 mm (or pours) carries the 2 A peak at ≈ 10 °C rise on 1 oz outer copper (IPC-2152, estimate). The 0.2 mm `LED_PWR` clearance is above IPC-2221B B2 for 33 V.
 - Default-class nets that need care by hand: `BST_SW` (1.44 A peak), `MDC`, `MDIO`, `PHY_RST_N`, `STATUS_LED`, the jack LED nets and the IMU bus.
 
@@ -73,7 +73,8 @@ Coated microstrip on L1 over the L2 plane. W = drawn base width, S = gap inside 
 
 - C26 and C27 at U1 pins 75/76; pin 74 on the same +3V3 copper. U1 pin 53 (ESP_LDO_VO3) feeds the module's MIPI PHY: no test pad, no load.
 - R1, C24 and SW1 close to U1 pin 1 with a short `ESP_EN` trace; this avoids reboots from interference (Espressif HDG).
-- R3 (and R2) sit directly on the `RMII_TXD1` trace, keeping the BOOT stub to a few mm: TXD1 is synchronous to the 50 MHz REF_CLK. SW2 can sit anywhere after R3.
+- R73 (TXD0), R74 (TXD1) and R75 (TX_EN) within ≈ 3 mm of U1 pins 46, 47 and 67: they terminate the P4-driven RMII lines at the source.
+- R3 (and R2) sit directly on the `RMII_TXD1_MCU` trace between U1 pin 47 and R74, keeping the BOOT stub to a few mm: TXD1 is synchronous to the 50 MHz REF_CLK. SW2 can sit anywhere after R3.
 - USB pairs: 90 Ω, in parallel with equal lengths, GND around and underneath, few vias (Espressif HDG). R23/R24 at U1. U2 (USBLC6) at J1, flow-through, with short GND and pin 5 connections (USBLC6 DS §2.3).
 - D2 (VBUS TVS) within 5 mm of J1's VBUS pins, before `VBUS` branches to U2, R25 and R62, with a short via to GND. Not at U4; C15 stays at U4 IN2.
 - `VBUS_SENSE`: R63 and C49 at U1 pin 16, C49 closest. It is a 29 kΩ node: keep it short and away from the USB pair and the switch nodes. R62 sits at the pin too, on its own thin tap from `VBUS` (45 µA).
@@ -89,7 +90,7 @@ Coated microstrip on L1 over the L2 plane. W = drawn base width, S = gap inside 
 ## Ethernet
 
 - MDI pairs: short, no vias except at the device. Leave U6's pad row at the pad pitch and open out to 0.55 mm at the courtyard edge. The `MDI spacing` exemption covers a whole segment if any part touches the courtyard, so end each escape segment at the courtyard edge with a vertex there.
-- RMII: short, never parallel to REF_CLK, `MDC` or `XTAL_X1` (IP101G DS §6.1). R11–R14 within ≈ 3 mm of the PHY pins: they terminate the PHY-driven lines at the source.
+- RMII: short, never parallel to REF_CLK, `MDC` or `XTAL_X1` (IP101G DS §6.1). R11–R14 within ≈ 3 mm of the PHY pins and R73–R75 within ≈ 3 mm of the P4 pins: each terminates its line at the driver.
 - REF_CLK: R11 is the only series resistor; the star point is its pin 2. Both branches, to U6 pin 10 and to GPIO50 (U1 pin 68), ≤ 20 mm and equal in length (IP101G DS §6.1); the RX setup margin assumes it. GND guard at 0.20 mm (coplanar row); a layout choice, not a DRC rule: a closer guard lowers the impedance.
 - Crystal: Y1 right next to U6 pins 2/3, C3/C4 close to its pins, a GND guard around it, no signals under the crystal or its traces. The 18 pF load caps assume ≈ 3 pF of pin and trace capacitance (estimate).
 - Decoupling, each with a short via to GND: C5 at pin 13 (VDDIO), C6 at pin 28 (REGOUT), C7 at pin 31 (AVDD33); C8 next to C6, C9 between pins 13 and 31. U6's exposed pad is its only GND: the footprint has thermal vias, otherwise stitch at least 4–5.

@@ -26,9 +26,10 @@ The MCU sheet (`mcu.kicad_sch`) holds the ESP32-P4 module and everything local t
 ## BOOT on GPIO35, shared with RMII TXD1
 
 - GPIO35 is both the boot-mode strap and RMII TXD1, as on Espressif's own Ethernet board. The IP101G's TXD1 is a Hi-Z input with no pull, so it never fights the strap. (IP101G DS §3.2)
+- R73 (TXD0), R74 (TXD1) and R75 (TX_EN), 22 Ω, sit at the P4 pins as source termination of the P4-driven RMII lines; the value and its reasoning are in [ethernet.md](ethernet.md). R2 and R3 connect on the P4 side of R74 (`RMII_TXD1_MCU`), so R74 is not part of the strap divider and every strap figure below holds unchanged.
 - R2 10 kΩ pull-up holds GPIO35 high (SPI Boot) for the ≥ 3 ms hold time after CHIP_PU rises, on top of the internal 45 kΩ pull-up; HDG advises reserving one. No capacitor on GPIO35 or `BOOT_SW`. (DS Table 3-2, HDG-SC Strapping)
 - SW2 pulls GPIO35 down through R3 1 kΩ. Pressed during reset: 3.3 V × 1 k / (1 k + 8.18 k) = 0.36 V, below V_IL 0.825 V, so the chip enters download mode (8.18 kΩ = R2 ∥ the 45 kΩ pull-up).
-- Pressed while Ethernet runs: R3 limits the load on TXD1 to ≈ 3.6 mA. The pad drops about 0.1–0.2 V (estimate), so TXD1 stays ≈ 3.1 V, above the PHY's V_IH 2.64 V. Frames stay intact and nothing shorts. (IP101G DS Table 12)
+- Pressed while Ethernet runs: R3 limits the load on TXD1 to ≈ 3.6 mA. The pad drops about 0.1–0.2 V (estimate), so TXD1 stays ≈ 3.1 V, above the PHY's V_IH 2.64 V; R74 carries only the PHY's µA input current, so the PHY sees the same level. Frames stay intact and nothing shorts. (IP101G DS Table 12)
 - Flashing normally needs neither button: USB Serial/JTAG forces download mode (espflash does this). BOOT + RESET is the fallback.
 - Other straps: GPIO34 (RMII TXD0) floats and is ignored with default eFuses (firmware rule 8); GPIO36 has a 10 kΩ pull-up on the module. Board outputs float during ROM and boot, so every output that reaches an active part has a pull or divider on its own sheet. The RMII TX lines and MDC are the exception: R10 holds the PHY in reset (firmware rule 9).
 

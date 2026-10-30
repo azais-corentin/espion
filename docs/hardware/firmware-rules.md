@@ -32,12 +32,12 @@ From the schematic (U1, the Waveshare ESP32-P4-Core module). The Ethernet pins a
 | `MDC` | 31 | out | None | GPIO matrix. Rule 9 |
 | `PPS` | 32 | out | None | EMAC PTP pulse, GPIO matrix signal 243 `emac_ptp_pps_pad_out` (TRM Table 10.12-1). Goes to TP1 and through R27 (0 Ω) to GPIO33 |
 | `PPS_IN` | 33 | in (ETM) | Driven by `PPS` | Keep it an input. With R27 removed, capture on GPIO32 instead (see [mcu.md](mcu.md)) |
-| `RMII_TXD0` | 34 | out | Floats (no pull anywhere) | Strap. Rule 8 |
-| `RMII_TXD1` | 35 | out | R2 10 kΩ pull-up; BOOT button through R3 1 kΩ | Boot strap |
+| `RMII_TXD0` | 34 | out | Floats (no pull anywhere) | Strap. 22 Ω series resistor R73 at the P4. Rule 8 |
+| `RMII_TXD1` | 35 | out | R2 10 kΩ pull-up; BOOT button through R3 1 kΩ (both on the P4 side of R74) | Boot strap. 22 Ω series resistor R74 at the P4 |
 | — | 36 | — | NC; module pull-up R46 10 kΩ | Strap |
 | — | 37, 38 | — | NC | Straps. UART0 TX/RX by default: GPIO37 carries the ROM log |
 | — | 39–48 | — | NC | Unusable: their I/O domain (VDD_IO_5) is fed by ESP_LDO_VO4, which is 0 V until firmware sets it |
-| `RMII_TX_EN` | 49 | out | None | Rule 9 |
+| `RMII_TX_EN` | 49 | out | None | 22 Ω series resistor R75 at the P4. Rule 9 |
 | `RMII_REF_CLK` | 50 | in | None | 50 MHz from the PHY through R11 22 Ω. See Clocks |
 | `PHY_RST_N` | 51 | out | R10 10 kΩ pull-down | Rule 3 |
 | `MDIO` | 52 | in/out | R9 1.5 kΩ pull-up to PHY_3V3 | GPIO matrix |

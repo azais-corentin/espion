@@ -24,8 +24,8 @@ All straps latch on the rising edge of RESET_N (setup 10 µs, hold 2.63 ms) and 
 
 - Pin 14 (50 MHz out) → R11 (22 Ω) → star point → GPIO50 (`GMAC_RMII_CLK_PAD`) and back into the PHY's own 50M_CLKI (pin 10), which needs the clock even when the PHY makes it. Same as both reference boards. In esp-hal: `ExternalRefClock::new(GPIO50)`. (DS p.16, Fig. 8)
 - Exactly two loads. A third load on `RMII_REF_CLK` needs a buffer (DS Fig. 10 p.45).
-- 22 Ω source resistors on the PHY-driven lines only: R11 REF_CLK, R12 CRS_DV, R13 RXD0, R14 RXD1. ESP32-P4 HDG §1.3.14 recommends one on the clock. 22 Ω ≈ 50 Ω trace − 25–30 Ω pad output (estimate: the DS gives no output impedance). [EV] fits 0 Ω in these places, [WS] nothing. 0 Ω also works on short traces; keep the footprints. PHY drive is adjustable (P16R26/27).
-- P4-driven lines (TX_EN, TXD0/1, MDC, MDIO) get no resistor, as on the reference boards. If they overshoot, lower the P4 pad drive.
+- 22 Ω source resistors on every RMII line, each at its driver. PHY-driven, on this sheet: R11 REF_CLK, R12 CRS_DV, R13 RXD0, R14 RXD1; ESP32-P4 HDG §1.3.14 recommends one on the clock. P4-driven, on the MCU sheet at the P4 pins: R75 TX_EN, R73 TXD0, R74 TXD1 ([mcu.md](mcu.md)). 22 Ω ≈ 50 Ω trace − 25–30 Ω pad output (estimate: neither datasheet gives an output impedance). [EV] fits 0 Ω in all these places, [WS] nothing. 0 Ω also works on short traces; keep the footprints. PHY drive is adjustable (P16R26/27), and so is the P4 pad drive.
+- The TX resistors damp overshoot into the PHY's TXEN/TXD inputs (abs max 3.63 V, DS p.57) and delay TX data by ≈ 0.1 ns (22 Ω × ≈ 5 pF, estimate), small against the PHY's 4 ns setup and 2 ns hold. MDC and MDIO get no resistor: both run at ≤ 2.5 MHz.
 - Timing: the PHY drives RXD/CRS_DV 6–13 ns after its clock edge, so the P4 sees ≈ 20 − 13 − t_flight ≈ 6 ns setup and ≥ 6 ns hold, provided both clock branches are equal length. RMII 1.2 asks 4 ns setup, 2 ns hold (estimate: spec not re-read); the P4 EMAC's own figure wasn't found. TX: the PHY needs 4 ns setup, 2 ns hold. (DS Tables 18, 19)
 
 ## Management and reset

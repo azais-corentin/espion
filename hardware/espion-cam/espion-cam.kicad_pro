@@ -580,6 +580,10 @@
         "pattern": "/Ethernet/RMII_CRS_DV*"
       },
       {
+        "netclass": "RMII",
+        "pattern": "/MCU/RMII_TX*"
+      },
+      {
         "netclass": "ETH_SHIELD",
         "pattern": "/Ethernet/ETH_SHIELD*"
       }
