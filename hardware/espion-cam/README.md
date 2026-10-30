@@ -11,7 +11,8 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - Waveshare ESP32-P4-Core, 16 MB flash (SKU 36096): ESP32-P4NRW32X (rev v3.x, as esp-hal
   requires), 32 MB in-package PSRAM, 40 MHz and 32.768 kHz crystals. 76 stamp holes,
   1 mm pitch, 24 × 20 mm. Symbol `MCU_Module_Waveshare:ESP32-P4-Core`, footprint
-  `Module_Waveshare:Waveshare_ESP32-P4-Core` (`../lib/`)
+  `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder` (`../lib/`; hand-soldered, not on
+  the stencil)
 - OV9281 global-shutter mono camera module (Raspberry Pi style) on a 15-pin 1.0 mm FPC
   (MIPI CSI-2, 2 lanes), mounted on the back with the lens through a cutout. The board's
   FPC connector (JUSHUO AFA07-S15ECA-00) is single contact, so a face-flipped cable makes

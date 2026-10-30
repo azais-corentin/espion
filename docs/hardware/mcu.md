@@ -13,7 +13,8 @@ The MCU sheet (`mcu.kicad_sch`) holds the ESP32-P4 module and everything local t
 - Supply: C26 4.7 µF + C27 100 nF at pins 75/76. The module already carries ≈ 30 µF on ESP_3V3, so the pins see ≈ 35 µF, and the smaller entrance cap keeps the buck's total output capacitance down ([power.md](power.md)).
 - Unused P4 functions: DSI pins may float (HDG-SC MIPI). The USB HS OTG pins are NC; the 1 MΩ D+ pull-down HDG asks for applies to chip rev v1.x only, and this module carries rev v3.x. GPIO37/38 stay NC because GPIO37 carries the UART0 ROM log.
 - Logic levels: P4 V_IH = 0.75 × VDD = 2.48 V, so every P4 input (STROBE, RMII RX, PPS_IN, PWR_SRC) must be 3.3 V push-pull or a pulled-up open drain. A 1.8 V signal would not read high. (DS Table 5-4)
-- **Provisional land pattern, for hand soldering.** Waveshare publishes the outline and pad pitch, not the pad size. The footprint's 0.6 × 2.5 mm pads (1.0 mm under the body like KiCad's castellated Espressif modules, 1.5 mm past its edge for the iron tip) are a guess. Measure a real module and confirm `Module_Waveshare:Waveshare_ESP32-P4-Core` before ordering boards (`hardware/lib/README.md`).
+- **Provisional land pattern.** Waveshare publishes the outline and pad pitch, not the pad size, so the pads (1.0 mm under the body, like KiCad's castellated Espressif modules) are a guess. Measure a real module and confirm both footprints before ordering boards (`hardware/lib/README.md`).
+- **U1 is hand-soldered after the rest of the board**, on `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder`: 0.6 × 2.5 mm pads reaching 1.5 mm past the edge for the iron tip, and no paste, so the stencil has no apertures for it. For reflow, switch U1 to `Module_Waveshare:Waveshare_ESP32-P4-Core` (0.6 × 1.5 mm pads, with paste).
 
 ## Reset (ESP_EN)
 

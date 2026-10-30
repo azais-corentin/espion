@@ -92,8 +92,9 @@ holes, the net tie and pad test points are left out; the loop GND test points TP
 
 ## Before ordering
 
-- Measure the castellated pads of a real P4-Core and confirm the provisional land pattern
-  `Module_Waveshare:Waveshare_ESP32-P4-Core` ([hardware/lib/README.md](../../hardware/lib/README.md)).
+- Measure the castellated pads of a real P4-Core and confirm the provisional land patterns
+  `Module_Waveshare:Waveshare_ESP32-P4-Core` and `_HandSolder`
+  ([hardware/lib/README.md](../../hardware/lib/README.md)).
 - Before routing J3: ohm the camera's GND pad to the cable's edge conductor to confirm which
   edge is pin 1 ([camera.md](camera.md), FPC connector).
 - Before buying J3: check the cable type and the module connector's contact side; together

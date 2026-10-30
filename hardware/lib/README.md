@@ -52,6 +52,9 @@ Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part
   `.stpZ` model or split the exposed-pad paste into separate apertures. The stock footprints
   they come from get the same messages.
 - **S4.5** on `Connector_HanRun:HR871150C` only (waiver): the part has no pin 6.
+- **F6.1** (waiver) and **F6.3 "missing Paste"** on
+  `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder`: the hand-soldering variant has no
+  paste on its pads, so the stencil has no apertures for it.
 
 ## 3D models
 
@@ -77,7 +80,7 @@ KiCad library exception); the Parts section says which.
 
 ## Parts
 
-### `MCU_Module_Waveshare:ESP32-P4-Core`, `Module_Waveshare:Waveshare_ESP32-P4-Core`
+### `MCU_Module_Waveshare:ESP32-P4-Core`, `Module_Waveshare:Waveshare_ESP32-P4-Core`, `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder`
 
 Waveshare ESP32-P4-Core, 16 MB and 32 MB flash versions (same pinout and outline).
 
@@ -95,11 +98,15 @@ Waveshare ESP32-P4-Core, 16 MB and 32 MB flash versions (same pinout and outline
   Boot). `GPIO0/XTAL_32K_N` and `GPIO1/XTAL_32K_P` are wired to the module's 32.768 kHz
   crystal. The MIPI CSI/DSI pins are bidirectional, as the datasheet's Table 2-10 types
   them.
-- **Provisional land pattern, for hand soldering.** Waveshare publishes the outline and pad
-  pitch, not the pad size. The pads are 0.6 × 2.5 mm, reaching 1.0 mm under the body (like
-  KiCad's castellated Espressif module footprints) and 1.5 mm past its edge, so an iron tip
-  reaches each castellation. Check them against a real module before ordering boards.
-  There are no pads under the module.
+- **Provisional land pattern.** Waveshare publishes the outline and pad pitch, not the pad
+  size. Check the pads against a real module before ordering boards. There are no pads
+  under the module. Two footprints, both 1.0 mm under the body like KiCad's castellated
+  Espressif module footprints:
+  - `Waveshare_ESP32-P4-Core` (reflow): 0.6 × 1.5 mm pads, 0.5 mm past the body edge, with
+    paste.
+  - `Waveshare_ESP32-P4-Core_HandSolder`: 0.6 × 2.5 mm pads, 1.5 mm past the edge so an iron
+    tip reaches each castellation, and no paste, so the stencil leaves the module out. Same
+    3D model as the reflow footprint.
 - 3D model: `Module_Waveshare.3dshapes/`, from `3d-src/`. A 24 × 20 × 0.85 mm PCB with
   76 castellated half-holes on the footprint pads, under a shield can up to the published
   3.30 mm overall height (the components under the can aren't modelled). The can size

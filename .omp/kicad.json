@@ -24,7 +24,8 @@
       },
       "klcExpected": ["F9.3", "F6.3"],
       "klcWaivers": {
-        "Connector_HanRun:HR871150C": { "S4.5": "the part has no pin 6 (HanRun datasheet p. 2, \"Remove Pin#6\")" }
+        "Connector_HanRun:HR871150C": { "S4.5": "the part has no pin 6 (HanRun datasheet p. 2, \"Remove Pin#6\")" },
+        "Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder": { "F6.1": "hand-soldering variant: its pads carry no F.Paste so the stencil has no apertures for it (docs/hardware/mcu.md)" }
       },
       "fieldExempt": { "LCSC": ["U1"] },
       "powerSymbols": { "PHY_3V3": "power:+3V3", "+32V": "power:+36V" },
