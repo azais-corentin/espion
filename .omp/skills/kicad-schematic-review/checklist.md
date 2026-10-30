@@ -77,7 +77,7 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 - **FW-1** GPIO map: every MCU pin's reset function, its use on this board, its pull, and its constraints (strap, ADC-capable, USB, input-only) match `docs/hardware/firmware-rules.md` (GPIO map, straps) and the schematic (`kicad_query symbol` on the MCU). Each peripheral instance and each signal is used once.
 - **FW-2** The rules in `docs/hardware/firmware-rules.md` are complete for the circuits in scope, and the firmware (`firmware/cam-p4`) follows them (read the code; cite file and line).
 - **FW-3** Debug and programming access without soldering (USB Serial/JTAG, UART console), and a boot-mode entry.
-- **FW-4** Test points on every rail and on the signals bring-up will probe (clocks, PPS, strobe, reset); at least one status indicator.
+- **FW-4** A probe point on every rail and on the signals bring-up will probe (clocks, PPS, strobe, reset); at least one status indicator. A pad of an accessible passive on the net (series resistor, pull resistor, divider, decoupling capacitor) is a probe point: such a net needs no dedicated test point. Ask for a test point only where no such pad exists (e.g. a net between two IC pins, or one under a shield or module).
 - **FW-5** Firmware can measure what it needs to decide (power source, rail sense, temperature) and can switch off what it must (load switches, LED power).
 
 ## PROD: production (full)
