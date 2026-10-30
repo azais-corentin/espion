@@ -13,7 +13,7 @@ import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
 type Step = [string, Record<string, unknown>];
 
 async function edit(p: Project, steps: Step[]): Promise<string[]> {
-	const ctx: OpContext = { project: p, libs: await p.libs(), notes: [], touch() {}, touchPart() {} };
+	const ctx: OpContext = { project: p, libs: await p.libs(), notes: [], touch() {}, touchPart() {}, touchBoard() {} };
 	for (const [op, args] of steps) {
 		const def = ops.find(o => o.op === op);
 		if (!def) throw new Error(`no op ${op}`);

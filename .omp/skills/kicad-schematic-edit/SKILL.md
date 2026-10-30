@@ -1,6 +1,6 @@
 ---
 name: kicad-schematic-edit
-description: Use when changing anything in a KiCad project in this repo (schematic sheets, parts, wiring, labels, new sheets, net classes, design rules, BOM presets). KiCad files are toolkit-only: kicad_query, kicad_edit, kicad_check, kicad_render.
+description: Use when changing anything in a KiCad project in this repo (schematic sheets, parts, wiring, labels, new sheets, net classes, design rules, BOM presets, board set-up). KiCad files are toolkit-only: kicad_query, kicad_edit, kicad_check, kicad_render.
 ---
 
 # Editing a KiCad project
@@ -45,6 +45,7 @@ description: Use when changing anything in a KiCad project in this repo (schemat
 - New sheet: `create_sheet`, hierarchical labels in the child (`add_label kind: "hierarchical"`), then `add_sheet_pin` (or `sync_sheet_pins`) and wires on the parent, all in one call.
 - References: omit `ref` (or end it with `?`) to annotate; power symbols follow the per-sheet `#PWR` blocks in `.omp/kicad.json`, and a new sheet gets the next free block automatically (no config edit needed).
 - Library parts (new symbols/footprints) are made with the `kicad-library-part` skill, in a separate `kicad_edit` call before they're placed.
+- **Board**: the `board` ops of `kicad_edit` set the stack-up (`set_stackup`), board-wide rule minimums and DRC severities (`set_board_rules`), the outline and cutouts (`set_board_edges`, fillets per vertex), bring footprints and nets over from the schematic (`update_from_schematic`, in its own call after a schematic change; new footprints land beside the outline), place footprints (`place_footprint`, no side flip) and move, turn, hide or re-layer their field texts (`set_footprint_field`). Read with `kicad_query` `board`, `footprints`, `footprint`; check with `kicad_check {checks: ["drc"]}` (DRC + schematic parity); look with `kicad_render {board: true}`. A board edit is refused when it adds a DRC violation or a parity issue.
 
 ## Example: a new sheet with two resistors on a net and on GND
 This exact call passes every gate on the espion-cam project (it is the toolkit's transaction test). `Device:R` pins are at (0, −3.81) "U" and (0, 3.81) "D" from the origin.

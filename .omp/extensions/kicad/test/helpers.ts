@@ -11,6 +11,8 @@ import type { Expect } from "../src/netdiff";
 export const REPO = path.resolve(import.meta.dir, "../../../..");
 /** "Re-save the espion-cam sheets in KiCad's canonical form": canonical sheets, IMU sheet present. */
 export const FIXTURE_COMMIT = "56ec3b6";
+/** The toolkit config the fixture's references match (.omp/kicad.json came later than FIXTURE_COMMIT; the working tree's follows the live project). */
+export const CONFIG_COMMIT = "185424c";
 export const PROJECT = "hardware/espion-cam";
 
 /** A temp repo root holding hardware/espion-cam and hardware/lib (with its 3D models) at FIXTURE_COMMIT. */
@@ -24,12 +26,25 @@ export function stageFixture(commit = FIXTURE_COMMIT): string {
 	const tar = Bun.spawnSync(["tar", "-x", "-C", root], { stdin: archive.stdout, stderr: "pipe" });
 	if (tar.exitCode !== 0) throw new Error(`tar failed: ${tar.stderr.toString()}`);
 	fs.mkdirSync(path.join(root, ".omp"), { recursive: true });
-	fs.copyFileSync(path.join(REPO, ".omp", "kicad.json"), path.join(root, ".omp", "kicad.json"));
+	const config = Bun.spawnSync(["git", "-C", REPO, "show", `${CONFIG_COMMIT}:.omp/kicad.json`], { stdout: "pipe", stderr: "pipe" });
+	if (config.exitCode !== 0) throw new Error(`git show failed: ${config.stderr.toString()}`);
+	fs.writeFileSync(path.join(root, ".omp", "kicad.json"), config.stdout);
 	return root;
 }
 
 export function cleanup(root: string): void {
 	fs.rmSync(root, { recursive: true, force: true });
+}
+
+/** The board fixture project: root sheet with R1 and C1 (DNP), sub-sheet Led with D1 (project footprint), an empty 2-layer board. */
+export const BOARD_FIXTURE = path.join(import.meta.dir, "fixtures", "board");
+export const BOARD_PROJECT = "board";
+
+/** A temp repo root holding a copy of the board fixture project at BOARD_PROJECT. */
+export function stageBoardFixture(): string {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "kicad-board-test-"));
+	fs.cpSync(BOARD_FIXTURE, path.join(root, BOARD_PROJECT), { recursive: true });
+	return root;
 }
 
 /** kicad-cli integration tests need the dev shell; they are skipped outside it. */

@@ -13,7 +13,7 @@ import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
 /** Apply ops to a freshly opened project and write the pending files; returns the op notes. */
 async function apply(root: string, list: Record<string, unknown>[]): Promise<string[]> {
 	const project = Project.open(PROJECT, root);
-	const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {} };
+	const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {}, touchBoard() {} };
 	for (const { op, ...args } of list) {
 		const def = ops.find(o => o.op === op);
 		if (!def) throw new Error(`no op ${String(op)}`);

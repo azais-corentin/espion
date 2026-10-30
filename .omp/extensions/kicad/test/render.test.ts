@@ -152,17 +152,19 @@ describe.skipIf(!HAS_KICAD)("renderSheet", () => {
 });
 
 describe("kicad_render arguments", () => {
-	test("exactly one of sheet, symbol, footprint; part options only with their part", async () => {
+	test("exactly one of sheet, symbol, footprint, board; part options only with their part", async () => {
 		const before = calls.length;
 		await expect(runRender("/nonexistent", { sheet: "root", symbol: "Device:R" }, stub)).rejects.toThrow(
-			"give exactly one of sheet, symbol, footprint (got sheet and symbol)",
+			"give exactly one of sheet, symbol, footprint, board (got sheet and symbol)",
 		);
 		await expect(runRender("/nonexistent", { symbol: "Device:R", footprint: "Resistor_SMD:R_0603_1608Metric" }, stub)).rejects.toThrow(
 			"(got symbol and footprint)",
 		);
-		await expect(runRender("/nonexistent", {}, stub)).rejects.toThrow(/^give exactly one of sheet, symbol, footprint$/);
+		await expect(runRender("/nonexistent", { board: true, sheet: "root" }, stub)).rejects.toThrow("(got sheet and board)");
+		await expect(runRender("/nonexistent", {}, stub)).rejects.toThrow(/^give exactly one of sheet, symbol, footprint, board$/);
+		await expect(runRender("/nonexistent", { board: false }, stub)).rejects.toThrow("board: give true");
 		await expect(runRender("/nonexistent", { footprint: "Connector_RJ:X", unit: 2 }, stub)).rejects.toThrow("unit applies to a symbol only");
-		await expect(runRender("/nonexistent", { symbol: "Device:R", layers: ["F.Cu"] }, stub)).rejects.toThrow("layers applies to a footprint only");
+		await expect(runRender("/nonexistent", { symbol: "Device:R", layers: ["F.Cu"] }, stub)).rejects.toThrow("layers applies to a footprint or the board only");
 		expect(calls.length).toBe(before);
 	});
 });
@@ -346,13 +348,14 @@ describe.skipIf(!HAS_KICAD)("renderPart", () => {
 });
 
 describe("kicad_render 3d arguments", () => {
-	test("3d is for footprints; 3d and 2d options don't mix", async () => {
+	test("3d is for footprints and the board; 3d and 2d options don't mix", async () => {
 		const before = calls.length;
 		const r = (req: Parameters<typeof runRender>[1]) => runRender("/nonexistent", req, stub);
-		await expect(r({ symbol: "Device:R", view: "3d" })).rejects.toThrow("view 3d applies to a footprint only");
-		await expect(r({ sheet: "root", view: "3d" })).rejects.toThrow("view 3d applies to a footprint only");
+		await expect(r({ symbol: "Device:R", view: "3d" })).rejects.toThrow("view 3d applies to a footprint or the board only");
+		await expect(r({ sheet: "root", view: "3d" })).rejects.toThrow("view 3d applies to a footprint or the board only");
 		await expect(r({ footprint: "A:B", view: "2.5d" })).rejects.toThrow('view must be "2d" or "3d"');
 		await expect(r({ footprint: "A:B", side: "top", zoom: 2 })).rejects.toThrow('side, zoom: for view "3d" only');
+		await expect(r({ board: true, side: "bottom", zoom: 2 })).rejects.toThrow('zoom: for view "3d" only');
 		await expect(r({ footprint: "A:B", view: "3d", box: [0, 0, 1, 1], layers: ["F.Cu"] })).rejects.toThrow('layers, box: for view "2d" only');
 		expect(calls.length).toBe(before);
 	});

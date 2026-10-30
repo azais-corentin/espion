@@ -8,7 +8,11 @@
  * - the connectivity change must equal the declared `expect` exactly,
  * - no new ERC violation,
  * - no new drawing-style finding on the touched sheets,
- * - a changed .kicad_dru must parse (sentinel rule), changed library parts no new KLC violation.
+ * - a changed .kicad_dru must parse (sentinel rule), changed library parts no new KLC violation,
+ * - a changed board (re-saved with `kicad-cli pcb upgrade --force`): no new KiCad DRC violation and
+ *   no new schematic parity issue (`pcb drc --schematic-parity`). Unconnected items, violations
+ *   inside footprints the ops placed from the libraries and those a board-rules-only change
+ *   brings up are reported, not gated.
  *
  * Only when every gate passes are KiCad's re-saved bytes copied over the real files, each
  * replaced atomically; if a copy fails midway the files already replaced are restored. The real
@@ -19,18 +23,20 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Analysis } from "./analysis";
+import { drcFindings, refRenames } from "./checks/board";
 import { ercFindings } from "./checks/connectivity";
 import { druProblems } from "./checks/rules";
 import { klcFindings } from "./checks/klc";
 import { styleFindings } from "./checks/style";
 import * as cli from "./cli";
 import { compactJson } from "./format";
-import type { Box } from "./geom";
+import { type Box, bbox, type Pt } from "./geom";
 import type { Libraries } from "./libs";
 import { type Expect, checkExpect, diffNetlists, expectFromDiff, summarize } from "./netdiff";
 import { Project, type SheetInst } from "./project";
 import { OPS } from "./registry";
-import { type LabelledImage, type Rasterize, renderPart, renderRegions } from "./render";
+import { EDIT_BOARD_LAYERS, type LabelledImage, type Rasterize, renderBoard, renderPart, renderRegions } from "./render";
+import { parse } from "./sexpr";
 import { SpecError, validate } from "./spec";
 import type { Finding, OpContext, PartKind } from "./types";
 
@@ -172,6 +178,34 @@ function fmtFinding(f: Finding): string {
 	return `  - [${f.check}] ${f.sheet ? `${f.sheet} ` : ""}${f.message}${f.at ? ` @ (${f.at[0]}, ${f.at[1]})` : ""}`;
 }
 
+/**
+ * The DRC change of a board edit: new violations (gated, or confined to one footprint the edit
+ * placed from the libraries), new parity issues, and the report lines. `rename` maps the before
+ * board's references to the after board's (footprints matched by uuid), so a renamed reference or
+ * net keeps an old violation old.
+ */
+function boardChange(before: cli.DrcReport | undefined, after: cli.DrcReport, placed: Set<string>, rename: ReadonlyMap<string, string>) {
+	const b = before ? drcFindings(before, rename) : { violations: [], parity: [] };
+	const a = drcFindings(after);
+	const vNew = newFindings(b.violations, a.violations);
+	// a footprint fresh from its library brings its own pads and drawings, checked against the board's rules: not this edit's doing;
+	// a violation with a board item (edge, track, via, zone) or another footprint is the placement's doing
+	const inside = vNew.filter(f => f.confinedTo !== undefined && placed.has(f.confinedTo));
+	const gated = vNew.filter(f => !inside.includes(f));
+	const parityNew = newFindings(b.parity, a.parity);
+	const list = (l: Finding[]) => [...l.slice(0, 20).map(fmtFinding), ...(l.length > 20 ? [`  - … ${l.length - 20} more`] : [])];
+	const report = (gatedRun: boolean): string[] => [
+		`DRC: ${a.violations.length} violations after (${vNew.length} new, ${newFindings(a.violations, b.violations).length} resolved).`,
+		`Schematic parity: ${a.parity.length} issues after (${parityNew.length} new, ${newFindings(a.parity, b.parity).length} resolved).`,
+		`Unconnected items: ${before?.unconnected.length ?? 0} before, ${after.unconnected.length} after (not gated).`,
+		...(inside.length
+			? ["New DRC violations inside footprints this edit placed from the libraries (the library footprint against the board's rules; not gated):", ...list(inside)]
+			: []),
+		...(!gatedRun && gated.length ? ["New DRC violations under the changed board rules (not gated):", ...list(gated)] : []),
+	];
+	return { gated, parityNew, report };
+}
+
 export async function runEdit(
 	req: EditRequest,
 	repoRoot: string,
@@ -182,7 +216,8 @@ export async function runEdit(
 	const project = Project.open(req.project, repoRoot);
 	const libs = await project.libs();
 	const libPaths = inRepoLibPaths(project, libs);
-	const lockDirs = [project.dir, ...new Set(libPaths.map(p => path.dirname(p)))];
+	// a project library may sit in the project directory itself
+	const lockDirs = [...new Set([project.dir, ...libPaths.map(p => path.dirname(p))])];
 	const locks = checkLocks(lockDirs, processes);
 	if (locks.held.length) {
 		throw new Error(
@@ -196,6 +231,7 @@ export async function runEdit(
 	// 1. apply the ops in memory
 	const touched = new Map<string, { sheet: SheetInst; boxes: Box[] }>();
 	const touchedParts = new Map<string, { kind: PartKind; id: string }>();
+	const board: BoardTouch = { touched: false, boxes: [], placed: new Set() };
 	const ctx: OpContext = {
 		project,
 		libs,
@@ -207,6 +243,11 @@ export async function runEdit(
 		},
 		touchPart(kind, id) {
 			touchedParts.set(`${kind}:${id}`, { kind, id });
+		},
+		touchBoard(box, placed) {
+			board.touched = true;
+			if (box) board.boxes.push(box);
+			for (const r of placed ?? []) board.placed.add(r);
 		},
 	};
 	for (const [i, raw] of req.ops.entries()) {
@@ -222,15 +263,25 @@ export async function runEdit(
 		}
 	}
 	const pending = project.pendingWrites();
-	if (pending.size === 0 && project.deleted.size === 0) return { applied: false, report: ["No file changes.", ...lockNotes].join("\n"), images: [] };
+	if (pending.size === 0 && project.deleted.size === 0) {
+		return { applied: false, report: ["No file changes.", ...lockNotes, ...(ctx.notes.length ? ["Notes:", ...ctx.notes.map(n => `  - ${n}`)] : [])].join("\n"), images: [] };
+	}
 
 	// 2. stage a copy; everything from here on works in it and the copy always goes away
 	const tempRoot = stage(project, libPaths);
 	try {
-		return await verifyAndWrite({ req, project, tempRoot, pending, touched, touchedParts, notes: ctx.notes, lockDirs, lockNotes, processes, rasterize, signal });
+		return await verifyAndWrite({ req, project, tempRoot, pending, touched, touchedParts, board, notes: ctx.notes, lockDirs, lockNotes, processes, rasterize, signal });
 	} finally {
 		fs.rmSync(tempRoot, { recursive: true, force: true });
 	}
+}
+
+/** The board side of an edit: whether its design changed, where, and which footprints came fresh from the libraries. */
+interface BoardTouch {
+	touched: boolean;
+	boxes: Box[];
+	/** References of footprints the ops placed from the libraries (added or replaced). */
+	placed: Set<string>;
 }
 
 interface Staged {
@@ -241,6 +292,7 @@ interface Staged {
 	touched: Map<string, { sheet: SheetInst; boxes: Box[] }>;
 	/** Library parts created or changed by the ops, keyed "kind:Lib:Name". */
 	touchedParts: Map<string, { kind: PartKind; id: string }>;
+	board: BoardTouch;
 	notes: string[];
 	lockDirs: string[];
 	/** Stale lock files ignored, for the report. */
@@ -255,19 +307,24 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 	const { req, project, tempRoot, pending, touched, signal } = s;
 	const repoRoot = project.repoRoot;
 	const toTemp = (f: string) => path.join(tempRoot, path.relative(repoRoot, f));
+	const ro = { cwd: path.dirname(toTemp(project.rootFile)), repoRoot, signal };
 	const before = Project.open(path.relative(repoRoot, project.dir), tempRoot);
 	const beforeA = new Analysis(before, signal);
 	const touchedSheets = (p: Project) => p.hierarchy().filter(sh => touched.has(sh.namePath));
 	const libFiles = [...pending.keys()].filter(f => /\.(kicad_sym|kicad_mod)$/.test(f));
-	const [netBefore, ercBefore, styleBefore, klcBefore] = await Promise.all([
+	// KiCad's DRC with schematic parity, when the board's design changes (its file or its rules)
+	const boardFile = toTemp(project.boardFile);
+	const boardRun = s.board.touched || pending.has(project.boardFile);
+	const boardBefore = boardRun && fs.existsSync(boardFile) ? parse(fs.readFileSync(boardFile, "utf8")) : undefined;
+	const [netBefore, ercBefore, styleBefore, klcBefore, drcBefore] = await Promise.all([
 		beforeA.netlist(),
 		beforeA.erc(),
 		styleFindings(beforeA, touchedSheets(before).filter(sh => fs.existsSync(sh.file))),
 		libFiles.length ? klcFindings(before, libFiles.map(toTemp).filter(f => fs.existsSync(f)), signal) : Promise.resolve([]),
+		boardRun && fs.existsSync(boardFile) ? cli.pcbDrc(boardFile, ro, true) : Promise.resolve(undefined),
 	]).finally(() => beforeA.dispose());
 
 	// 3. write the new files into the copy and let KiCad re-save them
-	const ro = { cwd: path.dirname(toTemp(project.rootFile)), repoRoot, signal };
 	for (const [f, content] of pending) {
 		const t = toTemp(f);
 		fs.mkdirSync(path.dirname(t), { recursive: true });
@@ -280,6 +337,7 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		const t = toTemp(f);
 		if (t.endsWith(".kicad_sch")) await cli.upgrade("sch", t, ro);
 		else if (t.endsWith(".kicad_sym")) await cli.upgrade("sym", t, ro);
+		else if (t.endsWith(".kicad_pcb")) await cli.upgrade("pcb", t, ro);
 		else if (t.endsWith(".kicad_mod")) prettyDirs.add(path.dirname(t));
 	}
 	for (const d of prettyDirs) await cli.upgrade("fp", d, ro);
@@ -288,12 +346,13 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 	const afterP = Project.open(path.relative(repoRoot, project.dir), tempRoot);
 	const afterA = new Analysis(afterP, signal);
 	try {
-		const [netAfter, ercAfter, styleAfter, klcAfter, druErrs] = await Promise.all([
+		const [netAfter, ercAfter, styleAfter, klcAfter, druErrs, drcAfter] = await Promise.all([
 			afterA.netlist(),
 			afterA.erc(),
 			styleFindings(afterA, touchedSheets(afterP)),
 			libFiles.length ? klcFindings(afterP, libFiles.map(toTemp), signal) : Promise.resolve([]),
 			pending.has(project.druFile) ? druProblems(afterP, signal) : Promise.resolve([]),
+			boardRun && fs.existsSync(boardFile) ? cli.pcbDrc(boardFile, ro, true) : Promise.resolve(undefined),
 		]);
 		const diff = diffNetlists(netBefore, netAfter);
 		const problems: string[] = [];
@@ -304,6 +363,10 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		const klcNew = newFindings(klcBefore, klcAfter).filter(f => f.severity !== "info");
 		problems.push(...[...ercNew, ...styleNew, ...klcNew].map(fmtFinding));
 		problems.push(...druErrs.map(e => `  - [rules] ${e}`));
+		const rename = boardBefore && drcAfter ? refRenames(boardBefore, parse(fs.readFileSync(boardFile, "utf8"))) : new Map<string, string>();
+		const drc = drcAfter ? boardChange(drcBefore, drcAfter, s.board.placed, rename) : undefined;
+		// a changed board file is gated; changed board rules alone are reported (tighter rules show real problems to fix)
+		if (drc && pending.has(project.boardFile)) problems.push(...[...drc.gated, ...drc.parityNew].map(fmtFinding));
 
 		const lines: string[] = [...s.lockNotes];
 		if (s.notes.length) lines.push("Done:", ...s.notes.map(n => `  - ${n}`));
@@ -311,6 +374,7 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		lines.push("Connectivity and part changes:", ...(sum.length ? sum.map(x => `  - ${x}`) : ["  - none"]));
 		const ercResolved = newFindings(ercFindings(ercAfter), ercFindings(ercBefore)).length;
 		lines.push(`ERC: ${ercAfter.filter(v => !v.excluded).length} violations after (${ercNew.length} new, ${ercResolved} resolved).`);
+		if (drc) lines.push(...drc.report(pending.has(project.boardFile)));
 		lines.push(
 			`Files: ${[
 				...[...pending.keys()].map(f => `${project.rel(f)}${project.created.has(f) ? " (new)" : ""}`),
@@ -327,6 +391,11 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 			for (const { kind, id } of s.touchedParts.values()) {
 				const img = await renderPart(libs, { kind, id }, s.rasterize, ro);
 				images.push({ label: `${kind === "symbol" ? "Symbol" : "Footprint"} ${id}`, png: img.png });
+			}
+			if (s.board.touched && fs.existsSync(boardFile)) {
+				const box = s.board.boxes.length ? bbox(s.board.boxes.flatMap((b): Pt[] => [[b[0], b[1]], [b[2], b[3]]])) : undefined;
+				const img = await renderBoard(boardFile, { box, layers: EDIT_BOARD_LAYERS }, s.rasterize, ro);
+				images.push({ label: `Board, region [${img.box.map(v => v.toFixed(2)).join(", ")}] mm (outline, copper, courtyards)`, png: img.png });
 			}
 		}
 

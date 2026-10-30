@@ -7,7 +7,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { child, children, type List, parse, text } from "./sexpr";
+import { child, children, isList, type List, parse, text } from "./sexpr";
 
 let shellEnv: Promise<Record<string, string>> | undefined;
 
@@ -104,6 +104,12 @@ export interface Component {
 	part: string;
 	sheetName: string;
 	sheetFile: string;
+	/** Sheet instance path of uuids as the netlist writes it: "/" for the root, "/<sheet uuid>/" below. */
+	sheetPath: string;
+	/** The symbol's uuids, one per unit, first unit first (netlist `tstamps`). */
+	uuids: string[];
+	/** Footprint filters (`ki_fp_filters`), space separated. */
+	fpFilters: string;
 	fields: Record<string, string>;
 	dnp: boolean;
 	excludeFromBom: boolean;
@@ -140,6 +146,12 @@ export function parseNetlist(source: string): Netlist {
 			part: txt(libsource, "part"),
 			sheetName: txt(child(c, "sheetpath"), "names"),
 			sheetFile: props.Sheetfile ?? "",
+			sheetPath: txt(child(c, "sheetpath"), "tstamps"),
+			uuids: (child(c, "tstamps") ?? [])
+				.slice(1)
+				.flatMap(a => (isList(a) ? [] : a.v.split(/\s+/)))
+				.filter(Boolean),
+			fpFilters: props.ki_fp_filters ?? "",
 			fields,
 			dnp: "dnp" in props,
 			excludeFromBom: "exclude_from_bom" in props,
@@ -286,14 +298,59 @@ export async function bom(rootSch: string, preset: string | undefined, o: RunOpt
 	return text;
 }
 
-export async function upgrade(kind: "sch" | "sym" | "fp", file: string, o: RunOpts): Promise<void> {
+export async function upgrade(kind: "sch" | "sym" | "fp" | "pcb", file: string, o: RunOpts): Promise<void> {
 	await must(["kicad-cli", kind, "upgrade", "--force", file], o);
 }
 
-export async function pcbDrc(board: string, o: RunOpts): Promise<{ violations: unknown[]; raw: string }> {
-	const { text, r } = await exportText("drc.json", out => ["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", "-o", out, board], o, true);
-	const j = JSON.parse(text) as { violations?: unknown[] };
-	return { violations: j.violations ?? [], raw: r.stdout + r.stderr };
+/** One item of a DRC violation: KiCad's description ("Pad 2 [GND] of R1 on F.Cu"), position (mm) and uuid. */
+export interface DrcItem {
+	description: string;
+	pos?: { x: number; y: number };
+	uuid?: string;
+}
+
+export interface DrcViolation {
+	type: string;
+	severity: string;
+	description: string;
+	items: DrcItem[];
+	excluded?: boolean;
+	/** Comment the user gave when excluding the violation in KiCad. */
+	comment?: string;
+}
+
+export interface DrcReport {
+	violations: DrcViolation[];
+	unconnected: DrcViolation[];
+	/** Schematic parity issues; empty unless asked for. */
+	parity: DrcViolation[];
+	raw: string;
+}
+
+/** KiCad's DRC of a board (JSON report, drc.v1 schema, mm), with the schematic parity test when `parity`. */
+export async function pcbDrc(board: string, o: RunOpts, parity = false): Promise<DrcReport> {
+	const { text, r } = await exportText(
+		"drc.json",
+		out => ["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", ...(parity ? ["--schematic-parity"] : []), "-o", out, board],
+		o,
+		true,
+	);
+	// kicad-cli's JSON report is trusted as KiCad's own output
+	const j = JSON.parse(text) as { violations?: DrcViolation[]; unconnected_items?: DrcViolation[]; schematic_parity?: DrcViolation[] };
+	return { violations: j.violations ?? [], unconnected: j.unconnected_items ?? [], parity: j.schematic_parity ?? [], raw: r.stdout + r.stderr };
+}
+
+/**
+ * Plot board layers into one SVG (`--mode-single`), without the drawing sheet. The SVG's user
+ * units are board millimetres: a board point (x, y) is drawn at SVG (x, y).
+ */
+export async function pcbSvg(board: string, layers: string[], theme: string, out: string, o: RunOpts): Promise<string> {
+	const r = await must(
+		["kicad-cli", "pcb", "export", "svg", "--mode-single", "--theme", theme, "--layers", layers.join(","), "--exclude-drawing-sheet", "--page-size-mode", "1", "--sketch-pads-on-fab-layers", "-o", out, board],
+		o,
+	);
+	if (!fs.existsSync(out)) throw new Error(`kicad-cli pcb export svg wrote no output: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
+	return out;
 }
 
 /** Root of kicad-library-tools (dev shell env KICAD_LIBRARY_TOOLS). */

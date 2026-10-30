@@ -21,13 +21,19 @@ export interface OpContext {
 	touch(sheet: SheetInst, box?: Box): void;
 	/** Record that a project library part was created or changed ("Lib:Name"), for renders. */
 	touchPart(kind: PartKind, id: string): void;
+	/**
+	 * Record that the board's design changed (its file or its .kicad_pro rules), optionally the
+	 * region in board mm (for renders) and the references of footprints the op put on the board
+	 * fresh from the libraries; the transaction then runs KiCad's DRC before and after.
+	 */
+	touchBoard(box?: Box, placed?: string[]): void;
 }
 
 export type PartKind = "symbol" | "footprint";
 
 export interface OpDef {
 	op: string;
-	/** Group in the tool description: "schematic", "hierarchy", "project", "rules", "library". */
+	/** Group in the tool description: "schematic", "hierarchy", "project", "rules", "library", "board". */
 	group: string;
 	doc: string;
 	fields: Fields;
@@ -66,6 +72,8 @@ export interface Finding {
 	at?: Pt;
 	refs?: string[];
 	net?: string;
+	/** DRC: the footprint every item of the violation belongs to (none when a board item takes part: edge, track, via, zone, board text). */
+	confinedTo?: string;
 }
 
 export interface CheckContext {

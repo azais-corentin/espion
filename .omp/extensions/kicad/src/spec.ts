@@ -11,6 +11,7 @@ export type FieldType =
 	| "boolean"
 	| "point"
 	| "points"
+	| "numbers"
 	| "strings"
 	| "object"
 	| "objects"
@@ -36,6 +37,7 @@ function typeName(f: Field): string {
 		boolean: "boolean",
 		point: "[x,y] mm",
 		points: "[[x,y],…] mm",
+		numbers: "number[]",
 		strings: "string[]",
 		object: "object",
 		objects: "object[]",
@@ -91,6 +93,9 @@ export function validate(where: string, args: Record<string, unknown>, fields: F
 				break;
 			case "points":
 				if (!Array.isArray(v) || v.length < 2 || !v.every(isPt)) throw bad("a list of at least two [x, y] points");
+				break;
+			case "numbers":
+				if (!Array.isArray(v) || !v.every(x => typeof x === "number" && Number.isFinite(x))) throw bad("a list of numbers");
 				break;
 			case "strings":
 				if (!Array.isArray(v) || !v.every(x => typeof x === "string")) throw bad("a list of strings");

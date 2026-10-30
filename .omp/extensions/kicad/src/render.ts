@@ -1,12 +1,14 @@
 /**
- * Sheet and library part images: kicad-cli's SVG export (text is stroked, so no fonts are
+ * Sheet, board and library part images: kicad-cli's SVG export (text is stroked, so no fonts are
  * needed), framed by rewriting viewBoxes (SVG units are millimetres), then rasterised to PNG by
- * the host (omp's rasterizeSvg). Footprints in 3D: KiCad's raytracer on a scratch board.
+ * the host (omp's rasterizeSvg). Footprints and boards in 3D: KiCad's raytracer.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Analysis } from "./analysis";
+import { Board, courtyardBox } from "./board";
 import * as cli from "./cli";
+import { boardOutline, isEdgeItem } from "./edges";
 import { type Box, bbox, type Pt } from "./geom";
 import { describeFootprint, type FpModelInfo, kicadVars, type Libraries, splitId } from "./libs";
 import { at, prop } from "./sch";
@@ -433,18 +435,23 @@ function footprintExtent(fp: List): Box {
 const ZOOM_FLAT = 0.85;
 const ZOOM_ROTATED = 0.7;
 
+/** The raytracer settings of a 3D request, checked: camera side, zoom (default by rotation) and image size. */
+function camera(req: Omit<Footprint3dRequest, "id">): cli.Render3dOpts {
+	if (req.rotate && (req.rotate.length !== 3 || req.rotate.some(v => !Number.isFinite(v)))) throw new Error("rotate must be [x, y, z] in degrees");
+	const zoom = req.zoom ?? (req.rotate ? ZOOM_ROTATED : ZOOM_FLAT);
+	if (!(zoom > 0)) throw new Error("zoom must be > 0");
+	const size = req.size ?? 1600;
+	if (!Number.isInteger(size) || size < 32 || size > 4000) throw new Error("size must be a whole number of pixels, 32..4000");
+	return { size, side: req.side ?? "top", rotate: req.rotate, zoom, perspective: req.perspective ?? false };
+}
+
 /**
  * A footprint in 3D: placed at the origin of a scratch 1.6 mm board whose outline is the
  * courtyard plus a margin, with model paths made absolute (`${KIPRJMOD}` is the real project
  * directory, other variables come from the dev shell's KiCad), rendered by `kicad-cli pcb render`.
  */
 export async function renderFootprint3d(libs: Libraries, req: Footprint3dRequest, o: cli.RunOpts): Promise<Rendered3d> {
-	const side = req.side ?? "top";
-	if (req.rotate && (req.rotate.length !== 3 || req.rotate.some(v => !Number.isFinite(v)))) throw new Error("rotate must be [x, y, z] in degrees");
-	const zoom = req.zoom ?? (req.rotate ? ZOOM_ROTATED : ZOOM_FLAT);
-	if (!(zoom > 0)) throw new Error("zoom must be > 0");
-	const size = req.size ?? 1600;
-	if (!Number.isInteger(size) || size < 32 || size > 4000) throw new Error("size must be a whole number of pixels, 32..4000");
+	const cam = camera(req);
 
 	const fp = parse(fs.readFileSync(libs.footprintFile(req.id), "utf8"));
 	const vars: Record<string, string> = { ...(await kicadVars(o.repoRoot)), KIPRJMOD: libs.projectDir };
@@ -475,8 +482,86 @@ export async function renderFootprint3d(libs: Libraries, req: Footprint3dRequest
 	try {
 		const file = path.join(dir, "part.kicad_pcb");
 		fs.writeFileSync(file, `${print(pcb)}\n`);
-		const png = await cli.pcbRender(file, { size, side, rotate: req.rotate, zoom, perspective: req.perspective ?? false }, { ...o, cwd: dir });
-		return { models, board, zoom, png };
+		const png = await cli.pcbRender(file, cam, { ...o, cwd: dir });
+		return { models, board, zoom: cam.zoom, png };
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+// ---- boards -------------------------------------------------------------------------------------
+
+/** Layers a board image draws by default, bottom first, for the side looked at. */
+export const DEFAULT_BOARD_LAYERS = {
+	top: ["Edge.Cuts", "F.Cu", "F.Courtyard", "F.Fab", "F.Silkscreen"],
+	bottom: ["Edge.Cuts", "B.Cu", "B.Courtyard", "B.Fab", "B.Silkscreen"],
+} as const;
+
+/** What a board edit's image shows: the outline, copper and courtyards of both sides. */
+export const EDIT_BOARD_LAYERS = ["Edge.Cuts", "B.Cu", "F.Cu", "B.Courtyard", "F.Courtyard"];
+
+export interface BoardRenderRequest {
+	/** Layers to plot, bottom first (default DEFAULT_BOARD_LAYERS of `side`). */
+	layers?: string[];
+	side?: "top" | "bottom";
+	/** Region in board mm; default the outline's bbox, or every footprint's courtyard when there is no outline. */
+	box?: Box;
+	/** Extra space around the box (mm, default 3). */
+	margin?: number;
+	size?: number;
+}
+
+/** The board region a default image frames: the outline, or the footprints when it has none. */
+function boardExtent(tree: List): Box | undefined {
+	const outline = boardOutline(tree.filter((c): c is List => isList(c) && isEdgeItem(c)));
+	if (outline.bbox) return outline.bbox;
+	const boxes = children(tree, "footprint").flatMap(fp => courtyardBox(fp)?.box ?? []);
+	return boxes.length ? bbox(boxes.flatMap((b): Pt[] => [[b[0], b[1]], [b[2], b[3]]])) : undefined;
+}
+
+/**
+ * A 2D image of a board's layers: kicad-cli's SVG plot at the page size (SVG units are board mm,
+ * so a board point is drawn at its own coordinates), framed on `box` + margin, on the board colours' dark background.
+ */
+export async function renderBoard(boardFile: string, req: BoardRenderRequest, rasterize: Rasterize, o: cli.RunOpts): Promise<{ box: Box; layers: string[]; png: Uint8Array }> {
+	const layers = req.layers?.length ? req.layers : [...DEFAULT_BOARD_LAYERS[req.side ?? "top"]];
+	const extent = req.box ?? boardExtent(Board.load(boardFile).tree);
+	if (!extent) throw new Error("the board has no outline and no footprints: give a box");
+	const m = req.margin ?? 3;
+	const box: Box = [extent[0] - m, extent[1] - m, extent[2] + m, extent[3] + m];
+	if (!(box[2] - box[0] > 0 && box[3] - box[1] > 0)) throw new Error(`empty region ${JSON.stringify(box)}`);
+	const dir = cli.tmpDir("board");
+	try {
+		const file = await cli.pcbSvg(boardFile, layers, PART_THEME, path.join(dir, "board.svg"), o);
+		const [w, h] = [box[2] - box[0], box[3] - box[1]];
+		const svg = [
+			`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="${f4(w)}mm" height="${f4(h)}mm" viewBox="${[box[0], box[1], w, h].map(f4).join(" ")}">`,
+			`<rect x="${f4(box[0])}" y="${f4(box[1])}" width="${f4(w)}" height="${f4(h)}" fill="${BACKGROUND.footprint}"/>`,
+			svgBody(fs.readFileSync(file, "utf8")),
+			"</svg>",
+		].join("\n");
+		return { box, layers, png: await toPng(svg, w, h, rasterize, req.size) };
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * A board in 3D with its footprints' models: a temp copy whose `${KIPRJMOD}` model paths point
+ * at the project directory, raytraced by `kicad-cli pcb render`.
+ */
+export async function renderBoard3d(boardFile: string, projectDir: string, req: Omit<Footprint3dRequest, "id">, o: cli.RunOpts): Promise<{ zoom: number; png: Uint8Array }> {
+	const cam = camera(req);
+	const tree = parse(fs.readFileSync(boardFile, "utf8"));
+	for (const fp of children(tree, "footprint")) {
+		for (const m of children(fp, "model")) m[1] = str((text(m) ?? "").replace(/\$\{KIPRJMOD\}/g, projectDir));
+	}
+	const dir = cli.tmpDir("board3d");
+	try {
+		const file = path.join(dir, "board.kicad_pcb");
+		fs.writeFileSync(file, `${print(tree)}\n`);
+		const png = await cli.pcbRender(file, cam, { ...o, cwd: dir });
+		return { zoom: cam.zoom, png };
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}

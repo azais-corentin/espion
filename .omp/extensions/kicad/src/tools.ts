@@ -3,11 +3,11 @@ import { Analysis } from "./analysis";
 import type { Box } from "./geom";
 import { Project } from "./project";
 import { CHECKS, QUERIES } from "./registry";
-import { type ModelInfo, type Rasterize, renderFootprint3d, renderPart, renderSheet, SIDES } from "./render";
+import { type ModelInfo, type Rasterize, renderBoard, renderBoard3d, renderFootprint3d, renderPart, renderSheet, SIDES } from "./render";
 import { SpecError, validate } from "./spec";
 import type { Finding } from "./types";
 
-export const CONVENTIONS = `Conventions: coordinates are sheet millimetres, x right, y down, on the 1.27 mm grid. Rotations are 0/90/180/270 degrees counter-clockwise; mirror is "x" or "y". A pin's "dir" is the side its wire leaves (L/R/U/D). Sheets are named by sheet name ("Power"), file ("power.kicad_sch") or "root". Net names are as in KiCad's netlist ("/Power/POE_VA1", "+3V3"). "project" is the .kicad_pro path or its directory, relative to the repo; it may be omitted when .omp/kicad.json lists one project.`;
+export const CONVENTIONS = `Conventions: coordinates are sheet millimetres, x right, y down, on the 1.27 mm grid. Rotations are 0/90/180/270 degrees counter-clockwise; mirror is "x" or "y". A pin's "dir" is the side its wire leaves (L/R/U/D). Sheets are named by sheet name ("Power"), file ("power.kicad_sch") or "root". Net names are as in KiCad's netlist ("/Power/POE_VA1", "+3V3"). Board coordinates are board millimetres, x right, y down (as pcbnew shows them); board rotations are any angle in degrees, counter-clockwise, as pcbnew shows them; board layers go by KiCad's canonical names ("F.Cu", "Edge.Cuts"). "project" is the .kicad_pro path or its directory, relative to the repo; it may be omitted when .omp/kicad.json lists one project.`;
 
 export interface QueryRequest {
 	project?: string;
@@ -28,6 +28,7 @@ export interface RenderToolRequest {
 	sheet?: string;
 	symbol?: string;
 	footprint?: string;
+	board?: boolean;
 	refs?: string[];
 	unit?: number;
 	body_style?: number;
@@ -106,15 +107,18 @@ export async function runChecks(repoRoot: string, req: CheckRequest, signal?: Ab
 }
 
 export async function runRender(repoRoot: string, req: RenderToolRequest, rasterize: Rasterize, signal?: AbortSignal): Promise<RenderToolResult> {
-	const targets = (["sheet", "symbol", "footprint"] as const).filter(k => req[k] !== undefined);
-	if (targets.length !== 1) throw new SpecError(`give exactly one of sheet, symbol, footprint${targets.length ? ` (got ${targets.join(" and ")})` : ""}`);
-	for (const [field, target] of [["refs", "sheet"], ["unit", "symbol"], ["body_style", "symbol"], ["layers", "footprint"]] as const) {
+	if (req.board === false) throw new SpecError("board: give true to render the board, or leave it out");
+	const targets = (["sheet", "symbol", "footprint", "board"] as const).filter(k => req[k] !== undefined);
+	if (targets.length !== 1) throw new SpecError(`give exactly one of sheet, symbol, footprint, board${targets.length ? ` (got ${targets.join(" and ")})` : ""}`);
+	for (const [field, target] of [["refs", "sheet"], ["unit", "symbol"], ["body_style", "symbol"]] as const) {
 		if (req[field] !== undefined && req[target] === undefined) throw new SpecError(`${field} applies to a ${target} only`);
 	}
+	if (req.layers !== undefined && req.footprint === undefined && !req.board) throw new SpecError("layers applies to a footprint or the board only");
 	const view = req.view ?? "2d";
 	if (view !== "2d" && view !== "3d") throw new SpecError('view must be "2d" or "3d"');
-	if (view === "3d" && req.footprint === undefined) throw new SpecError("view 3d applies to a footprint only");
-	const only3d = (["side", "rotate", "zoom", "perspective"] as const).filter(k => req[k] !== undefined);
+	if (view === "3d" && req.footprint === undefined && !req.board) throw new SpecError("view 3d applies to a footprint or the board only");
+	// a 2D board image takes a side too: it picks that side's default layers
+	const only3d = (["side", "rotate", "zoom", "perspective"] as const).filter(k => req[k] !== undefined && !(k === "side" && req.board));
 	const only2d = (["layers", "box", "margin"] as const).filter(k => req[k] !== undefined);
 	if (view === "2d" && only3d.length) throw new SpecError(`${only3d.join(", ")}: for view "3d" only`);
 	if (view === "3d" && only2d.length) throw new SpecError(`${only2d.join(", ")}: for view "2d" only`);
@@ -122,26 +126,33 @@ export async function runRender(repoRoot: string, req: RenderToolRequest, raster
 	const box: Box | undefined = req.box ? [req.box[0]!, req.box[1]!, req.box[2]!, req.box[3]!] : undefined;
 	const fmtBox = (b: Box) => `[${b.map(v => v.toFixed(2)).join(", ")}]`;
 	const project = Project.open(req.project, repoRoot);
+	const side = SIDES.find(s => s === req.side);
+	if (req.side !== undefined && !side) throw new SpecError(`side must be one of ${SIDES.join(", ")}`);
+	const camera = (zoom: number) =>
+		[`from ${side ?? "top"}`, req.rotate ? `board rotated [${req.rotate.join(", ")}]°` : "", `zoom ${zoom}`, req.perspective ? "perspective" : ""].filter(Boolean).join(", ");
+	if (req.board) {
+		const o = { cwd: project.dir, repoRoot, signal };
+		const rel = project.rel(project.board().file);
+		if (view === "3d") {
+			const img = await renderBoard3d(project.boardFile, project.dir, { side, rotate: req.rotate, zoom: req.zoom, perspective: req.perspective, size: req.size }, o);
+			return { text: `Board ${rel} in 3D, ${camera(img.zoom)}, with its footprints' 3D models.`, png: img.png };
+		}
+		if (side !== undefined && side !== "top" && side !== "bottom") throw new SpecError('side: a 2D board image is "top" or "bottom"');
+		const img = await renderBoard(project.boardFile, { layers: req.layers, side, box, margin: req.margin, size: req.size }, rasterize, o);
+		return { text: `Board ${rel}, layers ${img.layers.join(", ")}, region ${fmtBox(img.box)} mm (board coordinates, seen from the top)`, png: img.png };
+	}
 	if (view === "3d") {
-		const side = SIDES.find(s => s === req.side);
-		if (req.side !== undefined && !side) throw new SpecError(`side must be one of ${SIDES.join(", ")}`);
 		const id = req.footprint!;
 		const img = await renderFootprint3d(
 			await project.libs(),
 			{ id, side, rotate: req.rotate, zoom: req.zoom, perspective: req.perspective, size: req.size },
 			{ cwd: project.dir, repoRoot, signal },
 		);
-		const camera = [
-			`from ${side ?? "top"}`,
-			req.rotate ? `board rotated [${req.rotate.join(", ")}]°` : "",
-			`zoom ${img.zoom}`,
-			req.perspective ? "perspective" : "",
-		].filter(Boolean);
 		const models = img.models.length ? ["3D models:", ...img.models.map(modelLine)] : ["3D models: none (the footprint references no model)"];
 		const missing = img.models.filter(m => !m.exists).length;
 		return {
 			text: [
-				`Footprint ${id} in 3D, ${camera.join(", ")}, on a 1.6 mm scratch board ${fmtBox(img.board)} mm (courtyard + 1 mm, footprint coordinates).`,
+				`Footprint ${id} in 3D, ${camera(img.zoom)}, on a 1.6 mm scratch board ${fmtBox(img.board)} mm (courtyard + 1 mm, footprint coordinates).`,
 				...models,
 				...(missing ? [`WARNING: ${missing} of ${img.models.length} model(s) missing, not drawn: the image shows the board and the footprint without them.`] : []),
 			].join("\n"),

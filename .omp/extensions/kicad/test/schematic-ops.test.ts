@@ -17,7 +17,7 @@ import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
 
 async function context(root: string): Promise<OpContext> {
 	const project = Project.open(PROJECT, root);
-	return { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {} };
+	return { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {}, touchBoard() {} };
 }
 
 async function apply(ctx: OpContext, op: string, args: Record<string, unknown>): Promise<void> {

@@ -62,7 +62,7 @@ describe.skipIf(!HAS_KICAD)("kicad_edit transaction", () => {
 		expect(snapshot(dir)).toEqual(before);
 		const r = await runEdit({ ops: OPS, expect: e }, root, undefined);
 		expect(r.report).toStartWith("Applied.");
-	});
+	}, 120_000);
 
 	test("a new drawing-rule violation is not written", async () => {
 		root = stageFixture();

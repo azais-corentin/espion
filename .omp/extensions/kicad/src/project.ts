@@ -1,11 +1,12 @@
 /**
- * A KiCad project: the .kicad_pro, its sheet hierarchy and the files an edit touches.
+ * A KiCad project: the .kicad_pro, its sheet hierarchy, its board and the files an edit touches.
  *
  * Files load lazily and stay in memory; edits mark them dirty, and `pendingWrites()` returns the
  * new bytes for the transaction to write.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Board } from "./board";
 import { type Config, loadConfig, type ProjectConfig, projectConfig } from "./config";
 import { Libraries } from "./libs";
 import { type ProJson, parsePro, stringifyPro } from "./projson";
@@ -39,6 +40,7 @@ export class Project {
 	readonly deleted = new Set<string>();
 	readonly proJson: ProJson;
 	private libsP?: Promise<Libraries>;
+	private boardV?: Board;
 
 	private constructor(
 		readonly dir: string,
@@ -89,6 +91,24 @@ export class Project {
 
 	get druFile(): string {
 		return path.join(this.dir, `${this.name}.kicad_dru`);
+	}
+
+	get boardFile(): string {
+		return path.join(this.dir, `${this.name}.kicad_pcb`);
+	}
+
+	/** The board, loaded once; throws when the project has none. */
+	board(): Board {
+		if (!this.boardV) {
+			if (!fs.existsSync(this.boardFile)) throw new Error(`${this.rel(this.boardFile)} does not exist: create the board in KiCad (File > New Board in the project) first`);
+			this.boardV = Board.load(this.boardFile);
+		}
+		return this.boardV;
+	}
+
+	/** Is this file part of the pending writes? */
+	isDirty(file: string): boolean {
+		return this.dirtyFiles.has(file);
 	}
 
 	rel(file: string): string {
@@ -201,6 +221,11 @@ export class Project {
 
 	touchPro(): void {
 		this.dirtyFiles.set(this.proFile, () => stringifyPro(this.proJson));
+	}
+
+	touchBoard(): void {
+		const b = this.board();
+		this.dirtyFiles.set(this.boardFile, () => b.serialize());
 	}
 
 	/** Mark an arbitrary file (rules, lib table, library) to be written with this content. */

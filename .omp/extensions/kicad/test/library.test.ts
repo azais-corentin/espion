@@ -16,7 +16,7 @@ import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
 /** Apply library ops in memory, then write the files into the fixture and let KiCad re-save them (throws if KiCad rejects one). */
 async function commit(root: string, list: Record<string, unknown>[]): Promise<string[]> {
 	const project = Project.open(PROJECT, root);
-	const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {} };
+	const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {}, touchBoard() {} };
 	for (const o of list) {
 		const def = ops.find(d => d.op === o.op)!;
 		await def.apply(ctx, validate(String(o.op), o, def.fields, ["op"]));

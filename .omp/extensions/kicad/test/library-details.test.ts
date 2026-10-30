@@ -20,7 +20,7 @@ import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
 /** Apply library ops in memory; returns the pending writes by repo-relative path, and the notes. */
 async function stage(root: string, list: Record<string, unknown>[]): Promise<{ files: Map<string, string>; notes: string[] }> {
 	const project = Project.open(PROJECT, root);
-	const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {} };
+	const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {}, touchBoard() {} };
 	for (const o of list) {
 		const def = ops.find(d => d.op === o.op)!;
 		await def.apply(ctx, validate(String(o.op), o, def.fields, ["op"]));
