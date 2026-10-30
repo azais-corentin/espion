@@ -24430,7 +24430,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
+		(property "Manufacturer" ""
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -24442,7 +24442,7 @@
 				)
 			)
 		)
-		(property "MPN" "0805W8F0000T5E"
+		(property "MPN" ""
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -24454,7 +24454,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C17477"
+		(property "LCSC" ""
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -24470,7 +24470,7 @@
 		(path "/ced9b58c-3461-4369-95cf-100fb6b8baef/b56dd734-3f6e-4e68-a3dd-e633ca0a5a58")
 		(sheetname "/Camera/")
 		(sheetfile "camera.kicad_sch")
-		(attr smd dnp)
+		(attr smd exclude_from_bom dnp)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -0.227064 -0.735)

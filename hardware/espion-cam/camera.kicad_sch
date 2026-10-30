@@ -6035,7 +6035,7 @@
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
-		(in_bom yes)
+		(in_bom no)
 		(on_board yes)
 		(in_pos_files yes)
 		(dnp yes)
@@ -6094,7 +6094,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "UNI-ROYAL"
+		(property "Manufacturer" ""
 			(at 168.91 63.5 0)
 			(hide yes)
 			(show_name no)
@@ -6105,7 +6105,7 @@
 				)
 			)
 		)
-		(property "MPN" "0805W8F0000T5E"
+		(property "MPN" ""
 			(at 168.91 63.5 0)
 			(hide yes)
 			(show_name no)
@@ -6116,7 +6116,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C17477"
+		(property "LCSC" ""
 			(at 168.91 63.5 0)
 			(hide yes)
 			(show_name no)

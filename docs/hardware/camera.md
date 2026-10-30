@@ -51,7 +51,7 @@ Layout: see [layout.md](layout.md). Firmware: [firmware rules](firmware-rules.md
 - R43 47 kΩ holds the module off while GPIO10 floats. The module side is regulator EN pins with no pull (Camera V2.1: 2 × AP7331, 1 × PAM2301).
 - AP7331 leaks ±1 µA per EN with V_IL ≤ 0.4 V: 3 µA × 47 kΩ = 0.14 V. 100 kΩ would give 0.3 V, too close. With the pin high R43 draws 70 µA. The SZYTF module's enable current is not published.
 - `CAM_EN` and XVS need pins with no reset pull-up: a 45 kΩ pull-up against 47 kΩ gives ≈ 1.6 V and turns the module on during reset. GPIO2 has one; GPIO10 (`CAM_EN`) and GPIO11 (XVS) do not (P4 DS Tables 2-1, 5-4).
-- R52 (0 Ω, DNP) links camera pin 12 (`CAM_IO1`) to `CAM_EN`, for a module that wants its enable there. It keeps pad 12 on a net, so there is no no-connect flag.
+- R52 (0 Ω, DNP) links camera pin 12 (`CAM_IO1`) to `CAM_EN`, for a module that wants its enable there. It keeps pad 12 on a net, so there is no no-connect flag. It is excluded from the BOM and carries no sourcing fields; to fit it, solder an 0805 0 Ω (e.g. UNI-ROYAL 0805W8F0000T5E, LCSC C17477).
 
 ## XVS level option
 
