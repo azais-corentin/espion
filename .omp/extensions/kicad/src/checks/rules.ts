@@ -258,6 +258,52 @@ export function netSettings(project: Project): NetSettings {
 	return ns as NetSettings;
 }
 
+/** A net class's copper settings, mm. */
+export interface ClassRules {
+	name: string;
+	clearance: number;
+	track_width: number;
+	via_diameter: number;
+	via_drill: number;
+	microvia_diameter: number;
+	microvia_drill: number;
+	diff_pair_width: number;
+	diff_pair_gap: number;
+}
+
+/** KiCad's Default class values, for a .kicad_pro that leaves one out. */
+export const KICAD_CLASS_DEFAULTS: Omit<ClassRules, "name"> = {
+	clearance: 0.2,
+	track_width: 0.2,
+	via_diameter: 0.6,
+	via_drill: 0.3,
+	microvia_diameter: 0.3,
+	microvia_drill: 0.1,
+	diff_pair_width: 0.2,
+	diff_pair_gap: 0.25,
+};
+
+/**
+ * The settings of a net class by the name KiCad's netlist gives it (several comma-separated: the
+ * first the .kicad_pro has; none of them: Default). KiCad writes a class key only when the class
+ * sets it, so each one falls back to Default's value, then KiCad's own default.
+ */
+export function classRules(ns: NetSettings, name: string): ClassRules {
+	const def = ns.classes.find(c => c.name === "Default");
+	const cls =
+		name
+			.split(",")
+			.map(s => ns.classes.find(c => c.name === s.trim()))
+			.find(c => c) ?? def;
+	const out = { name: cls?.name ?? "Default" } as ClassRules;
+	for (const k of Object.keys(KICAD_CLASS_DEFAULTS) as (keyof typeof KICAD_CLASS_DEFAULTS)[]) {
+		const own = cls?.[k];
+		const d = def?.[k];
+		out[k] = typeof own === "number" ? own : typeof d === "number" ? d : KICAD_CLASS_DEFAULTS[k];
+	}
+	return out;
+}
+
 /** KiCad's net class pattern match: an anchored regular expression or an anchored wildcard (`*`, `?`). */
 export function patternMatcher(pattern: string): (net: string) => boolean {
 	const wild = new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);

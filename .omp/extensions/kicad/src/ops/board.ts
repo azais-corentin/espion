@@ -14,6 +14,7 @@ import {
 	fpId,
 	fpRef,
 	instantiate,
+	normAngle,
 	placement,
 	removeProperty,
 	setAttrFlags,
@@ -26,10 +27,11 @@ import {
 } from "../board";
 import * as cli from "../cli";
 import { boardOutline, checkCutouts, type EdgeShape, encodeEdge, isEdgeItem, normalShape, shapeIn, shapePolygon } from "../edges";
+import { mm } from "../fpgfx";
 import { type Box, bbox, type Pt } from "../geom";
 import type { Project } from "../project";
 import { newUuid } from "../sch";
-import { child, children, isList, type List, parse, text } from "../sexpr";
+import { child, children, head, isList, L, type List, parse, setChild, str, text } from "../sexpr";
 import { type Fields, validate } from "../spec";
 import type { OpDef } from "../types";
 
@@ -357,7 +359,7 @@ const updateFromSchematic: OpDef = {
 			if (fpId(existing) !== c.footprint) {
 				const pl = placement(existing);
 				const fp = instantiate(libFp(c.footprint), c.footprint, newUuid);
-				if (pl.side === "bottom") flipToBack(fp);
+				if (pl.side === "bottom") flipToBack(fp, board.copperLayers());
 				setPlacement(fp, pl.at, pl.rot);
 				setLocked(fp, pl.locked);
 				syncFootprint(fp, c, pins, fabFont, missingPads);
@@ -411,11 +413,14 @@ const updateFromSchematic: OpDef = {
 const placeFootprint: OpDef = {
 	op: "place_footprint",
 	group: "board",
-	doc: "Move and rotate a footprint on its side (no side flip): pads, texts and drawings move with it, texts keeping their pose relative to it. A locked footprint moves only with locked: false. Several footprints: several ops in one call.",
+	doc:
+		"Move and rotate a footprint, optionally to the other side: pads, texts and drawings move with it, texts keeping their pose relative to it. " +
+		"A side change flips it around its origin as pcbnew's default (left/right) flip does: footprint-relative y mirrored, layers flipped (F.*/B.*, inner copper In1 ↔ In(n−2)), texts on F.*/B.* layers mirrored, its rotation 180° − rot unless rot is given. A locked footprint moves only with locked: false. Several footprints: several ops in one call.",
 	fields: {
 		ref: { t: "string", req: true, doc: "reference" },
 		at: { t: "point", req: true, doc: "footprint origin, board mm" },
-		rot: { t: "number", doc: "rotation in degrees, counter-clockwise (default: unchanged)" },
+		rot: { t: "number", doc: "rotation in degrees, counter-clockwise (default: unchanged; after a side change, 180° − the old one)" },
+		side: { t: "string", values: ["top", "bottom"], doc: "board side (default: unchanged)" },
 		locked: { t: "boolean", doc: "lock or unlock it" },
 	},
 	apply(ctx, args) {
@@ -424,10 +429,16 @@ const placeFootprint: OpDef = {
 		const fp = board.footprint(ref);
 		const old = placement(fp);
 		const at = args.at as Pt;
-		const rot = (args.rot as number | undefined) ?? old.rot;
-		const moves = at[0] !== old.at[0] || at[1] !== old.at[1] || rot !== old.rot;
+		const flip = args.side !== undefined && args.side !== old.side;
+		const rot = (args.rot as number | undefined) ?? (flip ? normAngle(180 - old.rot) : old.rot);
+		const moves = flip || at[0] !== old.at[0] || at[1] !== old.at[1] || rot !== old.rot;
 		if (moves && old.locked && args.locked !== false) throw new Error(`${ref} is locked: give locked: false to unlock and move it`);
 		const before = courtyardBox(fp)?.box;
+		if (flip) {
+			// pcbnew's flip around the origin: moved to the board origin unrotated (its zones with it), flipped top/bottom, then turned to rot (left/right: 180° − the old rot)
+			setPlacement(fp, [0, 0], 0);
+			flipToBack(fp, board.copperLayers());
+		}
 		setPlacement(fp, at, rot);
 		if (typeof args.locked === "boolean") setLocked(fp, args.locked);
 		const after = courtyardBox(fp)?.box;
@@ -435,7 +446,7 @@ const placeFootprint: OpDef = {
 		const boxes = [before, after].filter((b): b is Box => !!b);
 		ctx.touchBoard(boxes.length ? bbox(boxes.flatMap(b => [[b[0], b[1]] as Pt, [b[2], b[3]] as Pt])) : undefined);
 		const p = placement(fp);
-		ctx.notes.push(`${ref} at (${fmtMm(p.at[0])}, ${fmtMm(p.at[1])}), ${fmtMm(p.rot)}°${p.locked ? ", locked" : ""}`);
+		ctx.notes.push(`${ref} at (${fmtMm(p.at[0])}, ${fmtMm(p.at[1])}), ${fmtMm(p.rot)}°, ${p.side}${flip ? " (flipped)" : ""}${p.locked ? ", locked" : ""}`);
 	},
 };
 
@@ -485,4 +496,124 @@ const setFootprintField: OpDef = {
 	},
 };
 
-export const ops: OpDef[] = [setStackup, setBoardRules, setBoardEdges, updateFromSchematic, placeFootprint, setFootprintField];
+// ---- board setup ----------------------------------------------------------------------------------
+
+const TITLE_KEYS = ["title", "date", "rev", "company"] as const;
+
+/** Teardrop parameter sets of the .kicad_pro by their op key (Board Setup > Teardrops). */
+const TEARDROP_TARGETS: Record<string, string> = { round_shape: "td_round_shape", rect_shape: "td_rect_shape", track_end: "td_track_end" };
+
+/** Set KiCad's own keys of `target` from `given`, each the type KiCad keeps there; returns "key old → new" for changes. */
+function setKnown(target: Record<string, unknown>, given: Record<string, unknown>, where: string): string[] {
+	const out: string[] = [];
+	for (const [k, v] of Object.entries(given)) {
+		if (!(k in target)) throw new Error(`${where}: unknown key "${k}"; KiCad's keys: ${Object.keys(target).filter(x => typeof target[x] !== "string").join(", ")}`);
+		const want = typeof target[k];
+		if (want === "string" || typeof v !== want || (want === "number" && !Number.isFinite(v as number))) throw new Error(`${where}.${k}: expected a ${want === "boolean" ? "boolean" : "number"}, got ${JSON.stringify(v)}`);
+		if (target[k] !== v) out.push(`${k} ${target[k]} → ${v}`);
+		target[k] = v;
+	}
+	return out;
+}
+
+const setBoardSetup: OpDef = {
+	op: "set_board_setup",
+	group: "board",
+	doc:
+		"Set the board's title block (File > Board Setup > Title block; kicad_export names its folder after rev) and Board Setup values: origins, solder mask and paste clearances, via tenting, teardrops. Only the given keys change; an empty string clears a title block field. " +
+		"teardrops takes KiCad's own .kicad_pro keys: the td_on* options (td_onvia, td_onpthpad, td_onsmdpad, td_ontrackend, td_onroundshapesonly) and per shape {round_shape, rect_shape, track_end}: {td_maxlen, td_maxheight, td_length_ratio, td_height_ratio, td_curve_segcount, td_allow_use_two_tracks, td_on_pad_in_zone, td_width_to_size_filter_ratio, td_enabled}.",
+	fields: {
+		title: { t: "string", doc: "title" },
+		rev: { t: "string", doc: "revision" },
+		date: { t: "string", doc: 'date, e.g. "2026-10-30"' },
+		company: { t: "string", doc: "company" },
+		comments: { t: "strings", doc: "comment lines 1..9 (replace all; empty strings leave a line blank)" },
+		aux_origin: { t: "point", doc: "drill/place file origin, board mm" },
+		grid_origin: { t: "point", doc: "grid origin, board mm" },
+		pad_to_mask_clearance: { t: "number", doc: "solder mask expansion around pads, mm" },
+		solder_mask_min_width: { t: "number", doc: "minimum solder mask web width, mm" },
+		pad_to_paste_clearance: { t: "number", doc: "paste clearance around pads, mm (negative shrinks the paste)" },
+		tent_vias: { t: "boolean", doc: "cover vias with solder mask on both sides" },
+		teardrops: { t: "object", doc: "{td_on…: boolean, round_shape?: {…}, rect_shape?: {…}, track_end?: {…}}, KiCad's keys" },
+	},
+	apply(ctx, args) {
+		const project = ctx.project;
+		const board = project.board();
+		const tree = board.tree;
+		const keys = Object.keys(args).filter(k => args[k] !== undefined && k !== "op");
+		if (!keys.length) throw new Error("give at least one setting");
+		const done: string[] = [];
+		const titleGiven = [...TITLE_KEYS, "comments"].filter(k => args[k] !== undefined);
+		if (titleGiven.length) {
+			const old = child(tree, "title_block");
+			const values = new Map<string, string>();
+			for (const k of TITLE_KEYS) {
+				const v = args[k] ?? text(child(old ?? [], k));
+				if (typeof v === "string" && v !== "") values.set(k, v);
+			}
+			let comments = children(old ?? [], "comment").map(c => [Number(text(c)), text(c, 2) ?? ""] as const);
+			if (Array.isArray(args.comments)) {
+				if (args.comments.length > 9) throw new Error(`KiCad has 9 comment lines; got ${args.comments.length}`);
+				comments = args.comments.map((c, i) => [i + 1, String(c)] as const);
+			}
+			const items: List[] = [...values].map(([k, v]) => L(k, str(v)));
+			for (const [n, c] of comments.filter(([, c]) => c !== "")) items.push(L("comment", n, str(c)));
+			if (old) tree.splice(tree.indexOf(old), 1);
+			if (items.length) {
+				const i = tree.findIndex(x => isList(x) && head(x) === "paper");
+				tree.splice(i < 0 ? tree.findIndex(x => isList(x) && head(x) === "layers") : i + 1, 0, L("title_block", ...items));
+			}
+			done.push(`title block: ${titleGiven.map(k => (k === "comments" ? "comments" : `${k} "${args[k]}"`)).join(", ")}`);
+		}
+		const setup = child(tree, "setup");
+		const setupKeys = ["aux_origin", "grid_origin", "pad_to_mask_clearance", "solder_mask_min_width", "pad_to_paste_clearance", "tent_vias"].filter(k => args[k] !== undefined);
+		if (setupKeys.length && !setup) throw new Error("the board has no setup section: open and save it in KiCad 10 once");
+		for (const k of setupKeys) {
+			const v = args[k];
+			if (k === "aux_origin" || k === "grid_origin") {
+				const p = v as Pt;
+				setChild(setup!, L(k === "aux_origin" ? "aux_axis_origin" : "grid_origin", mm(p[0]), mm(p[1])));
+				done.push(`${k} (${fmtMm(p[0])}, ${fmtMm(p[1])})`);
+			} else if (k === "tent_vias") {
+				setChild(setup!, L("tenting", L("front", v as boolean), L("back", v as boolean)));
+				done.push(`vias ${v ? "tented" : "not tented"}`);
+			} else {
+				const n = v as number;
+				if (k === "solder_mask_min_width" && n < 0) throw new Error(`${k} must be >= 0`);
+				setChild(setup!, L(k, mm(n)));
+				done.push(`${k} ${fmtMm(n)} mm`);
+			}
+		}
+		if (titleGiven.length || setupKeys.length) {
+			project.touchBoard();
+			ctx.touchBoard();
+		}
+		if (args.teardrops !== undefined) {
+			const ds = designSettings(project) as unknown as Record<string, unknown>;
+			const td = args.teardrops as Record<string, unknown>;
+			const options = Array.isArray(ds.teardrop_options) && isObject(ds.teardrop_options[0]) ? ds.teardrop_options[0] : undefined;
+			const params = Array.isArray(ds.teardrop_parameters) ? ds.teardrop_parameters.filter(isObject) : [];
+			if (!options || !params.length) throw new Error(`${project.rel(project.proFile)} has no teardrop settings: open and save the board in KiCad 10 once`);
+			const changes: string[] = [];
+			const opts: Record<string, unknown> = {};
+			for (const [k, v] of Object.entries(td)) {
+				const target = TEARDROP_TARGETS[k];
+				if (!target) {
+					opts[k] = v;
+					continue;
+				}
+				const set = params.find(p => p.td_target_name === target);
+				if (!set) throw new Error(`teardrops.${k}: the .kicad_pro has no ${target} settings`);
+				if (!isObject(v)) throw new Error(`teardrops.${k}: expected an object of KiCad's td_ keys`);
+				changes.push(...setKnown(set, v, `teardrops.${k}`).map(c => `${k}.${c}`));
+			}
+			changes.push(...setKnown(options, opts, "teardrops"));
+			project.touchPro();
+			ctx.touchBoard();
+			done.push(changes.length ? `teardrops: ${changes.join(", ")}` : "teardrops: already as given");
+		}
+		ctx.notes.push(`board setup: ${done.join("; ")}`);
+	},
+};
+
+export const ops: OpDef[] = [setStackup, setBoardRules, setBoardEdges, updateFromSchematic, placeFootprint, setFootprintField, setBoardSetup];

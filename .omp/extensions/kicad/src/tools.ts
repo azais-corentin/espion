@@ -41,6 +41,8 @@ export interface RenderToolRequest {
 	box?: number[];
 	margin?: number;
 	size?: number;
+	nets?: string[];
+	ratsnest?: boolean;
 }
 
 /** One caption line per 3D model: where it resolves, whether the file is there, non-default placement. */
@@ -114,12 +116,13 @@ export async function runRender(repoRoot: string, req: RenderToolRequest, raster
 		if (req[field] !== undefined && req[target] === undefined) throw new SpecError(`${field} applies to a ${target} only`);
 	}
 	if (req.layers !== undefined && req.footprint === undefined && !req.board) throw new SpecError("layers applies to a footprint or the board only");
+	if ((req.nets !== undefined || req.ratsnest !== undefined) && !req.board) throw new SpecError("nets and ratsnest apply to the board only");
 	const view = req.view ?? "2d";
 	if (view !== "2d" && view !== "3d") throw new SpecError('view must be "2d" or "3d"');
 	if (view === "3d" && req.footprint === undefined && !req.board) throw new SpecError("view 3d applies to a footprint or the board only");
 	// a 2D board image takes a side too: it picks that side's default layers
 	const only3d = (["side", "rotate", "zoom", "perspective"] as const).filter(k => req[k] !== undefined && !(k === "side" && req.board));
-	const only2d = (["layers", "box", "margin"] as const).filter(k => req[k] !== undefined);
+	const only2d = (["layers", "box", "margin", "nets", "ratsnest"] as const).filter(k => req[k] !== undefined);
 	if (view === "2d" && only3d.length) throw new SpecError(`${only3d.join(", ")}: for view "3d" only`);
 	if (view === "3d" && only2d.length) throw new SpecError(`${only2d.join(", ")}: for view "2d" only`);
 	if (req.box && req.box.length !== 4) throw new SpecError("box must be [x0, y0, x1, y1]");
@@ -138,8 +141,15 @@ export async function runRender(repoRoot: string, req: RenderToolRequest, raster
 			return { text: `Board ${rel} in 3D, ${camera(img.zoom)}, with its footprints' 3D models.`, png: img.png };
 		}
 		if (side !== undefined && side !== "top" && side !== "bottom") throw new SpecError('side: a 2D board image is "top" or "bottom"');
-		const img = await renderBoard(project.boardFile, { layers: req.layers, side, box, margin: req.margin, size: req.size }, rasterize, o);
-		return { text: `Board ${rel}, layers ${img.layers.join(", ")}, region ${fmtBox(img.box)} mm (board coordinates, seen from the top)`, png: img.png };
+		const img = await renderBoard(project.boardFile, { layers: req.layers, side, box, margin: req.margin, size: req.size, nets: req.nets, ratsnest: req.ratsnest }, rasterize, o);
+		const extra = [
+			img.highlighted ? `nets ${img.highlighted.nets.join(", ")} highlighted in yellow (${img.highlighted.items} pads, tracks, vias and zone fills)` : "",
+			img.ratsnest !== undefined ? `${img.ratsnest} unrouted connections drawn as thin white lines${req.nets?.length ? " (of these nets)" : ""}` : "",
+		].filter(Boolean);
+		return {
+			text: `Board ${rel}, layers ${img.layers.join(", ")}, region ${fmtBox(img.box)} mm (board coordinates, seen from the top)${extra.length ? `; ${extra.join("; ")}` : ""}`,
+			png: img.png,
+		};
 	}
 	if (view === "3d") {
 		const id = req.footprint!;

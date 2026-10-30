@@ -2,8 +2,9 @@
  * KiCad toolkit for omp: read, edit and review KiCad projects without opening KiCad.
  *
  * Tools: kicad_query (read), kicad_edit (verified transactional writes), kicad_check (review),
- * kicad_render (sheet, board and library part images), kicad_datasheet (part datasheet pages). A
- * tool_call hook keeps agents from editing KiCad files or running KiCad programs any other way.
+ * kicad_render (sheet, board and library part images), kicad_datasheet (part datasheet pages),
+ * kicad_export (fabrication outputs for JLCPCB). A tool_call hook keeps agents from editing KiCad
+ * files or running KiCad programs any other way.
  * See .omp/skills/kicad-* for the workflows.
  */
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -11,6 +12,7 @@ import { rasterizeSvg } from "@oh-my-pi/pi-natives";
 import { findRepoRoot } from "./src/config";
 import { type DatasheetRequest, readDatasheet } from "./src/datasheet";
 import { compactJson } from "./src/format";
+import { type ExportRequest, OUTPUTS, runExport } from "./src/export";
 import { blockReason } from "./src/hook";
 import { checksDoc, opsDoc, queriesDoc } from "./src/registry";
 import { DEFAULT_BOARD_LAYERS, DEFAULT_FP_LAYERS, SIDES } from "./src/render";
@@ -43,7 +45,7 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 		name: "kicad_query",
 		label: "KiCad query",
 		description: [
-			"Read a KiCad project: hierarchy, symbols, pins, nets, labels, net classes, rules, BOM and libraries; the board (stack-up, board rules, outline, footprints and their pads); and LCSC's live part data (stock, prices). Read-only.",
+			"Read a KiCad project: hierarchy, symbols, pins, nets, labels, net classes, rules, BOM and libraries; the board (stack-up, board rules, outline, footprints and their pads, copper: tracks, vias, zones, routing state, lengths, distances, free space, drawings, statistics); and LCSC's live part data (stock, prices). Read-only.",
 			"Answers come from KiCad itself (kicad-cli netlist) and the schematic and board files; `lcsc` from lcsc.com.",
 			CONVENTIONS,
 			"Queries (`what`, with `args`):",
@@ -70,11 +72,11 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 		name: "kicad_edit",
 		label: "KiCad edit",
 		description: [
-			"Change a KiCad project in one verified transaction: schematic sheets, hierarchy (new sheets, sheet pins), project settings (net classes, BOM presets), design rules, project libraries and the board (stack-up, board rules, outline, footprints from the schematic, placement).",
+			"Change a KiCad project in one verified transaction: schematic sheets, hierarchy (new sheets, sheet pins), project settings (net classes, BOM presets), design rules, project libraries and the board (stack-up, board rules and setup, outline, footprints from the schematic, placement, tracks, diff pairs, vias and stitching vias, zones, rule areas, board texts, drawings and board-only footprints).",
 			"The ops run in memory, then the result is written to a temporary copy, re-saved by KiCad (kicad-cli upgrade) and checked there. The real files are only replaced when every check passes:",
 			'- the connectivity change equals `expect` exactly (default: no connectivity change at all). Declare every net whose pins change, either as its exact final pin list (`{name?, pins: ["R1.2", …]}`) or, for a net that existed before, as a delta (`{name: "GND", added: ["R66.2"], removed: []}`); plus added/removed parts, renamed nets and pins left on no net;',
 			"- no new ERC violation; no new drawing-style finding on the touched sheets; a changed rules file parses; changed library parts add no KLC violation;",
-			"- a changed board: no new KiCad DRC violation and no new schematic parity issue (counted like ERC, without coordinates). Not gated, but reported: unconnected items (unrouted connections), violations inside footprints the edit put on the board from the libraries (the library footprint against the board's rules), and violations a board-rules-only change brings up.",
+			"- a changed board (KiCad refills its zones and the fills are kept in the file): no new KiCad DRC violation and no new schematic parity issue (counted like ERC, without coordinates). Not gated, but reported: routing in progress (unconnected items, dangling tracks and vias), violations inside footprints the edit put on the board from the libraries (the library footprint against the board's rules), and violations a board-rules-only change brings up.",
 			"Otherwise nothing is written and the report says why. Refuses while KiCad has the project open (lock files).",
 			"Every dry run and every refused (NOT APPLIED) result ends with the actual connectivity change as a JSON `expect` in exactly this input format. Read it against what the edit is meant to do before passing it back: pasting it blindly declares whatever the ops did, including a pin they moved by mistake.",
 			"Library changes (new symbols/footprints/libraries) and their use on a sheet need separate kicad_edit calls; so do schematic changes and update_from_schematic.",
@@ -137,7 +139,7 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 		name: "kicad_check",
 		label: "KiCad check",
 		description: [
-			"Review a KiCad project. Runs the named checks (default: all checks marked default) and lists findings with severity, sheet and position (sheet mm; board findings in board mm).",
+			"Review a KiCad project: the schematic (ERC, drawing rules, connectivity, parts, circuit checks), design rules, library parts (KLC) and the board (DRC with schematic parity, track widths, return paths, return vias, decoupling and footprint placement, the layout constraints of .omp/kicad.json). Runs the named checks (default: all checks marked default) and lists findings with severity, sheet and position (sheet mm; board findings in board mm).",
 			CONVENTIONS,
 			"Checks:",
 			checksDoc(),
@@ -166,7 +168,7 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 		description: [
 			"Render a schematic sheet (or a region of it), the board, a library symbol or a library footprint as a PNG image (KiCad's own plot), or a footprint or the board in 3D with the 3D models. Give exactly one of `sheet`, `board`, `symbol`, `footprint`. Use it to look at a change, or at a stock part you derive a new one from.",
 			'Parts are "Lib:Name" from the project\'s libraries or KiCad\'s stock ones, drawn in KiCad\'s built-in colours. Symbol coordinates are mm from the symbol origin, x right, y down (as lib_symbol reports pins and shapes); without `unit` every unit is drawn, in a grid in reading order. Footprint coordinates are KiCad\'s (mm, y down); by default copper, front silkscreen, courtyard and fab layers are drawn, with pad outlines and pad numbers sketched on the fab layers. The answer names the region shown, so a following `box` can zoom in.',
-			`The board (\`board: true\`) is drawn in board mm as seen from the top: by default its outline (plus a margin, or every footprint when there is no outline) with ${DEFAULT_BOARD_LAYERS.top.join(", ")} (\`side: "bottom"\`: the B.* analogues), pad outlines and numbers sketched on the fab layers; \`box\` frames any region, e.g. the footprints update_from_schematic placed beside the outline.`,
+			`The board (\`board: true\`) is drawn in board mm as seen from the top: by default its outline (plus a margin, or every footprint when there is no outline) with ${DEFAULT_BOARD_LAYERS.top.join(", ")} (\`side: "bottom"\`: the B.* analogues), pad outlines and numbers sketched on the fab layers; \`box\` frames any region, e.g. the footprints update_from_schematic placed beside the outline. \`layers: ["copper"]\` draws the outline and every copper layer, back to front. \`nets\` draws those nets' pads, tracks, arcs, vias, copper drawings and zone fills on the drawn copper layers in yellow over the plot; \`ratsnest: true\` draws the unrouted connections (of \`nets\`, or of every net) as thin white lines between the pads' copper centres.`,
 			'`view: "3d"` places a footprint at the origin of a scratch 1.6 mm board (courtyard + 1 mm), or takes the board as it is, and raytraces it with KiCad\'s 3D viewer, to check that 3D models line up with the pads and silkscreen: look from `side`, turn the board with `rotate` ([-45, 0, 45] is isometric), `zoom` in. For a footprint the answer lists every model path, where it resolves and whether the file exists: a MISSING model draws nothing.',
 			CONVENTIONS,
 		].join("\n\n"),
@@ -182,7 +184,9 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 			layers: z
 				.array(z.string())
 				.optional()
-				.describe(`Footprints and the board: layers to draw, bottom first, e.g. ["F.Cu", "F.Fab"] (footprint default ${DEFAULT_FP_LAYERS.join(", ")}). Pad numbers show on the fab layers.`),
+				.describe(
+					`Footprints and the board: layers to draw, bottom first, e.g. ["F.Cu", "F.Fab"] (footprint default ${DEFAULT_FP_LAYERS.join(", ")}). Pad numbers show on the fab layers. Board: "copper" stands for Edge.Cuts and every copper layer, back to front.`,
+				),
 			box: z
 				.array(z.number())
 				.optional()
@@ -194,6 +198,8 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 			rotate: z.array(z.number()).optional().describe("3D: rotate the board [x, y, z] degrees before looking, e.g. [-45, 0, 45] for isometric."),
 			zoom: z.number().optional().describe("3D: camera zoom; 1 spans about the board's longest side (default 0.85, or 0.7 with rotate: the whole board with a border)."),
 			perspective: z.boolean().optional().describe("3D: perspective instead of orthographic projection."),
+			nets: z.array(z.string()).optional().describe('2D board: highlight these nets\' copper (pads, tracks, arcs, vias, zone fills), e.g. ["GND", "/Power/VBUS"].'),
+			ratsnest: z.boolean().optional().describe("2D board: draw the unrouted connections (of `nets`, or of every net) as thin lines."),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			// omp validated params against `parameters`; the zod-like schema doesn't carry the static type
@@ -239,6 +245,37 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 						...(r.png ? [{ type: "image" as const, data: Buffer.from(r.png).toString("base64"), mimeType: "image/png" }] : []),
 					],
 				};
+			} catch (e) {
+				return text(errorText(e), true);
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "kicad_export",
+		label: "KiCad export",
+		description: [
+			'Write the board\'s fabrication outputs for JLCPCB into `<project dir>/fab/<rev>-<YYYY-MM-DD>/` (gitignored): `rev` as given, else the board\'s title block revision, else "draft". Files of the same name are replaced.',
+			"Outputs (`outputs`):",
+			'- "gerbers": Gerbers of every copper layer, F/B.Paste, F/B.SilkS, F/B.Mask and Edge.Cuts with JLCPCB\'s recommended KiCad settings (Protel extensions, zones refilled before plotting, solder mask subtracted from silkscreen, reference and value texts plotted, absolute origin), Excellon drill files (mm, decimal, oval holes in the alternate mode, plated and non-plated holes in separate files) and a PDF drill map, in `gerbers/`, all zipped into `<board>-gerbers.zip`: upload that one.',
+			'- "assembly": `<board>-bom.csv` (Comment, Designator, Footprint, JLCPCB Part #; one row per LCSC part) and `<board>-cpl.csv` (Designator, Mid X and Mid Y in mm with y up as in the Gerbers, Layer Top/Bottom, Rotation counter-clockwise; a bottom part gets 180° − its board rotation). Both hold the parts with an LCSC field that are fitted, in the BOM and on the board; the answer lists every part left out and why (DNP, excluded from the BOM, no LCSC field, not on the board, excluded from position files) and the board-only footprints.',
+			'- "step": `<board>.step`, the board with its footprints\' 3D models (no model substitution; `${KIPRJMOD}` is the project directory); the answer names every model file that is missing.',
+			"Gate: gerbers and assembly are written only when KiCad's DRC, with zones refilled in memory and the schematic parity test, finds no error-severity violation (exclusions made in KiCad are honoured), no parity issue and no unconnected item, and ERC finds no error; assembly also needs the fields check without errors. Otherwise that output is refused with what failed (counts and the first findings) and the others are still written. step is never gated.",
+			'Placement corrections for the CPL: `assembly.corrections` in .omp/kicad.json (in `defaults` or the project), {"<Lib:Name pattern>": {rot?: degrees counter-clockwise, offset?: [x, y] mm}}: `*`/`?` patterns on the footprint id, case-insensitive, first match wins (the project\'s entries first). rot is added to the CPL rotation; offset is where JLCPCB\'s part centre sits in the footprint\'s own frame (x right, y down, as the footprint editor shows it), turned with the footprint onto the board. Every placed footprint that matches no entry is listed as not confirmed in JLCPCB\'s placement preview; an entry {"rot": 0} records one that was checked and needs no correction.',
+			"The answer also gives the board size, copper layers and footprint and part counts.",
+		].join("\n\n"),
+		parameters: z.object({
+			project,
+			outputs: z.array(z.enum(OUTPUTS)).describe('Outputs to write: "gerbers", "assembly", "step".'),
+			rev: z.string().optional().describe("Revision for the directory name; default the board's title block revision, else \"draft\"."),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			// omp validated params against `parameters`; the zod-like schema doesn't carry the static type
+			const req = params as ExportRequest;
+			try {
+				onUpdate?.({ content: [{ type: "text", text: "Checking the board with KiCad and writing the outputs…" }] });
+				const r = await runExport(findRepoRoot(ctx.cwd), req, signal);
+				return text(r.text, r.refused.length > 0);
 			} catch (e) {
 				return text(errorText(e), true);
 			}

@@ -23,10 +23,12 @@ export interface OpContext {
 	touchPart(kind: PartKind, id: string): void;
 	/**
 	 * Record that the board's design changed (its file or its .kicad_pro rules), optionally the
-	 * region in board mm (for renders) and the references of footprints the op put on the board
-	 * fresh from the libraries; the transaction then runs KiCad's DRC before and after.
+	 * region in board mm (for renders), the references of footprints the op put on the board
+	 * fresh from the libraries, and the copper it changed (nets and copper layers: the edit's
+	 * render shows those layers with those nets highlighted); the transaction then runs KiCad's
+	 * DRC before and after.
 	 */
-	touchBoard(box?: Box, placed?: string[]): void;
+	touchBoard(box?: Box, placed?: string[], copper?: { nets?: string[]; layers?: string[] }): void;
 }
 
 export type PartKind = "symbol" | "footprint";

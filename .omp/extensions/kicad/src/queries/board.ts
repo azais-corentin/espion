@@ -3,6 +3,7 @@
  * footprint in full. Board millimetres, x right, y down; rotations counter-clockwise.
  */
 import { type Board, courtyardBox, fieldsInfo, fpAttrs, fpId, fpProp, fpRef, padsInfo, placement } from "../board";
+import { Copper } from "../copper";
 import { boardOutline, isEdgeItem, pointInPolygon, type ReadShape } from "../edges";
 import type { Box, Pt } from "../geom";
 import { describeFootprint } from "../libs";
@@ -67,9 +68,29 @@ function footprintRow(fp: List, o: Outline) {
 	};
 }
 
+/** Counts of the board's copper and drawings, whether its zones are filled, and the unrouted connections. */
+function copperSummary(board: Board) {
+	const c = Copper.of(board);
+	const filled = c.zones.filter(z => z.fills.length > 0).length;
+	return {
+		tracks: c.tracks.filter(t => t.kind === "track").length,
+		arcs: c.tracks.filter(t => t.kind === "arc").length,
+		vias: c.vias.length,
+		zones: c.zones.length,
+		rule_areas: c.ruleAreas.length,
+		drawings: c.drawings.length,
+		texts: c.texts.length,
+		tuning_patterns: c.generated.length,
+		zones_filled: c.zones.length ? (filled === c.zones.length ? "all" : filled ? "some" : "none") : null,
+		unrouted: c.nets().reduce((t, n) => t + c.connectivity(n).unrouted.length, 0),
+	};
+}
+
 const boardQuery: QueryDef = {
 	what: "board",
-	doc: "The board: file, layers, stack-up (dielectrics, copper, finish, mask, thickness), board-wide rules and DRC severities (.kicad_pro, the keys set_board_rules takes), outline and cutouts (as set_board_edges takes them when they are such shapes, else the raw lines/arcs), outline bbox and area (minus cutouts, mm²), footprint counts (inside the outline, partly, outside) and net count.",
+	doc:
+		"The board: file, layers, stack-up (dielectrics, copper, finish, mask, thickness), board-wide rules and DRC severities (.kicad_pro, the keys set_board_rules takes), outline and cutouts (as set_board_edges takes them when they are such shapes, else the raw lines/arcs), outline bbox and area (minus cutouts, mm²), footprint counts (inside the outline, partly, outside) and net count. " +
+		"copper: counts of tracks, arcs, vias, zones, rule areas, board drawings (Edge.Cuts included) and texts, tuning patterns; zones_filled all/some/none (null without zones); unrouted connections (KiCad's ratsnest from the copper: per net its pad clusters − 1; unfilled zones join nothing).",
 	fields: {},
 	async run(ctx) {
 		const { project } = ctx;
@@ -107,6 +128,7 @@ const boardQuery: QueryDef = {
 				outside: fps.filter(f => f.inside === "no").length,
 			},
 			nets: nets.size,
+			copper: copperSummary(board),
 		};
 	},
 };

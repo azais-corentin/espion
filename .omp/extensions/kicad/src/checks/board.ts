@@ -105,14 +105,16 @@ const drc: CheckDef = {
 	name: "drc",
 	doc:
 		"KiCad's DRC with schematic parity on the board: one finding per violation and parity issue (KiCad's severity, rule type, message, position in board mm, references); violations excluded in KiCad are info with their exclusion comment; unconnected items (unrouted connections) are one info finding with their count unless args {unconnected: true} lists each. " +
-		"An empty board (no footprints, no outline) gives one info finding and no DRC run.",
+		"Zones are refilled first, in memory (the file keeps its fills). An empty board (no footprints, no outline) gives one info finding and no DRC run.",
 	byDefault: true,
 	async run(ctx) {
 		const board = ctx.project.board();
 		if (boardIsEmpty(board.tree)) {
 			return [{ check: "drc", severity: "info", message: "the board is empty (no footprints, no outline): DRC not run", key: "drc|empty" }];
 		}
-		const r = await pcbDrc(ctx.project.boardFile, { cwd: ctx.project.dir, repoRoot: ctx.project.repoRoot, signal: ctx.signal }, true);
+		// zones (the board's and its footprints') refilled in memory first, as pcbnew's DRC does, so fills match the current copper
+		const zones = children(board.tree, "zone").length > 0 || board.footprints().some(fp => children(fp, "zone").length > 0);
+		const r = await pcbDrc(ctx.project.boardFile, { cwd: ctx.project.dir, repoRoot: ctx.project.repoRoot, signal: ctx.signal }, true, zones);
 		const { violations, parity } = drcFindings(r);
 		const excluded = [...r.violations, ...r.parity]
 			.filter(v => v.excluded)

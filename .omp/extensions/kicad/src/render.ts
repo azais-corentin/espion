@@ -8,6 +8,7 @@ import * as path from "node:path";
 import type { Analysis } from "./analysis";
 import { Board, courtyardBox } from "./board";
 import * as cli from "./cli";
+import { Copper, type Shape } from "./copper";
 import { boardOutline, isEdgeItem } from "./edges";
 import { type Box, bbox, type Pt } from "./geom";
 import { describeFootprint, type FpModelInfo, kicadVars, type Libraries, splitId } from "./libs";
@@ -500,8 +501,15 @@ export const DEFAULT_BOARD_LAYERS = {
 /** What a board edit's image shows: the outline, copper and courtyards of both sides. */
 export const EDIT_BOARD_LAYERS = ["Edge.Cuts", "B.Cu", "F.Cu", "B.Courtyard", "F.Courtyard"];
 
+/** `layers: ["copper"]` stands for the outline and every copper layer, back to front. */
+export const COPPER_PRESET = "copper";
+
+/** Highlight colour of the selected nets' copper and of unrouted connections, over KiCad's plot. */
+const HIGHLIGHT = "#FFE14D";
+const RATSNEST = "#FFFFFF";
+
 export interface BoardRenderRequest {
-	/** Layers to plot, bottom first (default DEFAULT_BOARD_LAYERS of `side`). */
+	/** Layers to plot, bottom first (default DEFAULT_BOARD_LAYERS of `side`); "copper" expands to Edge.Cuts and every copper layer, back to front. */
 	layers?: string[];
 	side?: "top" | "bottom";
 	/** Region in board mm; default the outline's bbox, or every footprint's courtyard when there is no outline. */
@@ -509,6 +517,66 @@ export interface BoardRenderRequest {
 	/** Extra space around the box (mm, default 3). */
 	margin?: number;
 	size?: number;
+	/** Nets whose pads, tracks, arcs, vias and zone fills are drawn in the highlight colour over the plot. */
+	nets?: string[];
+	/** Draw the unrouted connections (of `nets`, or of every net) as thin lines. */
+	ratsnest?: boolean;
+}
+
+export interface RenderedBoard {
+	box: Box;
+	layers: string[];
+	png: Uint8Array;
+	/** The highlighted nets (as the board names them) and how many copper items were drawn. */
+	highlighted?: { nets: string[]; items: number };
+	/** Unrouted connections drawn. */
+	ratsnest?: number;
+}
+
+/** One copper shape as SVG in board mm: a disc, a stadium, or a (rounded) polygon. */
+function shapeSvg(s: Shape, colour: string): string {
+	const pts = s.pts;
+	if (pts.length === 1) return `<circle cx="${f4(pts[0]![0])}" cy="${f4(pts[0]![1])}" r="${f4(s.r)}" fill="${colour}"/>`;
+	if (pts.length === 2) {
+		return `<line x1="${f4(pts[0]![0])}" y1="${f4(pts[0]![1])}" x2="${f4(pts[1]![0])}" y2="${f4(pts[1]![1])}" stroke="${colour}" stroke-width="${f4(2 * s.r)}" stroke-linecap="round"/>`;
+	}
+	const stroke = s.r > 0 ? ` stroke="${colour}" stroke-width="${f4(2 * s.r)}" stroke-linejoin="round"` : "";
+	return `<polygon points="${pts.map(p => `${f4(p[0])},${f4(p[1])}`).join(" ")}" fill="${colour}"${stroke}/>`;
+}
+
+/**
+ * The selected nets' copper in the highlight colour, then the unrouted connections as thin lines
+ * between the pads' copper centres. Only copper on a plotted layer is drawn: fills, tracks and
+ * drawings on one, pads and vias that reach one.
+ */
+function copperOverlay(c: Copper, nets: string[], plotted: string[], ratsnest: boolean, lineWidth: number): { svg: string; items: number; rats: number } {
+	const parts: string[] = [];
+	let items = 0;
+	const shown = (layers: string[]) => layers.some(l => plotted.includes(l));
+	for (const net of nets) {
+		const k = c.connectivity(net);
+		// fills under tracks, drawings, vias and pads
+		const drawn = [
+			...k.fills.filter(f => shown([f.layer])).map(f => [f.shape]),
+			...k.tracks.filter(t => shown([t.layer])).map(t => t.shapes),
+			...k.drawings.filter(d => shown([d.layer])).map(d => d.shapes),
+			...k.vias.filter(v => shown(v.span)).map(v => v.shapes),
+			...k.pads.filter(p => shown(p.copper)).map(p => p.shapes),
+		];
+		for (const shapes of drawn) for (const s of shapes) parts.push(shapeSvg(s, HIGHLIGHT));
+		items += drawn.length;
+	}
+	let rats = 0;
+	if (ratsnest) {
+		for (const net of nets.length ? nets : c.nets()) {
+			for (const r of c.connectivity(net).unrouted) {
+				const [a, b] = [r.from.centre, r.to.centre];
+				parts.push(`<line x1="${f4(a[0])}" y1="${f4(a[1])}" x2="${f4(b[0])}" y2="${f4(b[1])}" stroke="${RATSNEST}" stroke-width="${f4(lineWidth)}"/>`);
+				rats++;
+			}
+		}
+	}
+	return { svg: `<g opacity="0.75">${parts.join("")}</g>`, items, rats };
 }
 
 /** The board region a default image frames: the outline, or the footprints when it has none. */
@@ -522,10 +590,16 @@ function boardExtent(tree: List): Box | undefined {
 /**
  * A 2D image of a board's layers: kicad-cli's SVG plot at the page size (SVG units are board mm,
  * so a board point is drawn at its own coordinates), framed on `box` + margin, on the board colours' dark background.
+ * KiCad's plot carries no nets, so the highlighted nets and the ratsnest are drawn over it from the copper model.
  */
-export async function renderBoard(boardFile: string, req: BoardRenderRequest, rasterize: Rasterize, o: cli.RunOpts): Promise<{ box: Box; layers: string[]; png: Uint8Array }> {
-	const layers = req.layers?.length ? req.layers : [...DEFAULT_BOARD_LAYERS[req.side ?? "top"]];
-	const extent = req.box ?? boardExtent(Board.load(boardFile).tree);
+export async function renderBoard(boardFile: string, req: BoardRenderRequest, rasterize: Rasterize, o: cli.RunOpts): Promise<RenderedBoard> {
+	const board = Board.load(boardFile);
+	const layers = (req.layers?.length ? req.layers : [...DEFAULT_BOARD_LAYERS[req.side ?? "top"]]).flatMap(l =>
+		l === COPPER_PRESET ? ["Edge.Cuts", ...board.copperLayers().reverse()] : [l],
+	);
+	const copper = req.nets?.length || req.ratsnest ? Copper.of(board) : undefined;
+	const nets = copper ? (req.nets ?? []).map(n => copper.net(n)) : [];
+	const extent = req.box ?? boardExtent(board.tree);
 	if (!extent) throw new Error("the board has no outline and no footprints: give a box");
 	const m = req.margin ?? 3;
 	const box: Box = [extent[0] - m, extent[1] - m, extent[2] + m, extent[3] + m];
@@ -534,13 +608,21 @@ export async function renderBoard(boardFile: string, req: BoardRenderRequest, ra
 	try {
 		const file = await cli.pcbSvg(boardFile, layers, PART_THEME, path.join(dir, "board.svg"), o);
 		const [w, h] = [box[2] - box[0], box[3] - box[1]];
+		const overlay = copper ? copperOverlay(copper, nets, layers, req.ratsnest === true, Math.max(w, h) / 800) : undefined;
 		const svg = [
 			`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="${f4(w)}mm" height="${f4(h)}mm" viewBox="${[box[0], box[1], w, h].map(f4).join(" ")}">`,
 			`<rect x="${f4(box[0])}" y="${f4(box[1])}" width="${f4(w)}" height="${f4(h)}" fill="${BACKGROUND.footprint}"/>`,
 			svgBody(fs.readFileSync(file, "utf8")),
+			overlay?.svg ?? "",
 			"</svg>",
 		].join("\n");
-		return { box, layers, png: await toPng(svg, w, h, rasterize, req.size) };
+		return {
+			box,
+			layers,
+			png: await toPng(svg, w, h, rasterize, req.size),
+			...(nets.length ? { highlighted: { nets, items: overlay!.items } } : {}),
+			...(req.ratsnest ? { ratsnest: overlay!.rats } : {}),
+		};
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}

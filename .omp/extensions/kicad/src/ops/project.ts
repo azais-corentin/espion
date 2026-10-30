@@ -279,7 +279,9 @@ export function druHeader(src: string): string | undefined {
 const setRule: OpDef = {
 	op: "set_rule",
 	group: "rules",
-	doc: "Add a custom design rule to the .kicad_dru (created with (version 1) when missing) or replace the rule with the same name; other rules keep their text and comments.",
+	doc:
+		"Add a custom design rule to the .kicad_dru (created with (version 1) when missing) or replace the rule with the same name; other rules keep their text and comments. " +
+		"A condition on a net names it with A.NetName == '/VIN' (A.Net is the net's number: comparing it with a name matches nothing, and KiCad gives no error).",
 	fields: {
 		rule: {
 			t: "string",

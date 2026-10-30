@@ -615,7 +615,7 @@ const rules: QueryDef = {
 };
 
 /** RFC 4180 CSV as kicad-cli writes it. */
-function parseCsv(src: string): string[][] {
+export function parseCsv(src: string): string[][] {
 	const rows: string[][] = [];
 	let row: string[] = [];
 	let cell = "";

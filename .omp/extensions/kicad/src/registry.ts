@@ -2,16 +2,22 @@
 import { checks as boardChecks } from "./checks/board";
 import { checks as circuitChecks } from "./checks/circuit";
 import { checks as connectivityChecks } from "./checks/connectivity";
+import { checks as copperChecks } from "./checks/copper";
 import { checks as klcChecks } from "./checks/klc";
+import { checks as layoutChecks } from "./checks/layout";
 import { checks as partChecks } from "./checks/parts";
 import { checks as rulesChecks } from "./checks/rules";
 import { checks as styleChecks } from "./checks/style";
 import { ops as boardOps } from "./ops/board";
+import { ops as boardItemOps } from "./ops/board-items";
+import { ops as copperOps } from "./ops/copper";
 import { ops as hierarchyOps } from "./ops/hierarchy";
 import { ops as libraryOps } from "./ops/library";
 import { ops as projectOps } from "./ops/project";
 import { ops as schematicOps } from "./ops/schematic";
+import { ops as zoneOps } from "./ops/zones";
 import { queries as boardQueries } from "./queries/board";
+import { queries as copperQueries } from "./queries/copper";
 import { queries as diffQueries } from "./queries/diff";
 import { queries as lcscQueries } from "./queries/lcsc";
 import { queries as libraryQueries } from "./queries/library";
@@ -29,10 +35,18 @@ function byName<T>(items: T[], name: (t: T) => string, what: string): Map<string
 	return m;
 }
 
-export const OPS = byName<OpDef>([...schematicOps, ...hierarchyOps, ...projectOps, ...libraryOps, ...boardOps], o => o.op, "op");
-export const QUERIES = byName<QueryDef>([...projectQueries, ...libraryQueries, ...diffQueries, ...lcscQueries, ...boardQueries], q => q.what, "query");
+export const OPS = byName<OpDef>(
+	[...schematicOps, ...hierarchyOps, ...projectOps, ...libraryOps, ...boardOps, ...copperOps, ...zoneOps, ...boardItemOps],
+	o => o.op,
+	"op",
+);
+export const QUERIES = byName<QueryDef>(
+	[...projectQueries, ...libraryQueries, ...diffQueries, ...lcscQueries, ...boardQueries, ...copperQueries],
+	q => q.what,
+	"query",
+);
 export const CHECKS = byName<CheckDef>(
-	[...connectivityChecks, ...styleChecks, ...partChecks, ...circuitChecks, ...rulesChecks, ...klcChecks, ...boardChecks],
+	[...connectivityChecks, ...styleChecks, ...partChecks, ...circuitChecks, ...rulesChecks, ...klcChecks, ...boardChecks, ...copperChecks, ...layoutChecks],
 	c => c.name,
 	"check",
 );

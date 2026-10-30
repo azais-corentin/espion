@@ -9,10 +9,12 @@
  * - no new ERC violation,
  * - no new drawing-style finding on the touched sheets,
  * - a changed .kicad_dru must parse (sentinel rule), changed library parts no new KLC violation,
- * - a changed board (re-saved with `kicad-cli pcb upgrade --force`): no new KiCad DRC violation and
- *   no new schematic parity issue (`pcb drc --schematic-parity`). Unconnected items, violations
- *   inside footprints the ops placed from the libraries and those a board-rules-only change
- *   brings up are reported, not gated.
+ * - a changed board (re-saved with `kicad-cli pcb upgrade --force`; when it has zones, KiCad then
+ *   fills them and saves the board, so the committed file carries its fills): no new KiCad DRC
+ *   violation and no new schematic parity issue (`pcb drc --schematic-parity`, zones refilled).
+ *   Routing in progress (unconnected items, dangling tracks and vias), violations inside
+ *   footprints the ops placed from the libraries and those a board-rules-only change brings up
+ *   are reported, not gated.
  *
  * Only when every gate passes are KiCad's re-saved bytes copied over the real files, each
  * replaced atomically; if a copy fails midway the files already replaced are restored. The real
@@ -23,12 +25,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Analysis } from "./analysis";
+import { Board } from "./board";
 import { drcFindings, refRenames } from "./checks/board";
 import { ercFindings } from "./checks/connectivity";
 import { druProblems } from "./checks/rules";
 import { klcFindings } from "./checks/klc";
 import { styleFindings } from "./checks/style";
 import * as cli from "./cli";
+import { Copper } from "./copper";
 import { compactJson } from "./format";
 import { type Box, bbox, type Pt } from "./geom";
 import type { Libraries } from "./libs";
@@ -36,7 +40,7 @@ import { type Expect, checkExpect, diffNetlists, expectFromDiff, summarize } fro
 import { Project, type SheetInst } from "./project";
 import { OPS } from "./registry";
 import { EDIT_BOARD_LAYERS, type LabelledImage, type Rasterize, renderBoard, renderPart, renderRegions } from "./render";
-import { parse } from "./sexpr";
+import { child, children, type List, parse } from "./sexpr";
 import { SpecError, validate } from "./spec";
 import type { Finding, OpContext, PartKind } from "./types";
 
@@ -178,26 +182,50 @@ function fmtFinding(f: Finding): string {
 	return `  - [${f.check}] ${f.sheet ? `${f.sheet} ` : ""}${f.message}${f.at ? ` @ (${f.at[0]}, ${f.at[1]})` : ""}`;
 }
 
+/** DRC rules that only say routing is unfinished: reported, never gated. */
+const ROUTING: Record<string, true> = { track_dangling: true, via_dangling: true };
+
+/** Unconnected items as findings, keyed by their items (pads, tracks, zones with their nets). */
+function unconnectedFindings(r: cli.DrcReport | undefined): Finding[] {
+	return (r?.unconnected ?? [])
+		.filter(v => !v.excluded)
+		.map(v => {
+			const items = v.items.map(i => i.description);
+			const pos = v.items.find(i => i.pos)?.pos;
+			return {
+				check: "drc",
+				severity: "warning",
+				message: `${v.type}: ${v.description}${items.length ? ` [${items.join("; ")}]` : ""}`,
+				key: `unconnected|${[...items].sort().join("|")}`,
+				...(pos ? { at: [pos.x, pos.y] as const } : {}),
+			};
+		});
+}
+
 /**
- * The DRC change of a board edit: new violations (gated, or confined to one footprint the edit
- * placed from the libraries), new parity issues, and the report lines. `rename` maps the before
- * board's references to the after board's (footprints matched by uuid), so a renamed reference or
- * net keeps an old violation old.
+ * The DRC change of a board edit: new violations (gated, routing in progress, or confined to one
+ * footprint the edit placed from the libraries), new parity issues, and the report lines. `rename`
+ * maps the before board's references to the after board's (footprints matched by uuid), so a
+ * renamed reference or net keeps an old violation old.
  */
 function boardChange(before: cli.DrcReport | undefined, after: cli.DrcReport, placed: Set<string>, rename: ReadonlyMap<string, string>) {
 	const b = before ? drcFindings(before, rename) : { violations: [], parity: [] };
 	const a = drcFindings(after);
 	const vNew = newFindings(b.violations, a.violations);
+	// dangling tracks and vias are routing not finished yet, like unconnected items
+	const routing = vNew.filter(f => ROUTING[f.key.split("|")[1] ?? ""]);
 	// a footprint fresh from its library brings its own pads and drawings, checked against the board's rules: not this edit's doing;
 	// a violation with a board item (edge, track, via, zone) or another footprint is the placement's doing
-	const inside = vNew.filter(f => f.confinedTo !== undefined && placed.has(f.confinedTo));
-	const gated = vNew.filter(f => !inside.includes(f));
+	const inside = vNew.filter(f => !routing.includes(f) && f.confinedTo !== undefined && placed.has(f.confinedTo));
+	const gated = vNew.filter(f => !inside.includes(f) && !routing.includes(f));
 	const parityNew = newFindings(b.parity, a.parity);
+	const unconnectedNew = newFindings(unconnectedFindings(before), unconnectedFindings(after));
 	const list = (l: Finding[]) => [...l.slice(0, 20).map(fmtFinding), ...(l.length > 20 ? [`  - … ${l.length - 20} more`] : [])];
 	const report = (gatedRun: boolean): string[] => [
 		`DRC: ${a.violations.length} violations after (${vNew.length} new, ${newFindings(a.violations, b.violations).length} resolved).`,
 		`Schematic parity: ${a.parity.length} issues after (${parityNew.length} new, ${newFindings(a.parity, b.parity).length} resolved).`,
-		`Unconnected items: ${before?.unconnected.length ?? 0} before, ${after.unconnected.length} after (not gated).`,
+		`Unconnected items: ${before?.unconnected.length ?? 0} before → ${after.unconnected.length} after (not gated).`,
+		...(unconnectedNew.length || routing.length ? ["Routing in progress, new unconnected items and dangling tracks or vias (not gated):", ...list([...unconnectedNew, ...routing])] : []),
 		...(inside.length
 			? ["New DRC violations inside footprints this edit placed from the libraries (the library footprint against the board's rules; not gated):", ...list(inside)]
 			: []),
@@ -231,7 +259,7 @@ export async function runEdit(
 	// 1. apply the ops in memory
 	const touched = new Map<string, { sheet: SheetInst; boxes: Box[] }>();
 	const touchedParts = new Map<string, { kind: PartKind; id: string }>();
-	const board: BoardTouch = { touched: false, boxes: [], placed: new Set() };
+	const board: BoardTouch = { touched: false, boxes: [], placed: new Set(), nets: new Set(), layers: new Set() };
 	const ctx: OpContext = {
 		project,
 		libs,
@@ -244,10 +272,12 @@ export async function runEdit(
 		touchPart(kind, id) {
 			touchedParts.set(`${kind}:${id}`, { kind, id });
 		},
-		touchBoard(box, placed) {
+		touchBoard(box, placed, copper) {
 			board.touched = true;
 			if (box) board.boxes.push(box);
 			for (const r of placed ?? []) board.placed.add(r);
+			for (const n of copper?.nets ?? []) board.nets.add(n);
+			for (const l of copper?.layers ?? []) board.layers.add(l);
 		},
 	};
 	for (const [i, raw] of req.ops.entries()) {
@@ -276,12 +306,20 @@ export async function runEdit(
 	}
 }
 
-/** The board side of an edit: whether its design changed, where, and which footprints came fresh from the libraries. */
+/** The board side of an edit: whether its design changed, where, which footprints came fresh from the libraries, and which copper changed. */
 interface BoardTouch {
 	touched: boolean;
 	boxes: Box[];
 	/** References of footprints the ops placed from the libraries (added or replaced). */
 	placed: Set<string>;
+	/** Nets and copper layers whose copper the ops changed. */
+	nets: Set<string>;
+	layers: Set<string>;
+}
+
+/** Does the board have zones to fill, its own or its footprints' (rule areas have none)? */
+function hasZones(tree: List): boolean {
+	return [tree, ...children(tree, "footprint")].some(l => children(l, "zone").some(z => !child(z, "keepout")));
 }
 
 interface Staged {
@@ -312,7 +350,7 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 	const beforeA = new Analysis(before, signal);
 	const touchedSheets = (p: Project) => p.hierarchy().filter(sh => touched.has(sh.namePath));
 	const libFiles = [...pending.keys()].filter(f => /\.(kicad_sym|kicad_mod)$/.test(f));
-	// KiCad's DRC with schematic parity, when the board's design changes (its file or its rules)
+	// KiCad's DRC with schematic parity, when the board's design changes (its file or its rules); zones refilled first, as pcbnew's DRC does
 	const boardFile = toTemp(project.boardFile);
 	const boardRun = s.board.touched || pending.has(project.boardFile);
 	const boardBefore = boardRun && fs.existsSync(boardFile) ? parse(fs.readFileSync(boardFile, "utf8")) : undefined;
@@ -321,7 +359,7 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		beforeA.erc(),
 		styleFindings(beforeA, touchedSheets(before).filter(sh => fs.existsSync(sh.file))),
 		libFiles.length ? klcFindings(before, libFiles.map(toTemp).filter(f => fs.existsSync(f)), signal) : Promise.resolve([]),
-		boardRun && fs.existsSync(boardFile) ? cli.pcbDrc(boardFile, ro, true) : Promise.resolve(undefined),
+		boardBefore ? cli.pcbDrc(boardFile, ro, true, hasZones(boardBefore)) : Promise.resolve(undefined),
 	]).finally(() => beforeA.dispose());
 
 	// 3. write the new files into the copy and let KiCad re-save them
@@ -342,7 +380,13 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 	}
 	for (const d of prettyDirs) await cli.upgrade("fp", d, ro);
 
-	// 4. the "after" state and the gates
+	// 4. the "after" state and the gates; a changed board with zones gets KiCad's fills saved into it (the bytes committed), with that run's DRC
+	const afterZones = pending.has(project.boardFile) ? hasZones(project.board().tree) : !!boardBefore && hasZones(boardBefore);
+	const drcAfterRun = (): Promise<cli.DrcReport | undefined> => {
+		if (!boardRun || !fs.existsSync(boardFile)) return Promise.resolve(undefined);
+		if (pending.has(project.boardFile) && afterZones) return cli.pcbRefillAndSave(boardFile, ro, true);
+		return cli.pcbDrc(boardFile, ro, true, afterZones);
+	};
 	const afterP = Project.open(path.relative(repoRoot, project.dir), tempRoot);
 	const afterA = new Analysis(afterP, signal);
 	try {
@@ -352,7 +396,7 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 			styleFindings(afterA, touchedSheets(afterP)),
 			libFiles.length ? klcFindings(afterP, libFiles.map(toTemp), signal) : Promise.resolve([]),
 			pending.has(project.druFile) ? druProblems(afterP, signal) : Promise.resolve([]),
-			boardRun && fs.existsSync(boardFile) ? cli.pcbDrc(boardFile, ro, true) : Promise.resolve(undefined),
+			drcAfterRun(),
 		]);
 		const diff = diffNetlists(netBefore, netAfter);
 		const problems: string[] = [];
@@ -394,8 +438,20 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 			}
 			if (s.board.touched && fs.existsSync(boardFile)) {
 				const box = s.board.boxes.length ? bbox(s.board.boxes.flatMap((b): Pt[] => [[b[0], b[1]], [b[2], b[3]]])) : undefined;
-				const img = await renderBoard(boardFile, { box, layers: EDIT_BOARD_LAYERS }, s.rasterize, ro);
-				images.push({ label: `Board, region [${img.box.map(v => v.toFixed(2)).join(", ")}] mm (outline, copper, courtyards)`, png: img.png });
+				if (s.board.nets.size || s.board.layers.size) {
+					// the touched copper layers, back to front, with the touched nets that still have copper highlighted
+					const after = Copper.of(Board.load(boardFile));
+					const copper = [...after.copperLayers].reverse().filter(l => s.board.layers.has(l));
+					const nets = [...s.board.nets].filter(n => after.hasNet(n));
+					const img = await renderBoard(boardFile, { box, layers: ["Edge.Cuts", ...copper, "B.Courtyard", "F.Courtyard"], nets }, s.rasterize, ro);
+					images.push({
+						label: `Board, region [${img.box.map(v => v.toFixed(2)).join(", ")}] mm (outline, ${copper.join(", ")}, courtyards${nets.length ? `; ${nets.join(", ")} highlighted` : ""})`,
+						png: img.png,
+					});
+				} else {
+					const img = await renderBoard(boardFile, { box, layers: EDIT_BOARD_LAYERS }, s.rasterize, ro);
+					images.push({ label: `Board, region [${img.box.map(v => v.toFixed(2)).join(", ")}] mm (outline, copper, courtyards)`, png: img.png });
+				}
 			}
 		}
 

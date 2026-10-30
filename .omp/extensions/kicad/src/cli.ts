@@ -327,17 +327,44 @@ export interface DrcReport {
 	raw: string;
 }
 
-/** KiCad's DRC of a board (JSON report, drc.v1 schema, mm), with the schematic parity test when `parity`. */
-export async function pcbDrc(board: string, o: RunOpts, parity = false): Promise<DrcReport> {
+/**
+ * KiCad's DRC of a board (JSON report, drc.v1 schema, mm), with the schematic parity test when
+ * `parity`; with `refill` the zones are refilled first, in memory (the file is left as it is).
+ */
+export async function pcbDrc(board: string, o: RunOpts, parity = false, refill = false): Promise<DrcReport> {
+	return drcRun(board, o, [...(parity ? ["--schematic-parity"] : []), ...(refill ? ["--refill-zones"] : [])]);
+}
+
+/**
+ * Refill every zone and save the board in place (`pcb drc --refill-zones --save-board`), as
+ * pcbnew's "Fill All Zones" then Save; returns the DRC report of the refilled board.
+ */
+export async function pcbRefillAndSave(board: string, o: RunOpts, parity = false): Promise<DrcReport> {
+	return drcRun(board, o, [...(parity ? ["--schematic-parity"] : []), "--refill-zones", "--save-board"]);
+}
+
+/**
+ * Every DRC run reports every violation of every track (`--all-track-errors`): KiCad otherwise
+ * stops at a track's first one, so a new violation on a track that already had one would go
+ * unseen by the edit gate.
+ */
+async function drcRun(board: string, o: RunOpts, flags: string[]): Promise<DrcReport> {
 	const { text, r } = await exportText(
 		"drc.json",
-		out => ["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", ...(parity ? ["--schematic-parity"] : []), "-o", out, board],
+		out => ["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", "--all-track-errors", ...flags, "-o", out, board],
 		o,
 		true,
 	);
 	// kicad-cli's JSON report is trusted as KiCad's own output
 	const j = JSON.parse(text) as { violations?: DrcViolation[]; unconnected_items?: DrcViolation[]; schematic_parity?: DrcViolation[] };
 	return { violations: j.violations ?? [], unconnected: j.unconnected_items ?? [], parity: j.schematic_parity ?? [], raw: r.stdout + r.stderr };
+}
+
+/** KiCad's board statistics (`pcb export stats`, JSON, mm), as KiCad writes them. */
+export async function pcbStats(board: string, o: RunOpts): Promise<Record<string, unknown>> {
+	const { text } = await exportText("stats.json", out => ["kicad-cli", "pcb", "export", "stats", "--format", "json", "--units", "mm", "-o", out, board], o);
+	// kicad-cli's JSON report is trusted as KiCad's own output
+	return JSON.parse(text) as Record<string, unknown>;
 }
 
 /**
@@ -361,4 +388,61 @@ export async function libraryTools(repoRoot: string): Promise<string> {
 		throw new Error("KICAD_LIBRARY_TOOLS is not set: enter the dev shell (flake input kicad-library-tools)");
 	}
 	return root;
+}
+
+// ---- fabrication outputs --------------------------------------------------------------------
+
+/** Files directly in `dir`, sorted. */
+function filesIn(dir: string): string[] {
+	return fs
+		.readdirSync(dir, { withFileTypes: true })
+		.filter(e => e.isFile())
+		.map(e => path.join(dir, e.name))
+		.sort();
+}
+
+/**
+ * Gerbers of `layers` into `outDir` with kicad-cli's file names: Protel extensions (kicad-cli's
+ * default), solder mask subtracted from silkscreen, zones checked and refilled first (in memory),
+ * reference and value texts plotted, absolute origin. Returns the files of `outDir`.
+ */
+export async function pcbGerbers(board: string, layers: string[], outDir: string, o: RunOpts): Promise<string[]> {
+	fs.mkdirSync(outDir, { recursive: true });
+	await must(["kicad-cli", "pcb", "export", "gerbers", "--layers", layers.join(","), "--subtract-soldermask", "--check-zones", "-o", `${outDir}${path.sep}`, board], o);
+	return filesIn(outDir);
+}
+
+/**
+ * Excellon drill files into `outDir`: absolute origin, mm, decimal zeros, oval holes in the
+ * alternate drill mode, plated and non-plated holes in separate files, plus a PDF drill map.
+ * Returns the files of `outDir`.
+ */
+export async function pcbDrill(board: string, outDir: string, o: RunOpts): Promise<string[]> {
+	fs.mkdirSync(outDir, { recursive: true });
+	await must(
+		[
+			"kicad-cli", "pcb", "export", "drill", "--format", "excellon", "--drill-origin", "absolute", "--excellon-units", "mm",
+			"--excellon-zeros-format", "decimal", "--excellon-oval-format", "alternate", "--excellon-separate-th",
+			"--generate-map", "--map-format", "pdf", "-o", `${outDir}${path.sep}`, board,
+		],
+		o,
+	);
+	return filesIn(outDir);
+}
+
+/**
+ * KiCad's footprint position file of both sides as CSV text, mm, page origin: columns Ref, Val,
+ * Package, PosX, PosY, Rot, Side; PosY points up (the board's y negated), Rot is the footprint's
+ * rotation as pcbnew shows it, Side "top" or "bottom". Footprints excluded from position files are left out.
+ */
+export async function pcbPos(board: string, o: RunOpts): Promise<string> {
+	const { text } = await exportText("pos.csv", out => ["kicad-cli", "pcb", "export", "pos", "--side", "both", "--format", "csv", "--units", "mm", "-o", out, board], o);
+	return text;
+}
+
+/** The board as a STEP file with its footprints' 3D models (no model substitution), overwriting `out`. */
+export async function pcbStep(board: string, out: string, o: RunOpts): Promise<RunResult> {
+	const r = await must(["kicad-cli", "pcb", "export", "step", "--force", "-o", out, board], o);
+	if (!fs.existsSync(out)) throw new Error(`kicad-cli pcb export step wrote no output: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
+	return r;
 }

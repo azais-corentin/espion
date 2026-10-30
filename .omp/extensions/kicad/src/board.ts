@@ -359,6 +359,42 @@ export function courtyardBox(fp: List): { box: Box; source: "courtyard" | "pads+
 	return { box: [r6(b[0]), r6(b[1]), r6(b[2]), r6(b[3])], source };
 }
 
+/**
+ * Courtyard outline of a footprint as edges, board mm: its F/B.CrtYd lines, rects, polygons, arcs
+ * and circles (arcs and circles as short chords), the footprint's rotation applied; the four edges
+ * of courtyardBox when it has no courtyard drawings. A loop drawn as separate lines works too:
+ * `insideEdges` counts crossings.
+ */
+export function courtyardEdges(fp: List): [Pt, Pt][] {
+	const p = placement(fp);
+	const court = fp.filter((c): c is List => isList(c) && DRAWING.test(head(c) ?? "") && /\.CrtYd$/.test(text(child(c, "layer")) ?? ""));
+	if (!court.length) {
+		const b = courtyardBox(fp)?.box;
+		if (!b) return [];
+		const c: Pt[] = [
+			[b[0], b[1]],
+			[b[2], b[1]],
+			[b[2], b[3]],
+			[b[0], b[3]],
+		];
+		return c.map((q, i) => [q, c[(i + 1) % 4]!]);
+	}
+	return court.flatMap(d => {
+		const pts = drawingPoints(d).map(q => toBoard(p, q));
+		const closed = head(d) === "fp_rect" || head(d) === "fp_circle" || head(d) === "fp_poly";
+		return Array.from({ length: Math.max(0, closed ? pts.length : pts.length - 1) }, (_, i): [Pt, Pt] => [pts[i]!, pts[(i + 1) % pts.length]!]);
+	});
+}
+
+/** Is p inside the closed outline these edges draw (even-odd crossings, so the edges may come in any order)? */
+export function insideEdges(p: Pt, edges: readonly (readonly [Pt, Pt])[]): boolean {
+	let inside = false;
+	for (const [a, b] of edges) {
+		if (a[1] > p[1] !== b[1] > p[1] && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+	}
+	return inside;
+}
+
 /** Corners of a visible text's box (stroke font: about one glyph size per character), footprint-relative. */
 function textCorners(item: List, fpRot: number, vars: { ref: string; value: string }): Pt[] {
 	const at = child(item, "at");
@@ -543,37 +579,56 @@ export function instantiate(lib: List, id: string, uuid: () => string): List {
 /** Lists whose second atom is a y coordinate a flip mirrors (drill `offset` included; 3D model placement is left alone). */
 const POINT: Record<string, true> = { at: true, start: true, end: true, mid: true, center: true, xy: true, offset: true };
 
+/** Texts a flip mirrors and turns as KiCad's PCB_TEXT::Flip does. */
+const TEXT: Record<string, true> = { property: true, fp_text: true, fp_text_box: true };
+
 /**
- * Flip an unplaced footprint (origin, rotation 0) to the back as pcbnew's top/bottom flip does:
- * y mirrored, F.* and B.* layers swapped (the footprint's own layer too), pad and text angles
- * negated, texts mirrored, trapezoid deltas and chamfered corners mirrored.
+ * Flip an unplaced footprint (origin, rotation 0) to the other side as pcbnew's top/bottom flip
+ * (FOOTPRINT::Flip, TOP_BOTTOM) does: y mirrored; layers flipped as BOARD::FlipLayer does (F.* and
+ * B.* swapped, the footprint's own layer too; inner copper layers In1 ↔ In(n−2) when `copper`, the
+ * board's copper layers front to back, is given); pad angles negated; text angles a → 180° − a,
+ * texts on side-specific (F.*, B.*) layers mirrored; trapezoid deltas and chamfered corners mirrored.
+ * pcbnew's default left/right flip is this one turned by 180° (the footprint's rotation 180° − rot).
  */
-export function flipToBack(fp: List): void {
-	const swap = (s: string) => (s.startsWith("F.") ? `B.${s.slice(2)}` : s.startsWith("B.") ? `F.${s.slice(2)}` : s);
+export function flipToBack(fp: List, copper?: readonly string[]): void {
+	const swap = (s: string) => {
+		const k = copper?.indexOf(s) ?? -1;
+		if (k >= 0) return copper![copper!.length - 1 - k]!;
+		return s.startsWith("F.") ? `B.${s.slice(2)}` : s.startsWith("B.") ? `F.${s.slice(2)}` : s;
+	};
 	const topBottom = (s: string) => (s.startsWith("top_") ? `bottom_${s.slice(4)}` : s.startsWith("bottom_") ? `top_${s.slice(7)}` : s);
+	const toggleMirror = (eff: List) => {
+		const j = child(eff, "justify");
+		if (!j) return eff.push(L("justify", "mirror"));
+		const k = j.findIndex(a => a instanceof Sym && a.v === "mirror");
+		if (k >= 0) j.splice(k, 1);
+		else j.push(new Sym("mirror"));
+	};
 	const walk = (l: List, inText: boolean) => {
 		const h = head(l) ?? "";
 		if (POINT[h] && l.length > 2 && !isList(l[2])) {
 			l[2] = mm(-num(l, 2));
-			if (h === "at" && l.length > 3 && !isList(l[3])) l[3] = mm(inText ? textAngle(-num(l, 3)) : normAngle(-num(l, 3)));
+			if (h === "at" && inText) l.splice(3, l.length - 3, mm(textAngle(180 - (l.length > 3 && !isList(l[3]) ? num(l, 3) : 0))));
+			else if (h === "at" && l.length > 3 && !isList(l[3])) l[3] = mm(normAngle(-num(l, 3)));
 		}
+		if (h === "angle" && inText) l[1] = mm(textAngle(180 - num(l, 1)));
 		if (h === "rect_delta") l[2] = mm(-num(l, 2));
 		if (h === "layer" || h === "layers") for (let i = 1; i < l.length; i++) if (l[i] instanceof Str) l[i] = str(swap((l[i] as Str).v));
 		if (h === "chamfer") for (let i = 1; i < l.length; i++) if (l[i] instanceof Sym) l[i] = new Sym(topBottom((l[i] as Sym).v));
-		if (h === "justify" && inText) {
-			const k = l.findIndex(a => a instanceof Sym && a.v === "mirror");
-			if (k >= 0) l.splice(k, 1);
-			else l.push(new Sym("mirror"));
-		}
-		const text_ = inText || h === "property" || h === "fp_text" || h === "fp_text_box";
-		for (const c of l) if (isList(c) && head(c) !== "model") walk(c, text_);
+		for (const c of l) if (isList(c) && head(c) !== "model" && head(c) !== "effects") walk(c, inText);
 	};
 	for (const c of fp.slice(2)) {
 		if (!isList(c) || head(c) === "model") continue;
-		walk(c, false);
-		// a text without a justify list gets one to be mirrored
-		const eff = head(c) === "property" || head(c) === "fp_text" ? child(c, "effects") : undefined;
-		if (eff && !child(eff, "justify")) eff.push(L("justify", "mirror"));
+		const isText = TEXT[head(c) ?? ""] === true;
+		const layer = text(child(c, "layer")) ?? "";
+		if (isText && head(c) === "fp_text_box" && !child(c, "angle")) {
+			const after = c.reduce((k, x, i) => (isList(x) && ["start", "end", "pts"].includes(head(x) ?? "") ? i : k), 1);
+			c.splice(after + 1, 0, L("angle", 0));
+		}
+		walk(c, isText);
+		// KiCad mirrors a flipped text only on a side-specific layer
+		const eff = isText ? child(c, "effects") : undefined;
+		if (eff && (layer.startsWith("F.") || layer.startsWith("B."))) toggleMirror(eff);
 	}
 }
 

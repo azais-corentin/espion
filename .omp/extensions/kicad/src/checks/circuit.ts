@@ -50,6 +50,40 @@ function partNets(nl: Netlist, prefix: string): Map<string, string[]> {
 	return out;
 }
 
+/** A fitted part's power_in pins on one non-ground net, with the capacitors that decouple them. */
+export interface PowerPins {
+	ref: string;
+	net: string;
+	pins: NetNode[];
+	/** Fitted capacitors (ref prefix C) from that net to a ground net on the part's sheet. */
+	caps: string[];
+}
+
+/**
+ * The decoupling check's pairing: per non-ground net, every fitted part (not "#" power symbols)
+ * with power_in pins on it, and the capacitors from that net to ground on the part's sheet.
+ */
+export function decouplingPairs(nl: Netlist, ground: (net: string) => boolean): PowerPins[] {
+	// "net\0sheet path" → capacitors from that net to ground on that sheet
+	const capsOn = new Map<string, string[]>();
+	for (const [ref, nets] of partNets(nl, "C")) {
+		if (!nets.some(ground)) continue;
+		const sheet = nl.components.get(ref)!.sheetName;
+		for (const n of nets) if (!ground(n)) capsOn.set(`${n}\0${sheet}`, [...(capsOn.get(`${n}\0${sheet}`) ?? []), ref]);
+	}
+	const out: PowerPins[] = [];
+	for (const net of nl.nets) {
+		if (ground(net.name)) continue;
+		const byRef = new Map<string, NetNode[]>();
+		for (const node of net.nodes) {
+			if (pinType(node) !== "power_in" || node.ref.startsWith("#") || !fitted(nl.components.get(node.ref))) continue;
+			byRef.set(node.ref, [...(byRef.get(node.ref) ?? []), node]);
+		}
+		for (const [ref, pins] of byRef) out.push({ ref, net: net.name, pins, caps: capsOn.get(`${net.name}\0${nl.components.get(ref)!.sheetName}`) ?? [] });
+	}
+	return out;
+}
+
 const decoupling: CheckDef = {
 	name: "decoupling",
 	doc: 'Every fitted board part (not DNP, not "#" power symbols) with a power_in pin on a non-ground net needs a fitted capacitor (ref prefix C) from that net to a ground net on the same sheet; otherwise a warning per part and net naming its power pins. Ground nets: leaf name matching settings.groundNets (default GND*, *GND, VSS*). settings.decouplingExempt {"REF" or "REF.pin": reason} turns the warning into info with the reason.',
@@ -60,45 +94,29 @@ const decoupling: CheckDef = {
 		const isGround = wildcards(groundNets);
 		const ground = (net: string) => isGround(netLeaf(net));
 		const scope = sheetScope(ctx);
-		// "net\0sheet path" for every sheet with a capacitor from that net to ground
-		const decoupled = new Set<string>();
-		for (const [ref, nets] of partNets(nl, "C")) {
-			if (!nets.some(ground)) continue;
-			const sheet = nl.components.get(ref)!.sheetName;
-			for (const n of nets) if (!ground(n)) decoupled.add(`${n}\0${sheet}`);
-		}
 		const out: Finding[] = [];
-		for (const net of nl.nets) {
-			if (ground(net.name)) continue;
-			const byRef = new Map<string, NetNode[]>();
-			for (const node of net.nodes) {
-				if (pinType(node) !== "power_in" || node.ref.startsWith("#")) continue;
-				const c = nl.components.get(node.ref);
-				if (!fitted(c) || !scope(c) || decoupled.has(`${net.name}\0${c.sheetName}`)) continue;
-				byRef.set(node.ref, [...(byRef.get(node.ref) ?? []), node]);
+		for (const { ref, net, pins: nodes, caps } of decouplingPairs(nl, ground)) {
+			const c = nl.components.get(ref)!;
+			if (caps.length || !scope(c)) continue;
+			const sheet = sheetOfPath(c.sheetName);
+			const base = { check: "decoupling", refs: [ref], net, sheet };
+			const what = (pins: NetNode[]) =>
+				`${ref} (${c.value}) power pin${pins.length > 1 ? "s" : ""} ${pins.map(pinLabel).join(", ")} on ${net}: no capacitor from ${net} to ground on sheet ${sheet}`;
+			const plain: NetNode[] = [];
+			const waived = new Map<string, NetNode[]>();
+			for (const n of nodes) {
+				const reason = exempt[`${ref}.${n.pin}`] ?? exempt[ref];
+				if (reason === undefined) plain.push(n);
+				else waived.set(reason, [...(waived.get(reason) ?? []), n]);
 			}
-			for (const [ref, nodes] of byRef) {
-				const c = nl.components.get(ref)!;
-				const sheet = sheetOfPath(c.sheetName);
-				const base = { check: "decoupling", refs: [ref], net: net.name, sheet };
-				const what = (pins: NetNode[]) =>
-					`${ref} (${c.value}) power pin${pins.length > 1 ? "s" : ""} ${pins.map(pinLabel).join(", ")} on ${net.name}: no capacitor from ${net.name} to ground on sheet ${sheet}`;
-				const plain: NetNode[] = [];
-				const waived = new Map<string, NetNode[]>();
-				for (const n of nodes) {
-					const reason = exempt[`${ref}.${n.pin}`] ?? exempt[ref];
-					if (reason === undefined) plain.push(n);
-					else waived.set(reason, [...(waived.get(reason) ?? []), n]);
-				}
-				if (plain.length) out.push({ ...base, severity: "warning", message: what(plain), key: `decoupling|${ref}|${net.name}` });
-				for (const [reason, pins] of waived) {
-					out.push({
-						...base,
-						severity: "info",
-						message: `${what(pins)} [exempt: ${reason}]`,
-						key: `decoupling|${ref}|${net.name}|${pins.map(p => p.pin).join(",")}`,
-					});
-				}
+			if (plain.length) out.push({ ...base, severity: "warning", message: what(plain), key: `decoupling|${ref}|${net}` });
+			for (const [reason, pins] of waived) {
+				out.push({
+					...base,
+					severity: "info",
+					message: `${what(pins)} [exempt: ${reason}]`,
+					key: `decoupling|${ref}|${net}|${pins.map(p => p.pin).join(",")}`,
+				});
 			}
 		}
 		return out;
