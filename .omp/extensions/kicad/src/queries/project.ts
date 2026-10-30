@@ -9,7 +9,7 @@ import { CHAR_W, TEXT_H } from "../analysis";
 import { placementRefs, refPrefix } from "../annotate";
 import * as cli from "../cli";
 import { type Box, bbox, key, onInterior, overlap, type Pt, pt, r3, type Seg, samePt, xform } from "../geom";
-import { druRules } from "../ops/project";
+import { druHeader, druRules } from "../ops/project";
 import type { Project, SheetInst } from "../project";
 import { at, isHidden, type Label, propValue, type Sch } from "../sch";
 import { child, children, flag, head, isList, type List, num, text } from "../sexpr";
@@ -594,13 +594,15 @@ function words(l: List): string {
 
 const rules: QueryDef = {
 	what: "rules",
-	doc: "Custom design rules from the .kicad_dru: name, comment (the # lines directly above it), layer, condition, severity and constraints (one line each).",
+	doc: "Custom design rules from the .kicad_dru: the file's header comment (the # lines after (version N)), then each rule's name, comment (the # lines directly above it), layer, condition, severity and constraints (one line each).",
 	fields: {},
 	async run({ project }) {
 		if (!fs.existsSync(project.druFile)) return { file: null, rules: [] };
+		const src = fs.readFileSync(project.druFile, "utf8");
 		return {
 			file: project.rel(project.druFile),
-			rules: druRules(fs.readFileSync(project.druFile, "utf8")).map(({ node: r, comment }) => ({
+			header: druHeader(src),
+			rules: druRules(src).map(({ node: r, comment }) => ({
 				name: text(r) ?? "",
 				comment,
 				layer: text(child(r, "layer")),

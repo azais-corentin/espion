@@ -1739,7 +1739,7 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "XVS level: assembly option R31/R32.\nFitted by default: 1.5k / 1.8k (1.8 V module I/O).\nValues for 2.8 V and 3.3 V I/O: SCHEMATIC.md, Camera."
+	(text "XVS level: assembly option R31/R32.\nFitted by default: 1.5k / 1.8k (1.8 V module I/O).\n2.8 V and 3.3 V I/O: docs/hardware/camera.md."
 		(exclude_from_sim no)
 		(at 96.52 149.86 0)
 		(effects
@@ -1748,9 +1748,9 @@
 			)
 			(justify left bottom)
 		)
-		(uuid "369ad37e-1bad-4926-aaa3-c54f3f734def")
+		(uuid "59709276-9d24-4381-aadf-2206977b3a36")
 	)
-	(text "J3 pad n = camera FPC pin 16 - n:\npad 1 = camera pin 15 (3V3),\npad 15 = camera pin 1 (GND).\nSee SCHEMATIC.md, Camera FPC connector."
+	(text "J3 pad n = camera FPC pin 16 - n:\npad 1 = camera pin 15 (3V3),\npad 15 = camera pin 1 (GND).\nSee docs/hardware/camera.md."
 		(exclude_from_sim no)
 		(at 198.12 91.44 0)
 		(effects
@@ -1759,7 +1759,7 @@
 			)
 			(justify left bottom)
 		)
-		(uuid "6bd4f50d-97de-44e7-b4a2-201ff01c4100")
+		(uuid "7756553c-6e53-46c3-9e95-cd66f37cba6f")
 	)
 	(junction
 		(at 162.56 63.5)

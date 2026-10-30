@@ -219,7 +219,7 @@ describe("hook", () => {
 		expect(blocked("write", { path: "hardware/espion-cam/sym-lib-table" })).toBe(true);
 		expect(blocked("write", { path: "hardware/lib/Foo.pretty/Bar.kicad_mod" })).toBe(true);
 		expect(blocked("edit", { input: "[hardware/espion-cam/mcu.kicad_sch#1A2B]\nPUT 1.=1:\n+x" })).toBe(true);
-		expect(blocked("edit", { path: "hardware/espion-cam/SCHEMATIC.md", input: "[hardware/espion-cam/SCHEMATIC.md#1A2B]\nPUT 1.=1:\n+see power.kicad_sch" })).toBe(false);
+		expect(blocked("edit", { path: "docs/hardware/power.md", input: "[docs/hardware/power.md#1A2B]\nPUT 1.=1:\n+see power.kicad_sch" })).toBe(false);
 		expect(blocked("write", { path: "docs/notes.md" })).toBe(false);
 	});
 

@@ -32,8 +32,8 @@ themselves, with automatic failover. The board is powered over PoE (802.3af) or 
 | `host/espion-viewer/` | egui live view |
 | `host/espion-calib/` | Intrinsics + extrinsics calibration |
 | `host/espion-sync/` | Time-sync coordinator |
-| `hardware/` | KiCad project (`espion-cam/`, with its [schematic design](hardware/espion-cam/SCHEMATIC.md)) and local libraries with their 3D models (`lib/`) |
-| `docs/` | [architecture](docs/architecture.md), [protocol](docs/protocol.md), [timing](docs/timing.md) |
+| `hardware/` | KiCad project (`espion-cam/`) and local libraries with their 3D models (`lib/`) |
+| `docs/` | [architecture](docs/architecture.md), [protocol](docs/protocol.md), [timing](docs/timing.md), [board design](docs/hardware/README.md) |
 
 ## Dev environment
 

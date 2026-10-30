@@ -244,6 +244,38 @@ export function druRules(src: string): { node: List; comment?: string }[] {
 	return items.filter(it => head(it.node) === "rule").map(it => ({ node: it.node, comment: commentAbove(src, it.start).text || undefined }));
 }
 
+/**
+ * The header comment of a .kicad_dru text: the `#` lines after `(version N)`, ending at a blank
+ * line before the first rule's own comment (see commentAbove) or at the end of the file. Returns
+ * the text up to the line after `(version N)` (`before`), the text from the first rule's comment
+ * on (`after`) and the header between them, one line each without the `#` and the space after it
+ * (blank lines inside it as empty lines). Undefined without `(version N)`; throws on syntax problems.
+ */
+function druHeaderSplit(src: string): { before: string; after: string; text: string } | undefined {
+	const { items, problems } = scanDru(src);
+	if (problems.length) throw new Error(problems.join("; "));
+	const ver = items.find(it => head(it.node) === "version");
+	if (!ver) return undefined;
+	const next = items.find(it => it.start > ver.end);
+	const stop = next ? commentAbove(src, next.start).from : src.length;
+	const nl = src.indexOf("\n", ver.end);
+	// the next list may share the version's line: then there is no header and the cut is right after (version N)
+	const cut = nl >= 0 && nl < stop ? nl + 1 : ver.end;
+	const before = cut === ver.end ? `${src.slice(0, ver.end)}\n` : src.slice(0, cut);
+	const lines = src
+		.slice(cut, stop)
+		.split("\n")
+		.map(l => /^\s*#[ \t]?(.*?)\s*$/.exec(l)?.[1] ?? "");
+	while (lines.length && !lines[0]) lines.shift();
+	while (lines.length && !lines[lines.length - 1]) lines.pop();
+	return { before, after: src.slice(stop), text: lines.join("\n") };
+}
+
+/** The header comment of a .kicad_dru text (see druHeaderSplit), undefined when it has none or no `(version N)`. */
+export function druHeader(src: string): string | undefined {
+	return druHeaderSplit(src)?.text || undefined;
+}
+
 const setRule: OpDef = {
 	op: "set_rule",
 	group: "rules",
@@ -331,4 +363,47 @@ const removeRule: OpDef = {
 	},
 };
 
-export const ops: OpDef[] = [setNetclass, removeNetclass, setNetclassPatterns, setBomPreset, removeBomPreset, setRule, removeRule];
+const setRulesHeader: OpDef = {
+	op: "set_rules_header",
+	group: "rules",
+	doc: "Set the header comment of the .kicad_dru (written with (version 1) when the file is missing or empty): the # lines after (version N), a blank line before the first rule's own comment. Rules and their comments keep their text.",
+	fields: {
+		comment: {
+			t: "string",
+			req: true,
+			doc: 'what the rules file is about (one or more lines, each written as a "# " line; an empty line gives a bare "#"). Replaces the existing header; "" removes it',
+		},
+	},
+	apply(ctx, args) {
+		const comment = String(args.comment)
+			.replace(/^(?:[ \t]*\r?\n)+/, "")
+			.trimEnd();
+		const lines = comment
+			.split(/\r?\n/)
+			.map(l => `${`# ${l}`.trimEnd()}\n`)
+			.join("");
+		const file = ctx.project.rel(ctx.project.druFile);
+		const old = ctx.project.fileText(ctx.project.druFile);
+		if (!old?.trim()) {
+			if (!comment) {
+				ctx.notes.push(`${file} ${old === undefined ? "does not exist" : "is empty"}; no header to remove`);
+				return;
+			}
+			ctx.project.setFile(ctx.project.druFile, `(version 1)\n\n${lines}`);
+			ctx.notes.push(`${old === undefined ? "created" : "filled the empty"} ${file} with a header comment`);
+			return;
+		}
+		const split = druHeaderSplit(old);
+		if (!split) throw new Error(`${file} has no (version N) line to put the header after`);
+		const { before, after, text: was } = split;
+		if (!comment && !was) {
+			ctx.notes.push(`${file} has no header comment to remove`);
+			return;
+		}
+		const body = comment ? `\n${lines}${after ? "\n" : ""}` : after ? "\n" : "";
+		ctx.project.setFile(ctx.project.druFile, before + body + after);
+		ctx.notes.push(`rules header ${!comment ? "removed" : was ? "replaced" : "added"}`);
+	},
+};
+
+export const ops: OpDef[] = [setNetclass, removeNetclass, setNetclassPatterns, setBomPreset, removeBomPreset, setRule, removeRule, setRulesHeader];

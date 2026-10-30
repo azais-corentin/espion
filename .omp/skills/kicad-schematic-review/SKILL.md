@@ -10,7 +10,7 @@ The items to verify are in [checklist.md](skill://kicad-schematic-review/checkli
 ## Rules
 - **Report-only** unless the user asks for fixes (then see [Fix loop](#fix-loop-only-when-asked)).
 - **Independent.** A reviewer never reviews a change it made. If you made the change in this session, every review step goes to subagents.
-- **Recompute, don't trust.** `SCHEMATIC.md` "Values and derivations", the author's report and earlier reviews are claims to check. Open the datasheet yourself.
+- **Recompute, don't trust.** The values in `docs/hardware/`, the author's report and earlier reviews are claims to check. Open the datasheet yourself.
 - Never fetch EasyEDA/LCSC symbol, footprint or model data (AGENTS.md). Stock, price and second sources belong to `kicad-part-sourcing`; library parts to `kicad-library-review`.
 
 ## Design assumptions (not findings)
@@ -18,11 +18,11 @@ A finding is something that fails in normal operation with every part inside its
 - **Connected equipment meets its own standard.** USB VBUS stays ≤ 5.5 V, a PoE PSE follows 802.3, a host behaves like an ordinary host (a bench USB port supplies 500 mA from attach). No overvoltage cut-offs, fuses or current limits against non-compliant or faulty sources; ESD/surge clamps on user-pluggable inputs are still in scope (PROT-1).
 - **The project's own accessories work.** The camera module, its cables and other parts the design names are assembled correctly and don't short. No current limits, fuses, ESD parts or series resistors for internal connectors and cables; ESD covers what a user touches in use (USB, RJ45, buttons, exposed metal).
 - **A nominal rail is in spec.** A rail within ±5 % of its nominal (3.3 V: 3.135–3.465 V) suits every part rated for that nominal, even when one datasheet prints a slightly narrower window. A worst case that crosses a limit by tens of millivolts is not a finding.
-- **Worst case = datasheet tolerances at the operating point, not stacked extremes.** Use the reference and resistor tolerances and the rail range in `SCHEMATIC.md`. Don't add resistor TCR or temperature drift, maximum-temperature leakage corners (85 °C I_LK) or several independent worst cases at once, unless the circuit is a precision measurement whose accuracy the firmware relies on (ANA-3). A margin that only disappears that way is not a finding.
+- **Worst case = datasheet tolerances at the operating point, not stacked extremes.** Use the reference and resistor tolerances and the rail ranges in `docs/hardware/README.md`. Don't add resistor TCR or temperature drift, maximum-temperature leakage corners (85 °C I_LK) or several independent worst cases at once, unless the circuit is a precision measurement whose accuracy the firmware relies on (ANA-3). A margin that only disappears that way is not a finding.
 - **Latest silicon revision.** Assume the newest revision of every IC and module; requirements and errata of older revisions are not findings.
 - **Firmware follows the documented rules.** Ask for a new firmware rule only when the hardware needs it to work; never one that guards against firmware setting wrong register bits or ignoring a documented rule.
 
-A concern these assumptions exclude stays out of the report even when its fix looks cheap. The project's own assumptions in `SCHEMATIC.md` (e.g. accepted corners, bring-up checks) also stand unless the review shows them wrong.
+A concern these assumptions exclude stays out of the report even when its fix looks cheap. The project's own accepted risks in `docs/hardware/` (each block doc's accepted risks and not-measured items) also stand unless the review shows them wrong.
 
 ## Mode
 Ask (with `ask`) when the request doesn't settle it, together with the scope (whole board or some sheets, which topics to skip):
@@ -54,7 +54,7 @@ Checklist items marked **(full)** run only in `full` mode.
 Work through ARCH-1…4:
 - the power tree with rail ranges;
 - the list of external contacts;
-- blocks vs `SCHEMATIC.md` and `docs/architecture.md`;
+- blocks vs `docs/hardware/` and `docs/architecture.md`;
 - one reference design or hardware design guide per major IC (datasheet application circuit, app note, Espressif hardware design guidelines for the P4).
 
 Write the result to `local://review-architecture.md`. Every reviewer gets it. In `change` mode, cover only what the change touches: the rails it draws from or feeds, the external contacts it reaches, its blocks and the reference designs of its new or changed ICs.
@@ -64,14 +64,14 @@ Spawn `task` subagents in one batch (default agent type, so the kicad_* tools ar
 
 | Reviewer | Checklist items |
 |---|---|
-| One per sheet | PWR-2, PWR-4, PWR-7; PASS; IC; RST-1, RST-2; BUS-1…4, BUS-6; HS; CLK; ANA; PROT-5; DOC-2; DOC-3 for its own `SCHEMATIC.md` section |
+| One per sheet | PWR-2, PWR-4, PWR-7; PASS; IC; RST-1, RST-2; BUS-1…4, BUS-6; HS; CLK; ANA; PROT-5; DOC-2; DOC-3 for its own block doc in `docs/hardware/` |
 | Topic: power & protection | ARCH-1 checked in depth; PWR-1, PWR-3, PWR-5, PWR-6, PWR-8; PROT-1…4; EMC |
 | Topic: firmware & bring-up | RST-3, RST-4; FW-1…5; BUS-1 addresses and recovery; BUS-5 across sheets |
 | Topic: production (`full` only) | PROD |
 | You, after the reviewers | DOC-1, DOC-3 across sheets (hierarchical pins, buses, net classes), DOC-4, DOC-5; merging |
 
 Give each reviewer:
-- the mode, its scope (sheet or topic), and its purpose from `SCHEMATIC.md`;
+- the mode, its scope (sheet or topic), and its purpose from its block doc in `docs/hardware/`;
 - the path of this skill's `checklist.md` and its item IDs;
 - `local://review-architecture.md` and the phase 0 findings for its scope;
 - the parts with their datasheet links (`kicad_query symbols` / `symbol` Datasheet fields);
@@ -118,6 +118,6 @@ Every finding has evidence and a concrete fix. Every datasheet number cites the 
    Put long material (the merged JSON, long derivations) in `local://` files and reference them.
 
 ## Fix loop (only when asked)
-1. Give the findings the user accepts to an author subagent, which follows `kicad-schematic-edit`, updates `SCHEMATIC.md`, and reports its connectivity diff.
+1. Give the findings the user accepts to an author subagent, which follows `kicad-schematic-edit`, updates `docs/hardware/`, and reports its connectivity diff.
 2. A fresh reviewer (never the author) checks only those findings and the fix's `connectivity` diff, in `change` mode, with this skill.
 3. Repeat until it approves. After three rounds without approval, stop and ask the user.

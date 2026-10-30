@@ -2,13 +2,13 @@
 
 Items carry an ID that findings and passes cite (`"item": "PWR-3"`). Every item applies in `change` mode (to the parts and nets in scope) and in `standard` and `full` mode, except those marked **(full)**: those run in `full` mode only. **Auto:** names the `kicad_check` check that already proves the item: read its result and don't redo it by hand. An item that doesn't apply to the scope is `na`, not a pass.
 
-Numbers come from the datasheet (document, page, table/figure) or from `kicad_query`; computed numbers show the formula and its inputs. Worst case means component tolerance and rail min/max (the rail ranges are in `SCHEMATIC.md`), as limited by the review skill's **Design assumptions** (`skill://kicad-schematic-review`): sources within their standard, accessories working, ±5 % rails in spec, no TCR or maximum-temperature leakage stacking, latest silicon revision. A case those assumptions exclude is not a finding under any item below.
+Numbers come from the datasheet (document, page, table/figure) or from `kicad_query`; computed numbers show the formula and its inputs. Worst case means component tolerance and rail min/max (the rail ranges are in `docs/hardware/README.md`), as limited by the review skill's **Design assumptions** (`skill://kicad-schematic-review`): sources within their standard, accessories working, ±5 % rails in spec, no TCR or maximum-temperature leakage stacking, latest silicon revision. A case those assumptions exclude is not a finding under any item below.
 
 ## ARCH: architecture (orchestrator, phase 1)
-- **ARCH-1** Power tree: every rail, its source, its loads and its range at min/max input. Matches `SCHEMATIC.md` "Power nets" and `docs/architecture.md`.
+- **ARCH-1** Power tree: every rail, its source, its loads and its range at min/max input. Matches the Rails table in `docs/hardware/README.md` and `docs/architecture.md`.
 - **ARCH-2** External interfaces: every connector, button, exposed pad and shield, with the nets that reach it. Feeds PROT.
-- **ARCH-3** Blocks vs design docs: every block of `SCHEMATIC.md` "Sheets" exists, with the parts the Parts tables name (`kicad_query hierarchy`, `symbols`).
-- **ARCH-4** Reference designs: for each major IC, the vendor's application circuit or hardware design guide (for the ESP32-P4: Espressif's hardware design guidelines and schematic checklist). Deviations from it are intentional and written down in `SCHEMATIC.md`; an undocumented deviation is a finding.
+- **ARCH-3** Blocks vs design docs: every block of the `docs/hardware/README.md` block diagram exists as a sheet, with the parts its block doc names (`kicad_query hierarchy`, `symbols`).
+- **ARCH-4** Reference designs: for each major IC, the vendor's application circuit or hardware design guide (for the ESP32-P4: Espressif's hardware design guidelines and schematic checklist). Deviations from it are intentional and written down in the block's doc in `docs/hardware/`; an undocumented deviation is a finding.
 
 ## PWR: power
 - **PWR-1** Every regulator input stays within its operating range over the source's specified range (its standard or datasheet regulation limits), including UVLO and abs max.
@@ -51,7 +51,7 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 ## HS: high-speed and pairs
 - **HS-1** Differential pairs named `_P/_N` and in the right net class. **Auto:** `netclasses`.
 - **HS-2** Termination, series resistors and AC-coupling as the interface standard and the datasheet ask (e.g. series R on clocks and fast single-ended lines).
-- **HS-3** The layout constraints each pair needs (impedance, length match, spacing) are carried as net classes and rules and listed in `SCHEMATIC.md`. **Auto:** `netclasses`, `rules` prove they exist and load.
+- **HS-3** The layout constraints each pair needs (impedance, length match, spacing) are carried as net classes and rules and listed in `docs/hardware/layout.md`. **Auto:** `netclasses`, `rules` prove they exist and load.
 
 ## CLK: clocks
 - **CLK-1** Crystal load capacitors: C = 2·(C_L − C_stray) with the crystal's C_L and a stated stray estimate; the crystal's ESR and drive level within the oscillator's limits.
@@ -74,8 +74,8 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 - **EMC-2** Shield and chassis grounding as the connector and the interface standard ask (e.g. Ethernet shield RC/HV cap, isolation voltage).
 
 ## FW: firmware and bring-up
-- **FW-1** GPIO map: every MCU pin's reset function, its use on this board, its pull, and its constraints (strap, ADC-capable, USB, input-only) match `SCHEMATIC.md` (GPIO groups, Connections, Strapping pins). Each peripheral instance and each signal is used once.
-- **FW-2** "Firmware rules from the schematic" in `SCHEMATIC.md` are complete for the circuits in scope, and the firmware (`firmware/cam-p4`) follows them (read the code; cite file and line).
+- **FW-1** GPIO map: every MCU pin's reset function, its use on this board, its pull, and its constraints (strap, ADC-capable, USB, input-only) match `docs/hardware/firmware-rules.md` (GPIO map, straps) and the schematic (`kicad_query symbol` on the MCU). Each peripheral instance and each signal is used once.
+- **FW-2** The rules in `docs/hardware/firmware-rules.md` are complete for the circuits in scope, and the firmware (`firmware/cam-p4`) follows them (read the code; cite file and line).
 - **FW-3** Debug and programming access without soldering (USB Serial/JTAG, UART console), and a boot-mode entry.
 - **FW-4** Test points on every rail and on the signals bring-up will probe (clocks, PPS, strobe, reset); at least one status indicator.
 - **FW-5** Firmware can measure what it needs to decide (power source, rail sense, temperature) and can switch off what it must (load switches, LED power).
@@ -88,7 +88,7 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 ## DOC: documentation and drawing
 - **DOC-1** ERC is clean, and every exclusion carries a reason. **Auto:** `erc`.
 - **DOC-2** Drawing rules. **Auto:** `style`. Readability the check can't see (crowding, signal flow left to right, misleading placement) by looking with `kicad_render`.
-- **DOC-3** `SCHEMATIC.md` matches the schematic: buses, hierarchical pins (name, direction, level), parts, values, net classes (`kicad_query hierarchy`, `symbols`, `netclasses`, `net`). Say which side you think is wrong.
+- **DOC-3** `docs/hardware/` matches the schematic wherever it states something: values, reference designators, rails, net classes, GPIO numbers (`kicad_query symbols`, `symbol`, `netclasses`, `net`). Say which side you think is wrong.
 - **DOC-4** Net names say what the net is (no `Net-(…)` on nets that cross sheets or that bring-up will probe), and names are consistent across sheets.
 - **DOC-5** Title block filled on every sheet (`kicad_query sheet`).
 

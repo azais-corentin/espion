@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { druProblems } from "../src/checks/rules";
 import { bom, netlist } from "../src/cli";
-import { druRules, ops } from "../src/ops/project";
+import { druHeader, druRules, ops } from "../src/ops/project";
 import { Project } from "../src/project";
 import { text } from "../src/sexpr";
 import { validate } from "../src/spec";
@@ -163,6 +163,57 @@ describe.skipIf(!HAS_KICAD)("project ops", () => {
 		await apply(root, [{ op: "remove_rule", name: "MDI spacing" }]);
 		expect(fs.readFileSync(druFile, "utf8")).toBe(dru0.slice(0, start) + dru0.slice(end));
 		expect(await druProblems(Project.open(PROJECT, root))).toEqual([]);
+	});
+
+	test("set_rules_header replaces, removes and inserts the header; rules and their comments keep their bytes", async () => {
+		const dru0 = fs.readFileSync(druFile, "utf8");
+		const rulesText = dru0.slice(dru0.indexOf("# PoE isolation"));
+		const read = () => fs.readFileSync(druFile, "utf8");
+		const comments = () => druRules(read()).map(r => [text(r.node, 1), r.comment]);
+		const comments0 = druRules(dru0).map(r => [text(r.node, 1), r.comment]);
+		expect(druHeader(dru0)).toStartWith("Spacing rules from SCHEMATIC.md");
+
+		expect(await apply(root, [{ op: "set_rules_header", comment: "Board spacing rules.\n\nWidths: net classes." }])).toEqual(["rules header replaced"]);
+		expect(read()).toBe(`(version 1)\n\n# Board spacing rules.\n#\n# Widths: net classes.\n\n${rulesText}`);
+		expect(druHeader(read())).toBe("Board spacing rules.\n\nWidths: net classes.");
+		expect(comments()).toEqual(comments0);
+
+		expect(await apply(root, [{ op: "set_rules_header", comment: "" }])).toEqual(["rules header removed"]);
+		expect(read()).toBe(`(version 1)\n\n${rulesText}`);
+		expect(druHeader(read())).toBeUndefined();
+		expect(comments()).toEqual(comments0);
+
+		expect(await apply(root, [{ op: "set_rules_header", comment: "Spacing rules." }])).toEqual(["rules header added"]);
+		expect(read()).toBe(`(version 1)\n\n# Spacing rules.\n\n${rulesText}`);
+		expect(comments()).toEqual(comments0);
+		expect(await druProblems(Project.open(PROJECT, root))).toEqual([]);
+	});
+
+	test("set_rules_header inserted after (version N) leaves a rule comment right below it to the rule", async () => {
+		const rule = `(rule "USB spacing"\n\t(condition "A.NetClass == 'USB'")\n\t(constraint clearance (min 0.3mm)))`;
+		fs.writeFileSync(druFile, `(version 1)\n# USB 2.0: 0.3 mm from the pair\n${rule}\n`);
+		expect(druHeader(fs.readFileSync(druFile, "utf8"))).toBeUndefined();
+		await apply(root, [{ op: "set_rules_header", comment: "Spacing rules." }]);
+		const dru = fs.readFileSync(druFile, "utf8");
+		expect(dru).toBe(`(version 1)\n\n# Spacing rules.\n\n# USB 2.0: 0.3 mm from the pair\n${rule}\n`);
+		expect(druHeader(dru)).toBe("Spacing rules.");
+		expect(druRules(dru)[0]?.comment).toBe("USB 2.0: 0.3 mm from the pair");
+
+		expect(await apply(root, [{ op: "set_rules_header", comment: "" }])).toEqual(["rules header removed"]);
+		expect(fs.readFileSync(druFile, "utf8")).toBe(`(version 1)\n\n# USB 2.0: 0.3 mm from the pair\n${rule}\n`);
+
+		fs.rmSync(druFile);
+		await apply(root, [{ op: "set_rules_header", comment: "Spacing rules." }]);
+		expect(fs.readFileSync(druFile, "utf8")).toBe("(version 1)\n\n# Spacing rules.\n");
+		expect(druRules(fs.readFileSync(druFile, "utf8"))).toEqual([]);
+
+		fs.writeFileSync(druFile, "\n");
+		const notes = await apply(root, [{ op: "set_rules_header", comment: "Spacing rules." }]);
+		expect(notes[0]).toStartWith("filled the empty");
+		expect(fs.readFileSync(druFile, "utf8")).toBe("(version 1)\n\n# Spacing rules.\n");
+
+		fs.writeFileSync(druFile, `# USB 2.0\n${rule}\n`);
+		await expect(apply(root, [{ op: "set_rules_header", comment: "Spacing rules." }])).rejects.toThrow("no (version N)");
 	});
 
 	test("set_rule creates a missing rules file and rejects malformed rules", async () => {

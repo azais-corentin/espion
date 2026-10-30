@@ -1,22 +1,20 @@
 # UDP protocol
 
-`crates/espion-proto` is the single source of truth for everything on this page. Any
-change to the format bumps the protocol version and updates this document and the
-changelog at the end of it in the same commit.
+`crates/espion-proto` is the source of truth for this page. Any format change bumps the
+protocol version and updates this page and its changelog in the same commit.
 
-> **Status: draft.** No implementation exists yet. Decided: the header, the versioning
-> rules (exact version match), boards identified by their Ethernet MAC, and Q11.5 blob
-> coordinates. The other message fields are the intended v1 content and may change until
-> the first implementation lands.
+> **Status: draft, not implemented.** Settled: header, versioning (exact match), boards identified
+> by their Ethernet MAC, Q11.5 blob coordinates. Other fields are planned v1 and may still change.
 
 ## Transport
 
-- UDP over IPv4 on the wired Ethernet network (100 Mbit/s per board) shared by the boards
-  and the host. Boards get their address by DHCP; the network needs a DHCP server.
-- One message per datagram. A datagram is at most **1472 bytes** (1500-byte MTU minus the IPv4
-  and UDP headers), so IP fragmentation never happens.
-- The host is whoever sent the board its last Config or FrameEpoch. Until then a board
+- UDP over IPv4 on the wired Ethernet shared by boards and host (100 Mbit/s per board).
+  Boards get their address by DHCP, so the network needs a DHCP server.
+- One message per datagram, at most **1472 bytes** (1500-byte MTU minus IPv4 and UDP
+  headers), so IP never fragments.
+- The host is whoever last sent the board a Config or FrameEpoch. Until then the board
   broadcasts Status to port 5005 and sends no Centroids.
+- No retransmission. A lost Centroids packet is a lost frame; the host copes with gaps.
 - Ports (defaults, configurable):
 
   | Port | Direction | Traffic |
@@ -25,17 +23,7 @@ changelog at the end of it in the same commit.
   | 5007 | host → board, unicast or broadcast | Config, FrameEpoch |
   | 319, 320 | multicast 224.0.1.129 | PTP event and general messages (IEEE 1588, not espion-proto; see [timing.md](timing.md)) |
 
-- No retransmission. Lost centroid packets are lost frames; the host tolerates gaps.
-
 ## Packet layout
-
-```
- 0        1        2        3        4 ...
-+--------+--------+--------+--------+------------------------------+
-| magic  | magic  |version |  kind  | body (postcard)              |
-| 0x45 E | 0x53 S |  u8    |  u8    |                              |
-+--------+--------+--------+--------+------------------------------+
-```
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
@@ -44,20 +32,18 @@ changelog at the end of it in the same commit.
 | 3 | 1 | kind | Message kind (table below) |
 | 4 | … | body | [postcard](https://postcard.jamesmunns.com/wire-format)-encoded struct for (`version`, `kind`) |
 
-The header is raw bytes, not postcard. A receiver checks magic and version before it
-touches the body. Packets with an unknown magic, version or kind are dropped and counted,
-and are never decoded.
+The header is raw bytes, not postcard. A receiver checks magic and version before reading
+the body. Packets with an unknown magic, version or kind are counted and dropped, never decoded.
 
 ## Versioning
 
-- One version number covers the whole protocol: header, all message kinds and all bodies.
-- Bump the version for **any** change to any body (field added, removed, reordered, retyped)
-  or to the semantics of a field. Postcard has no field tags, so no change is backward
-  compatible.
-- Never reuse a kind value, even after a message is removed.
-- Firmware and host must speak the same version. The host logs the version of every board it
-  hears from and reports mismatches. It does not decode foreign versions.
-- Every bump adds a row to the changelog below.
+- One version number covers everything: header, all kinds, all bodies.
+- Bump it for **any** body change (field added, removed, reordered, retyped) or any change in
+  what a field means. Postcard has no field tags, so no change is backward compatible.
+- Never reuse a kind value, even after its message is removed.
+- Firmware and host must speak the same version. The host logs each board's version and
+  reports mismatches; it never decodes a foreign version.
+- Every bump adds a changelog row.
 
 ## Message kinds (draft v1)
 
@@ -69,8 +55,8 @@ and are never decoded.
 | `0x10` | Config | host → board | On change |
 | `0x11` | FrameEpoch | host → board | On change |
 
-Times on the wire are **network time**: nanoseconds of PTP time on the current
-grandmaster's clock (see [timing.md](timing.md)), as `u64`.
+Times on the wire are **network time**: PTP nanoseconds on the current grandmaster's clock
+(see [timing.md](timing.md)), as `u64`.
 
 ### `0x01` Centroids
 
@@ -84,25 +70,18 @@ grandmaster's clock (see [timing.md](timing.md)), as `u64`.
 | part, parts | `u8`, `u8` | This datagram's index and the datagram count for this frame |
 | blobs | `[Blob]` | Centroids found in the frame (this part) |
 
-`Blob`: `x`, `y` as `u16` fixed point in 1/32 pixel (Q11.5: up to 2048 px, enough for
-the full 1280 × 800 mode as well as 640 × 400 binned), `area` as `u16` pixels and `peak`
-as `u8` intensity.
+`Blob`: `x`, `y` as `u16` in 1/32 pixel (Q11.5: up to 2048 px, enough for full 1280 × 800
+and binned 640 × 400), `area` as `u16` pixels, `peak` as `u8` intensity.
 
-### `0x02` Status
+### Other messages
 
-Firmware version, uptime, link state (speed, duplex), PTP port state
-(master/slave/listening/passive), grandmaster clockIdentity, PTP statistics (offset from
-master, mean path delay), PPS servo lock state, dropped-frame and dropped-packet counters.
-
-### `0x10` Config
-
-Exposure (µs, default 500), threshold, minimum and maximum blob area, dark frame interval
-N (one LED-off frame every N frames), frame-rate divider.
-
-### `0x11` FrameEpoch
-
-`t0: u64`, the network time (ns) of frame 0, and the frame period as a rational
-(`num`/`den` ns, `10⁹/120` by default). See [timing.md](timing.md).
+- **`0x02` Status:** firmware version, uptime, link state (speed, duplex), PTP port state
+  (master/slave/listening/passive), grandmaster clockIdentity, PTP statistics (offset from
+  master, mean path delay), PPS servo lock state, dropped-frame and dropped-packet counters.
+- **`0x10` Config:** exposure (µs, default 500), threshold, min and max blob area,
+  dark-frame interval N (one LED-off frame every N frames), frame-rate divider.
+- **`0x11` FrameEpoch:** `t0: u64`, the network time (ns) of frame 0, and the frame period
+  as a ratio `num`/`den` ns (`10⁹/120` by default). See [timing.md](timing.md).
 
 ## Changelog
 

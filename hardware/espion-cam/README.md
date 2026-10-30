@@ -38,9 +38,8 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - 4 × M3 plated mounting holes (H1–H4), each pad on GND, ≥ 2 mm from the PoE cable-side
   copper
 
-Schematic design (sheets, buses, hierarchical pins, pin-level connections, component values
-and the checks still open for the first boards): `SCHEMATIC.md`. The notes on the selected
-parts are in its "Bill of materials" section.
+Board design (decisions, values and their reasons, layout constraints, firmware rules, the
+checks for the first boards): [`docs/hardware/`](../../docs/hardware/README.md).
 
 The BOM itself comes from the schematic: every sourced symbol carries Manufacturer, MPN
 and LCSC fields, and the project's BOM preset `Order` exports them. Generate it for each
@@ -58,8 +57,7 @@ for the JLCPCB JLC04161H-7628 stack-up (4 layers, 1.6 mm). The spacing rules tha
 classes can't express (PoE isolation, MIPI CSI, MDI and USB spacing) are in the custom
 rules file `espion-cam.kicad_dru`.
 
-Signal list, module pin notes, Ethernet pin map and hardware tasks: see
-`../../docs/architecture.md`. Timing requirements for XVS, STROBE and PPS: see
+System view: `../../docs/architecture.md`. Timing requirements for XVS, STROBE and PPS:
 `../../docs/timing.md`.
 
 ## Conventions
@@ -67,9 +65,10 @@ Signal list, module pin notes, Ethernet pin map and hardware tasks: see
 - Edit only with KiCad (the dev shell provides KiCad 10). Never hand-edit `.kicad_*` files.
   Agents work through the KiCad toolkit instead (`kicad_query`, `kicad_edit`,
   `kicad_check`, `kicad_render`; see `../../AGENTS.md`).
-- `SCHEMATIC.md` is the plan the schematic follows: a schematic change updates it in the
-  same commit. A part change also updates the symbol's Manufacturer, MPN and LCSC fields
-  and the board list above. There is no committed BOM file.
+- The schematic is the source of truth. A change that alters a decision, a derived value,
+  a layout constraint, a firmware rule or a part updates `../../docs/hardware/` in the same
+  commit. A part change also updates the symbol's Manufacturer, MPN and LCSC fields and the
+  board list above. There is no committed BOM file.
 - Keep ERC at 0 violations: `kicad-cli sch erc espion-cam.kicad_sch` (from this directory).
 - Project-specific symbols, footprints and 3D models go in `../lib/` (conventions and KLC
   checks in `../lib/README.md`), not in global libraries.

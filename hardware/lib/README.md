@@ -221,8 +221,8 @@ C22438965), drawn for the OV9281 camera FFC. Symbol:
 
 - **Not used by espion-cam.** Dual contact lets a face-flipped FFC mirror the pins and put
   +3V3 on the camera's GND, so the board now uses the single-contact JUSHUO
-  AFA07-S15ECA-00 on a stock footprint (`../espion-cam/SCHEMATIC.md`, Camera FPC
-  connector). The library is still registered in `espion-cam/fp-lib-table`.
+  AFA07-S15ECA-00 on a stock footprint (`../../docs/hardware/camera.md`, FPC connector).
+  The library is still registered in `espion-cam/fp-lib-table`.
 - Source: XFCN drawing F1004-H-xx-20G-R rev A1 ([LCSC](https://datasheet.lcsc.com/datasheet/pdf/b071ded21ff6dd235e3f83c07f03e103.pdf),
   15P row, recommended PCB layout); pin 1 cross-checked with LCSC's footprint. Drawn for this
   project; CERN-OHL-P-2.0.

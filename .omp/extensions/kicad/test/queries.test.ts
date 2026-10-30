@@ -208,10 +208,30 @@ describe("project queries", () => {
 		expect(classes.find((c: { name: string }) => c.name === "POE_CABLE").patterns).toContain("/Ethernet/POE_*");
 	});
 
-	test("rules from the .kicad_dru, comments skipped", async () => {
-		const { rules } = await q("rules");
+	test("rules from the .kicad_dru, with the file's header comment", async () => {
+		const { header, rules } = await q("rules");
+		expect(header).toBe(
+			"Spacing rules from SCHEMATIC.md (layout constraints). Track widths and diff-pair geometry\nare in the net classes (Schematic Setup > Net Classes), sized for JLC04161H-7628.",
+		);
 		expect(rules.map((r: { name: string }) => r.name)).toEqual(["PoE isolation", "MIPI_CSI spacing", "MDI spacing", "USB spacing"]);
 		expect(rules[2]).toMatchObject({ condition: "A.NetClass == 'MDI' && B.NetClass != 'MDI'", constraints: ["clearance min 0.55mm"] });
+	});
+
+	test("rules on an empty or version-less .kicad_dru: no header, rules as found", async () => {
+		const other = stageFixture();
+		try {
+			const p = Project.open(PROJECT, other);
+			const def = queries.find(d => d.what === "rules")!;
+			const run = () => def.run({ project: p, analysis: new Analysis(p), libs: () => p.libs() }, {});
+			fs.writeFileSync(p.druFile, "");
+			expect(await run()).toEqual({ file: p.rel(p.druFile), rules: [] });
+			fs.writeFileSync(p.druFile, '# no version\n(rule "x" (constraint clearance (min 1mm)))\n');
+			const r = await run();
+			expect(r.header).toBeUndefined();
+			expect(r.rules).toMatchObject([{ name: "x", comment: "no version" }]);
+		} finally {
+			cleanup(other);
+		}
 	});
 
 	test.skipIf(!HAS_KICAD)("bom with the Order preset: grouped rows with LCSC numbers", async () => {
