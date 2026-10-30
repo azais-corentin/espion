@@ -131,7 +131,7 @@
         ],
         "heightZones": [
           {
-            "name": "lens view cone", "center": [165, 159], "r0": 7.0, "slope": 0.83,
+            "name": "lens view cone", "center": [163, 159], "r0": 7.0, "slope": 0.83,
             "heights": {
               "Converter_DCDC_SDAPO:Converter_DCDC_SDAPO_DP1435_THT": 14,
               "Connector_RJ_HanRun:RJ45_HanRun_HR871150C_Horizontal": 15,
