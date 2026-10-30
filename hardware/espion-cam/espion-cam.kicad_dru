@@ -1,6 +1,6 @@
 (version 1)
 
-# Spacing rules from SCHEMATIC.md (layout constraints). Track widths and diff-pair geometry
+# Spacing rules from docs/hardware/layout.md. Track widths and diff-pair geometry
 # are in the net classes (Schematic Setup > Net Classes), sized for JLC04161H-7628.
 
 # MIPI CSI-2: >= 2W (0.36 mm) to everything except the pair's own partner; this also keeps GND
