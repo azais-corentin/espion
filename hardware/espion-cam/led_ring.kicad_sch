@@ -1616,7 +1616,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b0280dd3-c143-41af-8282-15f14f57c9fc")
-		(property "Reference" "#PWR701"
+		(property "Reference" "#PWR0138"
 			(at 40.64 63.5 0)
 			(hide yes)
 			(show_name no)
@@ -1676,7 +1676,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1147b082-a51f-40f1-ad77-0df74eadd2f1"
-					(reference "#PWR701")
+					(reference "#PWR0138")
 					(unit 1)
 				)
 			)

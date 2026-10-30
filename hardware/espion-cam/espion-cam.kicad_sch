@@ -497,7 +497,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "1597c8db-94ab-4336-a273-4021b7a45f21")
-		(property "Reference" "#PWR102"
+		(property "Reference" "#PWR02"
 			(at 66.04 162.56 0)
 			(hide yes)
 			(show_name no)
@@ -557,7 +557,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6"
-					(reference "#PWR102")
+					(reference "#PWR02")
 					(unit 1)
 				)
 			)
@@ -575,7 +575,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "339ca73b-8fc5-484c-afa6-9a6e05ebe409")
-		(property "Reference" "#PWR104"
+		(property "Reference" "#PWR04"
 			(at 96.52 162.56 0)
 			(hide yes)
 			(show_name no)
@@ -635,7 +635,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6"
-					(reference "#PWR104")
+					(reference "#PWR04")
 					(unit 1)
 				)
 			)
@@ -730,7 +730,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a1a6b97f-fe8e-4647-93e9-3610cc3f6791")
-		(property "Reference" "#PWR101"
+		(property "Reference" "#PWR01"
 			(at 50.8 162.56 0)
 			(hide yes)
 			(show_name no)
@@ -790,7 +790,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6"
-					(reference "#PWR101")
+					(reference "#PWR01")
 					(unit 1)
 				)
 			)
@@ -1039,7 +1039,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e6192eeb-5aeb-42cd-b79c-2931711213dc")
-		(property "Reference" "#PWR103"
+		(property "Reference" "#PWR03"
 			(at 81.28 162.56 0)
 			(hide yes)
 			(show_name no)
@@ -1099,7 +1099,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6"
-					(reference "#PWR103")
+					(reference "#PWR03")
 					(unit 1)
 				)
 			)
