@@ -4195,6 +4195,12 @@
 		(uuid "d28f3d6a-204e-4a00-a741-e2b821c8cec4")
 	)
 	(junction
+		(at 266.7 106.68)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "d6e48baf-ab58-4bf7-a80a-3ee17de2c02b")
+	)
+	(junction
 		(at 256.54 91.44)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -5174,6 +5180,16 @@
 	)
 	(wire
 		(pts
+			(xy 266.7 115.57) (xy 266.7 116.84)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5eb00f0f-1ded-4749-a427-071bd3fe665f")
+	)
+	(wire
+		(pts
 			(xy 149.86 114.3) (xy 134.62 114.3)
 		)
 		(stroke
@@ -5201,6 +5217,16 @@
 			(type default)
 		)
 		(uuid "64e64efe-8b93-44f2-aba5-a7100a96ca22")
+	)
+	(wire
+		(pts
+			(xy 266.7 106.68) (xy 266.7 107.95)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "65b236d8-e63a-4136-b5d2-c6e923e1ee81")
 	)
 	(wire
 		(pts
@@ -7443,6 +7469,84 @@
 		)
 	)
 	(symbol
+		(lib_id "power:GND")
+		(at 266.7 116.84 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "1a2c0542-7250-49b2-8b4b-a8af1b67fd06")
+		(property "Reference" "#PWR401"
+			(at 266.7 123.19 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 266.7 120.65 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 266.7 116.84 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 266.7 116.84 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 266.7 116.84 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "2dd56f34-81fc-4763-9d8f-d6eaa8f46b00")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
+					(reference "#PWR401")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "power:VBUS")
 		(at 105.41 129.54 0)
 		(unit 1)
@@ -9186,6 +9290,121 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
 					(reference "#PWR059")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:D_Zener")
+		(at 266.7 111.76 270)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "7221087a-c5a3-4920-8ae7-b712c5ca28d6")
+		(property "Reference" "D16"
+			(at 269.24 110.49 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "TSD05DYFR"
+			(at 269.24 113.03 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Diode_SMD:D_SOD-323_HandSoldering"
+			(at 266.7 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" "https://www.ti.com/lit/ds/symlink/tsd05.pdf"
+			(at 266.7 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Unidirectional TVS diode, VRWM 5.5 V, SOD-323"
+			(at 266.7 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "TI"
+			(at 266.7 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "TSD05DYFR"
+			(at 266.7 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C22396185"
+			(at 266.7 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "e9a98d4d-b737-4475-a7b1-87fa394a09dc")
+		)
+		(pin "2"
+			(uuid "44673fb2-393b-4368-93c3-57bbf8ec01f8")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
+					(reference "D16")
 					(unit 1)
 				)
 			)
