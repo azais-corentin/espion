@@ -456,8 +456,7 @@ Tooling hole for JLCPCB assembly: Ø1.152 mm NPTH with a 0.148 mm solder mask ex
 (1.448 mm opening), as the [JLCPCB tooling-hole article](https://jlcpcb.com/help/article/How-to-add-tooling-holes-for-PCB-assembly-order)
 specifies. The stock `MountingHole:ToolingHole_1.152mm` it copies opens only 1.3 mm.
 
-- Source: the JLCPCB article (capture: `audit/jlc-tooling-holes-2026-10-31.txt` in the
-  espion audit notes).
+- Source: the JLCPCB article above (read 2026-10-31).
 - Copied from KiCad's stock footprint (CC-BY-SA 4.0 with the KiCad library exception); only
   the description and the pad's mask margin differ. No 3D model (a hole).
 
