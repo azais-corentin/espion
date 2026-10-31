@@ -14,4 +14,5 @@
 	(lib (name "Connector_FFC-FPC_JUSHUO") (type "KiCad") (uri "${KIPRJMOD}/../lib/Connector_FFC-FPC_JUSHUO.pretty") (options "") (descr "JUSHUO FFC/FPC connectors (espion project library)"))
 	(lib (name "Button_Switch_SMD_XKB") (type "KiCad") (uri "${KIPRJMOD}/../lib/Button_Switch_SMD_XKB.pretty") (options "") (descr "XKB SMD switches (espion project library)"))
 	(lib (name "NetTie_Courtyard") (type "KiCad") (uri "${KIPRJMOD}/../lib/NetTie_Courtyard.pretty") (options "") (descr "Net ties with a courtyard (espion project library)"))
+	(lib (name "LED_SMD_Yongyu") (type "KiCad") (uri "${KIPRJMOD}/../lib/LED_SMD_Yongyu.pretty") (options "") (descr "Yongyu SMD LEDs (espion project library)"))
 )

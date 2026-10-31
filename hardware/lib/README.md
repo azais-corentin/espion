@@ -21,7 +21,8 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Connector_RJ_HanRun.pretty/` | HanRun RJ45 jacks |
 | `Connector_USB_HRO.pretty/` | Korean Hroparts USB connectors |
 | `LED_SMD_Amicc.pretty/` | Amicc SMD LEDs |
-| `LED_SMD_Worldsemi.pretty/` | Worldsemi SMD LEDs |
+| `LED_SMD_Worldsemi.pretty/` | Worldsemi SMD LEDs (not used by espion-cam any more) |
+| `LED_Yongyu.kicad_sym`, `LED_SMD_Yongyu.pretty/` | Yongyu addressable RGB LEDs |
 | `Button_Switch_SMD_XKB.pretty/` | XKB SMD switches |
 | `Package_SON_TI.pretty/` | TI SON packages with TI's land patterns |
 | `Package_DFN_QFN_TI.pretty/` | TI DFN/QFN packages with TI's land patterns |
@@ -63,8 +64,9 @@ Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part
 - **F6.3 "Rectangular SMD pad"** on `LED_SMD_Worldsemi:LED_WS2812B-2020_PLCC4_2.0x2.0mm` and
   `Button_Switch_SMD_XKB:SW_Push_1P1T_XKB_TS-1187A`: their pads are unchanged from the stock
   footprints, which get the same message.
-- **F6.2** on `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal`
-  (waiver): the anchor is kept where KiCad's stock footprint has it.
+- **F6.2** on `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal` and
+  `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal` (waivers): the
+  anchor is kept where KiCad's stock footprint has it.
 - **F5.1** and **F5.2** on `NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm` (waivers): Reference and
   Value stay hidden, as in the stock net tie it copies (a copper bridge with no body to label).
 
@@ -241,8 +243,8 @@ C22438965), drawn for the OV9281 camera FFC. Symbol:
 `Connector_Generic_MountingPin:Conn_01x15_MountingPin`.
 
 - **Not used by espion-cam.** Dual contact lets a face-flipped FFC mirror the pins and put
-  +3V3 on the camera's GND, so the board now uses the single-contact JUSHUO
-  AFA07-S15ECA-00 on a stock footprint (`../../docs/hardware/camera.md`, FPC connector).
+  +3V3 on the camera's GND, so the board uses a single-contact JUSHUO connector (now the
+  bottom-contact AFA07-S15FCA-00, `Connector_FFC-FPC_JUSHUO`).
   The library is still registered in `espion-cam/fp-lib-table`.
 - Source: XFCN drawing F1004-H-xx-20G-R rev A1 ([LCSC](https://datasheet.lcsc.com/datasheet/pdf/b071ded21ff6dd235e3f83c07f03e103.pdf),
   15P row, recommended PCB layout); pin 1 cross-checked with LCSC's footprint. Drawn for this
@@ -284,6 +286,8 @@ Aluminium SMD can footprints for `Device:C_Polarized` (pad 1 = +): AISHI VZ poly
 Worldsemi WS2812B-2020-V6 addressable RGB LED, 2.0 × 2.2 mm (LCSC C52917434), for the stock
 `LED:WS2812B-2020` symbol.
 
+- **Not used by espion-cam any more** (2026-10-31): JLCPCB lists the WS2812B-2020-V6 for
+  Standard PCBA only, so D1 is the Yongyu YY-0807RGBJ26-07-FJ (`LED_Yongyu`).
 - Source: [WS2812B-2020-V6 datasheet](https://datasheet.lcsc.com/datasheet/pdf/a29e59ba4bc7e47e236b4d50b6c26345.pdf)
   p. 2 (back, top and side views, pin table).
 - Unchanged copy of KiCad's footprint of the same name (CC-BY-SA 4.0 with the KiCad library
@@ -294,6 +298,35 @@ Worldsemi WS2812B-2020-V6 addressable RGB LED, 2.0 × 2.2 mm (LCSC C52917434), f
   clear top block, terminal length, notch radius, the bottom polarity bar and the chips inside
   are scaled from the drawing. KiCad draws the clear block opaque, so the chips (the only
   polarity mark visible from the top) don't show.
+
+### `LED_Yongyu:YY-0807RGBJ26-07-FJ`, `LED_SMD_Yongyu:LED_Yongyu_YY-0807_2.0x1.7mm`
+
+Yongyu YY-0807RGBJ26-07-FJ addressable RGB LED, 2.0 × 1.7 × 0.85 mm, single-wire 24-bit GRB
+(WS2812-type), VDD 3.0–7.5 V, 12 mA per channel (LCSC C54796803).
+
+- Source: [Yongyu approval spec](https://datasheet.lcsc.com/datasheet/pdf/f9afa0e15f6569ed1e35edd063d6a18f.pdf)
+  (package, pinout and suggested soldering pad p. 2, reflow profile and absolute ratings p. 4,
+  electrical and switching characteristics p. 5, bit timing p. 6, application circuit p. 8).
+- Pins (p. 2): 1 DOUT, 2 VDD, 3 DIN, 4 GND. Pins 2 and 4 are swapped against
+  `LED:WS2812B-2020`, so that symbol doesn't fit. The symbol is drawn with the stock
+  WS2812B-2020 graphic (CC-BY-SA 4.0 with the KiCad library exception), body 5.08 mm taller
+  (2.54 mm at each end) so the VDD/GND names clear DIN/DOUT.
+- Footprint drawn for this project (CERN-OHL-P-2.0): Yongyu's suggested pad (p. 2), four
+  0.85 × 0.75 mm pads with 0.20 / 0.97 mm gaps, roundrect per KLC. The datasheet top view is
+  turned 90° CCW so pad 1 sits top left: pads 1 (−0.86, −0.525), 2 (0.86, −0.525),
+  3 (0.86, 0.525), 4 (−0.86, 0.525), 0.75 × 0.85 mm; the 2.0 mm body side runs along X. DOUT,
+  VDD, DIN and GND sit where they are on `LED_WS2812B-2020_PLCC4_2.0x2.0mm`.
+- The p. 2 drawing has no "top/bottom view" labels. The left view is the top view: its 1.20 mm
+  between the terminal bands is the clear block (side view 1.2), and the p. 8 tape drawing
+  (parts seen through the cover tape) puts − at GND (4) top left and + at VDD (2) bottom right,
+  as the left view does. The right view is its mirror image (bottom view).
+- Timing (p. 6): T0H 0.295 µs, T1H 0.595 µs, T0L 0.595 µs, T1L 0.295 µs, each ±0.15 µs;
+  reset ≥ 80 µs. T1H must stay within 0.445–0.745 µs.
+- 3D model: `LED_SMD_Yongyu.3dshapes/`, from `3d-src/` (CERN-OHL-P-2.0). Substrate, clear
+  block, bottom and top terminals from the p. 2 dimensions. The castellation radius, the top
+  terminal gap and the green polarity mark are scaled from the drawing (the mark sits on the
+  pin 1/4 end: p. 2 draws it slightly toward pin 1, the p. 8 tape view toward pin 4); the metal
+  thicknesses are assumed. KiCad draws the clear block opaque, so the mark doesn't show.
 
 ### `Button_Switch_SMD_XKB:SW_Push_1P1T_XKB_TS-1187A`
 
@@ -315,6 +348,8 @@ JUSHUO AFA07-S15ECA-00 15-pin 1.0 mm FFC/FPC connector, top contact, slide lock,
 (LCSC C262742), for the camera FFC (`../../docs/hardware/camera.md`). Symbol:
 `Connector_Generic_MountingPin:Conn_01x15_MountingPin`.
 
+- **Not used by espion-cam any more** (J4 is the bottom-contact FCA since 2026-10-31, next
+  entry).
 - Sources: JUSHUO drawings rev A, [AFA07-S15ECA-00](https://datasheet.lcsc.com/datasheet/pdf/0bfd48b78181b65482fe0787b860af72.pdf)
   (top, front and side views, section A-A, DIM table, recommended PCB pattern) and
   [AFA07-S15FCA-00](https://datasheet.lcsc.com/datasheet/pdf/b01391708457137d9b8d8b493bdc4f0c.pdf)
@@ -331,6 +366,33 @@ JUSHUO AFA07-S15ECA-00 15-pin 1.0 mm FFC/FPC connector, top contact, slide lock,
   nail width are scaled from the drawing; the nail sheet thickness (0.20 mm) and its hidden
   rear web are assumed. The F.Fab rectangle in front of the latch (y 3.475–4.475) is the
   latch pulled open (+1.65 mm, section A-A); the model shows it closed.
+
+### `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal`
+
+JUSHUO AFA07-S15FCA-00 15-pin 1.0 mm FFC/FPC connector, bottom contact, slide lock, 2.5 mm
+high (LCSC C262721), J4 on espion-cam, for the camera FFC (`../../docs/hardware/camera.md`).
+Symbol: `Connector_Generic_MountingPin:Conn_01x15_MountingPin`.
+
+- Source: JUSHUO drawing AFA07-S\*\*F\*\*-\*\* rev A
+  ([LCSC](https://datasheet.lcsc.com/datasheet/pdf/b01391708457137d9b8d8b493bdc4f0c.pdf): top,
+  front and side views, section A-A, DIM table, recommended PCB pattern), compared with the
+  E drawing of the entry above.
+- Copy of the ECA footprint above, whose pads and drawings are KiCad's
+  `Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal` unchanged (CC-BY-SA 4.0
+  with the KiCad library exception). The F drawing's recommended PCB pattern is the E
+  drawing's: pitch 1.00 ± 0.05, DIM A 14.00 ± 0.05, pads 0.60 × 1.80, MP pads 2.60 × 3.00,
+  3.65 from circuit 1 to the MP pad's outer edge, 4.57 overall, circuit 1 on the left in the
+  top view; DIM C/D, the 5.30 depth and the side view's 6.75/2.55/4.00/1.45/2.50 are the same
+  too. Only the description (F drawing), tags and 3D model differ from the ECA footprint
+  (KiCad ships no model for the stock one). The stock anchor breaks KLC F6.2 (waived, as for
+  the ECA).
+- 3D model: `Connector_FFC-FPC_JUSHUO.3dshapes/`, from `3d-src/` (CERN-OHL-P-2.0): the ECA
+  model with its front turned upside down, as the F front view and section A-A draw it. The
+  FFC opening sits 0.42–0.83 mm above the board, with the housing floor lip set into the latch
+  notch below it; both heights are scaled from the F front view. The latch bar is solid on top
+  across its full width (F top view). Everything else, estimates included, is as in the ECA
+  model; the chamfer at the rear end of the latch side arms (low in the F side view, high in
+  the E one) is modelled in neither.
 
 ### `NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm`
 

@@ -27,6 +27,7 @@
         "Connector_HanRun:HR871150C": { "S4.5": "the part has no pin 6 (HanRun datasheet p. 2, \"Remove Pin#6\")" },
         "Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder": { "F6.1": "hand-soldering variant: its pads carry no F.Paste so the stencil has no apertures for it (docs/hardware/mcu.md)" },
         "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal": { "F6.2": "pads and anchor unchanged from stock Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal, whose generator puts the anchor there; only name, description, tags and 3D model differ" },
+        "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal": { "F6.2": "pads and anchor unchanged from stock Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal, whose generator puts the anchor there; only description, tags and 3D model differ" },
         "NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm": { "F5.1": "net tie: a copper bridge with no body, so its Reference stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added", "F5.2": "net tie: a copper bridge with no body, so its Value stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added" }
       },
       "fieldExempt": { "LCSC": ["U6"] },

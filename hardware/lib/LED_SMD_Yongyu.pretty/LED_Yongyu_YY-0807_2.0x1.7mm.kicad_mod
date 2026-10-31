@@ -1,0 +1,189 @@
+(footprint "LED_Yongyu_YY-0807_2.0x1.7mm"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Yongyu 0807 addressable RGB LED with integrated controller (YY-0807RGBJ26-07-FJ), 2.0x1.7mm body, 0.85mm high, Yongyu suggested soldering pad (p. 2), https://datasheet.lcsc.com/datasheet/pdf/f9afa0e15f6569ed1e35edd063d6a18f.pdf")
+	(tags "LED RGB addressable WS2812 Yongyu 0807")
+	(property "Reference" "REF**"
+		(at 0 -1.9 0)
+		(layer "F.SilkS")
+		(uuid "340e51c9-1b21-4c85-81b7-2bcb3a086fec")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "LED_Yongyu_YY-0807_2.0x1.7mm"
+		(at 0 1.9 0)
+		(layer "F.Fab")
+		(uuid "7e62e2c6-caa0-42c4-baba-4ffa86b1a1d7")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "a842f2d9-cbe3-4739-8106-536ccd3507a1")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "16a44e98-c2ce-409c-9a86-bcbef52f9aa6")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -0.225 -0.96)
+		(end 0.225 -0.96)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "9c2ca2d1-cd18-4440-a10f-f40a4c43960a")
+	)
+	(fp_line
+		(start -0.225 0.96)
+		(end 0.225 0.96)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "8429c506-17e5-4124-923a-433c6cad3178")
+	)
+	(fp_poly
+		(pts
+			(xy -1.56 -0.525) (xy -1.89 -0.765) (xy -1.89 -0.285)
+		)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(fill yes)
+		(layer "F.SilkS")
+		(uuid "80f79779-3045-48c8-bca4-badd67fba2da")
+	)
+	(fp_line
+		(start -1.49 -1.2)
+		(end 1.49 -1.2)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "ecab1e64-2e28-499e-9a8f-41a9c2c7f51b")
+	)
+	(fp_line
+		(start -1.49 1.2)
+		(end -1.49 -1.2)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "c4f2d518-2a70-401e-8a3d-da7d2bbe2c88")
+	)
+	(fp_line
+		(start 1.49 -1.2)
+		(end 1.49 1.2)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "a3513c6d-326c-4ed9-93bb-e4645bc8cf93")
+	)
+	(fp_line
+		(start 1.49 1.2)
+		(end -1.49 1.2)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "5d1350b5-04b0-4289-8ebc-3dba03ea0e6a")
+	)
+	(fp_poly
+		(pts
+			(xy -1 -0.425) (xy -0.575 -0.85) (xy 1 -0.85) (xy 1 0.85) (xy -1 0.85)
+		)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "d2f97a33-9c26-4e32-b3c7-91c6d94c4ca2")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "103ca977-2633-424d-a6c5-58e286ff5cd3")
+		(effects
+			(font
+				(size 0.5 0.5)
+				(thickness 0.08)
+			)
+		)
+	)
+	(pad "1" smd roundrect
+		(at -0.86 -0.525)
+		(size 0.75 0.85)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "9d625061-714d-4c5a-8b54-5836244267b8")
+	)
+	(pad "2" smd roundrect
+		(at 0.86 -0.525)
+		(size 0.75 0.85)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "dc860079-c288-4bbc-8d5c-66e5b6248df0")
+	)
+	(pad "3" smd roundrect
+		(at 0.86 0.525)
+		(size 0.75 0.85)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "e5f391fa-569d-4a6a-81b7-bfa8f6aba91f")
+	)
+	(pad "4" smd roundrect
+		(at -0.86 0.525)
+		(size 0.75 0.85)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "5e0c2699-6158-4e4d-9e90-6e277a6777b3")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/../lib/LED_SMD_Yongyu.3dshapes/LED_Yongyu_YY-0807_2.0x1.7mm.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)
