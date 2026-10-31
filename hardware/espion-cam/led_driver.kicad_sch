@@ -5846,7 +5846,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/a4d1e2744bd5d44ba57842651a3fd598.pdf"
 			(at 17.78 129.54 0)
 			(hide yes)
 			(show_name no)
@@ -5868,7 +5868,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FH"
+		(property "Manufacturer" "Murata"
 			(at 17.78 129.54 0)
 			(hide yes)
 			(show_name no)
@@ -5879,7 +5879,7 @@
 				)
 			)
 		)
-		(property "MPN" "0603CG103J500NT"
+		(property "MPN" "GRM1885C1H103JA01D"
 			(at 17.78 129.54 0)
 			(hide yes)
 			(show_name no)
@@ -5890,7 +5890,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C82282"
+		(property "LCSC" "C85973"
 			(at 17.78 129.54 0)
 			(hide yes)
 			(show_name no)
@@ -7419,7 +7419,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/a4d1e2744bd5d44ba57842651a3fd598.pdf"
 			(at 48.26 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -7441,7 +7441,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FH"
+		(property "Manufacturer" "Murata"
 			(at 48.26 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -7452,7 +7452,7 @@
 				)
 			)
 		)
-		(property "MPN" "0603CG103J500NT"
+		(property "MPN" "GRM1885C1H103JA01D"
 			(at 48.26 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -7463,7 +7463,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C82282"
+		(property "LCSC" "C85973"
 			(at 48.26 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -8025,7 +8025,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "220uF 50V"
+		(property "Value" "330uF 50V"
 			(at 212.09 43.18 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8047,7 +8047,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/28b7f65130241c48e650f325ce318c84.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f8871fe6898b34eedf38592b1f4f312e.pdf"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -8069,7 +8069,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "ROQANG"
+		(property "Manufacturer" "Panasonic"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -8080,7 +8080,7 @@
 				)
 			)
 		)
-		(property "MPN" "RVT1H221M1010"
+		(property "MPN" "EEEFT1H331AP"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -8091,7 +8091,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C72499"
+		(property "LCSC" "C178596"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -9054,7 +9054,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/a4d1e2744bd5d44ba57842651a3fd598.pdf"
 			(at 144.78 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -9076,7 +9076,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FH"
+		(property "Manufacturer" "Murata"
 			(at 144.78 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -9087,7 +9087,7 @@
 				)
 			)
 		)
-		(property "MPN" "0603CG103J500NT"
+		(property "MPN" "GRM1885C1H103JA01D"
 			(at 144.78 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -9098,7 +9098,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C82282"
+		(property "LCSC" "C85973"
 			(at 144.78 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -11525,7 +11525,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "220uF 50V"
+		(property "Value" "330uF 50V"
 			(at 232.41 43.18 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11547,7 +11547,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/28b7f65130241c48e650f325ce318c84.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f8871fe6898b34eedf38592b1f4f312e.pdf"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11569,7 +11569,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "ROQANG"
+		(property "Manufacturer" "Panasonic"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11580,7 +11580,7 @@
 				)
 			)
 		)
-		(property "MPN" "RVT1H221M1010"
+		(property "MPN" "EEEFT1H331AP"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11591,7 +11591,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C72499"
+		(property "LCSC" "C178596"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
