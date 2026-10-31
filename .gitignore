@@ -39,3 +39,6 @@ hardware/**/*-bom.csv
 
 # Personal notes
 /TODO.md
+
+# Agent run state and evidence
+/audit/
