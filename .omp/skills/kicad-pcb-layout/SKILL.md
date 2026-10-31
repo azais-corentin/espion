@@ -47,7 +47,7 @@ Every board edit is re-saved by KiCad, every zone is refilled and the fills are 
     - `layout`: the `.omp/kicad.json` constraints.
     Every warning is fixed, or written in `layout.md` as an accepted risk with its reason.
 11. **Review.** Another agent reviews the layout with the `kicad-pcb-review` skill. Fix what it finds.
-12. **Fab output.** `kicad_export {outputs: ["gerbers", "assembly", "step"], rev?}` writes into `fab/` (gitignored). It refuses gerbers and assembly while DRC has an error, parity an issue, any item is unconnected, or ERC has an error. Each footprint the answer lists as not confirmed in JLCPCB's placement preview needs an entry in `assembly.corrections` in `.omp/kicad.json` once checked.
+12. **Fab output.** `kicad_export {outputs: ["gerbers", "assembly", "step", "drawings"], rev?}` writes into `fab/` (gitignored). It refuses gerbers and assembly while DRC has an error, parity an issue, any item is unconnected, or ERC has an error. Each footprint the answer lists as not confirmed in JLCPCB's placement preview needs an entry in `assembly.corrections` in `.omp/kicad.json` once checked. Parts soldered by hand go in `assembly.hand` (`{"U6": "reason"}`): they leave the BOM and CPL for `<board>-hand-assembly.csv`, and the `drawings` (assembly drawings per side, SVG and PDF, the bottom mirrored) highlight them.
 
 ## Length tuning
 Meanders are drawn by the user in pcbnew; the toolkit doesn't draw them. Measure with `lengths` (per net, the diff-pair skew, `paths` from pad to pad). Check with `kicad_check {checks: ["layout"]}` (`lengthGroups`, `paths`) and `drc` (skew rules in the `.kicad_dru`). `copper` shows tracks that belong to a tuning pattern. `remove_copper` removes a pattern only with all of its tracks.

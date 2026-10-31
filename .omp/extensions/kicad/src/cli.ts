@@ -369,15 +369,33 @@ export async function pcbStats(board: string, o: RunOpts): Promise<Record<string
 
 /**
  * Plot board layers into one SVG (`--mode-single`), without the drawing sheet. The SVG's user
- * units are board millimetres: a board point (x, y) is drawn at SVG (x, y).
+ * units are board millimetres: a board point (x, y) is drawn at SVG (x, y). `flags` are further
+ * kicad-cli plot options (e.g. `--black-and-white`).
  */
-export async function pcbSvg(board: string, layers: string[], theme: string, out: string, o: RunOpts): Promise<string> {
+export async function pcbSvg(board: string, layers: string[], theme: string, out: string, o: RunOpts, flags: string[] = []): Promise<string> {
 	const r = await must(
-		["kicad-cli", "pcb", "export", "svg", "--mode-single", "--theme", theme, "--layers", layers.join(","), "--exclude-drawing-sheet", "--page-size-mode", "1", "--sketch-pads-on-fab-layers", "-o", out, board],
+		[
+			"kicad-cli", "pcb", "export", "svg", "--mode-single", "--theme", theme, "--layers", layers.join(","), "--exclude-drawing-sheet", "--page-size-mode", "1",
+			"--sketch-pads-on-fab-layers", ...flags, "-o", out, board,
+		],
 		o,
 	);
 	if (!fs.existsSync(out)) throw new Error(`kicad-cli pcb export svg wrote no output: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
 	return out;
+}
+
+/** PDF resolution of svgToPdf (dots per inch). */
+export const PDF_DPI = 300;
+
+/**
+ * An SVG as a PDF page of the same size, rasterised at PDF_DPI by the dev shell's ImageMagick
+ * (librsvg). False, and no file, when the dev shell has no `magick`.
+ */
+export async function svgToPdf(svg: string, pdf: string, o: RunOpts): Promise<boolean> {
+	if (!Bun.which("magick", { PATH: (await devEnv(o.repoRoot)).PATH ?? "" })) return false;
+	const r = await must(["magick", "-density", String(PDF_DPI), "-units", "PixelsPerInch", svg, pdf], o);
+	if (!fs.existsSync(pdf)) throw new Error(`magick wrote no PDF: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
+	return true;
 }
 
 /** Root of kicad-library-tools (dev shell env KICAD_LIBRARY_TOOLS). */

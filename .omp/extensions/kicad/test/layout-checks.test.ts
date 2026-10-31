@@ -325,6 +325,17 @@ describe.skipIf(!HAS_KICAD)("board review checks on the routed fixture", () => {
 			"error copperArea a: X5 has no copper pads to measure from (why: w)",
 		]);
 	}, 60_000);
+
+	test("placement: an assembly.hand reference the board doesn't have is an error quoting its reason; the listed parts in one info finding", async () => {
+		fs.writeFileSync(path.join(root, ".omp", "kicad.json"), JSON.stringify({ projects: { layout: { assembly: { hand: { X3: "fragile", U9: "module dropped in rev B" } } } } }));
+		const f = (await run(["placement"])).filter(x => x.key.startsWith("placement|hand"));
+		expect(f.map(x => [x.severity, x.message])).toEqual([
+			["error", "assembly.hand U9: no footprint U9 on the board (stale config) (why: module dropped in rev B)"],
+			["info", "1 hand-assembly parts (assembly.hand; left out of JLCPCB's BOM and CPL): X3"],
+		]);
+		setLayout({});
+		expect((await run(["placement"])).filter(x => x.key.startsWith("placement|hand"))).toEqual([]);
+	}, 60_000);
 });
 
 describe("board review checks on espion-cam (183 footprints, 21 placed, no tracks)", () => {

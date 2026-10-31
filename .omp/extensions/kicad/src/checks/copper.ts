@@ -601,6 +601,7 @@ const placementCheck: CheckDef = {
 	name: "placement",
 	doc:
 		"Footprint placement against the board: a placed footprint (origin on the board) with a pad outside the outline, in a cutout or crossing an edge (warning per footprint); a courtyard (its outline, rotation applied; pads and body box without one) overlapping a rule area that keeps footprints out on the footprint's side (error; a footprint's own rule areas, such as a tooling hole's keep-out ring, don't count); one info finding with the counts (placed, on the bottom side, locked) and one with the footprints not placed yet (origin off the board). " +
+		"The hand-assembly list (settings.assembly.hand, which kicad_export leaves out of JLCPCB's BOM and CPL): an error per reference the board has no footprint of (stale config), quoting its reason, and one info finding naming the hand-assembly parts. " +
 		"Courtyard overlaps between footprints are DRC's (drc). No footprints: one info finding.",
 	byDefault: true,
 	async run(ctx) {
@@ -609,7 +610,20 @@ const placementCheck: CheckDef = {
 		const info = (message: string, key: string): Finding => ({ check: "placement", severity: "info", message, key: `placement|${key}` });
 		if (!fps.length) return [info("no footprints on the board: nothing to check", "none")];
 		const o = outlineOf(ctx.project);
-		if (!o) return [info(`the board has no outline yet: placement of its ${fps.length} footprints not checked`, "none")];
+		const refs = new Set(fps.map(fpRef));
+		const hand = Object.entries(ctx.project.settings.assembly.hand).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+		const handFindings: Finding[] = hand
+			.filter(([ref]) => !refs.has(ref))
+			.map(([ref, why]) => ({
+				check: "placement",
+				severity: "error",
+				message: `assembly.hand ${ref}: no footprint ${ref} on the board (stale config) (why: ${why})`,
+				key: `placement|hand|${ref}`,
+				refs: [ref],
+			}));
+		const onHand = hand.filter(([ref]) => refs.has(ref)).map(([ref]) => ref);
+		if (onHand.length) handFindings.push(info(`${onHand.length} hand-assembly parts (assembly.hand; left out of JLCPCB's BOM and CPL): ${onHand.join(", ")}`, "hand"));
+		if (!o) return [...handFindings, info(`the board has no outline yet: placement of its ${fps.length} footprints not checked`, "none")];
 		const c = Copper.of(board);
 		const first = c.copperLayers[0]!;
 		const last = c.copperLayers[c.copperLayers.length - 1]!;
@@ -664,6 +678,7 @@ const placementCheck: CheckDef = {
 			const sorted = unplaced.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 			out.push(info(`${sorted.length} footprints not placed yet (origin off the board): ${sorted.slice(0, 30).join(", ")}${sorted.length > 30 ? ", …" : ""}`, "unplaced"));
 		}
+		out.push(...handFindings);
 		return out;
 	},
 };

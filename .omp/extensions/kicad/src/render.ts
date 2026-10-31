@@ -119,7 +119,7 @@ export async function renderRegions(
  * Parts are plotted with KiCad's built-in theme, whatever the user's editor themes are, on that
  * theme's background: KiCad's part SVGs have none, and the board colours need a dark one.
  */
-const PART_THEME = "_builtin_default";
+export const PART_THEME = "_builtin_default";
 const BACKGROUND: Record<PartKind, string> = { symbol: "#F5F4EF", footprint: "#001023" };
 
 /** Back copper under front copper, silkscreen, courtyard, then fabrication with numbered pad outlines on top. */
@@ -298,10 +298,10 @@ async function plotFootprint(libs: Libraries, req: PartRenderRequest, dir: strin
 	return { svg: probe.svg, offset, extent: [-offset[0], -offset[1], w - offset[0], h - offset[1]] };
 }
 
-const f4 = (v: number) => v.toFixed(4);
+export const f4 = (v: number) => v.toFixed(4);
 
 /** The children of a plot's root <svg>. */
-function svgBody(svg: string): string {
+export function svgBody(svg: string): string {
 	const open = /<svg\b[^>]*>/.exec(svg);
 	const end = svg.lastIndexOf("</svg>");
 	if (!open || end < 0) throw new Error("KiCad's plot is not an SVG document");

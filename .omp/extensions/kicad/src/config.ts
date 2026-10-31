@@ -41,6 +41,12 @@ export interface AssemblyConfig {
 	 * offset records that the footprint was checked in JLCPCB's placement preview and needs none.
 	 */
 	corrections: Record<string, PlacementCorrection>;
+	/**
+	 * Parts assembled by hand, by reference, with the reason: {"U6": "hand-soldered module"}. They
+	 * are left out of JLCPCB's BOM and CPL, listed in `<board>-hand-assembly.csv` and highlighted in
+	 * the assembly drawings (a project's entries over the defaults').
+	 */
+	hand: Record<string, string>;
 }
 
 /**
@@ -154,7 +160,7 @@ export const DEFAULTS: ProjectConfig = {
 	decouplingExempt: {},
 	pullUpNets: ["*SDA*", "*SCL*", "*MDIO*"],
 	pullsExempt: {},
-	assembly: { corrections: {} },
+	assembly: { corrections: {}, hand: {} },
 	layout: {
 		decouplingMaxDistance: 3,
 		viaReturnMaxDistance: 1,
@@ -204,8 +210,13 @@ function merge(a: ProjectConfig, b: Partial<ProjectConfig>): ProjectConfig {
 		klcWaivers: { ...a.klcWaivers, ...b.klcWaivers },
 		decouplingExempt: { ...a.decouplingExempt, ...b.decouplingExempt },
 		pullsExempt: { ...a.pullsExempt, ...b.pullsExempt },
-		// the project's patterns first: first match wins
-		assembly: { ...a.assembly, ...b.assembly, corrections: { ...b.assembly?.corrections, ...a.assembly.corrections, ...b.assembly?.corrections } },
+		assembly: {
+			...a.assembly,
+			...b.assembly,
+			// the project's patterns first: first match wins
+			corrections: { ...b.assembly?.corrections, ...a.assembly.corrections, ...b.assembly?.corrections },
+			hand: { ...a.assembly.hand, ...b.assembly?.hand },
+		},
 		layout: { ...a.layout, ...b.layout },
 	};
 }
@@ -215,10 +226,21 @@ export function projectConfig(cfg: Config, projectDir: string): ProjectConfig {
 	return merge(cfg.defaults, checked(cfg.projects[rel] ?? {}, `${cfg.file}: projects["${rel}"]`));
 }
 
-/** A config part with its layout section validated (throws naming the bad entry). */
+/** A config part with its layout section and hand-assembly list validated (throws naming the bad entry). */
 function checked(c: Partial<ProjectConfig>, where: string): Partial<ProjectConfig> {
 	if (c.layout !== undefined) validateLayout(c.layout, `${where}.layout`);
+	if (c.assembly?.hand !== undefined) validateHand(c.assembly.hand, `${where}.assembly.hand`);
 	return c;
+}
+
+/** Throws on a malformed `assembly.hand`, naming the entry: an object of reference → non-empty reason. */
+export function validateHand(raw: unknown, where: string): void {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`${where}: give an object {"<reference>": "<reason>"}, got ${JSON.stringify(raw)}`);
+	for (const [ref, reason] of Object.entries(raw)) {
+		const at = `${where}[${JSON.stringify(ref)}]`;
+		if (!/^[^\s.*?]+$/.test(ref)) throw new Error(`${at}: give a footprint reference ("U6"), not a pattern, pad or blank`);
+		if (typeof reason !== "string" || !reason.trim()) throw new Error(`${at}: give the reason as a non-empty string, got ${JSON.stringify(reason)}`);
+	}
 }
 
 type FieldKind = "string" | "strings" | "number" | "count" | "point" | "heights" | "side" | "pad" | "pads";

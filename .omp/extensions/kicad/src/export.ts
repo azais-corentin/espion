@@ -2,11 +2,15 @@
  * Fabrication outputs for JLCPCB (`kicad_export`), written to `<project dir>/fab/<rev>-<YYYY-MM-DD>/`:
  *
  * - gerbers: Gerbers and Excellon drill files with a drill map, zipped for upload;
- * - assembly: the BOM and CPL (pick and place) CSVs for JLCPCB's assembly service;
- * - step: the board with its 3D models.
+ * - assembly: the BOM and CPL (pick and place) CSVs for JLCPCB's assembly service, and the list of
+ *   the parts assembled by hand (`assembly.hand`), which the BOM and CPL leave out;
+ * - step: the board with its 3D models;
+ * - drawings: assembly drawings of each side with parts (outline, fab layer, silkscreen; the
+ *   bottom mirrored as seen from below) with the hand-assembly parts highlighted, SVG and PDF.
  *
  * Gerbers and assembly are gated: KiCad's DRC with zones refilled in memory, schematic parity and
- * every connection routed, and ERC; assembly also needs the fields check. STEP is never gated.
+ * every connection routed, and ERC; assembly also needs the fields check. STEP and the drawings are
+ * never gated; the drawings need a board outline.
  *
  * JLCPCB sources (read 2026-10-30):
  * - Gerbers and drill: https://jlcpcb.com/help/article/how-to-generate-gerber-and-drill-files-in-kicad-8
@@ -29,21 +33,23 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { Analysis } from "./analysis";
-import { type Board, fpId, fpRef, placement, toBoard } from "./board";
+import { type Board, courtyardEdges, fpAttrs, fpId, fpProp, fpRef, placement, toBoard } from "./board";
 import { boardIsEmpty, drcFindings } from "./checks/board";
 import { wildcards } from "./checks/circuit";
 import { ercFindings } from "./checks/connectivity";
 import * as cli from "./cli";
-import type { PlacementCorrection } from "./config";
+import type { AssemblyConfig, PlacementCorrection } from "./config";
 import { boardOutline, isEdgeItem } from "./edges";
+import type { Box, Pt } from "./geom";
 import { kicadVars } from "./libs";
 import { Project } from "./project";
 import { parseCsv } from "./queries/project";
 import { CHECKS } from "./registry";
+import { f4, PART_THEME, svgBody } from "./render";
 import { child, children, flag, isList, type List, text } from "./sexpr";
 import { SpecError } from "./spec";
 
-export const OUTPUTS = ["gerbers", "assembly", "step"] as const;
+export const OUTPUTS = ["gerbers", "assembly", "step", "drawings"] as const;
 export type Output = (typeof OUTPUTS)[number];
 
 export interface ExportRequest {
@@ -86,14 +92,15 @@ export interface LeftOut {
 
 /**
  * The parts JLCPCB assembles: schematic parts (not power symbols) whose footprint is on the board,
- * that are fitted, in the BOM and carry an LCSC part number (and, given `posRefs`, appear in
- * KiCad's position file). Every other part is left out with its reason; `boardOnly` lists the
- * board footprints without a symbol.
+ * that are fitted, not assembled by hand (`hand`: ref → reason), in the BOM and carry an LCSC part
+ * number (and, given `posRefs`, appear in KiCad's position file). Every other part is left out with
+ * its reason; `boardOnly` lists the board footprints without a symbol.
  */
 export function assemblyParts(
 	components: Iterable<cli.Component>,
 	boardIds: ReadonlyMap<string, string>,
 	posRefs?: ReadonlySet<string>,
+	hand: AssemblyConfig["hand"] = {},
 ): { parts: AsmPart[]; left: LeftOut[]; boardOnly: string[] } {
 	const parts: AsmPart[] = [];
 	const left: LeftOut[] = [];
@@ -108,13 +115,15 @@ export function assemblyParts(
 				? "not on the board"
 				: c.dnp
 					? "DNP"
-					: c.excludeFromBom
-						? "excluded from the BOM"
-						: !lcsc
-							? "no LCSC field"
-							: posRefs && !posRefs.has(c.ref)
-								? "excluded from position files"
-								: undefined;
+					: hand[c.ref] !== undefined
+						? `hand assembly (assembly.hand): ${hand[c.ref]}`
+						: c.excludeFromBom
+							? "excluded from the BOM"
+							: !lcsc
+								? "no LCSC field"
+								: posRefs && !posRefs.has(c.ref)
+									? "excluded from position files"
+									: undefined;
 		if (reason) left.push({ ref: c.ref, reason });
 		else parts.push({ ref: c.ref, value: c.value, footprint: id!, lcsc });
 	}
@@ -271,6 +280,213 @@ export function cplCsv(rows: CplRow[]): string {
 	return csv([["Designator", "Mid X", "Mid Y", "Layer", "Rotation"], ...rows.map(r => [r.ref, `${n(r.x)}mm`, `${n(r.y)}mm`, r.layer, n(r.rot)])]);
 }
 
+// ---- assembly: hand-assembly list ---------------------------------------------------------------
+
+/** A part assembled by hand (`assembly.hand`): what it is, where it sits (the CPL's frame) and why. */
+export interface HandRow {
+	ref: string;
+	value: string;
+	/** "" when the part has none. */
+	mpn: string;
+	/** The board footprint's "Lib:Name". */
+	footprint: string;
+	layer: "Top" | "Bottom";
+	/** mm, x right, page origin, as KiCad's position file. */
+	x: number;
+	/** mm, y up (the board's y negated), as KiCad's position file. */
+	y: number;
+	/** Degrees, as pcbnew shows it (KiCad's position file). */
+	rot: number;
+	reason: string;
+	/** Position from the board file: the footprint is excluded from position files (or no position file was given). */
+	fromBoard: boolean;
+	fp: List;
+}
+
+/**
+ * The hand-assembly parts (`hand`: ref → reason) in natural reference order: one row per fitted
+ * one with a footprint, positioned from KiCad's position file `pos`, else from the board file
+ * (same frame: page origin, y negated); the DNP ones and the ones with no footprint on the board apart.
+ */
+export function handParts(
+	hand: AssemblyConfig["hand"],
+	components: ReadonlyMap<string, cli.Component>,
+	fps: readonly List[],
+	pos: readonly PosRow[] = [],
+): { rows: HandRow[]; dnp: string[]; missing: string[] } {
+	const byRef = new Map(fps.map(fp => [fpRef(fp), fp] as const));
+	const at = new Map(pos.map(p => [p.ref, p] as const));
+	const rows: HandRow[] = [];
+	const dnp: string[] = [];
+	const missing: string[] = [];
+	for (const [ref, reason] of Object.entries(hand).sort(([a], [b]) => natural(a, b))) {
+		const fp = byRef.get(ref);
+		const c = components.get(ref);
+		if (!fp) missing.push(ref);
+		else if (c?.dnp || fpAttrs(fp).includes("dnp")) dnp.push(ref);
+		else {
+			const pl = placement(fp);
+			const p = at.get(ref);
+			rows.push({
+				ref,
+				value: c?.value ?? fpProp(fp, "Value") ?? "",
+				mpn: (c?.fields.MPN ?? fpProp(fp, "MPN") ?? "").trim(),
+				footprint: fpId(fp),
+				layer: (p?.side ?? pl.side) === "bottom" ? "Bottom" : "Top",
+				x: p ? p.x : pl.at[0] + 0,
+				y: p ? p.y : -pl.at[1] + 0,
+				rot: p ? p.rot : pl.rot,
+				reason,
+				fromBoard: !p,
+				fp,
+			});
+		}
+	}
+	return { rows, dnp, missing };
+}
+
+/** The hand-assembly list's columns: mm and rotation as in KiCad's position file. */
+export function handCsv(rows: HandRow[]): string {
+	const n = (v: number) => String(Math.round(v * 1e4) / 1e4 + 0);
+	return csv([
+		["Designator", "Value", "MPN", "Footprint", "Layer", "Mid X", "Mid Y", "Rotation", "Reason"],
+		...rows.map(r => [r.ref, r.value, r.mpn, r.footprint, r.layer, `${n(r.x)}mm`, `${n(r.y)}mm`, n(r.rot), r.reason]),
+	]);
+}
+
+/** What the answer says about the hand-assembly list besides the parts written. */
+function handLines(h: { dnp: string[]; missing: string[] }): string[] {
+	return [
+		...(h.dnp.length ? [`In assembly.hand but DNP (not listed, not highlighted): ${h.dnp.join(", ")}.`] : []),
+		...(h.missing.length ? [`In assembly.hand but not on the board (stale config, kicad_check placement flags it): ${h.missing.join(", ")}.`] : []),
+	];
+}
+
+// ---- drawings -----------------------------------------------------------------------------------
+
+/** Layers of a side's assembly drawing: the outline and fab layer in black, the silkscreen in grey. */
+export const DRAWING_LAYERS = {
+	top: { black: ["Edge.Cuts", "F.Fab"], grey: ["F.Silkscreen"] },
+	bottom: { black: ["Edge.Cuts", "B.Fab"], grey: ["B.Silkscreen"] },
+} as const;
+
+/** kicad-cli plot options of the drawings' layers. */
+const DRAWING_FLAGS = ["--black-and-white", "--crossout-DNP-footprints-on-fab-layers"];
+const GREY = "#8C8C8C";
+/** Colour of a hand-assembly part's courtyard, filled translucent, in the drawings. */
+export const HAND_COLOUR = "#FF5A00";
+
+/** Closed loops of edges given in any order and direction (a courtyard drawn as separate lines); an open chain is closed. */
+export function edgeLoops(edges: readonly (readonly [Pt, Pt])[]): Pt[][] {
+	const same = (a: Pt, b: Pt) => Math.abs(a[0] - b[0]) < 1e-4 && Math.abs(a[1] - b[1]) < 1e-4;
+	const left = edges.map(e => [e[0], e[1]] as [Pt, Pt]);
+	const loops: Pt[][] = [];
+	while (left.length) {
+		const loop: Pt[] = [...left.shift()!];
+		for (;;) {
+			const end = loop[loop.length - 1]!;
+			if (same(loop[0]!, end)) break;
+			const i = left.findIndex(e => same(e[0], end) || same(e[1], end));
+			if (i < 0) break;
+			const [e] = left.splice(i, 1);
+			loop.push(same(e![0], end) ? e![1] : e![0]);
+		}
+		if (loop.length > 2 && same(loop[0]!, loop[loop.length - 1]!)) loop.pop();
+		loops.push(loop);
+	}
+	return loops;
+}
+
+const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** The words of `s` in lines of at most `n` characters (a longer word on a line of its own). */
+function wrap(s: string, n: number): string[] {
+	const lines: string[] = [];
+	for (const w of s.split(/\s+/).filter(Boolean)) {
+		const last = lines[lines.length - 1];
+		if (last !== undefined && last.length + 1 + w.length <= n) lines[lines.length - 1] = `${last} ${w}`;
+		else lines.push(w);
+	}
+	return lines;
+}
+
+export interface DrawingSpec {
+	side: "top" | "bottom";
+	/** The board outline's bbox, board mm. */
+	box: Box;
+	/** KiCad's plots (SVG documents, board mm): the black layers and the grey ones. */
+	black: string;
+	grey: string;
+	/** The hand-assembly parts on this side, with their courtyard edges (board mm). */
+	hand: { ref: string; value: string; reason: string; edges: [Pt, Pt][] }[];
+	title: string;
+	/** Lines under the title. */
+	info: string[];
+}
+
+/**
+ * An assembly drawing on white: the board area (outline bbox + 5 mm), scaled up to 4:1 in half
+ * steps so its longer side reaches 140 mm, with each hand-assembly part's courtyard filled
+ * translucent in HAND_COLOUR under KiCad's plots (silkscreen grey, outline and fab layer black),
+ * mirrored left to right for the bottom (seen from below, as KiCad's mirrored plot); below it the
+ * legend: title, scale, info lines and the hand-assembly parts with their reasons. SVG units are mm.
+ */
+export function drawingSvg(d: DrawingSpec): string {
+	const m = 5;
+	const [x0, y0, x1, y1] = d.box;
+	const [bw, bh] = [x1 - x0, y1 - y0];
+	const s = Math.min(4, Math.max(1, Math.floor((140 / Math.max(bw, bh)) * 2) / 2));
+	const w = Math.max(bw * s + 2 * m, 150);
+	const font = 3;
+	const cols = Math.max(20, Math.floor((w - 2 * m) / (font * 0.6)));
+	const bx = (w - bw * s) / 2;
+	const transform = d.side === "top" ? `matrix(${s} 0 0 ${s} ${f4(bx - x0 * s)} ${f4(m - y0 * s)})` : `matrix(${-s} 0 0 ${s} ${f4(bx + x1 * s)} ${f4(m - y0 * s)})`;
+	const plot = (svg: string, colour?: string) => {
+		const body = svgBody(svg).replace(/<(title|desc)>[\s\S]*?<\/\1>/g, "");
+		return colour ? body.replace(/#000000/gi, colour) : body;
+	};
+	const highlights = d.hand.map(h => {
+		const dPath = edgeLoops(h.edges)
+			.map(l => `M${l.map(p => `${f4(p[0])},${f4(p[1])}`).join(" L")} Z`)
+			.join(" ");
+		return `<path data-ref="${xml(h.ref)}" d="${dPath}" fill="${HAND_COLOUR}" fill-opacity="0.35" fill-rule="evenodd" stroke="${HAND_COLOUR}" stroke-width="0.2" stroke-linejoin="round"/>`;
+	});
+	const legend: string[] = [];
+	let y = bh * s + 2 * m + font * 1.4;
+	legend.push(`<text x="${f4(m)}" y="${f4(y)}" font-size="${font * 1.3}" font-weight="bold">${xml(d.title)}</text>`);
+	for (const l of [`Scale ${s}:1.`, ...d.info].flatMap(t => wrap(t, cols))) {
+		y += font * 1.5;
+		legend.push(`<text x="${f4(m)}" y="${f4(y)}" font-size="${font}">${xml(l)}</text>`);
+	}
+	y += font * 1.8;
+	legend.push(
+		`<rect x="${f4(m)}" y="${f4(y - font * 0.8)}" width="${f4(font * 1.6)}" height="${f4(font)}" fill="${HAND_COLOUR}" fill-opacity="0.35" stroke="${HAND_COLOUR}" stroke-width="0.2"/>`,
+		`<text x="${f4(m + font * 2.2)}" y="${f4(y)}" font-size="${font}">${xml(
+			d.hand.length ? `Hand assembly (assembly.hand), highlighted: ${d.hand.length} part${d.hand.length > 1 ? "s" : ""} on this side` : "Hand assembly (assembly.hand): none on this side",
+		)}</text>`,
+	);
+	for (const h of d.hand) {
+		for (const [i, l] of wrap(`${h.ref} (${h.value}): ${h.reason}`, cols - 4).entries()) {
+			y += font * 1.5;
+			legend.push(`<text x="${f4(m + font * (i ? 3.4 : 2.2))}" y="${f4(y)}" font-size="${font}"${i ? "" : ' font-weight="bold"'}>${xml(l)}</text>`);
+		}
+	}
+	const h = y + m;
+	return [
+		`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="${f4(w)}mm" height="${f4(h)}mm" viewBox="0 0 ${f4(w)} ${f4(h)}">`,
+		`<title>${xml(d.title)}</title>`,
+		`<defs><clipPath id="board-area" clipPathUnits="userSpaceOnUse"><rect x="${f4(x0 - m / s)}" y="${f4(y0 - m / s)}" width="${f4(bw + (2 * m) / s)}" height="${f4(bh + (2 * m) / s)}"/></clipPath></defs>`,
+		`<rect x="0" y="0" width="${f4(w)}" height="${f4(h)}" fill="#FFFFFF"/>`,
+		`<g id="board" transform="${transform}"><g clip-path="url(#board-area)">`,
+		`<g id="hand-assembly">${highlights.join("")}</g>`,
+		`<g id="silkscreen">${plot(d.grey, GREY)}</g>`,
+		`<g id="outline-fab">${plot(d.black)}</g>`,
+		"</g></g>",
+		`<g id="legend" font-family="sans-serif" fill="#000000">${legend.join("")}</g>`,
+		"</svg>",
+	].join("\n");
+}
+
 // ---- zip ----------------------------------------------------------------------------------------
 
 /** A zip archive (deflate, UTF-8 names) of these entries, dated `date` (local time). */
@@ -374,7 +590,16 @@ async function missingModels(project: Project, board: Board): Promise<{ total: n
 /** The files and directories an output writes into the fab directory of a board named `name`. */
 export function outputPaths(dir: string, name: string, output: Output): string[] {
 	const at = (f: string) => path.join(dir, f);
-	return output === "gerbers" ? [at(`${name}-gerbers.zip`), at("gerbers")] : output === "assembly" ? [at(`${name}-bom.csv`), at(`${name}-cpl.csv`)] : [at(`${name}.step`)];
+	switch (output) {
+		case "gerbers":
+			return [at(`${name}-gerbers.zip`), at("gerbers")];
+		case "assembly":
+			return [at(`${name}-bom.csv`), at(`${name}-cpl.csv`), at(`${name}-hand-assembly.csv`)];
+		case "step":
+			return [at(`${name}.step`)];
+		case "drawings":
+			return ["top", "bottom"].flatMap(s => [at(`${name}-assembly-${s}.svg`), at(`${name}-assembly-${s}.pdf`)]);
+	}
 }
 
 export async function runExport(repoRoot: string, req: ExportRequest, signal?: AbortSignal, now = new Date()): Promise<ExportResult> {
@@ -385,6 +610,10 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 	const project = Project.open(req.project, repoRoot);
 	const board = project.board();
 	const corrections = outputs.includes("assembly") ? checkCorrections(project.settings.assembly.corrections, project.config.file) : {};
+	const hand = project.settings.assembly.hand;
+	const outline = boardOutline(board.tree.filter((c): c is List => isList(c) && isEdgeItem(c)));
+	const fps = board.footprints();
+	const bottom = fps.filter(fp => placement(fp).side === "bottom").length;
 	const rev = req.rev?.trim() ?? boardRev(board) ?? "draft";
 	const dir = path.join(project.dir, "fab", `${rev.replace(/[^A-Za-z0-9._-]+/g, "_")}-${ymd(now)}`);
 	const analysis = new Analysis(project, signal);
@@ -396,7 +625,7 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 	const removed = outputs.flatMap(x => outputPaths(dir, project.name, x)).filter(p => fs.existsSync(p));
 	for (const p of removed) fs.rmSync(p, { recursive: true, force: true });
 	try {
-		const gated = outputs.filter(x => x !== "step");
+		const gated = outputs.filter(x => x === "gerbers" || x === "assembly");
 		const [gate, nl, fields] = await Promise.all([
 			gated.length ? boardGate(project, analysis) : Promise.resolve([]),
 			analysis.netlist(),
@@ -406,6 +635,7 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 			const why = [...gate, ...(x === "assembly" ? failed("fields check errors", fields.filter(f => f.severity === "error").map(f => f.message)) : [])];
 			if (why.length) refusals.set(x, why);
 		}
+		if (outputs.includes("drawings") && !outline.bbox) refusals.set("drawings", []);
 		const ok = (x: Output) => outputs.includes(x) && !refusals.has(x);
 		if (outputs.some(ok)) fs.mkdirSync(dir, { recursive: true });
 
@@ -428,11 +658,12 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 			notes.push(`Gerbers: ${plotted.length} files (Gerbers, drill, drill map) zipped into ${path.basename(archive)}: upload that one.`);
 		}
 
-		const boardIds = new Map(board.footprints().map(fp => [fpRef(fp), fpId(fp)] as const));
-		const asm = assemblyParts(nl.components.values(), boardIds);
+		const boardIds = new Map(fps.map(fp => [fpRef(fp), fpId(fp)] as const));
+		const asm = assemblyParts(nl.components.values(), boardIds, undefined, hand);
+		let handNoted = false;
 		if (ok("assembly")) {
 			const pos = parsePos(await cli.pcbPos(project.boardFile, o));
-			const { parts, left, boardOnly } = assemblyParts(nl.components.values(), boardIds, new Set(pos.map(p => p.ref)));
+			const { parts, left, boardOnly } = assemblyParts(nl.components.values(), boardIds, new Set(pos.map(p => p.ref)), hand);
 			const rows = bomRows(parts);
 			const cpl = cplRows(pos, new Map(parts.map(p => [p.ref, p.footprint])), corrections);
 			const bomFile = path.join(dir, `${project.name}-bom.csv`);
@@ -440,6 +671,14 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 			fs.writeFileSync(bomFile, bomCsv(rows));
 			fs.writeFileSync(cplFile, cplCsv(cpl.rows));
 			files.push(bomFile, cplFile);
+			const byHand = handParts(hand, nl.components, fps, pos);
+			const handFile = path.join(dir, `${project.name}-hand-assembly.csv`);
+			if (byHand.rows.length) {
+				fs.writeFileSync(handFile, handCsv(byHand.rows));
+				files.push(handFile);
+			}
+			const fromBoard = byHand.rows.filter(r => r.fromBoard).map(r => r.ref);
+			handNoted = true;
 			const mixed = rows.filter(r => r.comment.includes(" / ") || r.footprint.includes(" / "));
 			const fixes = [...cpl.corrected].map(([r, p]) => `${r} by "${p}"`);
 			const several = mixed.map(r => `${r.lcsc} (${r.designators.join(", ")}): ${r.comment}; ${r.footprint}`);
@@ -455,11 +694,60 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 						]
 					: ["Every placed footprint is confirmed by an assembly.corrections entry."]),
 			);
+			if (byHand.rows.length) {
+				notes.push(
+					`Hand assembly (assembly.hand): ${byHand.rows.length} parts in ${path.basename(handFile)}, left out of the BOM and CPL:`,
+					...byHand.rows.map(r => `- ${r.ref} (${r.value}, ${r.footprint}, ${r.layer}): ${r.reason}`),
+					...(fromBoard.length ? [`Positions from the board file (excluded from position files): ${fromBoard.join(", ")}.`] : []),
+				);
+			}
+			notes.push(...handLines(byHand));
 		}
 
-		const outline = boardOutline(board.tree.filter((c): c is List => isList(c) && isEdgeItem(c)));
-		const fps = board.footprints();
-		const bottom = fps.filter(fp => placement(fp).side === "bottom").length;
+		if (ok("drawings")) {
+			const sides = (["top", "bottom"] as const).filter(s => s === "top" || bottom > 0);
+			const byHand = handParts(hand, nl.components, fps);
+			const tmp = cli.tmpDir("drawings");
+			let pdfs = 0;
+			try {
+				const plot = (layers: readonly string[], file: string) => cli.pcbSvg(project.boardFile, [...layers], PART_THEME, path.join(tmp, file), o, DRAWING_FLAGS);
+				const plots = await Promise.all(sides.map(s => Promise.all([plot(DRAWING_LAYERS[s].black, `${s}-black.svg`), plot(DRAWING_LAYERS[s].grey, `${s}-grey.svg`)])));
+				const [bx0, by0, bx1, by1] = outline.bbox!;
+				for (const [k, side] of sides.entries()) {
+					const onSide = byHand.rows.filter(r => r.layer === (side === "top" ? "Top" : "Bottom"));
+					const svg = drawingSvg({
+						side,
+						box: outline.bbox!,
+						black: fs.readFileSync(plots[k]![0], "utf8"),
+						grey: fs.readFileSync(plots[k]![1], "utf8"),
+						hand: onSide.map(r => ({ ref: r.ref, value: r.value, reason: r.reason, edges: courtyardEdges(r.fp) })),
+						title: `${project.name}: assembly drawing, ${side === "top" ? "top side (seen from above)" : "bottom side, mirrored (seen from below)"}`,
+						info: [
+							`Rev ${rev}, ${ymd(now)}; board ${round2(bx1 - bx0)} × ${round2(by1 - by0)} mm; footprints on this side: ${side === "top" ? fps.length - bottom : bottom}.`,
+							`Outline and ${DRAWING_LAYERS[side].black[1]} (references) in black, ${DRAWING_LAYERS[side].grey[0]} in grey; DNP parts crossed out.`,
+						],
+					});
+					const file = path.join(dir, `${project.name}-assembly-${side}.svg`);
+					fs.writeFileSync(file, svg);
+					files.push(file);
+					const pdf = path.join(dir, `${project.name}-assembly-${side}.pdf`);
+					if (await cli.svgToPdf(file, pdf, o)) {
+						files.push(pdf);
+						pdfs++;
+					}
+				}
+			} finally {
+				fs.rmSync(tmp, { recursive: true, force: true });
+			}
+			const lit = byHand.rows.map(r => `${r.ref} (${r.layer})`);
+			notes.push(
+				`Drawings: ${sides.join(" and ")} side${sides.length > 1 ? "s" : ""} (${sides.length > 1 ? "bottom mirrored, seen from below; " : "no footprints on the bottom; "}` +
+					`${pdfs ? `PDF rasterised at ${cli.PDF_DPI} dpi` : "SVG only: the dev shell has no ImageMagick (magick) for the PDF"}); ` +
+					`hand-assembly parts highlighted: ${lit.length ? lit.join(", ") : "none"}.`,
+				...(handNoted ? [] : handLines(byHand)),
+			);
+		}
+
 		const comps = [...nl.components.values()].filter(c => !c.ref.startsWith("#"));
 		const copper = board.copperLayers();
 		const size = outline.bbox ? `${round2(outline.bbox[2] - outline.bbox[0])} × ${round2(outline.bbox[3] - outline.bbox[1])} mm` : "no outline";
@@ -470,10 +758,13 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 		];
 		if (files.length) lines.push("Written:", ...files.map(f => `- ${project.rel(f)}`));
 		const refusedOutputs = [...refusals.keys()];
-		if (refusedOutputs.length) {
-			const shared = refusedOutputs.length === 2 && refusals.get("gerbers")!.join("\n") === refusals.get("assembly")!.join("\n");
-			if (shared) lines.push(`REFUSED gerbers and assembly: the board is not ready for fabrication:`, ...refusals.get("gerbers")!);
-			else for (const [x, why] of refusals) lines.push(`REFUSED ${x}: the board is not ready for fabrication:`, ...why);
+		const g = refusals.get("gerbers");
+		const a = refusals.get("assembly");
+		const shared = g !== undefined && a !== undefined && g.join("\n") === a.join("\n");
+		for (const [x, why] of refusals) {
+			if (x === "drawings") lines.push("REFUSED drawings: the board has no outline (Edge.Cuts) to draw them on.");
+			else if (shared && x === "gerbers") lines.push("REFUSED gerbers and assembly: the board is not ready for fabrication:", ...why);
+			else if (!(shared && x === "assembly")) lines.push(`REFUSED ${x}: the board is not ready for fabrication:`, ...why);
 		}
 		const stale = removed.filter(p => refusedOutputs.some(x => outputPaths(dir, project.name, x).includes(p)));
 		if (stale.length) lines.push(`Removed the refused outputs' files from an earlier run: ${stale.map(p => project.rel(p)).join(", ")}`);

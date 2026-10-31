@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { Board, flipToBack } from "../src/board";
 import { type Component, run } from "../src/cli";
 import { loadConfig, projectConfig } from "../src/config";
-import { assemblyParts, bomCsv, bomRows, checkCorrections, correctionFor, cplCsv, cplRow, cplRows, parsePos, type PosRow, runExport } from "../src/export";
+import { assemblyParts, bomCsv, bomRows, checkCorrections, correctionFor, cplCsv, cplRow, cplRows, handCsv, handParts, parsePos, type PosRow, runExport } from "../src/export";
+import { parse } from "../src/sexpr";
 import { type EditRequest, runEdit } from "../src/txn";
 import { BOARD_PROJECT, cleanup, HAS_KICAD, stageBoardFixture } from "./helpers";
 
@@ -208,6 +209,77 @@ describe("assembly: BOM", () => {
 	});
 });
 
+describe("assembly: hand-assembly list", () => {
+	test("hand parts leave the BOM and CPL with their reason, before BOM exclusion and a missing LCSC field; DNP and not on the board stay so", () => {
+		const board = new Map([
+			["R1", "Resistor_SMD:R_0603_1608Metric"],
+			["R2", "Resistor_SMD:R_0603_1608Metric"],
+			["U6", "Module:Hand"],
+			["C1", "Capacitor_SMD:C_0603_1608Metric"],
+		]);
+		const comps = [
+			comp("R1", {}, { LCSC: "C25804" }),
+			comp("R2", { excludeFromBom: true }, { LCSC: "C25804" }),
+			comp("U6", { value: "ESP32-P4" }, { MPN: "X" }),
+			comp("C1", { dnp: true }, { LCSC: "C14663" }),
+			comp("J1", { excludeFromBoard: true }, { LCSC: "C999" }),
+		];
+		const a = assemblyParts(comps, board, undefined, { R2: "fine pitch", U6: "hand-soldered module", C1: "x", J1: "y" });
+		expect(a.parts.map(p => p.ref)).toEqual(["R1"]);
+		expect(a.left).toEqual([
+			{ ref: "C1", reason: "DNP" },
+			{ ref: "J1", reason: "not on the board" },
+			{ ref: "R2", reason: "hand assembly (assembly.hand): fine pitch" },
+			{ ref: "U6", reason: "hand assembly (assembly.hand): hand-soldered module" },
+		]);
+	});
+
+	test("rows from KiCad's position file, else the board file (excluded from position files: y negated, rotation as stored); DNP and missing references apart", () => {
+		const fp = (ref: string, layer: string, at: string, attr: string) =>
+			parse(`(footprint "Lib:${ref}_FP" (layer "${layer}") (at ${at}) (attr ${attr}) (property "Reference" "${ref}") (property "Value" "V${ref}") (property "MPN" " FP-MPN "))`);
+		const fps = [fp("U6", "F.Cu", "10 20 90", "smd"), fp("J2", "B.Cu", "30 5.5 -90", "through_hole exclude_from_pos_files"), fp("C1", "F.Cu", "1 1", "smd dnp")];
+		const comps = new Map([
+			["U6", comp("U6", { value: "ESP32-P4" }, { MPN: "ESP32-P4-MPN" })],
+			["J2", comp("J2", { value: "Conn, 2 pins" })],
+			["C1", comp("C1")],
+		]);
+		const pos: PosRow[] = [{ ref: "U6", x: 10, y: -20, rot: 90, side: "top" }];
+		const h = handParts({ U6: "module", R5: "gone", J2: 'through-hole "J2"', C1: "x" }, comps, fps, pos);
+		expect(h.dnp).toEqual(["C1"]);
+		expect(h.missing).toEqual(["R5"]);
+		expect(h.rows.map(({ fp: _, ...r }) => r)).toEqual([
+			{ ref: "J2", value: "Conn, 2 pins", mpn: "FP-MPN", footprint: "Lib:J2_FP", layer: "Bottom", x: 30, y: -5.5, rot: -90, reason: 'through-hole "J2"', fromBoard: true },
+			{ ref: "U6", value: "ESP32-P4", mpn: "ESP32-P4-MPN", footprint: "Lib:U6_FP", layer: "Top", x: 10, y: -20, rot: 90, reason: "module", fromBoard: false },
+		]);
+		expect(handCsv(h.rows)).toBe(
+			'"Designator","Value","MPN","Footprint","Layer","Mid X","Mid Y","Rotation","Reason"\r\n' +
+				'"J2","Conn, 2 pins","FP-MPN","Lib:J2_FP","Bottom","30mm","-5.5mm","-90","through-hole ""J2"""\r\n' +
+				'"U6","ESP32-P4","ESP32-P4-MPN","Lib:U6_FP","Top","10mm","-20mm","90","module"\r\n',
+		);
+	});
+
+	test("config: malformed entries rejected naming the entry; the project's entries over the defaults'", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "kicad-export-hand-"));
+		const write = (cfg: unknown) => fs.writeFileSync(path.join(root, ".omp", "kicad.json"), JSON.stringify(cfg));
+		const load = () => projectConfig(loadConfig(root), path.join(root, "p")).assembly;
+		try {
+			fs.mkdirSync(path.join(root, ".omp"));
+			write({ projects: { p: { assembly: { hand: { U6: " " } } } } });
+			expect(load).toThrow('projects["p"].assembly.hand["U6"]: give the reason as a non-empty string, got " "');
+			write({ projects: { p: { assembly: { hand: ["U6"] } } } });
+			expect(load).toThrow('projects["p"].assembly.hand: give an object {"<reference>": "<reason>"}, got ["U6"]');
+			write({ projects: { p: { assembly: { hand: { "U*": "all" } } } } });
+			expect(load).toThrow('assembly.hand["U*"]: give a footprint reference ("U6"), not a pattern, pad or blank');
+			write({ defaults: { assembly: { hand: { J1: 5 } } } });
+			expect(load).toThrow('defaults.assembly.hand["J1"]: give the reason as a non-empty string, got 5');
+			write({ defaults: { assembly: { hand: { J1: "a", U6: "b" }, corrections: { "*": { rot: 0 } } } }, projects: { p: { assembly: { hand: { U6: "c" } } } } });
+			expect(load()).toEqual({ corrections: { "*": { rot: 0 } }, hand: { J1: "a", U6: "c" } });
+		} finally {
+			cleanup(root);
+		}
+	});
+});
+
 describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 	let root: string;
 	let dir: string;
@@ -251,9 +323,31 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 			"Removed the refused outputs' files from an earlier run: board/fab/draft-2026-10-30/board-gerbers.zip, board/fab/draft-2026-10-30/gerbers, board/fab/draft-2026-10-30/board-bom.csv, board/fab/draft-2026-10-30/board-cpl.csv",
 		);
 
-		await expect(runExport(root, { project: BOARD_PROJECT, outputs: [] })).rejects.toThrow("outputs: give one or more of gerbers, assembly, step");
+		await expect(runExport(root, { project: BOARD_PROJECT, outputs: [] })).rejects.toThrow("outputs: give one or more of gerbers, assembly, step, drawings");
 		await expect(runExport(root, { project: BOARD_PROJECT, outputs: ["gerber"] })).rejects.toThrow('outputs: unknown output "gerber"');
 		await expect(runExport(root, { project: BOARD_PROJECT, outputs: ["step"], rev: " " })).rejects.toThrow("rev: give a revision");
+
+		// drawings: refused without an outline; with one, the top side only (no footprint on the bottom), the hand-assembly LED highlighted
+		config({ hand: { D1: "hand-placed LED" } });
+		const none = await runExport(root, { project: BOARD_PROJECT, outputs: ["drawings"] }, undefined, NOW);
+		expect(none.refused).toEqual(["drawings"]);
+		expect(none.files).toEqual([]);
+		expect(none.text).toContain("REFUSED drawings: the board has no outline (Edge.Cuts) to draw them on.");
+		await edit([{ op: "set_board_edges", outline: { rect: { x: -5, y: -5, width: 40, height: 25 } } }]);
+		const top = await runExport(root, { project: BOARD_PROJECT, outputs: ["drawings"] }, undefined, NOW);
+		expect(top.refused).toEqual([]);
+		expect(top.files).toEqual([`${BOARD_PROJECT}/fab/draft-2026-10-30/board-assembly-top.svg`, `${BOARD_PROJECT}/fab/draft-2026-10-30/board-assembly-top.pdf`]);
+		expect(top.text).toContain("Drawings: top side (no footprints on the bottom; PDF rasterised at 300 dpi); hand-assembly parts highlighted: D1 (Top).");
+		const svg = fs.readFileSync(path.join(fab, "board-assembly-top.svg"), "utf8");
+		expect(svg).toMatch(/<g id="hand-assembly"><path data-ref="D1" d="M[^"]+ Z" fill="#FF5A00" fill-opacity="0.35"/);
+		// the 40 × 25 mm outline at 3.5:1 (longer side to 140 mm) centred on the 150 mm page: its corner (−5, −5) lands at (5, 5)
+		expect(svg).toContain('<g id="board" transform="matrix(3.5 0 0 3.5 22.5000 22.5000)">');
+		expect(svg).toContain("Scale 3.5:1.");
+		expect(svg).toContain("board: assembly drawing, top side (seen from above)");
+		expect(svg).toContain("D1 (red): hand-placed LED");
+		// KiCad's plots of the outline, fab layer and silkscreen made it in
+		expect(svg).toMatch(/<g id="silkscreen">[\s\S]*#8C8C8C[\s\S]*<g id="outline-fab">[\s\S]*<path/);
+		expect(fs.readFileSync(path.join(fab, "board-assembly-top.pdf")).subarray(0, 5).toString()).toBe("%PDF-");
 	}, 180_000);
 
 	test("a placed, routed board with a bottom part passes the gate: zipped Gerbers and drill files, JLCPCB BOM and CPL from KiCad's position file with corrections; the fields check gates assembly only", async () => {
@@ -378,5 +472,35 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 		expect(third.text).not.toContain("REFUSED gerbers");
 		expect(fs.readdirSync(fab).sort()).toEqual(["board-gerbers.zip", "gerbers"]);
 		expect(fs.readdirSync(path.join(fab, "gerbers")).sort()).toEqual(gerbers);
+
+		// hand assembly: R1 (bottom) leaves the BOM and CPL for the hand list, positioned from KiCad's position file;
+		// C1 (DNP) and U9 (not on the board) named in the answer; drawings of both sides, R1 highlighted on the mirrored bottom
+		config({ corrections: { "*": { rot: 0 } }, hand: { R1: "hand-soldered: test", C1: "DNP part", U9: "gone" } });
+		const fourth = await runExport(root, { project: BOARD_PROJECT, outputs: ["assembly", "drawings"], rev: "A 1" }, undefined, NOW);
+		expect(fourth.refused).toEqual([]);
+		expect(fs.readFileSync(path.join(fab, "board-bom.csv"), "utf8")).toBe('"Comment","Designator","Footprint","JLCPCB Part #"\r\n"red","D1","LED_Fixture_0603","C72044"\r\n');
+		expect(fs.readFileSync(path.join(fab, "board-cpl.csv"), "utf8")).toBe('"Designator","Mid X","Mid Y","Layer","Rotation"\r\n"D1","20mm","-6mm","Top","0"\r\n');
+		expect(fs.readFileSync(path.join(fab, "board-hand-assembly.csv"), "utf8")).toBe(
+			'"Designator","Value","MPN","Footprint","Layer","Mid X","Mid Y","Rotation","Reason"\r\n' +
+				'"R1","1k","0603WAF1001T5E","Resistor_SMD:R_0603_1608Metric","Bottom","8mm","-6mm","90","hand-soldered: test"\r\n',
+		);
+		expect(fourth.text).toContain("- hand assembly (assembly.hand): hand-soldered: test: R1");
+		expect(fourth.text).toContain("Hand assembly (assembly.hand): 1 parts in board-hand-assembly.csv, left out of the BOM and CPL:\n- R1 (1k, Resistor_SMD:R_0603_1608Metric, Bottom): hand-soldered: test");
+		expect(fourth.text).toContain("In assembly.hand but DNP (not listed, not highlighted): C1.");
+		expect(fourth.text).toContain("In assembly.hand but not on the board (stale config, kicad_check placement flags it): U9.");
+		expect(fourth.text).toContain("to assemble: 1 parts, 1 LCSC part numbers.");
+		expect(fourth.text).toContain("Drawings: top and bottom sides (bottom mirrored, seen from below; PDF rasterised at 300 dpi); hand-assembly parts highlighted: R1 (Bottom).");
+		const names = ["board-assembly-top.svg", "board-assembly-top.pdf", "board-assembly-bottom.svg", "board-assembly-bottom.pdf"];
+		expect(fourth.files.slice(-4)).toEqual(names.map(n => `${BOARD_PROJECT}/fab/A_1-2026-10-30/${n}`));
+		const topSvg = fs.readFileSync(path.join(fab, "board-assembly-top.svg"), "utf8");
+		const bottomSvg = fs.readFileSync(path.join(fab, "board-assembly-bottom.svg"), "utf8");
+		expect(topSvg).toContain('<g id="hand-assembly"></g>');
+		expect(topSvg).toContain("Hand assembly (assembly.hand): none on this side");
+		// the 30 × 20 mm board at 4:1 (120 mm) centred on the 150 mm page: the top from x 15, the bottom mirrored (x 0..30 lands at 135..15), R1's courtyard highlighted
+		expect(topSvg).toContain('<g id="board" transform="matrix(4 0 0 4 15.0000 5.0000)">');
+		expect(bottomSvg).toContain('<g id="board" transform="matrix(-4 0 0 4 135.0000 5.0000)">');
+		expect(bottomSvg).toMatch(/<path data-ref="R1" d="M[^"]+ Z" fill="#FF5A00"/);
+		expect(bottomSvg).toContain("board: assembly drawing, bottom side, mirrored (seen from below)");
+		expect(bottomSvg).toContain("R1 (1k): hand-soldered: test");
 	}, 300_000);
 });
