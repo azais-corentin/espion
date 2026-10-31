@@ -5343,7 +5343,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "AFA07-S15ECA-00"
+		(property "Value" "AFA07-S15FCA-00"
 			(at 195.58 73.025 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5354,7 +5354,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal"
+		(property "Footprint" "Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal"
 			(at 193.04 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5365,7 +5365,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0bfd48b78181b65482fe0787b860af72.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/b01391708457137d9b8d8b493bdc4f0c.pdf"
 			(at 193.04 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5398,7 +5398,7 @@
 				)
 			)
 		)
-		(property "MPN" "AFA07-S15ECA-00"
+		(property "MPN" "AFA07-S15FCA-00"
 			(at 193.04 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5409,7 +5409,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C262742"
+		(property "LCSC" "C262721"
 			(at 193.04 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5419,12 +5419,45 @@
 					(size 1.27 1.27)
 				)
 			)
+		)
+		(pin "1"
+			(uuid "f3502dae-b3fb-4736-b7d9-673c6f83239d")
+		)
+		(pin "2"
+			(uuid "7ebc4ec2-7b69-4db7-8375-bc041b5b1d41")
+		)
+		(pin "3"
+			(uuid "bfaf3dd6-26f6-46a8-9047-69f0fbf7a293")
+		)
+		(pin "4"
+			(uuid "b92773b7-b38d-494d-b1c1-293e245be7c6")
 		)
 		(pin "5"
 			(uuid "c49c7099-d1f2-4c3c-9ce6-ee78177fac36")
 		)
+		(pin "6"
+			(uuid "2f5230c2-23bb-47f1-a0ae-aef04a6ad5fe")
+		)
 		(pin "7"
 			(uuid "3c26f953-d965-4836-ba85-e143d3e16c1f")
+		)
+		(pin "8"
+			(uuid "994637e6-54d3-4e94-bcbc-0248d789d634")
+		)
+		(pin "9"
+			(uuid "9b28fd0d-f3c5-410b-a4b7-0d8c5602d9d2")
+		)
+		(pin "10"
+			(uuid "d207d963-2c89-46ce-af81-899ef5299e6d")
+		)
+		(pin "11"
+			(uuid "63687b9e-801f-4111-a5d1-1b7f86486c84")
+		)
+		(pin "12"
+			(uuid "1883f9c3-884d-4e6e-a174-fc028e0f6d06")
+		)
+		(pin "13"
+			(uuid "f294e8b4-1e78-4674-92b7-3efb6a052e88")
 		)
 		(pin "14"
 			(uuid "12b0af7a-ad95-467a-bb6f-4289d1d00f05")
@@ -5432,41 +5465,8 @@
 		(pin "15"
 			(uuid "355a0377-58ba-4fc0-920e-c548cc64a410")
 		)
-		(pin "3"
-			(uuid "bfaf3dd6-26f6-46a8-9047-69f0fbf7a293")
-		)
 		(pin "MP"
 			(uuid "5b05e0ec-93ce-4fc0-bb31-7ed12ac7060b")
-		)
-		(pin "1"
-			(uuid "f3502dae-b3fb-4736-b7d9-673c6f83239d")
-		)
-		(pin "6"
-			(uuid "2f5230c2-23bb-47f1-a0ae-aef04a6ad5fe")
-		)
-		(pin "9"
-			(uuid "9b28fd0d-f3c5-410b-a4b7-0d8c5602d9d2")
-		)
-		(pin "12"
-			(uuid "1883f9c3-884d-4e6e-a174-fc028e0f6d06")
-		)
-		(pin "10"
-			(uuid "d207d963-2c89-46ce-af81-899ef5299e6d")
-		)
-		(pin "2"
-			(uuid "7ebc4ec2-7b69-4db7-8375-bc041b5b1d41")
-		)
-		(pin "8"
-			(uuid "994637e6-54d3-4e94-bcbc-0248d789d634")
-		)
-		(pin "4"
-			(uuid "b92773b7-b38d-494d-b1c1-293e245be7c6")
-		)
-		(pin "13"
-			(uuid "f294e8b4-1e78-4674-92b7-3efb6a052e88")
-		)
-		(pin "11"
-			(uuid "63687b9e-801f-4111-a5d1-1b7f86486c84")
 		)
 		(instances
 			(project "espion-cam"
