@@ -142,7 +142,7 @@
         "max_error": 0.005,
         "min_clearance": 0.1,
         "min_connection": 0.1,
-        "min_copper_edge_clearance": 0.2,
+        "min_copper_edge_clearance": 0.3,
         "min_groove_width": 0.35,
         "min_hole_clearance": 0.2,
         "min_hole_to_hole": 0.2,
@@ -152,7 +152,7 @@
         "min_silk_clearance": 0.15,
         "min_text_height": 1.0,
         "min_text_thickness": 0.15,
-        "min_through_hole_diameter": 0.3,
+        "min_through_hole_diameter": 0.2,
         "min_track_width": 0.1,
         "min_via_annular_width": 0.075,
         "min_via_diameter": 0.45,
@@ -533,24 +533,6 @@
         "line_style": 0,
         "microvia_diameter": 0.3,
         "microvia_drill": 0.1,
-        "name": "ETH_SHIELD",
-        "pcb_color": "rgba(0, 0, 0, 0.000)",
-        "priority": 9,
-        "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.4,
-        "tuning_profile": "",
-        "via_diameter": 0.6,
-        "via_drill": 0.3,
-        "wire_width": 6
-      },
-      {
-        "bus_width": 12,
-        "clearance": 0.2,
-        "diff_pair_gap": 0.25,
-        "diff_pair_width": 0.2,
-        "line_style": 0,
-        "microvia_diameter": 0.3,
-        "microvia_drill": 0.1,
         "name": "LED_PWR",
         "pcb_color": "rgba(0, 0, 0, 0.000)",
         "priority": 1,
@@ -627,7 +609,7 @@
         "pcb_color": "rgba(0, 0, 0, 0.000)",
         "priority": 3,
         "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.5,
+        "track_width": 0.65,
         "tuning_profile": "",
         "via_diameter": 0.6,
         "via_drill": 0.3,
@@ -649,42 +631,6 @@
         "tuning_profile": "",
         "via_diameter": 0.8,
         "via_drill": 0.4,
-        "wire_width": 6
-      },
-      {
-        "bus_width": 12,
-        "clearance": 0.2,
-        "diff_pair_gap": 0.25,
-        "diff_pair_width": 0.2,
-        "line_style": 0,
-        "microvia_diameter": 0.3,
-        "microvia_drill": 0.1,
-        "name": "RMII",
-        "pcb_color": "rgba(0, 0, 0, 0.000)",
-        "priority": 8,
-        "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.36,
-        "tuning_profile": "",
-        "via_diameter": 0.6,
-        "via_drill": 0.3,
-        "wire_width": 6
-      },
-      {
-        "bus_width": 12,
-        "clearance": 0.2,
-        "diff_pair_gap": 0.25,
-        "diff_pair_width": 0.2,
-        "line_style": 0,
-        "microvia_diameter": 0.3,
-        "microvia_drill": 0.1,
-        "name": "RMII_CLK",
-        "pcb_color": "rgba(0, 0, 0, 0.000)",
-        "priority": 7,
-        "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.3,
-        "tuning_profile": "",
-        "via_diameter": 0.6,
-        "via_drill": 0.3,
         "wire_width": 6
       },
       {
@@ -783,30 +729,6 @@
       {
         "netclass": "USB",
         "pattern": "/MCU/USB_D_?"
-      },
-      {
-        "netclass": "RMII_CLK",
-        "pattern": "/Ethernet/RMII_REF_CLK*"
-      },
-      {
-        "netclass": "RMII",
-        "pattern": "/Ethernet/RMII_TX*"
-      },
-      {
-        "netclass": "RMII",
-        "pattern": "/Ethernet/RMII_RXD*"
-      },
-      {
-        "netclass": "RMII",
-        "pattern": "/Ethernet/RMII_CRS_DV*"
-      },
-      {
-        "netclass": "RMII",
-        "pattern": "/MCU/RMII_TX*"
-      },
-      {
-        "netclass": "ETH_SHIELD",
-        "pattern": "/Ethernet/ETH_SHIELD*"
       }
     ]
   },
