@@ -2237,6 +2237,12 @@
 		(uuid "38d27746-8678-406e-8fd9-c682ef8ddd39")
 	)
 	(junction
+		(at 241.3 83.82)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "4a9bd5b4-4e61-47a1-a0f1-0a7d3fda0253")
+	)
+	(junction
 		(at 63.5 129.54)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -2662,6 +2668,16 @@
 	)
 	(wire
 		(pts
+			(xy 241.3 93.98) (xy 247.65 93.98)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4dd3bb0a-61fe-4a4f-9c16-cb78381c1e1a")
+	)
+	(wire
+		(pts
 			(xy 93.98 53.34) (xy 93.98 55.88)
 		)
 		(stroke
@@ -2669,6 +2685,16 @@
 			(type default)
 		)
 		(uuid "4f80abef-f2be-41d4-9151-c3d7567702ff")
+	)
+	(wire
+		(pts
+			(xy 241.3 92.71) (xy 241.3 93.98)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4feb8387-196d-4bdf-bf0e-9fa46028ef57")
 	)
 	(wire
 		(pts
@@ -2689,6 +2715,16 @@
 			(type default)
 		)
 		(uuid "5229c836-fbd8-4c79-b0fb-465f6be73caf")
+	)
+	(wire
+		(pts
+			(xy 189.23 106.68) (xy 200.66 106.68)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "52499a8f-48ba-4e4b-8261-54d0aa47189e")
 	)
 	(wire
 		(pts
@@ -2829,6 +2865,16 @@
 			(type default)
 		)
 		(uuid "795b7357-2963-49f4-ad0d-3b84d1b3cc83")
+	)
+	(wire
+		(pts
+			(xy 200.66 106.68) (xy 200.66 107.95)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7a75c37a-824b-46de-8e6d-aa0abaa454a6")
 	)
 	(wire
 		(pts
@@ -3122,6 +3168,16 @@
 	)
 	(wire
 		(pts
+			(xy 200.66 115.57) (xy 200.66 116.84)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b371a04b-9add-4ba0-96b1-953406a45549")
+	)
+	(wire
+		(pts
 			(xy 220.98 127) (xy 220.98 129.54)
 		)
 		(stroke
@@ -3139,6 +3195,16 @@
 			(type default)
 		)
 		(uuid "b6c67163-d750-4f6f-b755-ab4a9bf5d23d")
+	)
+	(wire
+		(pts
+			(xy 241.3 83.82) (xy 241.3 85.09)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b6e32dfa-92c0-4fa1-92da-50927674d38a")
 	)
 	(wire
 		(pts
@@ -3499,6 +3565,16 @@
 			(justify left bottom)
 		)
 		(uuid "fdc73b0b-5bda-450b-8521-463f9b6a5664")
+	)
+	(label "PR1"
+		(at 247.65 93.98 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "fec16509-5700-44c4-9c2f-e2fe4c683ea8")
 	)
 	(hierarchical_label "PWR_SRC"
 		(shape output)
@@ -3867,6 +3943,121 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0"
 					(reference "#PWR039")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:C")
+		(at 200.66 111.76 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "240b33ff-e165-433c-8972-838ca6040791")
+		(property "Reference" "C52"
+			(at 204.47 110.49 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "100nF 50V"
+			(at 204.47 113.03 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
+			(at 200.66 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 200.66 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Unpolarized capacitor"
+			(at 200.66 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "YAGEO"
+			(at 200.66 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "CC0402KRX7R9BB104"
+			(at 200.66 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C131394"
+			(at 200.66 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "f1e9f7c3-eda6-4378-978a-8f12354d7fa7")
+		)
+		(pin "2"
+			(uuid "2e6b94fc-b8b4-4add-ae97-9a75005ef339")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0"
+					(reference "C52")
 					(unit 1)
 				)
 			)
@@ -5952,6 +6143,84 @@
 		)
 	)
 	(symbol
+		(lib_id "power:GND")
+		(at 200.66 116.84 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "557ab097-d255-44b9-9c9b-fa0d551608c6")
+		(property "Reference" "#PWR301"
+			(at 200.66 123.19 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 200.66 120.65 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 200.66 116.84 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 200.66 116.84 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 200.66 116.84 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "64c630a7-ac12-4120-a0a6-caddee2e3a61")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0"
+					(reference "#PWR301")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "power:VBUS")
 		(at 132.08 85.09 0)
 		(unit 1)
@@ -7916,6 +8185,121 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0"
 					(reference "TP3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 241.3 88.9 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "ba8375db-b215-41e6-a7c4-017eb79737fc")
+		(property "Reference" "R75"
+			(at 243.84 87.63 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1.00M 1%"
+			(at 243.84 90.17 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
+			(at 241.3 88.9 90)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 241.3 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 241.3 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Manufacturer" "UNI-ROYAL"
+			(at 241.3 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "0402WGF1004TCE"
+			(at 241.3 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C26083"
+			(at 241.3 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "ee8006a4-ecf1-4e63-99fb-9582ed58dc88")
+		)
+		(pin "2"
+			(uuid "05b1d013-0e0c-404f-9d4f-3ed2bf3137d2")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0"
+					(reference "R75")
 					(unit 1)
 				)
 			)
