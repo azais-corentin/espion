@@ -600,7 +600,7 @@ const decouplingPlacement: CheckDef = {
 const placementCheck: CheckDef = {
 	name: "placement",
 	doc:
-		"Footprint placement against the board: a placed footprint (origin on the board) with a pad outside the outline, in a cutout or crossing an edge (warning per footprint); a courtyard (its outline, rotation applied; pads and body box without one) overlapping a rule area that keeps footprints out on the footprint's side (error); one info finding with the counts (placed, on the bottom side, locked) and one with the footprints not placed yet (origin off the board). " +
+		"Footprint placement against the board: a placed footprint (origin on the board) with a pad outside the outline, in a cutout or crossing an edge (warning per footprint); a courtyard (its outline, rotation applied; pads and body box without one) overlapping a rule area that keeps footprints out on the footprint's side (error; a footprint's own rule areas, such as a tooling hole's keep-out ring, don't count); one info finding with the counts (placed, on the bottom side, locked) and one with the footprints not placed yet (origin off the board). " +
 		"Courtyard overlaps between footprints are DRC's (drc). No footprints: one info finding.",
 	byDefault: true,
 	async run(ctx) {
@@ -646,7 +646,8 @@ const placementCheck: CheckDef = {
 			if (!court.length) continue;
 			const sideLayer = pl.side === "top" ? first : last;
 			for (const a of areas) {
-				if (!a.layers.includes(sideLayer) || !courtyardOverlaps(court, a.outline)) continue;
+				// a footprint's own rule area (a tooling hole's keep-out ring, an antenna keepout) doesn't keep it out
+				if (a.footprint === ref || !a.layers.includes(sideLayer) || !courtyardOverlaps(court, a.outline)) continue;
 				const name = a.name ?? a.uuid.slice(0, 8);
 				out.push({
 					check: "placement",

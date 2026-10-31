@@ -11,7 +11,7 @@ import { OPS } from "../src/registry";
 import type { Rasterize } from "../src/render";
 import { child, children, L, type List, num, parse, print, str, text } from "../src/sexpr";
 import { validate } from "../src/spec";
-import { runQuery } from "../src/tools";
+import { runChecks, runQuery } from "../src/tools";
 import { type EditRequest, runEdit } from "../src/txn";
 import type { OpContext } from "../src/types";
 import { BOARD_FIXTURE, BOARD_PROJECT, cleanup, HAS_KICAD, stageBoardFixture } from "./helpers";
@@ -494,6 +494,19 @@ describe.skipIf(!HAS_KICAD)("board write ops on the copper fixture", () => {
 		const r = await edit([{ op: "remove_board_footprint", ref: "FID1" }]);
 		if (!r.applied) throw new Error(r.report);
 		expect(r.report).toContain("removed FID1 (Fiducial:Fiducial_1mm_Mask2mm)");
+	}, 120_000);
+
+	test("placement: a footprint's own keep-out (the tooling hole's ring) doesn't flag it; another footprint's courtyard on that keep-out does", async () => {
+		const ctx = await inMemory([
+			["add_board_footprint", { fp_id: "MountingHole:ToolingHole_1.152mm", ref: "TOOL1", at: [35, 5] }],
+			["add_board_footprint", { fp_id: "Fiducial:Fiducial_1mm_Mask2mm", ref: "FID1", at: [36.5, 5] }],
+		]);
+		expect(Copper.of(ctx.project.board()).ruleAreas.filter(a => a.footprint === "TOOL1" && a.keepout.footprints)).toHaveLength(1);
+		fs.writeFileSync(boardFile, ctx.project.board().serialize());
+		const r = await runChecks(root, { project: BOARD_PROJECT, checks: ["placement"] });
+		const errors = r.findings.filter(f => f.check === "placement" && f.severity === "error").map(f => f.message);
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toStartWith("FID1: its courtyard overlaps rule area ");
 	}, 120_000);
 
 	test("set_board_setup: title block (the rev kicad_export names its folder after), mask and tenting in the board, teardrops in the .kicad_pro", async () => {
