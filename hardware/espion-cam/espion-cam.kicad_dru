@@ -18,7 +18,9 @@
 
 # PoE: IEEE 802.3 33.4.1 isolation (1500 V rms 60 s, or 2250 V dc, or 1500 V 10/700 us impulse) between the cable
 # conductors and the board. IEC 60664-1 (2007) tables interpolated for 2250 V dc give about 1.53 mm clearance and
-# 1.25 mm creepage (audit/rule-audit.md); 2 mm adds margin. Pad pairs inside J1 are exempt (the jack's own pin field).
+# 1.25 mm creepage (audit/rule-audit.md); 2 mm adds margin. Pad pairs inside J1 are exempt: the jack's own pin field rests on
+# HanRun's HR871150C rating (p.1: 2250 V dc isolation, cable side to chip side); its pads are trimmed to O1.45 / O2.35 so pin 5-7
+# is 1.09 mm and SH-10 1.97 mm (audit/requirements.md D20). Same-layer only: In1 lane vs F.Cu is D19.
 (rule "PoE isolation" (condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J1') && B.memberOfFootprint('J1'))") (constraint clearance (min 2mm)))
 
 # MIPI CSI-2: Espressif ESP32-P4 HDG 1.4.6 allows 10 mil (0.254 mm) P/N skew per lane. Each lane is two pairs in series
@@ -47,3 +49,8 @@
 
 # JLCPCB capabilities (2026-10-31): pad hole-to-hole spacing 0.45 mm (vias: 0.2 mm, the board minimum).
 (rule "Pad hole to hole" (condition "A.Type == 'Pad' && B.Type == 'Pad'") (constraint hole_to_hole (min 0.45mm)))
+
+# Power classes (PWR_5V 1.0 mm, LED_PWR 1.0 mm) neck down to >= 0.3 mm only inside the courtyards of U4 (TPS2121 RUX, 0.4 mm pads, 0.3 mm gaps, TI p.39),
+# U8 (SOT-23-6, 0.95 mm pitch) and U10 (TPS61170 WSON, 0.3 mm pads): a class-width track can't enter those pads at 0.2 mm clearance.
+# Necks are < 1 mm long (audit/requirements.md D21).
+(rule "Power neck-down at fine-pitch pads" (condition "A.Type == 'Track' && (A.NetClass == 'PWR_5V' || A.NetClass == 'LED_PWR' || A.NetName == '/LED driver/+5V_BST') && (A.intersectsCourtyard('U4') || A.intersectsCourtyard('U8') || A.intersectsCourtyard('U10'))") (constraint track_width (min 0.3mm)))

@@ -29,6 +29,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Package_DFN_QFN_TI.pretty/` | TI DFN/QFN packages with TI's land patterns |
 | `Package_LGA_MEMSensing.pretty/` | MEMSensing LGA packages |
 | `NetTie_Courtyard.pretty/` | Net ties with a courtyard |
+| `MountingHole_JLCPCB.pretty/` | JLCPCB assembly tooling holes |
 | `Module_SZYTF.3dshapes/` | 3D models of off-board modules (no symbol or footprint) |
 | `<Library>.3dshapes/` | 3D models (STEP) for the footprints above |
 | `3d-src/` | SolidCraft scripts the 3D models are built from |
@@ -73,6 +74,8 @@ Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part
   anchor is kept where KiCad's stock footprint has it.
 - **F5.1** and **F5.2** on `NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm` (waivers): Reference and
   Value stay hidden, as in the stock net tie it copies (a copper bridge with no body to label).
+- **F5.1** on `MountingHole_JLCPCB:ToolingHole_1.152mm_JLCPCB` (waiver): the Reference stays
+  hidden, as in the stock tooling hole it copies (a tooling hole carries no designator).
 
 ## 3D models
 
@@ -158,6 +161,11 @@ green LEDs, right angle.
 - Symbol drawn for this project (CERN-OHL-P-2.0). The footprint is derived from KiCad's
   `Connector_RJ:RJ45_Abracon_ARJP11A-MA_Horizontal`, renumbered and corrected to the HanRun
   layout (CC-BY-SA 4.0 with the KiCad library exception).
+- Pads (2026-11-01): the signal pins 1–5 and 7–10 are Ø1.45 on the datasheet's Ø0.89 holes
+  and the shield tabs Ø2.35 on Ø1.63 (p.3 gives holes only; annular rings 0.28 and 0.36 mm,
+  above JLCPCB's 0.15 mm minimum). The original Ø1.8 / Ø3.0 left 0.74 mm between pin 5 (chip
+  side) and pin 7 (PoE cable side) and 1.47 mm between pin 10 and the shield; now 1.09 mm and
+  1.97 mm. The LED pins (Ø2.0 on Ø1.02) are unchanged.
 - 3D model: `Connector_RJ_HanRun.3dshapes/`, from `3d-src/`.
 
 ### `Interface_Ethernet_ICPlus:IP101GRI`
@@ -441,6 +449,17 @@ espion-cam: `ISNS_K` leaves R69's source-side pad through it (Kelvin sense,
   unchanged. Added: an F.CrtYd rectangle 0.25 mm around the copper (±1.0 × ±0.5 mm), so DRC
   checks NT1 for courtyard overlaps and the board can treat `missing_courtyard` as an error.
   Description (with the stock footprint's URL) and tags changed. No 3D model, as in stock.
+
+### `MountingHole_JLCPCB:ToolingHole_1.152mm_JLCPCB`
+
+Tooling hole for JLCPCB assembly: Ø1.152 mm NPTH with a 0.148 mm solder mask expansion
+(1.448 mm opening), as the [JLCPCB tooling-hole article](https://jlcpcb.com/help/article/How-to-add-tooling-holes-for-PCB-assembly-order)
+specifies. The stock `MountingHole:ToolingHole_1.152mm` it copies opens only 1.3 mm.
+
+- Source: the JLCPCB article (capture: `audit/jlc-tooling-holes-2026-10-31.txt` in the
+  espion audit notes).
+- Copied from KiCad's stock footprint (CC-BY-SA 4.0 with the KiCad library exception); only
+  the description and the pad's mask margin differ. No 3D model (a hole).
 
 ### SZYTF OV9281 camera module, 79° lens (3D model only)
 

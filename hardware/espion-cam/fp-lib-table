@@ -16,4 +16,5 @@
 	(lib (name "NetTie_Courtyard") (type "KiCad") (uri "${KIPRJMOD}/../lib/NetTie_Courtyard.pretty") (options "") (descr "Net ties with a courtyard (espion project library)"))
 	(lib (name "LED_SMD_Yongyu") (type "KiCad") (uri "${KIPRJMOD}/../lib/LED_SMD_Yongyu.pretty") (options "") (descr "Yongyu SMD LEDs (espion project library)"))
 	(lib (name "Package_LGA_MEMSensing") (type "KiCad") (uri "${KIPRJMOD}/../lib/Package_LGA_MEMSensing.pretty") (options "") (descr "MEMSensing LGA packages (espion project library)"))
+	(lib (name "MountingHole_JLCPCB") (type "KiCad") (uri "${KIPRJMOD}/../lib/MountingHole_JLCPCB.pretty") (options "") (descr "JLCPCB assembly tooling holes (espion project library)"))
 )
