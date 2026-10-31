@@ -7011,7 +7011,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "91k 1%"
+		(property "Value" "68k 1%"
 			(at 44.45 132.08 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7055,7 +7055,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "HWA CHN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 46.99 130.81 0)
 			(hide yes)
 			(show_name no)
@@ -7066,7 +7066,7 @@
 				)
 			)
 		)
-		(property "MPN" "HRC0402F9102DNTO"
+		(property "MPN" "0402WGF6802TCE"
 			(at 46.99 130.81 0)
 			(hide yes)
 			(show_name no)
@@ -7077,7 +7077,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C54920709"
+		(property "LCSC" "C36871"
 			(at 46.99 130.81 0)
 			(hide yes)
 			(show_name no)
@@ -12525,7 +12525,7 @@
 				)
 			)
 		)
-		(property "Description" "1V to 5.5V, 2A, 80mΩ Ultra-Low Leakage Load Switch, SOT23-6"
+		(property "Description" "TPS22918 5.5V 2A 52mOhm load switch, adjustable rise time (CT), quick output discharge (QOD), SOT-23-6 (pinout as TPS22917DBV)"
 			(at 66.04 38.1 0)
 			(hide yes)
 			(show_name no)
