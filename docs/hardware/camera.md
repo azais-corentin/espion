@@ -83,7 +83,7 @@ U7 (SN74LV1T34) turns the module's STROBE into a 3.3 V signal for the P4 (GPIO12
 
 ## CSI series links
 
-R45–R47 and R49–R51 are 0 Ω 0201 links on every CSI line, at the FPC end. Espressif asks to "reserve series resistors on the MIPI communication lines (initially 0 Ω)" (HDG §1.3.15), so a series value can be fitted if the lanes misbehave. 0201 keeps the pad close to the trace width. Lane rate ≤ 1.5 Gbps (P4 DS §4.2.1.6).
+R45–R47 and R49–R51 are 0 Ω 0402 links (UNI-ROYAL 0402WGF0000TCE, LCSC C17168, a JLCPCB basic part) on every CSI line, at the FPC end. Espressif asks to "reserve series resistors on the MIPI communication lines (initially 0 Ω)" (HDG §1.3.15), so a series value can be fitted if the lanes misbehave. 0402, not 0201: JLCPCB Economic PCBA places 0402 and larger only (PCB assembly capabilities, minimum package, read 2026-10-31; decision 2026-10-31). Each 0402 pad adds ≈ 0.05 pF over the 0.18 mm trace, ≈ 2 ps per link on a 25 Ω half pair ([layout.md](layout.md) Impedance). Lane rate ≤ 1.5 Gbps (P4 DS §4.2.1.6).
 
 ## Not measured yet
 

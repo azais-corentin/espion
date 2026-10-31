@@ -3387,7 +3387,7 @@
 				(justify right)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0201_0603Metric"
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 152.4 78.74 90)
 			(hide yes)
 			(show_name no)
@@ -3398,7 +3398,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 152.4 78.74 0)
 			(hide yes)
 			(show_name no)
@@ -3420,7 +3420,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 152.4 78.74 0)
 			(hide yes)
 			(show_name no)
@@ -3431,7 +3431,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0201P000 TS"
+		(property "MPN" "0402WGF0000TCE"
 			(at 152.4 78.74 0)
 			(hide yes)
 			(show_name no)
@@ -3442,7 +3442,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C7467269"
+		(property "LCSC" "C17168"
 			(at 152.4 78.74 0)
 			(hide yes)
 			(show_name no)
@@ -3502,7 +3502,7 @@
 				(justify right)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0201_0603Metric"
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 162.56 88.9 90)
 			(hide yes)
 			(show_name no)
@@ -3513,7 +3513,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 162.56 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -3535,7 +3535,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 162.56 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -3546,7 +3546,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0201P000 TS"
+		(property "MPN" "0402WGF0000TCE"
 			(at 162.56 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -3557,7 +3557,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C7467269"
+		(property "LCSC" "C17168"
 			(at 162.56 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -3967,7 +3967,7 @@
 				(justify right)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0201_0603Metric"
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 162.56 81.28 90)
 			(hide yes)
 			(show_name no)
@@ -3978,7 +3978,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 162.56 81.28 0)
 			(hide yes)
 			(show_name no)
@@ -4000,7 +4000,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 162.56 81.28 0)
 			(hide yes)
 			(show_name no)
@@ -4011,7 +4011,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0201P000 TS"
+		(property "MPN" "0402WGF0000TCE"
 			(at 162.56 81.28 0)
 			(hide yes)
 			(show_name no)
@@ -4022,7 +4022,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C7467269"
+		(property "LCSC" "C17168"
 			(at 162.56 81.28 0)
 			(hide yes)
 			(show_name no)
@@ -5045,7 +5045,7 @@
 				(justify right)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0201_0603Metric"
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 162.56 73.66 90)
 			(hide yes)
 			(show_name no)
@@ -5056,7 +5056,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 162.56 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5078,7 +5078,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 162.56 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5089,7 +5089,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0201P000 TS"
+		(property "MPN" "0402WGF0000TCE"
 			(at 162.56 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -5100,7 +5100,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C7467269"
+		(property "LCSC" "C17168"
 			(at 162.56 73.66 0)
 			(hide yes)
 			(show_name no)
@@ -6176,7 +6176,7 @@
 				(justify right)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0201_0603Metric"
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 152.4 86.36 90)
 			(hide yes)
 			(show_name no)
@@ -6187,7 +6187,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 152.4 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -6209,7 +6209,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 152.4 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -6220,7 +6220,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0201P000 TS"
+		(property "MPN" "0402WGF0000TCE"
 			(at 152.4 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -6231,7 +6231,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C7467269"
+		(property "LCSC" "C17168"
 			(at 152.4 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -6291,7 +6291,7 @@
 				(justify right)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0201_0603Metric"
+		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 152.4 71.12 90)
 			(hide yes)
 			(show_name no)
@@ -6302,7 +6302,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 152.4 71.12 0)
 			(hide yes)
 			(show_name no)
@@ -6324,7 +6324,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 152.4 71.12 0)
 			(hide yes)
 			(show_name no)
@@ -6335,7 +6335,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0201P000 TS"
+		(property "MPN" "0402WGF0000TCE"
 			(at 152.4 71.12 0)
 			(hide yes)
 			(show_name no)
@@ -6346,7 +6346,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C7467269"
+		(property "LCSC" "C17168"
 			(at 152.4 71.12 0)
 			(hide yes)
 			(show_name no)

@@ -20,7 +20,9 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   connector (JUSHUO AFA07-S15ECA-00, single contact, so a face-flipped cable makes
   no contact). XVS and STROBE (level not known: 1.8, 2.8 or 3.3 V) come from pads on the
   module over a JST-SH 4-pin pigtail: XVS through a resistor divider set as an assembly
-  option, STROBE through an SN74LV1T34 to the LED gate and a P4 GPIO (ETM capture)
+  option, STROBE through an SN74LV1T34 to the LED gate and a P4 GPIO (ETM capture). A 0 Ω
+  0402 link (UNI-ROYAL 0402WGF0000TCE) on each CSI line at the FPC end leaves room for a
+  series value
 - 850 nm LED ring for passive retroreflective markers at 2–5 m: 12 × Amicc
   A-SC880IR3C-P03-1T (90°) in one string, on r = 11.5 mm around the lens cutout. TPS22918
   load switch (`LED_PWR_EN`) and TPS61170 boost to 32 V (`BST_EN`) into 2 × 220 µF storage,
@@ -39,7 +41,8 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - ST LSM6DS3TR-C 6-axis IMU on its own I2C bus (GPIO3/4), INT1 on GPIO54: wake-on-motion
   flags a bumped camera, the accelerometer gives the gravity vector for rig calibration
 - 4 × M3 plated mounting holes (H1–H4), each pad on GND, ≥ 2 mm from the PoE cable-side
-  copper
+  copper; 3 × 1.152 mm NPTH tooling holes (TOOL1–TOOL3, board-only) for JLCPCB Economic
+  PCBA
 
 Board design (decisions, values and their reasons, layout constraints, firmware rules, the
 checks for the first boards): [`docs/hardware/`](../../docs/hardware/README.md).
@@ -57,7 +60,7 @@ one row per group of identical parts, without DNP parts or parts excluded from t
 
 Net classes (track widths, clearances, diff-pair geometry) are set in `espion-cam.kicad_pro`
 for the JLCPCB JLC04161H-7628 stack-up (4 layers, 1.6 mm). The spacing rules that net
-classes can't express (PoE isolation, MIPI CSI, MDI and USB spacing) are in the custom
+classes can't express (PoE isolation, MIPI CSI, MDI, USB and LED_PWR pad spacing) are in the custom
 rules file `espion-cam.kicad_dru`.
 
 System view: `../../docs/architecture.md`. Timing requirements for XVS, STROBE and PPS:

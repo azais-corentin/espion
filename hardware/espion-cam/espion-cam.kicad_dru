@@ -3,8 +3,10 @@
 # Spacing rules from docs/hardware/layout.md. Track widths and diff-pair geometry
 # are in the net classes (Schematic Setup > Net Classes), sized for JLC04161H-7628.
 
-# MIPI CSI-2: >= 2W (0.36 mm) to everything except the pair's own partner; this also keeps GND
-# pour >= 0.30 mm away, which the 100 ohm geometry (0.18/0.15 mm) assumes.
+# MIPI CSI-2: >= 2W (0.36 mm) to everything except the pair's own partner (Espressif ESP32-P4 HDG, PCB layout,
+# MIPI: "maintain a minimum spacing of 2W between MIPI trace pairs"; the 3W to other high-speed signals is kept by
+# hand). This also keeps GND pour >= 0.30 mm away, which the 100 ohm geometry (0.18/0.15 mm) assumes. The two pads
+# of each 0 ohm link R45-R47, R49-R51 carry the two halves of one lane and are exempt.
 (rule "MIPI_CSI spacing"
 	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R45') && B.memberOfFootprint('R45')) && !(A.memberOfFootprint('R46') && B.memberOfFootprint('R46')) && !(A.memberOfFootprint('R47') && B.memberOfFootprint('R47')) && !(A.memberOfFootprint('R49') && B.memberOfFootprint('R49')) && !(A.memberOfFootprint('R50') && B.memberOfFootprint('R50')) && !(A.memberOfFootprint('R51') && B.memberOfFootprint('R51'))")
 	(constraint clearance (min 0.36mm)))
@@ -15,7 +17,8 @@
 	(condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !A.intersectsCourtyard('U1')")
 	(constraint clearance (min 0.55mm)))
 
-# USB 2.0: keep GND and other nets >= 0.30 mm from the 90 ohm pair (0.245/0.15 mm).
+# USB 2.0: keep GND and other nets >= 0.30 mm from the 90 ohm pair (0.245/0.15 mm). 0.30 mm is a project choice:
+# Espressif ESP32-P4 HDG, PCB layout, USB says "Surround the USB traces with ground copper" and gives no number.
 (rule "USB spacing"
 	(condition "A.NetClass == 'USB' && !A.isCoupledDiffPair()")
 	(constraint clearance (min 0.3mm)))
@@ -35,3 +38,11 @@
 # USB-C receptacle: its CC and SBU pins sit 0.2 mm from the D+/D- pins, under the 0.3 mm
 # 'USB spacing'. Pad pairs inside J2 only; must stay after 'USB spacing' (the last matching rule wins).
 (rule "J2 USB pins" (condition "A.NetClass == 'USB' && A.memberOfFootprint('J2') && B.memberOfFootprint('J2')") (constraint clearance (min 0.2mm)))
+
+# LED_PWR (+32V, LED_K, ISNS, RING_*) and BST_SW reach 31.3 V (led.md). IPC-2221B Table 6-1, 31-50 V row:
+# A6 (external component leads and terminations, uncoated) 0.4 mm; B4 (permanent polymer coating, i.e. solder
+# mask) 0.13 mm, so mask-covered tracks keep the 0.2 mm class clearance. Exposed pads of these nets keep 0.4 mm
+# to any other net's copper. Pad pairs inside U10 (TI's TPS61170 land pattern, SLVS789D) and inside one LED
+# D4-D15 (its own pads, about one forward voltage apart) are exempt. POE_CABLE and MDI copper are left out:
+# the last matching rule wins, and 'PoE isolation' (2 mm) and 'MDI spacing' (0.55 mm) ask more there.
+(rule "LED_PWR pad spacing" (condition "A.Type == 'Pad' && (A.NetClass == 'LED_PWR' || A.NetName == '/LED driver/BST_SW') && B.NetClass != 'POE_CABLE' && B.NetClass != 'MDI' && !(A.memberOfFootprint('U10') && B.memberOfFootprint('U10')) && !(A.memberOfFootprint('D4') && B.memberOfFootprint('D4')) && !(A.memberOfFootprint('D5') && B.memberOfFootprint('D5')) && !(A.memberOfFootprint('D6') && B.memberOfFootprint('D6')) && !(A.memberOfFootprint('D7') && B.memberOfFootprint('D7')) && !(A.memberOfFootprint('D8') && B.memberOfFootprint('D8')) && !(A.memberOfFootprint('D9') && B.memberOfFootprint('D9')) && !(A.memberOfFootprint('D10') && B.memberOfFootprint('D10')) && !(A.memberOfFootprint('D11') && B.memberOfFootprint('D11')) && !(A.memberOfFootprint('D12') && B.memberOfFootprint('D12')) && !(A.memberOfFootprint('D13') && B.memberOfFootprint('D13')) && !(A.memberOfFootprint('D14') && B.memberOfFootprint('D14')) && !(A.memberOfFootprint('D15') && B.memberOfFootprint('D15'))") (constraint clearance (min 0.4mm)))
