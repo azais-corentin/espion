@@ -26,7 +26,8 @@
       "klcWaivers": {
         "Connector_HanRun:HR871150C": { "S4.5": "the part has no pin 6 (HanRun datasheet p. 2, \"Remove Pin#6\")" },
         "Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder": { "F6.1": "hand-soldering variant: its pads carry no F.Paste so the stencil has no apertures for it (docs/hardware/mcu.md)" },
-        "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal": { "F6.2": "pads and anchor unchanged from stock Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal, whose generator puts the anchor there; only name, description, tags and 3D model differ" }
+        "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal": { "F6.2": "pads and anchor unchanged from stock Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal, whose generator puts the anchor there; only name, description, tags and 3D model differ" },
+        "NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm": { "F5.1": "net tie: a copper bridge with no body, so its Reference stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added", "F5.2": "net tie: a copper bridge with no body, so its Value stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added" }
       },
       "fieldExempt": { "LCSC": ["U6"] },
       "powerSymbols": { "+32V": "power:+36V" },
@@ -39,7 +40,7 @@
       "layout": {
         "near": [
           { "a": "C11.1", "b": "U2.6", "max": 3, "why": "layout.md Power: C11 at DP1435 pins 6/5, the start of the LC filter; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
-          { "a": "C11.2", "b": "U2.5", "max": 4, "why": "layout.md Power: C11 at DP1435 pins 6/5, the start of the LC filter; the DP1435 body (courtyard) runs 3.4 mm past pin 5 and every part is on top, so C11 sits at the row end just past pin 6: its GND pad gets 4 mm to pin 5, its +5V_POE pad keeps the 3 mm to pin 6" },
+          { "a": "C11.2", "b": "U2.5", "max": 4, "why": "layout.md Power: C11 at DP1435 pins 6/5, the start of the LC filter; the DP1435 body runs 3.8 mm past pin 5 (courtyard 4.3 mm) and every part is on top, so C11 sits at the row end just past pin 6: its GND pad gets 4 mm to pin 5, its +5V_POE pad keeps the 3 mm to pin 6" },
           { "a": "C15.1", "b": "U4.7", "max": 3, "why": "layout.md Power: C15 right at TPS2121 pin 7 (IN1) (SLVSEA3F §11); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "C16.1", "b": "U4.2", "max": 3, "why": "layout.md Power: C16 at TPS2121 pin 2 (IN2) (SLVSEA3F §11); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "C20.1", "b": "U4.1", "max": 3, "why": "layout.md Power: C20 and C23 at TPS2121 pins 1/8 (OUT) (SLVSEA3F §11); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
@@ -95,6 +96,8 @@
           { "a": "C32.1", "b": "J4.15", "max": 3, "why": "layout.md Camera: C32 and C30 at J4 pad 15 (CAM_3V3); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "C30.1", "b": "J4.15", "max": 3, "why": "layout.md Camera: C32 and C30 at J4 pad 15 (CAM_3V3); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "R67.2", "b": "Q1.1", "max": 3, "why": "layout.md LED driver and ring: R67 at Q1's gate; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
+          { "a": "TH1", "b": "Q1.2", "max": 1, "why": "layout.md LED driver and ring: TH1 within 1 mm of Q1's tab (pad 2, LED_K drain) copper, on its own GND-connected pad, so it reads the tab temperature; measured to the tab pad" },
+          { "a": "NT1.1", "b": "R69.1", "max": 0.6, "why": "layout.md LED driver and ring: ISNS_K leaves R69's source-side pad (pad 1, ISNS) through NT1 at the pad (Kelvin sense); NT1's courtyard keeps it 0.575 mm off R69.1 at placement" },
           { "a": "C42", "b": "U11.4", "max": 3, "why": "layout.md LED driver and ring: C42 at U11 (its − input, pin 4); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "R64.1", "b": "U11.4", "max": 3, "why": "layout.md LED driver and ring: R64 at U11 (its − input, pin 4); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "C43.1", "b": "D3.1", "max": 3, "why": "layout.md LED driver and ring: C43/C45 next to D3's cathode, the boost output loop (SLVS789D layout); 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
@@ -116,7 +119,8 @@
           { "name": "CAM pairs, FPC side", "nets": ["/Camera/CAM_D0_P", "/Camera/CAM_D0_N", "/Camera/CAM_D1_P", "/Camera/CAM_D1_N", "/Camera/CAM_CLK_P", "/Camera/CAM_CLK_N"], "maxSpread": 0.762, "why": "layout.md Camera: pair-to-pair length match ≤ 0.762 mm (30 mil), each pair's mean, from the 0 Ω links to J4 (Espressif HDG §1.4.6); not a DRC rule because a second skew rule would replace the intra-pair one" }
         ],
         "paths": [
-          { "name": "REF_CLK branches", "from": "R13.2", "to": ["U1.10", "U6.68"], "maxLength": 20, "maxDiff": 1, "why": "layout.md Ethernet: from the star point at R13 pin 2, both REF_CLK branches (to U1 pin 10 and U6 pin 68, GPIO50) ≤ 20 mm and equal; IP101G DS §6.1 asks the clock trace to the PHY to equal the one to the MAC, with no tolerance. 1 mm is ≤ 7 ps of skew (≈ 7 ps/mm on an inner layer), negligible against the ≈ 2 ns RX setup margin in ethernet.md, so it reads 'equal' strictly and is easy to meet with the length tuner" }
+          { "name": "REF_CLK branches", "from": "R13.2", "to": ["U1.10", "U6.68"], "maxLength": 20, "maxDiff": 1, "why": "layout.md Ethernet: from the star point at R13 pin 2, both REF_CLK branches (to U1 pin 10 and U6 pin 68, GPIO50) ≤ 20 mm and equal; IP101G DS §6.1 asks the clock trace to the PHY to equal the one to the MAC, with no tolerance. 1 mm is ≤ 7 ps of skew (≈ 7 ps/mm on an inner layer), negligible against the ≈ 2 ns RX setup margin in ethernet.md, so it reads 'equal' strictly and is easy to meet with the length tuner" },
+          { "name": "BOOT stub", "from": "R36.1", "to": ["R39.1"], "maxLength": 3, "why": "layout.md MCU and USB: R39 (and R38) sit directly on the RMII_TXD1_MCU trace between U6 pin 47 and R36, so the BOOT strap stub stays a few mm (≤ 3 mm from R36.1 to R39.1): TXD1 is synchronous to the 50 MHz REF_CLK" }
         ],
         "viaParity": [
           { "name": "CSI lanes, P4 side", "nets": ["/Camera/CSI_D0_P", "/Camera/CSI_D0_N", "/Camera/CSI_D1_P", "/Camera/CSI_D1_N", "/Camera/CSI_CLK_P", "/Camera/CSI_CLK_N"], "why": "layout.md Camera: same via count on every lane, P and N alike (Espressif HDG §1.4.6); counted per side of the 0 Ω links" },
@@ -127,7 +131,9 @@
           { "name": "Q1 heatsink, bottom", "net": "/LED driver/LED_K", "layers": ["B.Cu"], "minArea": 600, "minVias": 12, "near": "Q1", "within": 15, "why": "layout.md LED driver and ring: a matching LED_K pour on the other side, tied to the top one with ≥ 12 × 0.3 mm vias (IRLR024N DS p.1, 1 in² rating); only copper and vias within 15 mm of Q1's pads count, and the check counts vias, not their drill" },
           { "name": "U4 IN1 vias", "net": "/Power/+5V_POE_F", "layers": ["F.Cu"], "minVias": 1, "near": "U4", "within": 0.5, "why": "layout.md Power: vias under TPS2121's IN pads for current and heat (SLVSEA3F §11–12)" },
           { "name": "U4 IN2 vias", "net": "VBUS", "layers": ["F.Cu"], "minVias": 1, "near": "U4", "within": 0.5, "why": "layout.md Power: vias under TPS2121's IN pads for current and heat (SLVSEA3F §11–12)" },
-          { "name": "U4 OUT vias", "net": "+5V", "layers": ["F.Cu"], "minVias": 1, "near": "U4", "within": 0.5, "why": "layout.md Power: vias under TPS2121's OUT pads for current and heat (SLVSEA3F §11–12)" }
+          { "name": "U4 OUT vias", "net": "+5V", "layers": ["F.Cu"], "minVias": 1, "near": "U4", "within": 0.5, "why": "layout.md Power: vias under TPS2121's OUT pads for current and heat (SLVSEA3F §11–12)" },
+          { "name": "U1 exposed pad vias", "net": "GND", "layers": ["F.Cu"], "minVias": 5, "near": "U1", "within": 0, "why": "layout.md Ethernet: U1's exposed pad is its only GND, so at least 5 GND vias of 0.3 / 0.45 mm go into it (a 3 × 3 grid at 0.85 mm pitch fits, the library's thermal-via layout); counts vias inside U1's pad box" },
+          { "name": "U10 exposed pad vias", "net": "GND", "layers": ["F.Cu"], "minVias": 2, "near": "U10", "within": 0, "why": "layout.md LED driver and ring: U10's exposed pad to GND through two 0.3 / 0.45 mm vias at TI's positions, ±0.55 mm along the pad (SLVS789D layout example); counts vias inside U10's pad box" }
         ],
         "heightZones": [
           {
@@ -170,7 +176,7 @@
               "Resistor_SMD:R_0201_0603Metric": 0.28,
               "TestPoint:TestPoint_Pad_D1.0mm": 0,
               "TestPoint:TestPoint_Pad_D1.5mm": 0,
-              "NetTie:NetTie-2_SMD_Pad0.5mm": 0
+              "NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm": 0
             },
             "why": "layout.md Camera opening: the lens view cone is r 7.0 mm at the front face and widens 0.83 mm per mm of height, so a part h mm tall sits ≥ 7.0 + 0.83 h from the lens axis. Heights are datasheet maximums (DP1435, HR871150C, JVE, RVT, SVZ, MA, RH-5002, TYPE-C-31-M-12, FXL0630, FNR4030S, SH, AFA07, SS16, IRLR024N, A-SC880IR3C, TS-1187A, WS2812B-2020, RUX0012A, LSM6DS3TR-C, TSX-3225) and Waveshare's published module height; chip passives, SOT-23, SOD-323, QFN-32 and WSON-6 are package-typical maximums (estimate)"
           }

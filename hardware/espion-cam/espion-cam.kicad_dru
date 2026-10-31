@@ -20,13 +20,13 @@
 	(condition "A.NetClass == 'USB' && !A.isCoupledDiffPair()")
 	(constraint clearance (min 0.3mm)))
 
-(rule "PoE isolation"
-	(condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J1') && B.memberOfFootprint('J1'))")
-	(constraint clearance (min 2mm)))
+# PoE: 1500 V rms isolation between the cable and the board (802.3 33.4.1); IEC 60664-1 basic
+# insulation is 1.5 mm, 2 mm adds margin and covers creepage on uncoated FR-4.
+# Pad pairs inside J1 are exempt: the jack's own pin field, rated 2250 VDC hipot (HR871150C DS p.1).
+(rule "PoE isolation" (condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J1') && B.memberOfFootprint('J1'))") (constraint clearance (min 2mm)))
 
-(rule "MIPI_CSI intra-pair skew"
-	(condition "A.NetClass == 'MIPI_CSI'")
-	(constraint skew (max 0.254mm) (within_diff_pairs)))
+# MIPI CSI-2: P/N skew <= 10 mil (0.254 mm) within each pair (Espressif HDG 1.4.6).
+(rule "MIPI_CSI intra-pair skew" (condition "A.NetClass == 'MIPI_CSI'") (constraint skew (max 0.254mm) (within_diff_pairs)))
 
 # LSM6DS3TR-C LGA-14: its land pattern puts pads 0.15-0.175 mm apart, under the 0.2 mm class
 # clearance (JLCPCB's minimum is 0.1 mm). Pad pairs inside U12 only; tracks keep the class clearance.

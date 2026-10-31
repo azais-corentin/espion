@@ -12111,7 +12111,7 @@
 				)
 			)
 		)
-		(property "Footprint" "NetTie:NetTie-2_SMD_Pad0.5mm"
+		(property "Footprint" "NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm"
 			(at 193.04 147.32 0)
 			(hide yes)
 			(show_name no)

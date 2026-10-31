@@ -25,6 +25,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Button_Switch_SMD_XKB.pretty/` | XKB SMD switches |
 | `Package_SON_TI.pretty/` | TI SON packages with TI's land patterns |
 | `Package_DFN_QFN_TI.pretty/` | TI DFN/QFN packages with TI's land patterns |
+| `NetTie_Courtyard.pretty/` | Net ties with a courtyard |
 | `Module_SZYTF.3dshapes/` | 3D models of off-board modules (no symbol or footprint) |
 | `<Library>.3dshapes/` | 3D models (STEP) for the footprints above |
 | `3d-src/` | SolidCraft scripts the 3D models are built from |
@@ -64,6 +65,8 @@ Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part
   footprints, which get the same message.
 - **F6.2** on `Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal`
   (waiver): the anchor is kept where KiCad's stock footprint has it.
+- **F5.1** and **F5.2** on `NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm` (waivers): Reference and
+  Value stay hidden, as in the stock net tie it copies (a copper bridge with no body to label).
 
 ## 3D models
 
@@ -328,6 +331,18 @@ JUSHUO AFA07-S15ECA-00 15-pin 1.0 mm FFC/FPC connector, top contact, slide lock,
   nail width are scaled from the drawing; the nail sheet thickness (0.20 mm) and its hidden
   rear web are assumed. The F.Fab rectangle in front of the latch (y 3.475–4.475) is the
   latch pulled open (+1.65 mm, section A-A); the model shows it closed.
+
+### `NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm`
+
+Two-pad net tie (0.5 mm round pads joined by a 1.0 × 0.5 mm copper bridge), used as NT1 on
+espion-cam: `ISNS_K` leaves R69's source-side pad through it (Kelvin sense,
+`../../docs/hardware/layout.md`, LED driver and ring).
+
+- Copy of KiCad's `NetTie:NetTie-2_SMD_Pad0.5mm` (CC-BY-SA 4.0 with the KiCad library
+  exception). Pads, the copper bridge, the net-tie pad group and the attributes are
+  unchanged. Added: an F.CrtYd rectangle 0.25 mm around the copper (±1.0 × ±0.5 mm), so DRC
+  checks NT1 for courtyard overlaps and the board can treat `missing_courtyard` as an error.
+  Description (with the stock footprint's URL) and tags changed. No 3D model, as in stock.
 
 ### SZYTF OV9281 camera module, 79° lens (3D model only)
 
