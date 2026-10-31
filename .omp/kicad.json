@@ -28,7 +28,8 @@
         "Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder": { "F6.1": "hand-soldering variant: its pads carry no F.Paste so the stencil has no apertures for it (docs/hardware/mcu.md)" },
         "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15ECA-00_1x15-1MP_P1.0mm_Horizontal": { "F6.2": "pads and anchor unchanged from stock Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal, whose generator puts the anchor there; only name, description, tags and 3D model differ" },
         "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal": { "F6.2": "pads and anchor unchanged from stock Connector_FFC-FPC:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal, whose generator puts the anchor there; only description, tags and 3D model differ" },
-        "NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm": { "F5.1": "net tie: a copper bridge with no body, so its Reference stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added", "F5.2": "net tie: a copper bridge with no body, so its Value stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added" }
+        "NetTie_Courtyard:NetTie-2_SMD_Pad0.5mm": { "F5.1": "net tie: a copper bridge with no body, so its Reference stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added", "F5.2": "net tie: a copper bridge with no body, so its Value stays hidden as in the stock NetTie:NetTie-2_SMD_Pad0.5mm it copies; only the courtyard is added" },
+        "Sensor_Motion_MEMSensing:MSA3S02": { "S4.6": "pins 4 and 8 are NC that the datasheet recommends connecting to GND (MSA3S02 datasheet V1.0 p. 5 Table 1, p. 30 Figure 8), so they are a visible passive pin [4,8] to wire to GND; the other NC pins are hidden no_connect" }
       },
       "fieldExempt": { "LCSC": ["U6"] },
       "assembly": {
@@ -122,8 +123,7 @@
           { "a": "R55", "b": "U9", "max": 3, "why": "layout.md LED driver and ring: timeout RC, C33, R55 and R58 at U9; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "R58.2", "b": "U9.6", "max": 3, "why": "layout.md LED driver and ring: timeout RC, C33, R55 and R58 at U9; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
           { "a": "R54.1", "b": "C33.1", "max": 3, "why": "layout.md LED driver and ring: R54 right at C33; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
-          { "a": "C50.1", "b": "U12.5", "max": 3, "why": "layout.md IMU: C50 at U12 pin 5 (VDDIO), short via to L2; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" },
-          { "a": "C51.1", "b": "U12.8", "max": 3, "why": "layout.md IMU: C51 at U12 pin 8 (VDD), short via to L2; 'at'/'next to' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" }
+          { "a": "C50.1", "b": "U12.7", "max": 3, "why": "audit/requirements.md D11: C50 100 nF at U12 pin 7 (VDD) (MSA3S02 DS V1.0 p. 30 Fig. 8); 'at' read as ≤ 3 mm copper edge to edge (the project's decoupling distance)" }
         ],
         "lengthGroups": [
           { "name": "CSI pairs, P4 side", "nets": ["/Camera/CSI_D0_P", "/Camera/CSI_D0_N", "/Camera/CSI_D1_P", "/Camera/CSI_D1_N", "/Camera/CSI_CLK_P", "/Camera/CSI_CLK_N"], "maxSpread": 0.762, "why": "layout.md Camera: pair-to-pair length match ≤ 0.762 mm (30 mil), each pair's mean, from U6 to the 0 Ω links R45–R47/R49–R51 (Espressif HDG §1.4.6); not a DRC rule because a second skew rule would replace the intra-pair one" },
@@ -173,7 +173,7 @@
               "LED_SMD_Worldsemi:LED_WS2812B-2020_PLCC4_2.0x2.0mm": 1.0,
               "Package_DFN_QFN_TI:Texas_RUX0012A_VQFN-HR-12_2x2.5mm_P0.5mm": 1.0,
               "Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm": 0.9,
-              "Package_LGA:LGA-14_3x2.5mm_P0.5mm_LayoutBorder3x4y": 0.86,
+              "Package_LGA_MEMSensing:MEMSensing_LGA-12_2x2mm_P0.5mm_LayoutBorder2x4y": 0.95,
               "Package_SON_TI:Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm": 0.8,
               "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm": 0.6,
               "Capacitor_SMD:C_1206_3216Metric": 1.8,

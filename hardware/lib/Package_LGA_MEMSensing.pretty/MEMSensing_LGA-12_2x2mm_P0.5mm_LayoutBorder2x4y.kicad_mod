@@ -1,0 +1,248 @@
+(footprint "MEMSensing_LGA-12_2x2mm_P0.5mm_LayoutBorder2x4y"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "MEMSensing LGA, 12 Pin, 2x2x0.95mm, pitch 0.5mm (0.525mm to the corner pads), land pattern calculated from the package drawing (none published), MSA3S02 (https://datasheet.lcsc.com/datasheet/pdf/17622eabedb09583cf1836f55c7a0a26.pdf#page=31)")
+	(tags "MEMSensing LGA NoLead MSA3S02")
+	(property "Reference" "REF**"
+		(at 0 -1.95 0)
+		(layer "F.SilkS")
+		(uuid "53dd3c7b-4324-45ab-8715-eb4143d234e3")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "MEMSensing_LGA-12_2x2mm_P0.5mm_LayoutBorder2x4y"
+		(at 0 1.95 0)
+		(layer "F.Fab")
+		(uuid "e7916abe-a5c5-4d02-ae38-fb0cdb93c61f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "8967b1ae-1676-4d7c-b7b7-ad0e74651919")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "0109ad05-710a-491f-8855-892938556a14")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "KiLib_Generator" "package/no_lead"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "836d6b62-d014-42b9-989e-9d44e7d4d75f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -0.815568 -1.185)
+		(end -0.685 -1.185)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "273be1cf-1ee3-449a-bb8a-f5624e92decf")
+	)
+	(fp_line
+		(start -0.685 1.185)
+		(end -1.11 1.185)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "c37559f6-b048-4245-96e8-765f1c13b1d9")
+	)
+	(fp_line
+		(start 0.685 -1.185)
+		(end 1.11 -1.185)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "736aa514-fe8b-4ca0-b192-29dbf4484411")
+	)
+	(fp_line
+		(start 1.11 1.185)
+		(end 0.685 1.185)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "10ac536e-f6bb-42b1-a610-f89baa1ad93b")
+	)
+	(fp_poly
+		(pts
+			(xy -1.11 -1.19) (xy -1.25 -1.38) (xy -0.97 -1.38)
+		)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(fill yes)
+		(layer "F.SilkS")
+		(uuid "149fb87c-b233-4bd8-a56d-3aa01b86fd34")
+	)
+	(fp_rect
+		(start -1.25 -1.25)
+		(end 1.25 1.25)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "e936195d-3803-4f42-95ab-ff956042c509")
+	)
+	(fp_poly
+		(pts
+			(xy -0.5 -1) (xy 1 -1) (xy 1 1) (xy -1 1) (xy -1 -0.5)
+		)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "8029bf8c-a014-455f-84b5-b2247436cf17")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "e287f864-2528-4bdb-89a0-5004f83d7d71")
+		(effects
+			(font
+				(size 0.5 0.5)
+				(thickness 0.08)
+			)
+		)
+	)
+	(pad "1" smd roundrect
+		(at -0.75 -0.775)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "89c96453-34d0-423b-813a-7ed64ed183d3")
+	)
+	(pad "2" smd roundrect
+		(at -0.75 -0.25)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "4da382ac-ba8e-4c88-aa46-d6430b24b292")
+	)
+	(pad "3" smd roundrect
+		(at -0.75 0.25)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "74826831-f16d-4393-a481-c4120d9cd729")
+	)
+	(pad "4" smd roundrect
+		(at -0.75 0.775)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "bff24082-b3b4-475d-ace1-3536662fed8a")
+	)
+	(pad "5" smd roundrect
+		(at -0.25 0.75)
+		(size 0.35 0.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "7ef3d2e4-ca37-4a03-9ead-a8e7aba98d09")
+	)
+	(pad "6" smd roundrect
+		(at 0.25 0.75)
+		(size 0.35 0.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "561c0d97-fb95-4019-88ec-1d555da4ed85")
+	)
+	(pad "7" smd roundrect
+		(at 0.75 0.775)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "ff83c4db-8d0b-48c8-909f-5429428bc432")
+	)
+	(pad "8" smd roundrect
+		(at 0.75 0.25)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "bda18508-71cf-4573-8d65-66b94c3b52ec")
+	)
+	(pad "9" smd roundrect
+		(at 0.75 -0.25)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "c9076b3f-f7db-456f-a6a3-7a7950b779fb")
+	)
+	(pad "10" smd roundrect
+		(at 0.75 -0.775)
+		(size 0.4 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "9046d241-3dcb-4cab-9401-c1ad82a21f2d")
+	)
+	(pad "11" smd roundrect
+		(at 0.25 -0.75)
+		(size 0.35 0.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "dcf5412b-5acd-45fa-b9ad-b9e3de0a5a29")
+	)
+	(pad "12" smd roundrect
+		(at -0.25 -0.75)
+		(size 0.35 0.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "d9af92ba-8f3b-4a9d-b259-af5fd539989b")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/../lib/Package_LGA_MEMSensing.3dshapes/MEMSensing_LGA-12_2x2mm_P0.5mm_LayoutBorder2x4y.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

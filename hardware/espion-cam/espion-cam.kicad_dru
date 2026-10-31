@@ -25,9 +25,11 @@
 # (U6 -> 0 ohm link -> J4), so each segment gets half: 0.127 mm.
 (rule "MIPI_CSI intra-pair skew" (condition "A.NetClass == 'MIPI_CSI'") (constraint skew (max 0.127mm) (within_diff_pairs)))
 
-# LSM6DS3TR-C LGA-14: its land pattern puts pads 0.15-0.175 mm apart, under the 0.2 mm class
-# clearance (JLCPCB's minimum is 0.1 mm). Pad pairs inside U12 only; tracks keep the class clearance.
-(rule "U12 LGA pads" (condition "A.memberOfFootprint('U12') && B.memberOfFootprint('U12')") (constraint clearance (min 0.15mm)))
+# MEMSensing MSA3S02 LGA-12 2x2 mm: the land pattern (pads matching the datasheet V1.0 p. 31 package drawing) puts
+# corner pads 0.125 mm from their row neighbours (1-12, 4-5, 6-7, 10-11), under the 0.2 mm class clearance.
+# JLCPCB's minimum spacing is 0.09 mm and its mask web 0.1 mm (audit/requirements.md D9). Pad pairs inside U12 only;
+# tracks keep the class clearance.
+(rule "U12 LGA pads" (condition "A.memberOfFootprint('U12') && B.memberOfFootprint('U12')") (constraint clearance (min 0.12mm)))
 
 # LED_PWR (+32V, LED_K, ISNS, RING_*) and BST_SW reach 33.9 V (TPS61170 set point worst case, audit/requirements.md D5).
 # IPC-2221A Table 6-1, 31-50 V row: A6 (external component leads/terminations, uncoated) 0.4 mm; B4 (permanent polymer

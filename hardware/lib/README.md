@@ -15,6 +15,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Regulator_Switching_TI.kicad_sym` | TI switching regulators |
 | `Power_Management_TI.kicad_sym` | TI power management ICs (power muxes) |
 | `Transistor_FET_Infineon.kicad_sym` | Infineon MOSFETs |
+| `Sensor_Motion_MEMSensing.kicad_sym` | MEMSensing motion sensors (accelerometers) |
 | `Capacitor_SMD_AISHI.pretty/`, `Capacitor_SMD_JIERR.pretty/` | Aluminium SMD can capacitors |
 | `Connector_FFC-FPC_XFCN.pretty/` | XFCN FFC/FPC connectors (not used by espion-cam any more) |
 | `Connector_FFC-FPC_JUSHUO.pretty/` | JUSHUO FFC/FPC connectors |
@@ -26,6 +27,7 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Button_Switch_SMD_XKB.pretty/` | XKB SMD switches |
 | `Package_SON_TI.pretty/` | TI SON packages with TI's land patterns |
 | `Package_DFN_QFN_TI.pretty/` | TI DFN/QFN packages with TI's land patterns |
+| `Package_LGA_MEMSensing.pretty/` | MEMSensing LGA packages |
 | `NetTie_Courtyard.pretty/` | Net ties with a courtyard |
 | `Module_SZYTF.3dshapes/` | 3D models of off-board modules (no symbol or footprint) |
 | `<Library>.3dshapes/` | 3D models (STEP) for the footprints above |
@@ -58,6 +60,8 @@ Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part
   `.stpZ` model or split the exposed-pad paste into separate apertures. The stock footprints
   they come from get the same messages.
 - **S4.5** on `Connector_HanRun:HR871150C` only (waiver): the part has no pin 6.
+- **S4.6** on `Sensor_Motion_MEMSensing:MSA3S02` only (waiver): its NC pins 4 and 8 are a
+  visible passive pin, because the datasheet recommends tying them to GND.
 - **F6.1** (waiver) and **F6.3 "missing Paste"** on
   `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder`: the hand-soldering variant has no
   paste on its pads, so the stencil has no apertures for it.
@@ -204,6 +208,38 @@ the project one. Used by espion-cam as U4.
 - 3D model: `Package_DFN_QFN_TI.3dshapes/`, from `3d-src/`, to the RUX0012A outline (p. 38):
   2.0 × 2.5 mm body, 1.0 mm high (the drawing gives only the maximum), 0.2 × 0.4 mm and
   0.35 × 0.85 mm terminals, pin-1 dot.
+
+### `Sensor_Motion_MEMSensing:MSA3S02`, `Package_LGA_MEMSensing:MEMSensing_LGA-12_2x2mm_P0.5mm_LayoutBorder2x4y`
+
+MEMSensing MSA3S02 3-axis accelerometer: ±2/4/8/16 g, 12 bit, 1–1000 Hz ODR, I2C up to
+400 kHz at the fixed 7-bit address 0x62, one interrupt pin, VDD 1.62–3.6 V, LGA-12
+2 × 2 × 0.95 mm (LCSC C51928204). The symbol's default footprint is the project one.
+
+- Source: [MSA3S02 datasheet](https://datasheet.lcsc.com/datasheet/pdf/17622eabedb09583cf1836f55c7a0a26.pdf)
+  V1.0, May 2024 (pin table p. 5, ratings pp. 6–7, interrupt pin p. 13 and register 0x20
+  p. 24, I2C address and timing p. 28, application circuit p. 30, package outline p. 31).
+  Symbol, footprint and 3D model drawn for this project (CERN-OHL-P-2.0).
+- Pins (p. 5): 2 SDA, 5 INT1, 7 VDD, 9 GND, 12 SCL; 1, 3, 6, 10, 11 NC (hidden
+  `no_connect`). 4 and 8 are NC that the datasheet recommends tying to GND, so they are one
+  visible passive pin stack `[4,8]` named NC, 5.08 mm long so the stacked number clears the
+  body (KLC S4.6 waived for this part). INT1 is push-pull, active low by default (register
+  0x20 = 0x00: `INT1_OD` 0, `INT1_LVL` 0); open drain and active high are set in that
+  register. There is no address pin and no separate VDDIO pin: p. 7 lists a VDDIO range
+  (1.2–3.6 V) and p. 30 pulls SCL/SDA up to "VDD/VDDIO", but the package has one supply pin.
+- Application circuit (p. 30): 100 nF from VDD to GND, 4.7 kΩ pull-ups on SCL and SDA, pin 4
+  to GND.
+- The datasheet publishes no land pattern. The footprint comes from KiCad's no-lead
+  generator (IPC, `qfn_pull_back`) with the p. 31 dimensions (D/E 2.00 ± 0.05, b 0.20–0.30,
+  L 0.225–0.325, L1 0.05–0.15), then pins 1, 4, 7 and 10 moved to y = ±0.775 mm (E1 1.55
+  BSC: the corner pins sit 0.525 mm from their neighbours, not 0.5 mm, which the
+  generator can't express). Pads 0.40 × 0.35 mm (pins 1–4, 7–10, at x = ±0.75) and
+  0.35 × 0.40 mm (pins 5, 6, 11, 12, at x = ±0.25, y = ±0.75), roundrect 25 %; the narrowest
+  copper gap is 0.125 mm (corner pad to its top/bottom-row neighbour).
+- 3D model: `Package_LGA_MEMSensing.3dshapes/`, from `3d-src/`, to the p. 31 outline:
+  2.00 × 2.00 × 0.95 mm, 0.13 mm substrate under a 0.82 mm cap, 0.275 × 0.25 mm terminals at
+  the p. 31 positions. The terminal thickness (0.03 mm, A1 ≤ 0.05) and the pin-1 dot
+  (Ø0.2 mm, 0.3 mm from both edges, scaled from the p. 5 and p. 31 top views) are assumed;
+  the C0.10 chamfer on terminal 1 is left out.
 
 ### `Transistor_FET_Infineon:IRLR024N`
 

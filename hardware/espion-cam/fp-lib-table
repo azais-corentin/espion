@@ -15,4 +15,5 @@
 	(lib (name "Button_Switch_SMD_XKB") (type "KiCad") (uri "${KIPRJMOD}/../lib/Button_Switch_SMD_XKB.pretty") (options "") (descr "XKB SMD switches (espion project library)"))
 	(lib (name "NetTie_Courtyard") (type "KiCad") (uri "${KIPRJMOD}/../lib/NetTie_Courtyard.pretty") (options "") (descr "Net ties with a courtyard (espion project library)"))
 	(lib (name "LED_SMD_Yongyu") (type "KiCad") (uri "${KIPRJMOD}/../lib/LED_SMD_Yongyu.pretty") (options "") (descr "Yongyu SMD LEDs (espion project library)"))
+	(lib (name "Package_LGA_MEMSensing") (type "KiCad") (uri "${KIPRJMOD}/../lib/Package_LGA_MEMSensing.pretty") (options "") (descr "MEMSensing LGA packages (espion project library)"))
 )

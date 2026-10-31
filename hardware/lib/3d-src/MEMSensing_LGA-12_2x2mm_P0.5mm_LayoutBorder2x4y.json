@@ -1,0 +1,37 @@
+{"commands":[
+ {"command":"parameters.add","params":{"name":"body_x","expression":"2.0 mm","comment":"MSA3S02 datasheet V1.0 p31 Figure 9: D 1.95-2.05 (nominal 2.00), KiCad X"}},
+ {"command":"parameters.add","params":{"name":"body_y","expression":"2.0 mm","comment":"p31: E 1.95-2.05 (nominal 2.00), KiCad Y"}},
+ {"command":"parameters.add","params":{"name":"body_h","expression":"0.95 mm","comment":"p31: A 0.90-1.00 (nominal 0.95) overall height"}},
+ {"command":"parameters.add","params":{"name":"sub_h","expression":"0.13 mm","comment":"p31 side view: 0.130 substrate under the 0.820 cap"}},
+ {"command":"parameters.add","params":{"name":"term_t","expression":"0.03 mm","comment":"p31: A1 0.05 max; terminal thickness not dimensioned, assumed 0.03"}},
+ {"command":"parameters.add","params":{"name":"b","expression":"0.25 mm","comment":"p31: b 0.20-0.30 (nominal 0.25) terminal width"}},
+ {"command":"parameters.add","params":{"name":"L","expression":"0.275 mm","comment":"p31: L 0.225-0.325 (nominal 0.275) terminal length"}},
+ {"command":"parameters.add","params":{"name":"col_x","expression":"0.7625 mm","comment":"p31: ZD 0.2375 BSC (body edge to pin 1-4 / 7-10 column centre): 1.0 - 0.2375"}},
+ {"command":"parameters.add","params":{"name":"row_y","expression":"0.7625 mm","comment":"p31: L1 0.10 (all sides) + L/2: centre of pins 5, 6, 11, 12 from the body centre"}},
+ {"command":"parameters.add","params":{"name":"corner_y","expression":"0.775 mm","comment":"p31: E1 1.55 BSC between the corner pin centres (ZE 0.225 BSC)"}},
+ {"command":"parameters.add","params":{"name":"mid","expression":"0.25 mm","comment":"p31: 2x0.500 between pins 5-6 / 11-12 and 2-3 / 8-9 (centres at +-0.25)"}},
+ {"command":"parameters.add","params":{"name":"dot_r","expression":"0.1 mm","comment":"p5/p31 top views: pin 1 marking circle about 0.3 from the pin 1 corner edges (scaled from the drawings; not dimensioned)"}},
+ {"command":"parameters.add","params":{"name":"dot_in","expression":"0.3 mm","comment":"pin 1 mark centre from the two body edges, scaled from p5/p31"}},
+
+ {"command":"solid.box","params":{"length":"body_x","width":"body_y","height":"sub_h - term_t","center":[0,0,"(sub_h + term_t)/2"],"operation":"new","body_name":"Substrate","name":"Substrate"}},
+ {"command":"solid.box","params":{"length":"body_x","width":"body_y","height":"body_h - sub_h","center":[0,0,"(body_h + sub_h)/2"],"operation":"new","body_name":"Cap","name":"Cap"}},
+ {"command":"solid.cylinder","params":{"base":["-body_x/2 + dot_in","body_y/2 - dot_in","body_h"],"radius":"dot_r","height":"0.01 mm","operation":"new","body_name":"Pin1Mark","name":"Pin1Mark"}},
+
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["-col_x","corner_y","term_t/2"],"operation":"new","body_name":"Pin1","name":"Pin1"}},
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["-col_x","mid","term_t/2"],"operation":"new","body_name":"Pin2","name":"Pin2"}},
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["-col_x","-mid","term_t/2"],"operation":"new","body_name":"Pin3","name":"Pin3"}},
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["-col_x","-corner_y","term_t/2"],"operation":"new","body_name":"Pin4","name":"Pin4"}},
+ {"command":"solid.box","params":{"length":"b","width":"L","height":"term_t","center":["-mid","-row_y","term_t/2"],"operation":"new","body_name":"Pin5","name":"Pin5"}},
+ {"command":"solid.box","params":{"length":"b","width":"L","height":"term_t","center":["mid","-row_y","term_t/2"],"operation":"new","body_name":"Pin6","name":"Pin6"}},
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["col_x","-corner_y","term_t/2"],"operation":"new","body_name":"Pin7","name":"Pin7"}},
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["col_x","-mid","term_t/2"],"operation":"new","body_name":"Pin8","name":"Pin8"}},
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["col_x","mid","term_t/2"],"operation":"new","body_name":"Pin9","name":"Pin9"}},
+ {"command":"solid.box","params":{"length":"L","width":"b","height":"term_t","center":["col_x","corner_y","term_t/2"],"operation":"new","body_name":"Pin10","name":"Pin10"}},
+ {"command":"solid.box","params":{"length":"b","width":"L","height":"term_t","center":["mid","row_y","term_t/2"],"operation":"new","body_name":"Pin11","name":"Pin11"}},
+ {"command":"solid.box","params":{"length":"b","width":"L","height":"term_t","center":["-mid","row_y","term_t/2"],"operation":"new","body_name":"Pin12","name":"Pin12"}},
+
+ {"command":"appearance.assign","params":{"bodies":["Cap"],"color":"#1E1E1E"}},
+ {"command":"appearance.assign","params":{"bodies":["Substrate"],"color":"#3B4A2F"}},
+ {"command":"appearance.assign","params":{"bodies":["Pin1Mark"],"color":"#D0D0D0"}},
+ {"command":"appearance.assign","params":{"bodies":["Pin1","Pin2","Pin3","Pin4","Pin5","Pin6","Pin7","Pin8","Pin9","Pin10","Pin11","Pin12"],"color":"#D4AF37"}}
+]}
