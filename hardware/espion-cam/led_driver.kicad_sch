@@ -8140,7 +8140,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "1.5k 1%"
+		(property "Value" "1.40k 1%"
 			(at 127 127 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8195,7 +8195,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1501TCE"
+		(property "MPN" "0402WGF1401TCE"
 			(at 129.54 125.73 0)
 			(hide yes)
 			(show_name no)
@@ -8206,7 +8206,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25867"
+		(property "LCSC" "C39650"
 			(at 129.54 125.73 0)
 			(hide yes)
 			(show_name no)
