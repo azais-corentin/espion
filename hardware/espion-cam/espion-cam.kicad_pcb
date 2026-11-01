@@ -11846,7 +11846,7 @@
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "44d7f06f-aaef-4f68-b8d3-472402050f4c")
-		(at 141.7 112.21 90)
+		(at 141.66 112.25 90)
 		(descr "Resistor SMD 0402 (1005 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R50"
@@ -15888,7 +15888,7 @@
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "5dd253a2-74cb-4d03-97a6-0c556ae3b10c")
-		(at 138.7 112.81 90)
+		(at 138.54 112.25 90)
 		(descr "Resistor SMD 0402 (1005 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R47"
@@ -31975,7 +31975,7 @@
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "c4c230c0-0206-4139-b962-36dd68651b07")
-		(at 139.7 112.21 90)
+		(at 139.58 112.25 90)
 		(descr "Resistor SMD 0402 (1005 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R45"
@@ -33758,7 +33758,7 @@
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "d33274a4-128b-449b-8c4d-be66bdfa7350")
-		(at 142.7 112.81 90)
+		(at 142.7 112.25 90)
 		(descr "Resistor SMD 0402 (1005 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R46"
@@ -38081,7 +38081,7 @@
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "f1b9a6fa-6ad7-4611-81d4-94bd1572ce63")
-		(at 137.7 112.21 90)
+		(at 137.5 112.25 90)
 		(descr "Resistor SMD 0402 (1005 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R51"
@@ -39918,7 +39918,7 @@
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "f8605f75-398b-4b90-93e4-e0dc61808571")
-		(at 140.7 112.81 90)
+		(at 140.62 112.25 90)
 		(descr "Resistor SMD 0402 (1005 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R49"
@@ -42689,9 +42689,9 @@
 		)
 	)
 	(gr_text "CONTACTS DOWN"
-		(at 134.4 114.3 0)
+		(at 129.7 114.3 0)
 		(layer "F.SilkS")
-		(uuid "de47dbeb-a4d0-41cc-9628-bf83732dfd02")
+		(uuid "af24c440-8603-4f8b-be56-a942b6e2fe72")
 		(effects
 			(font
 				(size 1 1)
@@ -42700,9 +42700,9 @@
 		)
 	)
 	(gr_text "1"
-		(at 136.7 111.85 0)
+		(at 136.4 111.85 0)
 		(layer "F.SilkS")
-		(uuid "4d635dde-21bf-47d5-a722-44e2bd3f4c80")
+		(uuid "e9021c96-df8b-4fe3-b047-35ed5bead272")
 		(effects
 			(font
 				(size 1 1)
@@ -42840,7 +42840,7 @@
 		)
 		(polygon
 			(pts
-				(xy 137.2 113.75) (xy 143.2 113.75) (xy 143.2 114.7) (xy 137.2 114.7)
+				(xy 135.6 113.25) (xy 143.5 113.25) (xy 143.5 114.45) (xy 135.6 114.45)
 			)
 		)
 	)
@@ -43067,10 +43067,10 @@
 		(polygon
 			(pts
 				(xy 100 100) (xy 164 100) (xy 164 164) (xy 100 164) (xy 100 115.55) (xy 108 115.55) (xy 108 120.5)
-				(xy 111.75 120.5) (xy 111.75 117.9) (xy 123.6 117.9) (xy 125 116.5) (xy 133.48 116.5) (xy 137.75 119)
-				(xy 139.6 119) (xy 141.2 121) (xy 141.2 123.4) (xy 147 123.4) (xy 147.5 122.5) (xy 147.6 119.05)
-				(xy 144.31 119.05) (xy 143.5 118.95) (xy 142.4 118.4) (xy 141.5 116.8) (xy 138.36 116.8) (xy 134.09 114.3)
-				(xy 123.7 114.3) (xy 122.3 115.7) (xy 111.75 115.7) (xy 111.75 111.4) (xy 111.1 111.4) (xy 111.1 110.6)
+				(xy 111.75 120.5) (xy 111.75 118) (xy 123.5 118) (xy 125 116.5) (xy 133.48 116.5) (xy 137.92 119.1)
+				(xy 139.68 119.1) (xy 141.2 121) (xy 141.2 123.4) (xy 147 123.4) (xy 147.5 122.5) (xy 147.6 119.05)
+				(xy 144.31 119.05) (xy 143.5 118.95) (xy 142.4 118.4) (xy 141.5 116.8) (xy 138.5579 116.8) (xy 134.1179 114.2)
+				(xy 123.8 114.2) (xy 122.3 115.7) (xy 111.75 115.7) (xy 111.75 111.4) (xy 111.1 111.4) (xy 111.1 110.6)
 				(xy 108 110.6) (xy 108 115.45) (xy 100 115.45)
 			)
 		)
