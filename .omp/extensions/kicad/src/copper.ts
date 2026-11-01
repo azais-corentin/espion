@@ -1323,7 +1323,7 @@ export class Copper {
 				if (!v.span.includes(ch.layer)) continue;
 				const [s, e] = [ch.pts[0]!, ch.pts[ch.pts.length - 1]!];
 				const forward = inVia(s) ? true : inVia(e) ? false : undefined;
-				if (forward !== undefined) ch.clips.push({ by: v, at: forward ? s : e });
+				if (forward !== undefined) ch.clips.push({ by: v, at: forward ? s : e, track: forward ? ch.first : ch.last });
 				clipChain(ch, inVia, v.at, forward);
 			}
 		}
@@ -1334,7 +1334,7 @@ export class Copper {
 				// only lines ending on the pad's position
 				if (!p.copper.includes(ch.layer) || (dist(s, p.at) > EPS && dist(e, p.at) > EPS)) continue;
 				const forward = inPad(s) ? true : inPad(e) ? false : undefined;
-				if (forward !== undefined) ch.clips.push({ by: p, at: forward ? s : e });
+				if (forward !== undefined) ch.clips.push({ by: p, at: forward ? s : e, track: forward ? ch.first : ch.last });
 				clipChain(ch, inPad, p.at, forward);
 			}
 		}
@@ -1395,8 +1395,9 @@ export class Copper {
 		const su = opts.useHeight ? this.board.stackup() : undefined;
 		// what KiCad's in-pad and in-via clipping takes off each chain end, put on the track at that end
 		const trim = new Map<Track, [number, number]>();
-		// a pad or via that clipped a chain joins it only at that end: its other tracks meeting it would skip the clipped length
-		const clipped = new Map<Pad | Via, { tracks: Set<Track>; at: Pt }[]>();
+		// a pad or via that clipped a chain joins it only at the clipped end (on the end track, wherever
+		// KiCad's connectivity saw them touch): its other junctions with the chain would skip the clipped length
+		const clipped = new Map<Pad | Via, { tracks: Set<Track>; at: Pt; track: Track; layer: string }[]>();
 		for (const ch of this.chains(net)) {
 			const [d0, d1] = ch.trimmed;
 			const startAtTrackStart = dist(ch.first.start, ch.pts[0]!) <= dist(ch.first.end, ch.pts[0]!);
@@ -1409,13 +1410,13 @@ export class Copper {
 			if (d0) add(ch.first, startAtTrackStart, d0);
 			if (d1) add(ch.last, !endAtTrackEnd, d1);
 			const tracks = new Set(ch.tracks);
-			for (const cl of ch.clips) clipped.set(cl.by, [...(clipped.get(cl.by) ?? []), { tracks, at: cl.at }]);
+			for (const cl of ch.clips) clipped.set(cl.by, [...(clipped.get(cl.by) ?? []), { tracks, at: cl.at, track: cl.track, layer: ch.layer }]);
 		}
 		const skip = (j: Junction): boolean => {
 			const [x, y] = [c.nodes[j.a]!.item, c.nodes[j.b]!.item];
-			const [by, t, at] = x.kind === "pad" || x.kind === "via" ? [x, y, j.pb] : [y, x, j.pa];
+			const [by, t] = x.kind === "pad" || x.kind === "via" ? [x, y] : [y, x];
 			if (by.kind !== "pad" && by.kind !== "via") return false;
-			return (clipped.get(by) ?? []).some(cl => cl.tracks.has(t as Track) && dist(at, cl.at) > EPS);
+			return (clipped.get(by) ?? []).some(cl => cl.tracks.has(t as Track));
 		};
 		const g = new Graph();
 		const key = (i: number, p: Pt, layer: string): string => {
@@ -1447,6 +1448,10 @@ export class Copper {
 			}
 		});
 		for (const j of c.junctions) if (!skip(j)) g.edge(addStop(j.a, j.pa, j.layer), addStop(j.b, j.pb, j.layer), { len: 0 });
+		const index = new Map(c.nodes.map((n, i) => [n.item, i] as const));
+		for (const [by, cls] of clipped) {
+			for (const cl of cls) g.edge(addStop(index.get(by)!, by.at, cl.layer), addStop(index.get(cl.track)!, cl.at, cl.layer), { len: 0 });
+		}
 		for (const [i, m] of stops) {
 			const t = c.nodes[i]!.item as Track;
 			const [t0, t1] = trim.get(t) ?? [0, 0];
@@ -1555,8 +1560,8 @@ interface Chain {
 	first: Track;
 	last: Track;
 	trimmed: [number, number];
-	/** The vias and pads that clipped an end, and that end before clipping. */
-	clips: { by: Via | Pad; at: Pt }[];
+	/** The vias and pads that clipped an end, that end before clipping and the track at it. */
+	clips: { by: Via | Pad; at: Pt; track: Track }[];
 }
 
 function chainOf(t: Track): Chain {

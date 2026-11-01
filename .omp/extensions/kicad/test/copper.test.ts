@@ -214,6 +214,36 @@ describe("copper model", () => {
 		expect(path.length).toBeCloseTo(Math.hypot(1, 0.5) + 3 + 1.25, 5);
 	});
 
+	test("a path runs through a short track wholly inside the via or pad it ends in, whichever way the track points", () => {
+		const k = Copper.of(
+			board(
+				[
+					// from the pad's position back out: (0.3, 0.3) → (0, 0) lies inside the 1 × 1 pad
+					seg([0.3, 0.3], [0, 0], "W"),
+					seg([0.3, 0.3], [5, 0.3], "W"),
+					// 0.212 mm, wholly inside the 0.45 mm via it ends at the centre of
+					seg([5, 0.3], [5.15, 0.45], "W"),
+					`(via (at 5.15 0.45) (size 0.45) (drill 0.2) (layers "F.Cu" "B.Cu") (net "W") (uuid "via-w"))`,
+					seg([5.15, 0.45], [10.15, 0.45], "W", "B.Cu"),
+					`(footprint "X" (layer "F.Cu") (at 0 0) (property "Reference" "P1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "W")) (pad "2" smd rect (at 10.15 0.45) (size 0.4 0.4) (layers "B.Cu") (net "W")))`,
+				].join(" "),
+			),
+		);
+		// out of the pad: centre to where it leaves at (0.5, 0.3); into the via: where it enters to its centre
+		const enter = 5.15 - Math.sqrt(0.225 ** 2 - 0.15 ** 2);
+		const want = Math.hypot(0.5, 0.3) + (enter - 0.5) + 0.225 + 5;
+		expect(k.connectivity("W").clusters).toHaveLength(1);
+		expect(k.netLength("W", { useHeight: false }).track).toBeCloseTo(want, 5);
+		for (const [from, to] of [
+			["P1.1", "P1.2"],
+			["P1.2", "P1.1"],
+		]) {
+			const p = k.path(from!, to!, { useHeight: false })!;
+			expect(p).toBeDefined();
+			expect([p.vias, p.length]).toEqual([1, expect.closeTo(want, 5)]);
+		}
+	});
+
 	test("copper joins where it overlaps, as KiCad's connectivity: a track short of the pad centre, crossing tracks, a track over a pad, a copper drawing with the net; jumper pads", () => {
 		const fp = (ref: string, at: Pt, pads: string, extra = "") => `(footprint "X" (layer "F.Cu") (at ${at[0]} ${at[1]}) (property "Reference" "${ref}") ${extra} ${pads})`;
 		const pad = (n: string, at: Pt, net: string, size = 1) => `(pad "${n}" smd rect (at ${at[0]} ${at[1]}) (size ${size} ${size}) (layers "F.Cu") (net "${net}"))`;
