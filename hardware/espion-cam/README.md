@@ -37,7 +37,7 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - USB-C straight to the P4's USB Serial/JTAG (no hub), with ESD protection and a TI
   TSD05DYFR VBUS TVS. VBUS is sensed on GPIO20 (`VBUS_SENSE`, 47 kΩ / 75 kΩ divider):
   firmware turns the D+ pull-up off while no USB host supplies VBUS
-- Yongyu YY-0807RGBJ26-07-FJ RGB status LED (WS2812-type protocol, shorter bit times);
+- Yongyu YY-0807BRGK26-07-FI RGB status LED (WS2812-type protocol, shorter bit times);
   BOOT and RESET buttons (BOOT with a TSD05DYFR ESD clamp)
 - MEMSensing MSA3S02 3-axis accelerometer (LGA-12 2 × 2 mm, I2C address 0x62) on its own
   I2C bus (GPIO3/4), INT1 on GPIO54: motion interrupt flags a bumped camera, the

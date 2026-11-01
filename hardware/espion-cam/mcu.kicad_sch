@@ -1307,7 +1307,7 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "LED_Yongyu:YY-0807RGBJ26-07-FJ"
+		(symbol "LED_Yongyu:YY-0807BRGK26-07-FI"
 			(exclude_from_sim no)
 			(in_bom yes)
 			(on_board yes)
@@ -1324,7 +1324,7 @@
 					(justify left)
 				)
 			)
-			(property "Value" "YY-0807RGBJ26-07-FJ"
+			(property "Value" "YY-0807BRGK26-07-FI"
 				(at -7.62 -11.43 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -1346,7 +1346,7 @@
 					)
 				)
 			)
-			(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f9afa0e15f6569ed1e35edd063d6a18f.pdf"
+			(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f10321733b2b8242740cb1ad891264de.pdf"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -1357,7 +1357,7 @@
 					)
 				)
 			)
-			(property "Description" "RGB LED with integrated controller, single-wire 24-bit GRB (WS2812-type, T0H 0.295us, T1H 0.595us, reset >=80us), VDD 3.0-7.5V, 12mA per channel, 2.0 x 1.7 mm"
+			(property "Description" "RGB LED with integrated controller, single-wire 24-bit (WS2812-type; datasheet p.7 data structure G-R-B, MSB first, part name 'BRG'), T0H 0.3us, T1H 0.6us (+-0.05us), reset >=80us, VDD 3.0-7.5V, 5mA per channel, 2.0 x 1.7 mm"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -1368,7 +1368,7 @@
 					)
 				)
 			)
-			(property "ki_keywords" "RGB LED addressable NeoPixel WS2812 Yongyu 0807"
+			(property "ki_keywords" "RGB LED addressable NeoPixel WS2812 Yongyu 0807 BRG"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -1390,7 +1390,7 @@
 					)
 				)
 			)
-			(symbol "YY-0807RGBJ26-07-FJ_0_0"
+			(symbol "YY-0807BRGK26-07-FI_0_0"
 				(text "RGB"
 					(at 2.286 -6.731 0)
 					(effects
@@ -1400,7 +1400,7 @@
 					)
 				)
 			)
-			(symbol "YY-0807RGBJ26-07-FJ_0_1"
+			(symbol "YY-0807BRGK26-07-FI_0_1"
 				(polyline
 					(pts
 						(xy 1.27 -5.08) (xy 1.778 -5.08)
@@ -1497,7 +1497,7 @@
 					)
 				)
 			)
-			(symbol "YY-0807RGBJ26-07-FJ_1_1"
+			(symbol "YY-0807BRGK26-07-FI_1_1"
 				(pin output line
 					(at 7.62 0 180)
 					(length 2.54)
@@ -6745,7 +6745,7 @@
 		)
 	)
 	(symbol
-		(lib_id "LED_Yongyu:YY-0807RGBJ26-07-FJ")
+		(lib_id "LED_Yongyu:YY-0807BRGK26-07-FI")
 		(at 76.2 121.92 0)
 		(mirror y)
 		(unit 1)
@@ -6767,7 +6767,7 @@
 				)
 			)
 		)
-		(property "Value" "YY-0807RGBJ26-07-FJ"
+		(property "Value" "YY-0807BRGK26-07-FI"
 			(at 76.2 109.855 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6789,7 +6789,7 @@
 				(justify left top)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f9afa0e15f6569ed1e35edd063d6a18f.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f10321733b2b8242740cb1ad891264de.pdf"
 			(at 76.2 121.92 0)
 			(hide yes)
 			(show_name no)
@@ -6801,7 +6801,7 @@
 				(justify left top)
 			)
 		)
-		(property "Description" "RGB LED with integrated controller, single-wire 24-bit GRB (WS2812-type, T0H 0.295us, T1H 0.595us, reset >=80us), VDD 3.0-7.5V, 12mA per channel, 2.0 x 1.7 mm"
+		(property "Description" "RGB LED with integrated controller, single-wire 24-bit (WS2812-type; datasheet p.7 data structure G-R-B, MSB first, part name 'BRG'), T0H 0.3us, T1H 0.6us (+-0.05us), reset >=80us, VDD 3.0-7.5V, 5mA per channel, 2.0 x 1.7 mm"
 			(at 76.2 121.92 0)
 			(hide yes)
 			(show_name no)
@@ -6812,7 +6812,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Shenzhen Yongyu Photoelectric"
+		(property "Manufacturer" "Yongyu Photoelectric"
 			(at 76.2 121.92 0)
 			(hide yes)
 			(show_name no)
@@ -6823,7 +6823,7 @@
 				)
 			)
 		)
-		(property "MPN" "YY-0807RGBJ26-07-FJ"
+		(property "MPN" "YY-0807BRGK26-07-FI"
 			(at 76.2 121.92 0)
 			(hide yes)
 			(show_name no)
@@ -6834,7 +6834,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C54796803"
+		(property "LCSC" "C54796802"
 			(at 76.2 121.92 0)
 			(hide yes)
 			(show_name no)
