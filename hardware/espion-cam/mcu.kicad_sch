@@ -4254,6 +4254,10 @@
 		(uuid "388827b3-02af-4ef1-b6a8-d34b3c1a3ed9")
 	)
 	(no_connect
+		(at 195.58 139.7)
+		(uuid "44f668d8-b301-4782-a450-c12b824e4a8c")
+	)
+	(no_connect
 		(at 195.58 53.34)
 		(uuid "554ba21c-a3e3-49a9-a740-84cb2740dc86")
 	)
@@ -4316,10 +4320,6 @@
 	(no_connect
 		(at 195.58 55.88)
 		(uuid "c6e06a2b-3495-4f72-835d-545c51fdd6fb")
-	)
-	(no_connect
-		(at 195.58 132.08)
-		(uuid "cd4adf9f-a125-46eb-a6fd-a7eac25a27d0")
 	)
 	(no_connect
 		(at 53.34 73.66)
@@ -4465,15 +4465,6 @@
 			(type default)
 		)
 		(uuid "61647257-68e0-4eca-80e1-ef739b141305")
-	)
-	(bus_entry
-		(at 248.92 134.62)
-		(size -2.54 -2.54)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "66e8c4f4-b8aa-477b-a785-abd336449cb3")
 	)
 	(bus_entry
 		(at 134.62 114.3)
@@ -4813,16 +4804,6 @@
 		)
 		(uuid "2426cd14-cba6-4bf3-90a0-88e180df282f")
 	)
-	(wire
-		(pts
-			(xy 196.85 132.08) (xy 246.38 132.08)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "2587e84a-5d7d-4b5c-a46e-c5b6a3fbc91e")
-	)
 	(bus
 		(pts
 			(xy 213.36 157.48) (xy 205.74 157.48)
@@ -4922,16 +4903,6 @@
 			(type default)
 		)
 		(uuid "35ac3bb9-a25b-4271-9366-38bb76e365cb")
-	)
-	(wire
-		(pts
-			(xy 195.58 139.7) (xy 198.12 139.7)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "39585798-d1b6-4015-9abc-8849454c75e7")
 	)
 	(wire
 		(pts
@@ -5452,6 +5423,16 @@
 			(type default)
 		)
 		(uuid "9720e510-c577-456e-9961-86b76674a229")
+	)
+	(wire
+		(pts
+			(xy 195.58 132.08) (xy 208.28 132.08)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "97544e46-c42b-4729-ac99-f87853fa524d")
 	)
 	(wire
 		(pts
@@ -5993,16 +5974,6 @@
 		)
 		(uuid "eac2f57d-06c4-44ac-9ae9-a459e2445917")
 	)
-	(wire
-		(pts
-			(xy 198.12 139.7) (xy 198.12 152.4)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ead483a8-3b3a-44fb-a500-2e382acf99d5")
-	)
 	(bus
 		(pts
 			(xy 132.08 109.22) (xy 132.08 119.38)
@@ -6143,16 +6114,6 @@
 		)
 		(uuid "0275ffae-8846-4f58-b5af-d1c02f068fce")
 	)
-	(label "PHY_RST_N"
-		(at 196.85 132.08 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "05908258-ad58-4bd0-a2d9-55334e1c77bb")
-	)
 	(label "RMII_TXD1_MCU"
 		(at 196.85 91.44 0)
 		(effects
@@ -6262,16 +6223,6 @@
 			(justify left bottom)
 		)
 		(uuid "3733d6ac-4880-4cf4-9c3d-50e571cfb7c5")
-	)
-	(label "IMU_INT1"
-		(at 199.39 152.4 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "3a800999-ecb6-43d5-8019-29d257b40e3a")
 	)
 	(label "LED_PWR_EN"
 		(at 135.89 104.14 0)
@@ -6392,6 +6343,16 @@
 			(justify left bottom)
 		)
 		(uuid "5f8d6e3d-2786-4d22-92ac-e03fc96ad915")
+	)
+	(label "IMU_INT1"
+		(at 198.12 152.4 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "62c8b211-24ba-43d0-888e-184be94f0ed1")
 	)
 	(label "IMU_SDA"
 		(at 118.11 96.52 0)
@@ -6632,6 +6593,16 @@
 			(justify left bottom)
 		)
 		(uuid "e725b918-0bb3-43d0-804e-f3a352b30b94")
+	)
+	(label "IMU_INT1"
+		(at 208.28 132.08 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "e72c7cdd-b8e1-4f9a-9064-675ff7942ba4")
 	)
 	(label "USB_C_D_N"
 		(at 105.41 71.12 0)
