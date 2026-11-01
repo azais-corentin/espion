@@ -1,21 +1,21 @@
 /**
- * Board items that aren't copper routing: board texts and drawings, and board-only footprints
- * (no symbol: fiducials, logos, test pads). Board millimetres, x right, y down; rotations
- * counter-clockwise degrees; KiCad canonical layer names.
+ * Board items that aren't copper routing: board texts and drawings, the stroke widths of placed
+ * footprints' drawings, and board-only footprints (no symbol: fiducials, logos, test pads). Board
+ * millimetres, x right, y down; rotations counter-clockwise degrees; KiCad canonical layer names.
  *
  * Written as KiCad 10 stores them: `(gr_text "…" (at x y rot) (layer "F.SilkS" [knockout]) (uuid)
  * (effects (font (size h w) (thickness t)) [(justify … [mirror])]))`; `(gr_line|gr_rect|gr_circle|
  * gr_arc|gr_poly … (stroke (width w) (type solid)) [(fill yes|no)] (layer) (uuid))`.
  */
 import * as fs from "node:fs";
-import { courtyardBox, flipToBack, fpAttrs, fpRef, instantiate, setPlacement, setProperty, textAngle } from "../board";
+import { courtyardBox, extentBox, flipToBack, fpAttrs, fpRef, instantiate, setPlacement, setProperty, textAngle } from "../board";
 import { Copper, type BoardText, type Drawing } from "../copper";
 import { arcPoints, pointInPolygon } from "../edges";
 import { mm } from "../fpgfx";
 import { type Box, bbox, type Pt } from "../geom";
 import type { Project } from "../project";
 import { newUuid } from "../sch";
-import { child, children, head, isList, L, type List, parse, str, Sym, text } from "../sexpr";
+import { child, children, flag, head, isList, L, type List, num, parse, str, Sym, text } from "../sexpr";
 import type { OpDef } from "../types";
 import { boardDefaults, boardSettings } from "./board";
 import { boxAround, fmtMm, fmtPt, short, xy } from "./copper";
@@ -261,6 +261,121 @@ const removeBoardItem: OpDef = {
 	},
 };
 
+// ---- footprint drawing widths ---------------------------------------------------------------------
+
+/** Footprint drawings with a stroke. */
+const STROKED = ["fp_line", "fp_arc", "fp_circle", "fp_rect", "fp_poly", "fp_curve"];
+
+/** Footprint texts with a font: fields (those with a position), user texts and text boxes. */
+const FP_TEXTS = ["property", "fp_text", "fp_text_box"];
+
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+/** A text's stroke as KiCad draws it: its thickness, or without one KiCad's default pen (glyph width / 8, bold / 5). */
+function textStroke(font: List): number {
+	const t = child(font, "thickness");
+	if (t) return num(t);
+	// (size height width)
+	const size = child(font, "size");
+	const w = size ? num(size, 2) : 1;
+	return flag(font, "bold") ? w / 5 : w / 8;
+}
+
+/** Set a font's stroke thickness where KiCad keeps it: in place, else right after the size. */
+function setThickness(font: List, v: number): void {
+	const node = L("thickness", mm(v));
+	const at = font.findIndex(c => isList(c) && head(c) === "thickness");
+	if (at >= 0) font[at] = node;
+	else {
+		const size = font.findIndex(c => isList(c) && head(c) === "size");
+		font.splice(size >= 0 ? size + 1 : font.length, 0, node);
+	}
+}
+
+const setFootprintGraphicsWidth: OpDef = {
+	op: "set_footprint_graphics_width",
+	group: "board",
+	doc:
+		"Raise the stroke width of the drawings (lines, arcs, circles, rectangles, polygons, Bézier curves) of placed footprints on the given layers to at least min_width, e.g. stock silkscreen drawn at 0.12 mm to a fab's 0.15 mm minimum line width; with texts, the stroke thickness of their texts on those layers too (fields such as the reference, user texts, text boxes; a text without a thickness counts at KiCad's default pen, glyph width / 8). " +
+		"Never narrows: items already as wide stay as they are; geometry, fill and line style are kept; a filled shape without an outline (stroke 0, e.g. a logo) is left alone. Only the board's copies change, not the library footprints. Reports per footprint how many items were raised. A wider line that now reaches a pad or another item is a new DRC violation and refused like any other.",
+	fields: {
+		refs: { t: "strings", doc: 'footprint references, e.g. ["R1", "U3"]' },
+		all: { t: "boolean", doc: "true: every footprint on the board (instead of refs)" },
+		layers: { t: "strings", req: true, doc: 'board layers, canonical or user names, e.g. ["F.SilkS", "B.SilkS"]' },
+		min_width: { t: "number", req: true, doc: "minimum stroke width, mm" },
+		texts: { t: "boolean", doc: "also raise the text stroke thickness on those layers (default false)" },
+	},
+	apply(ctx, args) {
+		const min = args.min_width as number;
+		if (!(min > 0)) throw new Error("min_width must be positive");
+		const refs = args.refs as string[] | undefined;
+		if ((args.all === true) === (refs !== undefined)) throw new Error("give refs or all: true");
+		if (refs && !refs.length) throw new Error("refs is empty");
+		const board = ctx.project.board();
+		const known = board.layers();
+		const names = args.layers as string[];
+		if (!names.length) throw new Error("layers is empty");
+		const layers = new Set(
+			names.map(n => {
+				const hit = known.find(l => l.name === n) ?? known.find(l => l.user === n);
+				if (!hit) throw new Error(`layers: the board has no layer "${n}" (layers: ${known.map(l => l.name).join(", ")})`);
+				return hit.name;
+			}),
+		);
+		const fps = refs ? [...new Set(refs)].map(r => board.footprint(r)) : board.footprints();
+		// below min by more than KiCad's 1 nm resolution
+		const narrow = (w: number) => w < min - 1e-7;
+		const changed: List[] = [];
+		const unchanged: string[] = [];
+		for (const fp of fps) {
+			let lines = 0;
+			let texts = 0;
+			const was = new Set<number>();
+			for (const item of fp) {
+				if (!isList(item) || !layers.has(text(child(item, "layer")) ?? "")) continue;
+				const h = head(item) ?? "";
+				if (STROKED.includes(h)) {
+					// KiCad 10 keeps the width in (stroke (width w) (type …)); older files as a plain (width w)
+					const stroke = child(item, "stroke");
+					const w = child(stroke ?? item, "width");
+					const width = w ? num(w) : 0;
+					const filled = ["yes", "solid"].includes(text(child(item, "fill")) ?? "");
+					if (!narrow(width) || (width === 0 && filled)) continue;
+					if (w) w[1] = mm(min);
+					else if (stroke) stroke.splice(1, 0, L("width", mm(min)));
+					else item.push(L("stroke", L("width", mm(min)), L("type", "solid")));
+					was.add(width);
+					lines++;
+				} else if (args.texts === true && FP_TEXTS.includes(h) && (h !== "property" || child(item, "at"))) {
+					const font = child(child(item, "effects") ?? [], "font");
+					if (!font) continue;
+					const stroke = textStroke(font);
+					if (!narrow(stroke)) continue;
+					setThickness(font, min);
+					was.add(Math.round(stroke * 1e4) / 1e4);
+					texts++;
+				}
+			}
+			if (!lines && !texts) {
+				unchanged.push(fpRef(fp));
+				continue;
+			}
+			changed.push(fp);
+			const what = [...(lines ? [plural(lines, "drawing")] : []), ...(texts ? [plural(texts, "text")] : [])].join(" and ");
+			ctx.notes.push(`${fpRef(fp)}: ${what} raised to ${fmtMm(min)} mm (was ${[...was].sort((a, b) => a - b).map(fmtMm).join(", ")} mm)`);
+		}
+		const where = `on ${[...layers].join(", ")}`;
+		if (unchanged.length) {
+			const list = unchanged.length <= 20 ? `: ${unchanged.join(", ")}` : "";
+			ctx.notes.push(`${plural(unchanged.length, "footprint")} unchanged, nothing narrower than ${fmtMm(min)} mm ${where}${list}`);
+		}
+		if (!changed.length) return;
+		ctx.project.touchBoard();
+		const boxes = changed.map(extentBox).filter((b): b is Box => !!b);
+		ctx.touchBoard(boxes.length ? bbox(boxes.flatMap(b => [[b[0], b[1]] as Pt, [b[2], b[3]] as Pt])) : undefined);
+	},
+};
+
 // ---- board-only footprints ------------------------------------------------------------------------
 
 const addBoardFootprint: OpDef = {
@@ -323,4 +438,4 @@ const removeBoardFootprint: OpDef = {
 	},
 };
 
-export const ops: OpDef[] = [addBoardText, addBoardGraphic, removeBoardItem, addBoardFootprint, removeBoardFootprint];
+export const ops: OpDef[] = [addBoardText, addBoardGraphic, removeBoardItem, setFootprintGraphicsWidth, addBoardFootprint, removeBoardFootprint];

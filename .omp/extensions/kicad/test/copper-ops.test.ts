@@ -496,6 +496,68 @@ describe.skipIf(!HAS_KICAD)("board write ops on the copper fixture", () => {
 		expect(r.report).toContain("removed FID1 (Fiducial:Fiducial_1mm_Mask2mm)");
 	}, 120_000);
 
+	test("set_footprint_graphics_width raises the selected footprints' strokes on the given layers, never narrows, texts only when asked; KiCad keeps the widths", async () => {
+		const strokes = (p: Project, ref: string, layer: string) =>
+			p
+				.board()
+				.footprint(ref)
+				.filter((c): c is List => Array.isArray(c) && /^fp_(line|arc|circle|rect|poly)$/.test(text(c, 0) ?? "") && text(child(c, "layer")) === layer)
+				.map(c => num(child(child(c, "stroke")!, "width")));
+		const thickness = (p: Project, ref: string, pred: (l: List) => boolean) => {
+			const t = p.board().footprint(ref).find((c): c is List => Array.isArray(c) && pred(c))!;
+			return text(child(child(child(t, "effects")!, "font")!, "thickness"));
+		};
+		const isRef = (l: List) => text(l, 0) === "property" && text(l, 1) === "Reference";
+		const isUser = (l: List) => text(l, 0) === "fp_text" && text(l, 1) === "user";
+
+		// silkscreen by its user name, two of the three footprints: their 0.12 mm lines raised, C1 and the fab layer untouched
+		const silk = await inMemory([["set_footprint_graphics_width", { refs: ["D1", "R1"], layers: ["F.Silkscreen"], min_width: 0.15 }]]);
+		expect(silk.notes).toEqual(["D1: 3 drawings raised to 0.15 mm (was 0.12 mm)", "R1: 2 drawings raised to 0.15 mm (was 0.12 mm)"]);
+		expect(strokes(silk.project, "D1", "F.SilkS")).toEqual([0.15, 0.15, 0.15]);
+		expect(strokes(silk.project, "C1", "F.SilkS")).toEqual([0.12, 0.12]);
+		expect(strokes(silk.project, "D1", "F.Fab")).toEqual([0.1, 0.1, 0.1, 0.1, 0.1]);
+		expect(strokes(silk.project, "R1", "F.CrtYd")).toEqual([0.05]);
+		// without texts, the reference on the silkscreen keeps its thickness
+		expect(thickness(silk.project, "D1", isRef)).toBe("0.15");
+
+		// already as wide or wider: never narrowed
+		const again = await inMemory([["set_footprint_graphics_width", { refs: ["D1", "R1"], layers: ["F.SilkS"], min_width: 0.13 }]], silk.project);
+		expect(again.notes).toEqual(["2 footprints unchanged, nothing narrower than 0.13 mm on F.SilkS: D1, R1"]);
+		expect(strokes(silk.project, "D1", "F.SilkS")).toEqual([0.15, 0.15, 0.15]);
+
+		// texts on the fab layer: the 0.06 mm ${REFERENCE} raised; Value (0.15) and the fields without a thickness (KiCad's pen 1.27 / 8) stay; the 0.1 mm lines already are
+		const fab = await inMemory([["set_footprint_graphics_width", { all: true, layers: ["F.Fab"], min_width: 0.1, texts: true }]]);
+		expect(fab.notes).toEqual(["D1: 1 text raised to 0.1 mm (was 0.06 mm)", "C1: 1 text raised to 0.1 mm (was 0.06 mm)", "R1: 1 text raised to 0.1 mm (was 0.06 mm)"]);
+		expect(thickness(fab.project, "R1", isUser)).toBe("0.1");
+		expect(thickness(fab.project, "D1", l => text(l, 0) === "property" && text(l, 1) === "Datasheet")).toBeUndefined();
+		expect(strokes(fab.project, "R1", "F.Fab")).toEqual([0.1]);
+
+		// a filled shape without an outline (a logo) keeps its 0 stroke; one with a thin outline is raised
+		const project = Project.open(BOARD_PROJECT, root);
+		const r1 = project.board().footprint("R1");
+		const pts = L("pts", L("xy", 0, 0), L("xy", 0.5, 0), L("xy", 0, 0.5));
+		const poly = (w: number) => L("fp_poly", pts, L("stroke", L("width", w), L("type", "solid")), L("fill", true), L("layer", str("F.SilkS")));
+		r1.splice(r1.findIndex(c => Array.isArray(c) && text(c, 0) === "pad"), 0, poly(0), poly(0.05));
+		const filled = await inMemory([["set_footprint_graphics_width", { refs: ["R1"], layers: ["F.SilkS"], min_width: 0.15 }]], project);
+		expect(filled.notes).toEqual(["R1: 3 drawings raised to 0.15 mm (was 0.05, 0.12 mm)"]);
+		expect(strokes(project, "R1", "F.SilkS")).toEqual([0.15, 0.15, 0, 0.15]);
+		expect(r1.filter(c => Array.isArray(c) && text(c, 0) === "fp_poly").map(c => text(child(c as List, "fill")))).toEqual(["yes", "yes"]);
+
+		await expect(inMemory([["set_footprint_graphics_width", { refs: ["R9"], layers: ["F.SilkS"], min_width: 0.15 }]])).rejects.toThrow("no footprint R9 on the board (3 footprints: C1, D1, R1)");
+		await expect(inMemory([["set_footprint_graphics_width", { refs: ["R1"], all: true, layers: ["F.SilkS"], min_width: 0.15 }]])).rejects.toThrow("give refs or all: true");
+		await expect(inMemory([["set_footprint_graphics_width", { layers: ["F.SilkS"], min_width: 0.15 }]])).rejects.toThrow("give refs or all: true");
+		await expect(inMemory([["set_footprint_graphics_width", { all: true, layers: ["F.Silk"], min_width: 0.15 }]])).rejects.toThrow('layers: the board has no layer "F.Silk"');
+		await expect(inMemory([["set_footprint_graphics_width", { all: true, layers: ["F.SilkS"], min_width: 0 }]])).rejects.toThrow("min_width must be positive");
+
+		// through the transaction: KiCad re-saves the raised widths, the DRC gate passes
+		const r = await edit([{ op: "set_footprint_graphics_width", all: true, layers: ["F.SilkS", "B.SilkS"], min_width: 0.15, texts: true }]);
+		if (!r.applied) throw new Error(r.report);
+		expect(r.report).toContain("C1: 2 drawings raised to 0.15 mm (was 0.12 mm)");
+		const saved = Project.open(BOARD_PROJECT, root);
+		for (const ref of ["D1", "C1", "R1"]) expect(strokes(saved, ref, "F.SilkS").every(w => w === 0.15)).toBe(true);
+		expect(strokes(saved, "R1", "F.Fab")).toEqual([0.1]);
+	}, 180_000);
+
 	test("placement: a footprint's own keep-out (the tooling hole's ring) doesn't flag it; another footprint's courtyard on that keep-out does", async () => {
 		const ctx = await inMemory([
 			["add_board_footprint", { fp_id: "MountingHole:ToolingHole_1.152mm", ref: "TOOL1", at: [35, 5] }],

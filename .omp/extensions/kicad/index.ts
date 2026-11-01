@@ -72,7 +72,7 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 		name: "kicad_edit",
 		label: "KiCad edit",
 		description: [
-			"Change a KiCad project in one verified transaction: schematic sheets, hierarchy (new sheets, sheet pins), project settings (net classes, BOM presets), design rules, project libraries and the board (stack-up, board rules and setup, outline, footprints from the schematic, placement, tracks, diff pairs, vias and stitching vias, zones, rule areas, board texts, drawings and board-only footprints).",
+			"Change a KiCad project in one verified transaction: schematic sheets, hierarchy (new sheets, sheet pins), project settings (net classes, BOM presets), design rules, project libraries and the board (stack-up, board rules and setup, outline, footprints from the schematic, placement, tracks, diff pairs, vias and stitching vias, zones, rule areas, board texts, drawings, footprint drawing widths and board-only footprints).",
 			"The ops run in memory, then the result is written to a temporary copy, re-saved by KiCad (kicad-cli upgrade) and checked there. The real files are only replaced when every check passes:",
 			'- the connectivity change equals `expect` exactly (default: no connectivity change at all). Declare every net whose pins change, either as its exact final pin list (`{name?, pins: ["R1.2", …]}`) or, for a net that existed before, as a delta (`{name: "GND", added: ["R66.2"], removed: []}`); plus added/removed parts, renamed nets and pins left on no net;',
 			"- no new ERC violation; no new drawing-style finding on the touched sheets; a changed rules file parses; changed library parts add no KLC violation;",
