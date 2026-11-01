@@ -1646,7 +1646,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 91.44 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -1761,7 +1761,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 109.22 88.9 0)
 			(hide yes)
 			(show_name no)

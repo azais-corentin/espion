@@ -1739,17 +1739,6 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "J4 pad n = camera FPC pin n:\npad 1 = camera pin 1 (GND),\npad 15 = camera pin 15 (3V3).\nSee docs/hardware/camera.md."
-		(exclude_from_sim no)
-		(at 198.12 91.44 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "565e79a5-dc74-44e4-9e1b-5555ceab5c3a")
-	)
 	(text "XVS level: assembly option R40/R44.\nFitted by default: 1.5k / 1.8k (1.8 V module I/O).\n2.8 V and 3.3 V I/O: docs/hardware/camera.md."
 		(exclude_from_sim no)
 		(at 96.52 149.86 0)
@@ -1760,6 +1749,17 @@
 			(justify left bottom)
 		)
 		(uuid "c8912c9a-a4ef-4347-b446-0bee0790944a")
+	)
+	(text "J4 pad n = camera FPC pin n (pad 1 GND, pad 15 3V3)\nonly with the white FFC supplied with the module\n(contacts on opposite faces at the two ends) in this\nbottom-contact J4 (AFA07-S15FCA-00, CONTACTS DOWN).\nA same-face cable makes no contact.\nNever twist the cable: pin n -> 16-n shorts CAM_3V3 to GND.\nSee docs/hardware/camera.md."
+		(exclude_from_sim no)
+		(at 198.12 99.06 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "fee1ced3-9bf9-4e2d-913f-7dcd6c38e564")
 	)
 	(junction
 		(at 162.56 63.5)

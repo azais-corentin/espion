@@ -3993,7 +3993,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
 			(at 200.66 111.76 0)
 			(hide yes)
 			(show_name no)
@@ -8235,7 +8235,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 241.3 88.9 0)
 			(hide yes)
 			(show_name no)

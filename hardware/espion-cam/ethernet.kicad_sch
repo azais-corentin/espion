@@ -3245,6 +3245,28 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "IP101G straps: PHY address 1 (PHY_AD0 = 1 by R1, PHY_AD3 = 0 by R7),\nRMII mode (COL/RMII = 1 by R10), LED mode 2 (CRS/LEDMOD = 1 by R9),\nTP mode (FX_HEN internal pull-down)."
+		(exclude_from_sim no)
+		(at 167.64 154.94 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "cad838b6-5b9a-4a14-a295-44f04bc4349d")
+	)
+	(text "MDI pairs crossed at J1 (MDI-X wiring): U1 TX pair (pins 30/29) -> J1 RD+/RD- (pins 4/5),\nU1 RX pair (pins 27/26) -> J1 TD+/TD- (pins 1/2), P to P, N to N.\nRelies on IP101G auto-MDIX (page 16 reg 16[11] AUTO_MDIX_DIS = 0, the default):\nnever disable it; if it must be off, set page 16 reg 30[3] FORCE_MDIX = 1."
+		(exclude_from_sim no)
+		(at 76.2 146.05 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "e134d0e0-1817-43ce-b311-decb9369b927")
+	)
 	(junction
 		(at 172.72 78.74)
 		(diameter 0)

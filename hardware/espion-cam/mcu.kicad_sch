@@ -4404,15 +4404,6 @@
 		(uuid "1e3189c3-882f-4f11-9f88-54b3c02e15f0")
 	)
 	(bus_entry
-		(at 134.62 106.68)
-		(size -2.54 -2.54)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "28331f29-289f-4b89-a109-dba97a343bbc")
-	)
-	(bus_entry
 		(at 134.62 144.78)
 		(size -2.54 2.54)
 		(stroke
@@ -4546,15 +4537,6 @@
 			(type default)
 		)
 		(uuid "e0542b06-a587-4235-aa24-7c7c9d8900fc")
-	)
-	(bus_entry
-		(at 134.62 116.84)
-		(size -2.54 2.54)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "f18f638f-1f00-41aa-8a03-6f6736b369ba")
 	)
 	(bus_entry
 		(at 210.82 137.16)
@@ -4704,16 +4686,6 @@
 			(type default)
 		)
 		(uuid "1b47052d-806d-4aa8-9a45-b668676fc20a")
-	)
-	(wire
-		(pts
-			(xy 140.97 116.84) (xy 134.62 116.84)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "1c1be512-abac-4cd5-8463-269d60646875")
 	)
 	(wire
 		(pts
@@ -5107,16 +5079,6 @@
 	)
 	(wire
 		(pts
-			(xy 121.92 140.97) (xy 121.92 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "58de7a80-f58a-4370-a0e0-860764eea908")
-	)
-	(wire
-		(pts
 			(xy 149.86 53.34) (xy 139.7 53.34)
 		)
 		(stroke
@@ -5307,16 +5269,6 @@
 	)
 	(wire
 		(pts
-			(xy 143.51 106.68) (xy 134.62 106.68)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "7cfebe66-d3f7-43ed-97cd-bc983785afae")
-	)
-	(wire
-		(pts
 			(xy 170.18 38.1) (xy 170.18 21.59)
 		)
 		(stroke
@@ -5354,6 +5306,16 @@
 			(type default)
 		)
 		(uuid "88f913df-1927-46c2-92c6-bc76dc2879fd")
+	)
+	(bus
+		(pts
+			(xy 132.08 109.22) (xy 132.08 116.84)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8bdfac5c-93be-42ed-80a6-1c594ebd889e")
 	)
 	(wire
 		(pts
@@ -5677,6 +5639,16 @@
 	)
 	(wire
 		(pts
+			(xy 121.92 140.97) (xy 121.92 125.73)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c40d32d5-3084-4a2d-a540-38d5e86ccdfc")
+	)
+	(wire
+		(pts
 			(xy 195.58 91.44) (xy 215.9 91.44)
 		)
 		(stroke
@@ -5965,16 +5937,6 @@
 		)
 		(uuid "eac2f57d-06c4-44ac-9ae9-a459e2445917")
 	)
-	(bus
-		(pts
-			(xy 132.08 109.22) (xy 132.08 119.38)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ead824ef-39a7-47ad-9ce0-59fbdade5cdb")
-	)
 	(wire
 		(pts
 			(xy 119.38 81.28) (xy 120.65 81.28)
@@ -6175,16 +6137,6 @@
 		)
 		(uuid "29816092-91af-40c1-afd3-4115b2a2eee3")
 	)
-	(label "VBUS_SENSE"
-		(at 121.92 124.46 90)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "2acec63e-d831-442c-8d12-69a06f0c5ca2")
-	)
 	(label "{LEDCTL}"
 		(at 203.2 144.78 0)
 		(effects
@@ -6264,16 +6216,6 @@
 			(justify left bottom)
 		)
 		(uuid "50f34c4a-6c42-4882-ae7b-8aab4995c866")
-	)
-	(label "XVS"
-		(at 140.97 116.84 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right bottom)
-		)
-		(uuid "51794116-2d04-41dd-9e82-eb1ff12d7d1f")
 	)
 	(label "IMU_SCL"
 		(at 118.11 99.06 0)
@@ -6405,6 +6347,16 @@
 		)
 		(uuid "7de83280-4eb3-4c1b-acd5-c631eaae7e15")
 	)
+	(label "VBUS_SENSE"
+		(at 121.92 125.73 270)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "7eabd7e5-43ed-4657-923f-b4a99999ee43")
+	)
 	(label "BST_EN"
 		(at 196.85 137.16 0)
 		(effects
@@ -6454,16 +6406,6 @@
 			(justify right bottom)
 		)
 		(uuid "9e695760-bd3d-4650-8b13-e43cb9227f05")
-	)
-	(label "LED_EN"
-		(at 143.51 106.68 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right bottom)
-		)
-		(uuid "a1a6d4d3-2657-40b0-b14e-1f321f3042e0")
 	)
 	(label "RMII_TXD1"
 		(at 226.06 96.52 0)
