@@ -1,12 +1,13 @@
 /**
- * Project settings ops: net classes and their patterns, BOM presets (.kicad_pro), and custom
- * design rules (.kicad_dru).
+ * Project settings ops: net classes and their patterns, BOM presets, ERC and DRC exclusions
+ * (.kicad_pro), and custom design rules (.kicad_dru).
  *
  * .kicad_pro changes go through `proJson` (byte-exact outside the changed keys). The rules file is
  * edited as text: only the named rule's text changes, every other rule keeps its comments and
  * layout.
  */
 import { conditionNetclasses, itemProblems, type NetclassJson, netSettings, scanDru } from "../checks/rules";
+import { EXCLUSION_KINDS, type ExclusionKind, editableList, selectExclusions } from "../exclusions";
 import type { Project } from "../project";
 import { child, head, type List, parse, text } from "../sexpr";
 import { type Fields, validate } from "../spec";
@@ -216,6 +217,56 @@ const removeBomPreset: OpDef = {
 	},
 };
 
+// ---- ERC and DRC exclusions ---------------------------------------------------------------------
+
+const EXCLUSION_PICK: Fields = {
+	kind: { t: "string", req: true, values: EXCLUSION_KINDS, doc: '"erc" (erc.erc_exclusions) or "drc" (board.design_settings.drc_exclusions)' },
+	key: { t: "string", doc: "the whole exclusion key, as kicad_query exclusions lists it" },
+	match: { t: "string", doc: "instead of key: text in the key or comment (case-insensitive), e.g. a uuid or the comment's start" },
+};
+
+const removeExclusion: OpDef = {
+	op: "remove_exclusion",
+	group: "project",
+	doc:
+		"Delete ERC or DRC exclusions from the .kicad_pro (kicad_query exclusions lists them, stale ones too). One exclusion unless all. " +
+		"A violation the exclusion still hid shows again in ERC/DRC: the edit reports it and still applies (it isn't new); fix it or exclude it again in KiCad.",
+	fields: { ...EXCLUSION_PICK, all: { t: "boolean", doc: "remove every exclusion match selects (default false: exactly one must match)" } },
+	apply(ctx, args) {
+		const kind = args.kind as ExclusionKind;
+		const data = ctx.project.proJson.data;
+		const list = editableList(data, kind, ctx.project.rel(ctx.project.proFile));
+		const hits = selectExclusions(data, kind, { key: args.key as string | undefined, match: args.match as string | undefined, all: args.all === true });
+		for (const e of [...hits].reverse()) list.splice(e.index, 1);
+		for (const e of hits) ctx.notes.push(`${kind.toUpperCase()} exclusion removed: ${e.rule} @ (${e.at[0]}, ${e.at[1]})${e.comment ? ` "${e.comment}"` : " (no comment)"}`);
+		ctx.project.touchPro();
+		if (kind === "drc") ctx.touchBoard();
+	},
+};
+
+const setExclusionComment: OpDef = {
+	op: "set_exclusion_comment",
+	group: "project",
+	doc: "Set the comment (the reason) of one ERC or DRC exclusion in the .kicad_pro; ERC and DRC reports carry it with the excluded violation.",
+	fields: { ...EXCLUSION_PICK, comment: { t: "string", req: true, doc: 'why the violation is excluded, with its source (datasheet page); "" removes it (the erc check then warns)' } },
+	apply(ctx, args) {
+		const kind = args.kind as ExclusionKind;
+		const data = ctx.project.proJson.data;
+		const list = editableList(data, kind, ctx.project.rel(ctx.project.proFile));
+		// selectExclusions throws unless exactly one matches
+		const e = selectExclusions(data, kind, { key: args.key as string | undefined, match: args.match as string | undefined })[0]!;
+		const comment = String(args.comment);
+		const what = `${kind.toUpperCase()} exclusion ${e.rule} @ (${e.at[0]}, ${e.at[1]})`;
+		if (e.comment === comment) {
+			ctx.notes.push(`${what} already has that comment`);
+			return;
+		}
+		list[e.index] = [e.key, comment];
+		ctx.notes.push(`${what}: comment ${comment ? (e.comment ? "replaced" : "added") : "removed"}`);
+		ctx.project.touchPro();
+	},
+};
+
 // ---- design rules -------------------------------------------------------------------------------
 
 /**
@@ -408,4 +459,15 @@ const setRulesHeader: OpDef = {
 	},
 };
 
-export const ops: OpDef[] = [setNetclass, removeNetclass, setNetclassPatterns, setBomPreset, removeBomPreset, setRule, removeRule, setRulesHeader];
+export const ops: OpDef[] = [
+	setNetclass,
+	removeNetclass,
+	setNetclassPatterns,
+	setBomPreset,
+	removeBomPreset,
+	removeExclusion,
+	setExclusionComment,
+	setRule,
+	removeRule,
+	setRulesHeader,
+];

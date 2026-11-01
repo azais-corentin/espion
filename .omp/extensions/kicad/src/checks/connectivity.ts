@@ -29,7 +29,7 @@ export function ercFindings(v: ErcViolation[]): Finding[] {
 
 const erc: CheckDef = {
 	name: "erc",
-	doc: "KiCad's ERC, one finding per violation with KiCad's severity and sheet path; violations excluded in KiCad are info with their exclusion comment, or a warning when the exclusion has no comment (excluded without a reason).",
+	doc: "KiCad's ERC, one finding per violation with KiCad's severity and sheet path; violations excluded in KiCad are info with their exclusion comment, or a warning when the exclusion has no comment (excluded without a reason). kicad_query exclusions lists the exclusions, stale ones too.",
 	byDefault: true,
 	async run(ctx) {
 		const violations = await ctx.analysis.erc();

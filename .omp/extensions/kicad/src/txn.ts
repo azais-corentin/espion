@@ -15,6 +15,8 @@
  *   Routing in progress (unconnected items, dangling tracks and vias), violations inside
  *   footprints the ops placed from the libraries and those a board-rules-only change brings up
  *   are reported, not gated.
+ * - a violation that an ERC or DRC exclusion removed by the edit still hid is an old one shown
+ *   again: reported, not gated, and not counted as new or resolved.
  *
  * Only when every gate passes are KiCad's re-saved bytes copied over the real files, each
  * replaced atomically; if a copy fails midway the files already replaced are restored. The real
@@ -33,6 +35,7 @@ import { klcFindings } from "./checks/klc";
 import { styleFindings } from "./checks/style";
 import * as cli from "./cli";
 import { Copper } from "./copper";
+import { type Exclusion, removedExclusions, unexcluded } from "./exclusions";
 import { compactJson } from "./format";
 import { type Box, bbox, type Pt } from "./geom";
 import type { Libraries } from "./libs";
@@ -202,6 +205,17 @@ function unconnectedFindings(r: cli.DrcReport | undefined): Finding[] {
 		});
 }
 
+/** A DRC report with the excluded violations a removed exclusion matched shown as not excluded (see unexcluded), and those violations. */
+function unhideDrc(r: cli.DrcReport, removed: Exclusion[]): { report: cli.DrcReport; shown: cli.DrcReport } {
+	const v = unexcluded(r.violations, removed);
+	const p = unexcluded(r.parity, removed);
+	const u = unexcluded(r.unconnected, removed);
+	return {
+		report: { ...r, violations: v.report, parity: p.report, unconnected: u.report },
+		shown: { violations: v.shown, parity: p.shown, unconnected: u.shown, raw: "" },
+	};
+}
+
 /**
  * The DRC change of a board edit: new violations (gated, routing in progress, or confined to one
  * footprint the edit placed from the libraries), new parity issues, and the report lines. `rename`
@@ -354,13 +368,18 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 	const boardFile = toTemp(project.boardFile);
 	const boardRun = s.board.touched || pending.has(project.boardFile);
 	const boardBefore = boardRun && fs.existsSync(boardFile) ? parse(fs.readFileSync(boardFile, "utf8")) : undefined;
-	const [netBefore, ercBefore, styleBefore, klcBefore, drcBefore] = await Promise.all([
+	const [netBefore, ercReport, styleBefore, klcBefore, drcReport] = await Promise.all([
 		beforeA.netlist(),
 		beforeA.erc(),
 		styleFindings(beforeA, touchedSheets(before).filter(sh => fs.existsSync(sh.file))),
 		libFiles.length ? klcFindings(before, libFiles.map(toTemp).filter(f => fs.existsSync(f)), signal) : Promise.resolve([]),
 		boardBefore ? cli.pcbDrc(boardFile, ro, true, hasZones(boardBefore)) : Promise.resolve(undefined),
 	]).finally(() => beforeA.dispose());
+	// a violation that an exclusion the edit removes still hid is old, shown again: the before-state has it unexcluded, so it neither gates nor counts as resolved
+	const ercUnhidden = unexcluded(ercReport, removedExclusions(before.proJson.data, project.proJson.data, "erc"));
+	const ercBefore = ercUnhidden.report;
+	const drcUnhidden = drcReport && unhideDrc(drcReport, removedExclusions(before.proJson.data, project.proJson.data, "drc"));
+	const drcBefore = drcUnhidden?.report;
 
 	// 3. write the new files into the copy and let KiCad re-save them
 	for (const [f, content] of pending) {
@@ -418,7 +437,15 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		lines.push("Connectivity and part changes:", ...(sum.length ? sum.map(x => `  - ${x}`) : ["  - none"]));
 		const ercResolved = newFindings(ercFindings(ercAfter), ercFindings(ercBefore)).length;
 		lines.push(`ERC: ${ercAfter.filter(v => !v.excluded).length} violations after (${ercNew.length} new, ${ercResolved} resolved).`);
+		if (ercUnhidden.shown.length) {
+			lines.push("ERC violations shown again by the removed exclusions (not gated; fix them or exclude them again with a reason):", ...ercFindings(ercUnhidden.shown).map(fmtFinding));
+		}
 		if (drc) lines.push(...drc.report(pending.has(project.boardFile)));
+		const shownF = drcAfter && drcUnhidden ? drcFindings(drcUnhidden.shown) : undefined;
+		const drcShown = shownF ? [...shownF.violations, ...shownF.parity, ...unconnectedFindings(drcUnhidden!.shown)] : [];
+		if (drcShown.length) {
+			lines.push("DRC violations shown again by the removed exclusions (not gated; fix them or exclude them again with a reason):", ...drcShown.map(fmtFinding));
+		}
 		lines.push(
 			`Files: ${[
 				...[...pending.keys()].map(f => `${project.rel(f)}${project.created.has(f) ? " (new)" : ""}`),

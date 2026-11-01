@@ -7,7 +7,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHAR_W, TEXT_H } from "../analysis";
 import { placementRefs, refPrefix } from "../annotate";
+import { fpRef } from "../board";
+import { boardIsEmpty } from "../checks/board";
 import * as cli from "../cli";
+import { EXCLUSION_KINDS, type Exclusion, excludes, exclusions } from "../exclusions";
 import { type Box, bbox, key, onInterior, overlap, type Pt, pt, r3, type Seg, samePt, xform } from "../geom";
 import { druHeader, druRules } from "../ops/project";
 import type { Project, SheetInst } from "../project";
@@ -614,6 +617,98 @@ const rules: QueryDef = {
 	},
 };
 
+/** What a uuid names in the schematic: "U3" (symbol), "U3 pin 5", "label VBUS", else the item's kind; keyed by sheet uuid path, then uuid. */
+function schItems(project: Project): Map<string, Map<string, string>> {
+	const out = new Map<string, Map<string, string>>();
+	for (const inst of project.hierarchy()) {
+		const m = new Map<string, string>();
+		for (const item of inst.sch.tree) {
+			if (!isList(item)) continue;
+			const uuid = text(child(item, "uuid"));
+			if (head(item) === "symbol") {
+				const ref = inst.sch.refOf(item, inst.path);
+				if (uuid) m.set(uuid, ref);
+				for (const pin of children(item, "pin")) {
+					const u = text(child(pin, "uuid"));
+					if (u) m.set(u, `${ref} pin ${text(pin) ?? "?"}`);
+				}
+			} else if (uuid) m.set(uuid, /label$/.test(head(item) ?? "") ? `${head(item)} ${text(item) ?? ""}` : (head(item) ?? "item"));
+		}
+		out.set(inst.path, m);
+	}
+	return out;
+}
+
+/** What a uuid names on the board: "R1" (footprint), "R1 pad 2", else the item's kind ("segment", "via", "zone"). */
+function boardItems(tree: List): Map<string, string> {
+	const m = new Map<string, string>();
+	for (const item of tree) {
+		if (!isList(item)) continue;
+		const uuid = text(child(item, "uuid"));
+		if (head(item) === "footprint") {
+			const ref = fpRef(item);
+			if (uuid) m.set(uuid, ref);
+			for (const pad of children(item, "pad")) {
+				const u = text(child(pad, "uuid"));
+				if (u) m.set(u, `${ref} pad ${text(pad) ?? "?"}`);
+			}
+		} else if (uuid) m.set(uuid, head(item) ?? "item");
+	}
+	return m;
+}
+
+const exclusionsQuery: QueryDef = {
+	what: "exclusions",
+	doc:
+		"ERC and DRC exclusions from the .kicad_pro, each with its kind, rule, marker position (sheet mm and sheet for ERC, board mm and layer when the key has one for DRC), comment, the items its key names (symbol, pin, footprint, pad; \"gone\" when no longer in the design) and its whole key (remove_exclusion and set_exclusion_comment take it or match its text). " +
+		'KiCad\'s ERC (and DRC when there are DRC exclusions) runs here: `hides` is the violation the exclusion still hides; `stale: true` when no violation matches it any more (the design changed under it; remove_exclusion cleans it up). DRC exclusions on a project without a board, or an empty one, aren\'t checked ("checked": false).',
+	fields: { kind: { t: "string", values: EXCLUSION_KINDS, doc: "only this kind (default both)" } },
+	async run({ project, analysis }, args) {
+		const data = project.proJson.data;
+		const kinds = EXCLUSION_KINDS.filter(k => args.kind === undefined || args.kind === k);
+		const rows: Record<string, unknown>[] = [];
+		for (const kind of kinds) {
+			const list = exclusions(data, kind);
+			if (!list.length) continue;
+			// the excluded violations of KiCad's report (ERC and DRC violations share these fields)
+			let report: cli.DrcViolation[] | undefined;
+			let name: (e: Exclusion, uuid: string) => string;
+			if (kind === "erc") {
+				report = (await analysis.erc()).filter(v => v.excluded);
+				const bySheet = schItems(project);
+				// pins of a sheet used twice share uuids: the key's sheets first, then anywhere
+				name = (e, u) => [...(e.sheetPaths ?? []).map(p => bySheet.get(p)), ...bySheet.values()].map(m => m?.get(u)).find(x => x) ?? `${u} (gone)`;
+			} else {
+				const tree = fs.existsSync(project.boardFile) ? project.board().tree : undefined;
+				if (tree && !boardIsEmpty(tree)) {
+					const zones = [tree, ...children(tree, "footprint")].some(l => children(l, "zone").length > 0);
+					const r = await cli.pcbDrc(project.boardFile, analysis.runOpts, true, zones);
+					report = [...r.violations, ...r.parity, ...r.unconnected].filter(v => v.excluded);
+				}
+				const items = tree ? boardItems(tree) : undefined;
+				name = (_, u) => items?.get(u) ?? `${u}${items ? " (gone)" : ""}`;
+			}
+			const sheets = new Map(project.hierarchy().map(i => [i.path, i.namePath]));
+			for (const e of list) {
+				const sheet = e.sheetPaths?.[0];
+				const hit = report?.find(v => excludes(e, v));
+				rows.push({
+					kind,
+					rule: e.rule,
+					at: e.at,
+					...(sheet ? { sheet: sheets.get(sheet) ?? `${sheet} (gone)` } : {}),
+					...(e.layer ? { layer: e.layer } : {}),
+					comment: e.comment,
+					items: [...e.items.map(u => name(e, u)), ...(e.text !== undefined ? [`text "${e.text}"`] : [])],
+					...(report ? (hit ? { hides: `${hit.description} [${hit.items.map(i => i.description).join("; ")}]` } : { stale: true }) : { checked: false }),
+					key: e.key,
+				});
+			}
+		}
+		return { file: project.rel(project.proFile), exclusions: rows };
+	},
+};
+
 /** RFC 4180 CSV as kicad-cli writes it. */
 export function parseCsv(src: string): string[][] {
 	const rows: string[][] = [];
@@ -879,4 +974,4 @@ const freeSpace: QueryDef = {
 	},
 };
 
-export const queries: QueryDef[] = [hierarchy, symbols, symbol, nets, net, labels, wires, nextRefQuery, netclasses, rules, bom, sheet, freeSpace];
+export const queries: QueryDef[] = [hierarchy, symbols, symbol, nets, net, labels, wires, nextRefQuery, netclasses, rules, exclusionsQuery, bom, sheet, freeSpace];
