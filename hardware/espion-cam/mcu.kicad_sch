@@ -4377,15 +4377,6 @@
 		(uuid "0aeb7261-f9cd-48a6-94ce-b0938b7bb399")
 	)
 	(bus_entry
-		(at 134.62 104.14)
-		(size -2.54 -2.54)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "137c0901-b324-4726-af6c-3cd76806a4ef")
-	)
-	(bus_entry
 		(at 134.62 60.96)
 		(size -2.54 -2.54)
 		(stroke
@@ -4656,16 +4647,6 @@
 	)
 	(wire
 		(pts
-			(xy 121.92 124.46) (xy 149.86 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "13c27d94-20e3-407a-9663-21a45c981ddf")
-	)
-	(wire
-		(pts
 			(xy 58.42 58.42) (xy 58.42 60.96)
 		)
 		(stroke
@@ -4743,6 +4724,16 @@
 			(type default)
 		)
 		(uuid "1c1f1bc0-b2ec-410c-a28b-fc87b57e6a48")
+	)
+	(wire
+		(pts
+			(xy 149.86 104.14) (xy 135.89 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1cc65d82-f818-4128-903e-26948598bf06")
 	)
 	(wire
 		(pts
@@ -5446,16 +5437,6 @@
 	)
 	(wire
 		(pts
-			(xy 149.86 104.14) (xy 134.62 104.14)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "983ef651-c551-4581-9345-d5074ee27a44")
-	)
-	(wire
-		(pts
 			(xy 205.74 73.66) (xy 207.01 73.66)
 		)
 		(stroke
@@ -5773,6 +5754,16 @@
 			(type default)
 		)
 		(uuid "cd864b86-009e-418a-b7bd-05952a5d9771")
+	)
+	(wire
+		(pts
+			(xy 124.46 124.46) (xy 149.86 124.46)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ce4c61d3-d324-47d6-a234-0dcd3601bd46")
 	)
 	(wire
 		(pts
@@ -6184,6 +6175,16 @@
 		)
 		(uuid "29816092-91af-40c1-afd3-4115b2a2eee3")
 	)
+	(label "VBUS_SENSE"
+		(at 121.92 124.46 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "2acec63e-d831-442c-8d12-69a06f0c5ca2")
+	)
 	(label "{LEDCTL}"
 		(at 203.2 144.78 0)
 		(effects
@@ -6213,26 +6214,6 @@
 			(justify left bottom)
 		)
 		(uuid "3727ac2b-9a0b-4b93-9ef0-e6a79509eb5e")
-	)
-	(label "VBUS_SENSE"
-		(at 123.19 124.46 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "3733d6ac-4880-4cf4-9c3d-50e571cfb7c5")
-	)
-	(label "LED_PWR_EN"
-		(at 135.89 104.14 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "3bf95ac4-a53b-493f-9942-c5ff780e8f0a")
 	)
 	(label "USB_D_N"
 		(at 138.43 83.82 0)
@@ -6494,6 +6475,16 @@
 		)
 		(uuid "ab57f2cf-f24c-46f6-abc7-ff33ba2b9135")
 	)
+	(label "LED_PWR_EN"
+		(at 124.46 124.46 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ae7d8fd6-a451-4326-acbb-21dd58a3b41a")
+	)
 	(label "MDIO"
 		(at 196.85 134.62 0)
 		(effects
@@ -6503,6 +6494,16 @@
 			(justify left bottom)
 		)
 		(uuid "b14dc99f-97fc-49bf-a669-cd6694780a80")
+	)
+	(label "VBUS_SENSE"
+		(at 135.89 104.14 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "b43f4cc1-3a00-4abc-ab4a-d2b364488064")
 	)
 	(label "ESP_EN"
 		(at 140.97 53.34 0)
