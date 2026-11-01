@@ -312,6 +312,9 @@ Korean Hroparts TYPE-C-31-M-12 USB-C 2.0 receptacle (LCSC C165948), for the stoc
 - Copy of KiCad's footprint of the same name with every pad, hole and shield slot corrected
   to the drawing: outer pads at 6.40 / 4.80 mm pitch, Ø0.60 mm NPTH, 0.6 × 1.7 / 0.6 × 1.4 mm
   slots (CC-BY-SA 4.0 with the KiCad library exception).
+- Silkscreen (2026-11-02): KiCad's line across the mating face is left out and the side
+  lines end at Y 3.6 (the face is at Y 3.65), so the shell front can sit 0.3 mm inside a
+  board edge without the silk breaking the 0.15 mm silk-to-edge clearance (espion-cam J2).
 - 3D model: `Connector_USB_HRO.3dshapes/`, from `3d-src/` (KiCad ships none for this part).
 
 ### `Capacitor_SMD_AISHI:CP_Elec_6.3x9`, `Capacitor_SMD_JIERR:CP_Elec_8x10.5`
@@ -354,6 +357,9 @@ Worldsemi WS2812B-2020-V6 addressable RGB LED, 2.0 × 2.2 mm (LCSC C52917434), f
 Yongyu YY-0807RGBJ26-07-FJ addressable RGB LED, 2.0 × 1.7 × 0.85 mm, single-wire 24-bit GRB
 (WS2812-type), VDD 3.0–7.5 V, 12 mA per channel (LCSC C54796803).
 
+- **Symbol not used by espion-cam any more** (2026-11-02): JLCPCB lists C54796803 as "Wave
+  Soldering" (hand-soldered), so D1 is the YY-0807BRGK26-07-FI below. The footprint is still
+  used: both parts share it.
 - Source: [Yongyu approval spec](https://datasheet.lcsc.com/datasheet/pdf/f9afa0e15f6569ed1e35edd063d6a18f.pdf)
   (package, pinout and suggested soldering pad p. 2, reflow profile and absolute ratings p. 4,
   electrical and switching characteristics p. 5, bit timing p. 6, application circuit p. 8).
@@ -377,6 +383,26 @@ Yongyu YY-0807RGBJ26-07-FJ addressable RGB LED, 2.0 × 1.7 × 0.85 mm, single-wi
   terminal gap and the green polarity mark are scaled from the drawing (the mark sits on the
   pin 1/4 end: p. 2 draws it slightly toward pin 1, the p. 8 tape view toward pin 4); the metal
   thicknesses are assumed. KiCad draws the clear block opaque, so the mark doesn't show.
+
+### `LED_Yongyu:YY-0807BRGK26-07-FI`
+
+Yongyu YY-0807BRGK26-07-FI addressable RGB LED, 2.0 × 1.7 × 0.85 mm, single-wire 24-bit
+(WS2812-type), VDD 3.0–7.5 V, 5 mA per channel (LCSC C54796802; JLCPCB "SMT Assembly",
+"Economic and Standard", read 2026-11-01). Used by espion-cam as D1.
+
+- Source: [Yongyu approval spec A.0](https://datasheet.lcsc.com/datasheet/pdf/f10321733b2b8242740cb1ad891264de.pdf)
+  (package, pinout and suggested soldering pad p. 2, absolute ratings p. 3, electrical
+  characteristics p. 4, switching characteristics p. 5, bit timing p. 6, data structure p. 7).
+- Copy of `LED_Yongyu:YY-0807RGBJ26-07-FJ` (same drawing, licence as there) with this part's
+  Datasheet, Description and keywords: p. 2 gives the same package, the same pins (1 DOUT,
+  2 VDD, 3 DIN, 4 GND) and the same suggested pad (0.85 × 0.75 mm, 0.20 / 0.97 mm gaps) as
+  the RGBJ26 part, so it uses `LED_SMD_Yongyu:LED_Yongyu_YY-0807_2.0x1.7mm` and its 3D model
+  unchanged.
+- Timing (p. 6): T0H 0.3 µs, T1H 0.6 µs, T0L 0.6 µs, T1L 0.3 µs, each ±0.05 µs; reset ≥ 80 µs.
+  Default output current 5 mA per channel (p. 2, p. 4). VDD abs-max 3.0–7.5 V (p. 3).
+- Byte order: the p. 7 data structure sends G7…G0, R7…R0, B7…B0 (MSB first, "GRB"), while
+  the part name and the page headers say "BRG". Firmware must check the order on the first
+  board.
 
 ### `Button_Switch_SMD_XKB:SW_Push_1P1T_XKB_TS-1187A`
 
