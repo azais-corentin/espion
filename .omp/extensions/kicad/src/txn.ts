@@ -38,9 +38,8 @@ import { Copper } from "./copper";
 import { type Exclusion, removedExclusions, unexcluded } from "./exclusions";
 import { compactJson } from "./format";
 import { type Box, bbox, type Pt } from "./geom";
-import type { Libraries } from "./libs";
 import { type Expect, checkExpect, diffNetlists, expectFromDiff, summarize } from "./netdiff";
-import { Project, type SheetInst } from "./project";
+import { inRepoLibPaths, Project, type SheetInst, stageCopy } from "./project";
 import { OPS } from "./registry";
 import { EDIT_BOARD_LAYERS, type LabelledImage, type Rasterize, renderBoard, renderPart, renderRegions } from "./render";
 import { child, children, type List, parse } from "./sexpr";
@@ -138,31 +137,6 @@ export function checkLocks(dirs: string[], processes: ProcessLookup): { held: { 
 	return { held, stale };
 }
 
-/** In-repo library locations of the project's own lib tables (files or .pretty dirs). */
-function inRepoLibPaths(project: Project, libs: Libraries): string[] {
-	const tables = [path.join(project.dir, "sym-lib-table"), path.join(project.dir, "fp-lib-table")];
-	return [...libs.sym, ...libs.fp]
-		.filter(e => tables.includes(e.table))
-		.map(e => e.uri)
-		.filter(u => !path.relative(project.repoRoot, u).startsWith("..") && fs.existsSync(u));
-}
-
-const SKIP = /(^~.*\.lck$)|(-backups$)|(^\.history$)|(\.kicad_prl$)|(^fp-info-cache$)/;
-
-/** Copy the project and its in-repo libraries into a temp root, keeping repo-relative paths. */
-function stage(project: Project, extra: string[]): string {
-	const root = cli.tmpDir("txn");
-	const copy = (src: string) => {
-		const dst = path.join(root, path.relative(project.repoRoot, src));
-		fs.mkdirSync(path.dirname(dst), { recursive: true });
-		fs.cpSync(src, dst, { recursive: true, filter: s => !SKIP.test(path.basename(s)) });
-	};
-	copy(project.dir);
-	for (const p of extra) copy(p);
-	if (fs.existsSync(project.config.file)) copy(project.config.file);
-	return root;
-}
-
 function count(fs_: Finding[]): Map<string, { n: number; f: Finding }> {
 	const m = new Map<string, { n: number; f: Finding }>();
 	for (const f of fs_) {
@@ -205,11 +179,11 @@ function unconnectedFindings(r: cli.DrcReport | undefined): Finding[] {
 		});
 }
 
-/** A DRC report with the excluded violations a removed exclusion matched shown as not excluded (see unexcluded), and those violations. */
-function unhideDrc(r: cli.DrcReport, removed: Exclusion[]): { report: cli.DrcReport; shown: cli.DrcReport } {
-	const v = unexcluded(r.violations, removed);
-	const p = unexcluded(r.parity, removed);
-	const u = unexcluded(r.unconnected, removed);
+/** A DRC report with the excluded violations a removed exclusion really hid shown as not excluded (see unexcluded), and those violations. */
+function unhideDrc(r: cli.DrcReport, removed: Exclusion[], after: cli.DrcReport | undefined): { report: cli.DrcReport; shown: cli.DrcReport } {
+	const v = unexcluded(r.violations, removed, after?.violations ?? []);
+	const p = unexcluded(r.parity, removed, after?.parity ?? []);
+	const u = unexcluded(r.unconnected, removed, after?.unconnected ?? []);
 	return {
 		report: { ...r, violations: v.report, parity: p.report, unconnected: u.report },
 		shown: { violations: v.shown, parity: p.shown, unconnected: u.shown, raw: "" },
@@ -312,7 +286,7 @@ export async function runEdit(
 	}
 
 	// 2. stage a copy; everything from here on works in it and the copy always goes away
-	const tempRoot = stage(project, libPaths);
+	const tempRoot = stageCopy(project, libPaths);
 	try {
 		return await verifyAndWrite({ req, project, tempRoot, pending, touched, touchedParts, board, notes: ctx.notes, lockDirs, lockNotes, processes, rasterize, signal });
 	} finally {
@@ -375,11 +349,6 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		libFiles.length ? klcFindings(before, libFiles.map(toTemp).filter(f => fs.existsSync(f)), signal) : Promise.resolve([]),
 		boardBefore ? cli.pcbDrc(boardFile, ro, true, hasZones(boardBefore)) : Promise.resolve(undefined),
 	]).finally(() => beforeA.dispose());
-	// a violation that an exclusion the edit removes still hid is old, shown again: the before-state has it unexcluded, so it neither gates nor counts as resolved
-	const ercUnhidden = unexcluded(ercReport, removedExclusions(before.proJson.data, project.proJson.data, "erc"));
-	const ercBefore = ercUnhidden.report;
-	const drcUnhidden = drcReport && unhideDrc(drcReport, removedExclusions(before.proJson.data, project.proJson.data, "drc"));
-	const drcBefore = drcUnhidden?.report;
 
 	// 3. write the new files into the copy and let KiCad re-save them
 	for (const [f, content] of pending) {
@@ -417,6 +386,12 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 			pending.has(project.druFile) ? druProblems(afterP, signal) : Promise.resolve([]),
 			drcAfterRun(),
 		]);
+		// a violation that an exclusion the edit removes still hid is old, shown again: the before-state has it unexcluded, so it neither gates nor counts as resolved;
+		// what it hid is what the after-state shows of it beyond the before-state (ERC's re-created marker of a stale exclusion hid nothing)
+		const ercUnhidden = unexcluded(ercReport, removedExclusions(before.proJson.data, project.proJson.data, "erc"), ercAfter);
+		const ercBefore = ercUnhidden.report;
+		const drcUnhidden = drcReport && unhideDrc(drcReport, removedExclusions(before.proJson.data, project.proJson.data, "drc"), drcAfter);
+		const drcBefore = drcUnhidden?.report;
 		const diff = diffNetlists(netBefore, netAfter);
 		const problems: string[] = [];
 		for (const p of checkExpect(diff, req.expect ?? {})) problems.push(`  - [connectivity] ${p}`);

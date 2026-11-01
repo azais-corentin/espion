@@ -10,7 +10,7 @@ import { placementRefs, refPrefix } from "../annotate";
 import { fpRef } from "../board";
 import { boardIsEmpty } from "../checks/board";
 import * as cli from "../cli";
-import { EXCLUSION_KINDS, type Exclusion, excludes, exclusions } from "../exclusions";
+import { EXCLUSION_KINDS, type Exclusion, exclusions, hiddenBy } from "../exclusions";
 import { type Box, bbox, key, onInterior, overlap, type Pt, pt, r3, type Seg, samePt, xform } from "../geom";
 import { druHeader, druRules } from "../ops/project";
 import type { Project, SheetInst } from "../project";
@@ -661,7 +661,7 @@ const exclusionsQuery: QueryDef = {
 	what: "exclusions",
 	doc:
 		"ERC and DRC exclusions from the .kicad_pro, each with its kind, rule, marker position (sheet mm and sheet for ERC, board mm and layer when the key has one for DRC), comment, the items its key names (symbol, pin, footprint, pad; \"gone\" when no longer in the design) and its whole key (remove_exclusion and set_exclusion_comment take it or match its text). " +
-		'KiCad\'s ERC (and DRC when there are DRC exclusions) runs here: `hides` is the violation the exclusion still hides; `stale: true` when no violation matches it any more (the design changed under it; remove_exclusion cleans it up). DRC exclusions on a project without a board, or an empty one, aren\'t checked ("checked": false).',
+		'KiCad\'s ERC runs here twice, as is and on a temp copy without the ERC exclusions (the ERC report also holds an excluded violation re-created from every exclusion whose items still exist, found or not), and DRC when there are DRC exclusions: `hides` is the violation KiCad still detects that the exclusion hides; `stale: true` when it hides none any more (the design changed under it; remove_exclusion cleans it up). DRC exclusions on a project without a board, or an empty one, aren\'t checked ("checked": false).',
 	fields: { kind: { t: "string", values: EXCLUSION_KINDS, doc: "only this kind (default both)" } },
 	async run({ project, analysis }, args) {
 		const data = project.proJson.data;
@@ -670,11 +670,12 @@ const exclusionsQuery: QueryDef = {
 		for (const kind of kinds) {
 			const list = exclusions(data, kind);
 			if (!list.length) continue;
-			// the excluded violations of KiCad's report (ERC and DRC violations share these fields)
+			// KiCad's report and the violations it detects (ERC and DRC violations share these fields)
 			let report: cli.DrcViolation[] | undefined;
+			let detected: cli.DrcViolation[] | undefined;
 			let name: (e: Exclusion, uuid: string) => string;
 			if (kind === "erc") {
-				report = (await analysis.erc()).filter(v => v.excluded);
+				[report, detected] = await Promise.all([analysis.erc(), analysis.ercDetected()]);
 				const bySheet = schItems(project);
 				// pins of a sheet used twice share uuids: the key's sheets first, then anywhere
 				name = (e, u) => [...(e.sheetPaths ?? []).map(p => bySheet.get(p)), ...bySheet.values()].map(m => m?.get(u)).find(x => x) ?? `${u} (gone)`;
@@ -683,7 +684,7 @@ const exclusionsQuery: QueryDef = {
 				if (tree && !boardIsEmpty(tree)) {
 					const zones = [tree, ...children(tree, "footprint")].some(l => children(l, "zone").length > 0);
 					const r = await cli.pcbDrc(project.boardFile, analysis.runOpts, true, zones);
-					report = [...r.violations, ...r.parity, ...r.unconnected].filter(v => v.excluded);
+					report = detected = [...r.violations, ...r.parity, ...r.unconnected];
 				}
 				const items = tree ? boardItems(tree) : undefined;
 				name = (_, u) => items?.get(u) ?? `${u}${items ? " (gone)" : ""}`;
@@ -691,7 +692,7 @@ const exclusionsQuery: QueryDef = {
 			const sheets = new Map(project.hierarchy().map(i => [i.path, i.namePath]));
 			for (const e of list) {
 				const sheet = e.sheetPaths?.[0];
-				const hit = report?.find(v => excludes(e, v));
+				const hit = report && hiddenBy(e, report, detected!);
 				rows.push({
 					kind,
 					rule: e.rule,

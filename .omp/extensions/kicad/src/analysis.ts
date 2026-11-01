@@ -1,15 +1,19 @@
 /**
- * KiCad's own view of a project, computed once per request: netlist, ERC report, SVG export and
- * the rendered width of every text string (from the SVG's textLength attributes).
+ * KiCad's own view of a project, computed once per request: netlist, ERC report (as is, and with
+ * no ERC exclusions for what KiCad actually detects), SVG export and the rendered width of every
+ * text string (from the SVG's textLength attributes).
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cli from "./cli";
-import type { Project } from "./project";
+import { exclusionList } from "./exclusions";
+import { inRepoLibPaths, type Project, stageCopy } from "./project";
+import { parsePro, stringifyPro } from "./projson";
 
 export class Analysis {
 	private netP?: Promise<cli.Netlist>;
 	private ercP?: Promise<cli.ErcViolation[]>;
+	private detectedP?: Promise<cli.ErcViolation[]>;
 	private svgP?: Promise<string>;
 	private widthP?: Promise<Map<string, number>>;
 
@@ -30,6 +34,32 @@ export class Analysis {
 	erc(): Promise<cli.ErcViolation[]> {
 		this.ercP ??= cli.erc(this.project.rootFile, this.runOpts);
 		return this.ercP;
+	}
+
+	/**
+	 * KiCad's ERC of a temp copy of the project (with its in-repo libraries) whose .kicad_pro has no
+	 * ERC exclusions: the violations KiCad detects. The report of `erc()` can't tell: KiCad re-creates
+	 * an excluded marker from every exclusion key whose items still resolve, whether or not ERC still
+	 * finds the violation (SCHEMATIC::ResolveERCExclusions).
+	 */
+	ercDetected(): Promise<cli.ErcViolation[]> {
+		this.detectedP ??= (async () => {
+			const root = stageCopy(this.project, inRepoLibPaths(this.project, await this.project.libs()));
+			try {
+				const dir = path.join(root, path.relative(this.project.repoRoot, this.project.dir));
+				const proFile = path.join(dir, path.basename(this.project.proFile));
+				const pro = parsePro(fs.readFileSync(proFile, "utf8"));
+				const list = exclusionList(pro.data, "erc");
+				if (list?.length) {
+					list.length = 0;
+					fs.writeFileSync(proFile, stringifyPro(pro));
+				}
+				return await cli.erc(path.join(dir, path.basename(this.project.rootFile)), { ...this.runOpts, cwd: dir });
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		})();
+		return this.detectedP;
 	}
 
 	/** Directory with one SVG per sheet: `<project>.svg` for the root, `<project>-<Sheet name>.svg` below. */

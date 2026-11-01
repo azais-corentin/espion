@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Board } from "./board";
+import { tmpDir } from "./cli";
 import { type Config, loadConfig, type ProjectConfig, projectConfig } from "./config";
 import { Libraries } from "./libs";
 import { type ProJson, parsePro, stringifyPro } from "./projson";
@@ -257,4 +258,29 @@ export class Project {
 		for (const [f, make] of this.dirtyFiles) out.set(f, make());
 		return out;
 	}
+}
+
+/** In-repo library locations of the project's own lib tables (files or .pretty dirs). */
+export function inRepoLibPaths(project: Project, libs: Libraries): string[] {
+	const tables = [path.join(project.dir, "sym-lib-table"), path.join(project.dir, "fp-lib-table")];
+	return [...libs.sym, ...libs.fp]
+		.filter(e => tables.includes(e.table))
+		.map(e => e.uri)
+		.filter(u => !path.relative(project.repoRoot, u).startsWith("..") && fs.existsSync(u));
+}
+
+const SKIP = /(^~.*\.lck$)|(-backups$)|(^\.history$)|(\.kicad_prl$)|(^fp-info-cache$)/;
+
+/** Copy the project, `extra` (its in-repo libraries) and the toolkit config into a temp root, keeping repo-relative paths. */
+export function stageCopy(project: Project, extra: string[]): string {
+	const root = tmpDir("txn");
+	const copy = (src: string) => {
+		const dst = path.join(root, path.relative(project.repoRoot, src));
+		fs.mkdirSync(path.dirname(dst), { recursive: true });
+		fs.cpSync(src, dst, { recursive: true, filter: s => !SKIP.test(path.basename(s)) });
+	};
+	copy(project.dir);
+	for (const p of extra) copy(p);
+	if (fs.existsSync(project.config.file)) copy(project.config.file);
+	return root;
 }

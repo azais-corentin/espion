@@ -14,6 +14,12 @@
  * KiCad's ERC and DRC reports mark the violations an exclusion matches as excluded but don't say
  * which exclusion: a violation belongs to an exclusion with the same rule whose item uuids it
  * all carries (by position when the key names no item).
+ *
+ * KiCad's ERC report also holds a violation for every exclusion whose items still resolve, found
+ * or not: SCHEMATIC::ResolveERCExclusions re-creates the excluded marker from the key when no
+ * marker of the run serializes to it. In the report such a marker looks like a detected one (same
+ * rule, message and items), so only an ERC run without the exclusions tells what KiCad detects.
+ * pcbnew's DRC report has no such markers.
  */
 import type { ErcViolation } from "./cli";
 import type { Pt } from "./geom";
@@ -115,6 +121,24 @@ export function excludes(e: Pick<Exclusion, "rule" | "items" | "at">, v: Violati
 	return v.items.some(i => i.pos && Math.abs(i.pos.x - e.at[0]) < 1e-4 && Math.abs(i.pos.y - e.at[1]) < 1e-4);
 }
 
+type Reported = Violation & { excluded?: boolean };
+
+/** How many violations of the report an exclusion matches that the report shows (not excluded). */
+const shownOf = (e: Exclusion, report: Reported[]): number => report.filter(v => !v.excluded && excludes(e, v)).length;
+
+/**
+ * The violation an exclusion hides, undefined when it is stale. `report` is KiCad's report as is,
+ * `detected` the violations KiCad finds (for ERC a run without the exclusions; for DRC the report
+ * itself): the exclusion hides one when KiCad detects more of its violations than the report
+ * shows, the rest being excluded. An excluded violation alone isn't proof: ERC re-creates the
+ * marker of a stale exclusion (see the module doc), and a violation that moved shows unexcluded
+ * beside it.
+ */
+export function hiddenBy<V extends Reported>(e: Exclusion, report: V[], detected: Violation[]): V | undefined {
+	if (detected.filter(v => excludes(e, v)).length <= shownOf(e, report)) return undefined;
+	return report.find(v => v.excluded && excludes(e, v));
+}
+
 /** Exclusions in `before` whose key is gone from `after` (removed by the edit). */
 export function removedExclusions(before: Record<string, unknown>, after: Record<string, unknown>, kind: ExclusionKind): Exclusion[] {
 	const kept = new Set(exclusions(after, kind).map(e => e.key));
@@ -122,14 +146,20 @@ export function removedExclusions(before: Record<string, unknown>, after: Record
 }
 
 /**
- * A report with the excluded violations that a removed exclusion matched shown as not excluded:
- * the edit's before-state for its gates, so a violation an edit makes visible again by removing
- * its exclusion is an old one, not a new one.
+ * A report with the excluded violations that a removed exclusion really hid shown as not
+ * excluded: the edit's before-state for its gates, so a violation an edit makes visible again by
+ * removing its exclusion is an old one, not a new one. A removed exclusion hid as many of its
+ * violations as the `after` report (without it) shows beyond the before report; the excluded
+ * marker ERC re-creates for a stale exclusion (see the module doc) hid nothing and stays excluded.
  */
-export function unexcluded<V extends Violation & { excluded?: boolean }>(report: V[], removed: Exclusion[]): { report: V[]; shown: V[] } {
+export function unexcluded<V extends Reported>(report: V[], removed: Exclusion[], after: Reported[]): { report: V[]; shown: V[] } {
+	const left = removed.map(e => shownOf(e, after) - shownOf(e, report));
 	const shown: V[] = [];
 	const out = report.map(v => {
-		if (!v.excluded || !removed.some(e => excludes(e, v))) return v;
+		if (!v.excluded) return v;
+		const i = removed.findIndex((e, k) => left[k]! > 0 && excludes(e, v));
+		if (i < 0) return v;
+		left[i]!--;
 		const s = { ...v, excluded: false };
 		shown.push(s);
 		return s;

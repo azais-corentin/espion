@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Analysis } from "../src/analysis";
 import { erc } from "../src/cli";
-import { excludes, exclusionList, parseKey, selectExclusions } from "../src/exclusions";
+import { excludes, exclusionList, exclusions, hiddenBy, parseKey, selectExclusions, unexcluded } from "../src/exclusions";
 import { ops } from "../src/ops/project";
 import { Project } from "../src/project";
 import { parsePro, stringifyPro } from "../src/projson";
@@ -19,6 +19,11 @@ const SA0 =
 	"pin_to_pin|1371600|939800|0158166b-1052-43f6-921e-5cf218d0b459|c082198d-9317-456f-a5e6-dc5097bb410f|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/b46c0f76-16c4-4d72-b9e8-a38b09270ab0|/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/852bc00d-c86c-4810-b88b-d834d499a4b0";
 /** The copper board fixture's dangling track end (still dangling after the zone refill), as KiCad keys its DRC exclusion. */
 const TRACK = `track_dangling|9175000|14000000|c0ffee00-0000-4000-8000-000000000009|${NIL}`;
+/**
+ * espion-cam with both ERC exclusions stale but their items still there: U12 is the MSA3S02 by
+ * then, the keys' pin uuids name its NC pin 1 and SDA pin 2, nothing ties them to the PWR_FLAG.
+ */
+const STALE_COMMIT = "08f6d3b";
 
 const noKicad = () => [];
 
@@ -92,6 +97,31 @@ describe("exclusion keys", () => {
 		expect(() => selectExclusions(data, "erc", { key: SA0, match: "U12" })).toThrow("exactly one of key");
 		expect(() => selectExclusions(data, "erc", {})).toThrow("exactly one of key");
 	});
+
+	test("an exclusion hides a violation only when KiCad detects more of it than the report shows; removing it shows only that", () => {
+		const e = exclusions({ erc: { erc_exclusions: [[SA0, "U12 SA0 tied"]] } }, "erc")[0]!;
+		const items = [
+			{ description: "U12 pin 1", uuid: "0158166b-1052-43f6-921e-5cf218d0b459", pos: { x: 137.16, y: 93.98 } },
+			{ description: "#FLG09 pin 1", uuid: "c082198d-9317-456f-a5e6-dc5097bb410f" },
+		];
+		const real = { type: "pin_to_pin", items };
+		const excluded = { ...real, excluded: true };
+		const other = { type: "pin_not_driven", items: items.slice(1) };
+		// live: KiCad detects it and the report has it excluded
+		expect(hiddenBy(e, [excluded, other], [real, other])).toBe(excluded);
+		// stale, items still there: the report has KiCad's re-created marker, the run without exclusions finds nothing
+		expect(hiddenBy(e, [excluded, other], [other])).toBeUndefined();
+		// stale, the violation moved: found and shown, the re-created marker beside it
+		expect(hiddenBy(e, [real, excluded], [real])).toBeUndefined();
+
+		// removing it: the after report (without it) tells what it hid
+		const live = unexcluded([excluded, other], [e], [real, other]);
+		expect(live.shown).toEqual([{ ...real, excluded: false }]);
+		expect(live.report).toEqual([{ ...real, excluded: false }, other]);
+		const stale = unexcluded([excluded, other], [e], [other]);
+		expect(stale).toEqual({ report: [excluded, other], shown: [] });
+		expect(unexcluded([real, excluded], [e], [real]).shown).toEqual([]);
+	});
 });
 
 describe.skipIf(!HAS_KICAD)("ERC exclusions", () => {
@@ -136,6 +166,27 @@ describe.skipIf(!HAS_KICAD)("ERC exclusions", () => {
 		expect(exclusions[1].stale).toBeUndefined();
 		expect((await query(root, PROJECT, { kind: "drc" })).exclusions).toEqual([]);
 	}, 60_000);
+
+	test("stale exclusions whose items still exist: KiCad's report keeps them excluded, the query names them stale and removing them shows nothing again", async () => {
+		root = stageFixture(STALE_COMMIT);
+		const dir = path.join(root, PROJECT);
+		// KiCad re-creates an excluded marker from each key whose items resolve, though ERC finds no conflict there
+		const v = await erc(path.join(dir, "espion-cam.kicad_sch"), { cwd: dir, repoRoot: root });
+		expect(v.filter(x => x.type === "pin_to_pin" && x.excluded).map(x => x.items[0]!.description)).toEqual([
+			"Symbol U12 Hidden pin 1 [NC, Unconnected, Line]",
+			"Symbol U12 Pin 2 [SDA, Bidirectional, Line]",
+		]);
+		const { exclusions } = await query(root, PROJECT, { kind: "erc" });
+		expect(exclusions).toHaveLength(2);
+		expect(exclusions[0]).toMatchObject({ items: ["U12 pin 1", "#FLG05 pin 1"], stale: true });
+		expect(exclusions[1]).toMatchObject({ items: ["U12 pin 2", "#FLG05 pin 1"], stale: true });
+		for (const e of exclusions) expect(e.hides).toBeUndefined();
+
+		const r = await runEdit({ ops: [{ op: "remove_exclusion", kind: "erc", match: "pin_to_pin", all: true }] }, root, undefined, undefined, noKicad);
+		expect(r.applied).toBe(true);
+		expect(r.report).toContain("(0 new, 0 resolved)");
+		expect(r.report).not.toContain("shown again");
+	}, 120_000);
 
 	test("removing an exclusion that still hides a violation applies and reports the violation, not gated", async () => {
 		root = stageFixture();
