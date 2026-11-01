@@ -13,8 +13,11 @@
 	(constraint clearance (min 0.36mm)))
 
 # Ethernet MDI: IP101G datasheet 6.2 asks for 'three times space' to other signals; read as 3W (3 x 0.18 mm = 0.54,
-# rounded up to 0.55 mm). Exempt inside U1's courtyard: its 0.4 mm pitch QFN pads (0.2 mm gap) can't hold it.
-(rule "MDI spacing" (condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !A.intersectsCourtyard('U1')") (constraint clearance (min 0.55mm)))
+# rounded up to 0.55 mm). Exempt inside U1's courtyard and the 'U1 MDI escape' rule area at U1's north row
+# (x 157.3-160.6, y 126.0-128.9; no keep-out, it only names the region): the 0.4 mm pitch QFN pads (0.2 mm gap) and the
+# four pin escapes between them can't hold it; IP101G 6.2 p.56 allows the device's own vicinity ('in close proximity
+# to device'). Default 0.2 mm clearance still applies there (audit/requirements.md D39).
+(rule "MDI spacing" (condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !(A.intersectsCourtyard('U1') || A.intersectsArea('U1 MDI escape'))") (constraint clearance (min 0.55mm)))
 
 # PoE: IEEE 802.3 33.4.1 isolation (1500 V rms 60 s, or 2250 V dc, or 1500 V 10/700 us impulse) between the cable
 # conductors and the board. IEC 60664-1 (2007) tables interpolated for 2250 V dc give about 1.53 mm clearance and
