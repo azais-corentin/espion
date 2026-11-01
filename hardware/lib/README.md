@@ -240,9 +240,15 @@ MEMSensing MSA3S02 3-axis accelerometer: ±2/4/8/16 g, 12 bit, 1–1000 Hz ODR, 
   generator (IPC, `qfn_pull_back`) with the p. 31 dimensions (D/E 2.00 ± 0.05, b 0.20–0.30,
   L 0.225–0.325, L1 0.05–0.15), then pins 1, 4, 7 and 10 moved to y = ±0.775 mm (E1 1.55
   BSC: the corner pins sit 0.525 mm from their neighbours, not 0.5 mm, which the
-  generator can't express). Pads 0.40 × 0.35 mm (pins 1–4, 7–10, at x = ±0.75) and
-  0.35 × 0.40 mm (pins 5, 6, 11, 12, at x = ±0.25, y = ±0.75), roundrect 25 %; the narrowest
-  copper gap is 0.125 mm (corner pad to its top/bottom-row neighbour).
+  generator can't express). Pins 2, 3, 8 and 9: 0.40 × 0.35 mm at x = ±0.75; roundrect 25 %
+  throughout. The eight corner lands are 0.025 mm shorter at their inner end than the
+  generator's 0.40 mm (pins 1, 4, 7, 10: 0.375 × 0.35 mm at x = ±0.7625, y = ±0.775; pins
+  5, 6, 11, 12: 0.35 × 0.375 mm at x = ±0.25, y = ±0.7625), so every pad-to-pad gap is
+  ≥ 0.15 mm, JLCPCB's "SMD pad to pad clearance (different nets)" (capabilities page, read
+  2026-10-31); the outer ends stay at 0.95 mm from the centre. The inner land end (0.575 mm
+  from the centre) still covers a terminal of L max 0.325 mm from the body edge (0.675) and
+  the nominal terminal (L1 0.10 + L 0.275: 0.625); only the worst tolerance stack (L1 0.15 +
+  L 0.325: 0.525) runs 0.05 mm past it (0.025 mm with the old 0.40 mm land).
 - 3D model: `Package_LGA_MEMSensing.3dshapes/`, from `3d-src/`, to the p. 31 outline:
   2.00 × 2.00 × 0.95 mm, 0.13 mm substrate under a 0.82 mm cap, 0.275 × 0.25 mm terminals at
   the p. 31 positions. The terminal thickness (0.03 mm, A1 ≤ 0.05) and the pin-1 dot
