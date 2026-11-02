@@ -69,7 +69,9 @@
 (rule "LED_PWR pad spacing (other pads)" (condition "A.Type == 'Pad' && A.NetClass != 'LED_PWR' && A.NetName != '/LED driver/BST_SW' && A.NetClass != 'POE_CABLE' && A.NetClass != 'MDI' && (B.NetClass == 'LED_PWR' || B.NetName == '/LED driver/BST_SW') && !(A.memberOfFootprint('U10') && B.NetName == '/LED driver/BST_SW' && B.intersectsCourtyard('U10')) && !(A.NetName == '/LED driver/ISNS_K' && B.NetName == '/LED driver/ISNS')") (constraint clearance (min 0.4mm)))
 
 # JLCPCB Legend capabilities (https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-10-31) set line width >= 0.15 mm,
-# text height >= 1.0 mm and pad to silkscreen 0.15 mm, but no silkscreen-to-silkscreen spacing. min_silk_clearance
-# (0.15 mm) stays for silk against pads and mask openings; between two silk items the legend may touch.
+# text height >= 1.0 mm and pad to silkscreen 0.15 mm, but no silkscreen-to-silkscreen spacing, so two silk items may touch.
+# KiCad 10 applies min_silk_clearance only between silk items; silk against pads is checked on the mask layer for overlap only.
+# Pad to silkscreen 0.15 mm is therefore NOT enforced by DRC: stock 0402/test-point/J4 silk lies 0.085-0.131 mm from pads and
+# JLCPCB clips it (user decision Q28, 2026-11-02; requirements D9); polarity marks and labels are kept >= 0.15 mm by hand (D65).
 (rule "Silk to silk" (condition "A.Type != 'Pad' && B.Type != 'Pad' && A.Layer == B.Layer && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint silk_clearance (min 0mm)))
 
