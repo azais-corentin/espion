@@ -103,7 +103,8 @@ KiCad library exception); the Parts section says which.
 
 ### `MCU_Module_Waveshare:ESP32-P4-Core`, `Module_Waveshare:Waveshare_ESP32-P4-Core`, `Module_Waveshare:Waveshare_ESP32-P4-Core_HandSolder`
 
-Waveshare ESP32-P4-Core, 16 MB and 32 MB flash versions (same pinout and outline).
+Waveshare ESP32-P4-Core, 16 MB and 32 MB flash versions (same pinout and outline). Used by
+espion-cam as U6 (16 MB, SKU 36096), on the `_HandSolder` footprint.
 
 - Sources: [Waveshare documentation](https://docs.waveshare.com/ESP32-P4-Core) (pin
   description, dimension drawing, module schematic), the
@@ -124,7 +125,8 @@ Waveshare ESP32-P4-Core, 16 MB and 32 MB flash versions (same pinout and outline
   under the module. Two footprints, both 1.0 mm under the body like KiCad's castellated
   Espressif module footprints:
   - `Waveshare_ESP32-P4-Core` (reflow): 0.6 × 1.5 mm pads, 0.5 mm past the body edge, with
-    paste.
+    paste. Not used by espion-cam any more (2026-10-30): U6 is hand-soldered on the
+    `_HandSolder` variant below.
   - `Waveshare_ESP32-P4-Core_HandSolder`: 0.6 × 2.5 mm pads, 1.5 mm past the edge so an iron
     tip reaches each castellation, and no paste, so the stencil leaves the module out. Same
     3D model as the reflow footprint.
@@ -137,7 +139,8 @@ Waveshare ESP32-P4-Core, 16 MB and 32 MB flash versions (same pinout and outline
 ### `Converter_DCDC_SDAPO:DP1435-5V`, `Converter_DCDC_SDAPO:Converter_DCDC_SDAPO_DP1435_THT`
 
 SDAPO DP1435-5V IEEE 802.3af PoE PD module: bridge rectifiers, 1.5 kVrms isolation,
-5.15 V / 2.4 A, SIP-6 through-hole (LCSC C5380097).
+5.15 V / 2.4 A, SIP-6 through-hole (LCSC C5380097). Used by espion-cam as U2 (bottom side,
+hand-soldered).
 
 - Source: [SDAPO DP1435 datasheet](https://datasheet.lcsc.com/datasheet/pdf/7fde657788cd634288cd65d78c25cb31.pdf)
   (pin table and package drawing p. 2, side view and land sketch p. 3). Drawn for this
@@ -152,7 +155,7 @@ SDAPO DP1435-5V IEEE 802.3af PoE PD module: bridge rectifiers, 1.5 kVrms isolati
 
 HanRun HR871150C RJ45 jack with magnetics (LCSC C19724786): 10/100BASE-T, 1CT:1CT
 transformers, PoE centre taps and spare pairs brought out, Bob-Smith termination, yellow and
-green LEDs, right angle.
+green LEDs, right angle. Used by espion-cam as J1 (bottom side, hand-soldered).
 
 - Source: [HanRun datasheet](https://datasheet.lcsc.com/datasheet/pdf/bae28869af3176e6a10bdf4859b444a5.pdf)
   (internal schematic, dimensions, recommended PCB layout).
@@ -171,7 +174,7 @@ green LEDs, right angle.
 ### `Interface_Ethernet_ICPlus:IP101GRI`
 
 IC Plus IP101GRI 10/100 Ethernet PHY (MII/RMII), QFN-32 4 × 4 mm (LCSC C703537), on stock
-`Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm`.
+`Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm`. Used by espion-cam as U1.
 
 - Source: [IP101G datasheet IP101G-DS-R01](https://datasheet.lcsc.com/datasheet/pdf/14f15850d1faf0804f05f4a04b553bc6.pdf)
   (Figure 3 pinout, §3.2 pin table, Figure 25 package). Drawn for this project;
@@ -190,9 +193,11 @@ TI TPS61170 1.2 A, 40 V boost converter (LCSC C15163), the 5 V → 32 V LED boos
 - The symbol is a copy of KiCad's `Driver_LED:TPS61165DRV` (same pinout), renamed. The
   footprints are KiCad's `WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm` with TI's land pattern: pads
   0.45 × 0.3 mm on 1.95 mm row centres, EP 1 × 1.6 mm, two paste openings. The
-  `_ThermalVias` variant adds TI's two optional 0.2 mm vias; espion-cam stopped using it
-  (0.2 mm holes cost extra at JLCPCB) and uses the plain one as U10. CC-BY-SA 4.0 with the
-  KiCad library exception.
+  `_ThermalVias` variant adds TI's two optional vias as footprint pads (Ø0.5 mm, 0.2 mm
+  hole); espion-cam stopped using it (2026-10-30, when those pads raised library-footprint
+  DRC errors on the board) and uses the plain one as U10, with the two exposed-pad vias
+  placed as board vias instead (GND, 0.45/0.2 mm, 1.1 mm apart). CC-BY-SA 4.0 with the KiCad
+  library exception.
 - 3D model: KiCad's stock WSON-6 model (same body).
 
 ### `Power_Management_TI:TPS2121RUX`, `Package_DFN_QFN_TI:Texas_RUX0012A_VQFN-HR-12_2x2.5mm_P0.5mm`
@@ -221,7 +226,8 @@ the project one. Used by espion-cam as U4.
 
 MEMSensing MSA3S02 3-axis accelerometer: ±2/4/8/16 g, 12 bit, 1–1000 Hz ODR, I2C up to
 400 kHz at the fixed 7-bit address 0x62, one interrupt pin, VDD 1.62–3.6 V, LGA-12
-2 × 2 × 0.95 mm (LCSC C51928204). The symbol's default footprint is the project one.
+2 × 2 × 0.95 mm (LCSC C51928204). The symbol's default footprint is the project one. Used by
+espion-cam as U12.
 
 - Source: [MSA3S02 datasheet](https://datasheet.lcsc.com/datasheet/pdf/17622eabedb09583cf1836f55c7a0a26.pdf)
   V1.0, May 2024 (pin table p. 5, ratings pp. 6–7, interrupt pin p. 13 and register 0x20
@@ -258,7 +264,7 @@ MEMSensing MSA3S02 3-axis accelerometer: ±2/4/8/16 g, 12 bit, 1–1000 Hz ODR, 
 ### `Transistor_FET_Infineon:IRLR024N`
 
 Infineon IRLR024NTRPBF logic-level N-MOSFET, 55 V / 17 A / 65 mΩ, D-Pak (LCSC C3007), on
-stock `Package_TO_SOT_SMD:TO-252-2` (G 1, D 2 = tab, S 3).
+stock `Package_TO_SOT_SMD:TO-252-2` (G 1, D 2 = tab, S 3). Used by espion-cam as Q1.
 
 - Source: [IRLR024NPbF datasheet](https://www.infineon.com/dgdl/irlr024npbf.pdf). Graphic
   from KiCad's `Transistor_FET:IPD50R380CE` (CC-BY-SA 4.0 with the KiCad library exception).
@@ -266,7 +272,7 @@ stock `Package_TO_SOT_SMD:TO-252-2` (G 1, D 2 = tab, S 3).
 ### `74xGxx_TI:SN74LVC1G97DBV`
 
 TI SN74LVC1G97DBVR configurable gate, SOT-23-6 (LCSC C128411), on stock
-`Package_TO_SOT_SMD:SOT-23-6`.
+`Package_TO_SOT_SMD:SOT-23-6`. Used by espion-cam as U9.
 
 - Source: [SN74LVC1G97 datasheet](https://www.ti.com/lit/ds/symlink/sn74lvc1g97.pdf)
   (SCES416N).
@@ -275,7 +281,8 @@ TI SN74LVC1G97DBVR configurable gate, SOT-23-6 (LCSC C128411), on stock
 
 ### `Device:LED` + `LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm`
 
-Amicc A-SC880IR3C-P03-1T 850 nm, 1 A IR LED, ceramic 3.85 × 3.85 mm (LCSC C5355470).
+Amicc A-SC880IR3C-P03-1T 850 nm, 1 A IR LED, ceramic 3.85 × 3.85 mm (LCSC C5355470). Used by
+espion-cam as D4–D15 (the LED ring).
 
 - Source: [Amicc datasheet](https://datasheet.lcsc.com/datasheet/pdf/f1bce98067a5ec3e3f50cd2383e27cb7.pdf)
   ADE-880-017 v1, p. 6 (recommended solder pad). Drawn for this project; CERN-OHL-P-2.0.
@@ -306,7 +313,7 @@ C22438965), drawn for the OV9281 camera FFC. Symbol:
 ### `Connector_USB_HRO:USB_C_Receptacle_HRO_TYPE-C-31-M-12`
 
 Korean Hroparts TYPE-C-31-M-12 USB-C 2.0 receptacle (LCSC C165948), for the stock
-`Connector:USB_C_Receptacle_USB2.0_16P` symbol.
+`Connector:USB_C_Receptacle_USB2.0_16P` symbol. Used by espion-cam as J2.
 
 - Source: HRO drawing dated 2020.12.08 ([LCSC](https://datasheet.lcsc.com/datasheet/pdf/9e56b777c022540fcce7c7f67825f55e.pdf)).
 - Copy of KiCad's footprint of the same name with every pad, hole and shield slot corrected
@@ -321,7 +328,7 @@ Korean Hroparts TYPE-C-31-M-12 USB-C 2.0 receptacle (LCSC C165948), for the stoc
 
 Aluminium SMD can footprints for `Device:C_Polarized` (pad 1 = +): AISHI VZ polymer
 6.3 × 9 mm (SVZ1CM331E09E00RAXXX, LCSC C3291468) and JIERR JVE electrolytic 8 × 10.5 mm
-(JVE16V330M8X10, LCSC C48615108).
+(JVE16V330M8X10, LCSC C48615108). Used by espion-cam as C13 (AISHI) and C14 (JIERR).
 
 - Sources: [AISHI VZ](https://datasheet.lcsc.com/datasheet/pdf/aabe05a1d48507568d8975f1e7578509.pdf),
   [JIERR JVE](https://datasheet.lcsc.com/datasheet/pdf/3ad662ff0f7907637937f3fa823d20da.pdf).
@@ -340,7 +347,8 @@ Worldsemi WS2812B-2020-V6 addressable RGB LED, 2.0 × 2.2 mm (LCSC C52917434), f
 `LED:WS2812B-2020` symbol.
 
 - **Not used by espion-cam any more** (2026-10-31): JLCPCB lists the WS2812B-2020-V6 for
-  Standard PCBA only, so D1 is the Yongyu YY-0807RGBJ26-07-FJ (`LED_Yongyu`).
+  Standard PCBA only, so D1 became the Yongyu YY-0807RGBJ26-07-FJ and, since 2026-11-02, the
+  YY-0807BRGK26-07-FI (`LED_Yongyu`).
 - Source: [WS2812B-2020-V6 datasheet](https://datasheet.lcsc.com/datasheet/pdf/a29e59ba4bc7e47e236b4d50b6c26345.pdf)
   p. 2 (back, top and side views, pin table).
 - Unchanged copy of KiCad's footprint of the same name (CC-BY-SA 4.0 with the KiCad library
@@ -407,7 +415,7 @@ Yongyu YY-0807BRGK26-07-FI addressable RGB LED, 2.0 × 1.7 × 0.85 mm, single-wi
 ### `Button_Switch_SMD_XKB:SW_Push_1P1T_XKB_TS-1187A`
 
 XKB TS-1187A-B-A-B 5.1 × 5.1 mm SMD tactile switch, 1.5 mm high, 160 gf (LCSC C318884), for
-the stock `Switch:SW_Push` symbol.
+the stock `Switch:SW_Push` symbol. Used by espion-cam as SW1 (RESET) and SW2 (BOOT).
 
 - Source: [XKB TS-1187A drawing](https://datasheet.lcsc.com/datasheet/pdf/56c8799ae5193945a16a1ffbe378246a.pdf)
   (side and top views, height table, materials).
@@ -474,7 +482,7 @@ Symbol: `Connector_Generic_MountingPin:Conn_01x15_MountingPin`.
 
 Two-pad net tie (0.5 mm round pads joined by a 1.0 × 0.5 mm copper bridge), used as NT1 on
 espion-cam: `ISNS_K` leaves R69's source-side pad through it (Kelvin sense,
-`../../docs/hardware/layout.md`, LED driver and ring).
+[layout](../../docs/hardware/layout.md#led-driver-and-ring)).
 
 - Copy of KiCad's `NetTie:NetTie-2_SMD_Pad0.5mm` (CC-BY-SA 4.0 with the KiCad library
   exception). Pads, the copper bridge, the net-tie pad group and the attributes are
@@ -486,7 +494,8 @@ espion-cam: `ISNS_K` leaves R69's source-side pad through it (Kelvin sense,
 
 Tooling hole for JLCPCB assembly: Ø1.152 mm NPTH with a 0.148 mm solder mask expansion
 (1.448 mm opening), as the [JLCPCB tooling-hole article](https://jlcpcb.com/help/article/How-to-add-tooling-holes-for-PCB-assembly-order)
-specifies. The stock `MountingHole:ToolingHole_1.152mm` it copies opens only 1.3 mm.
+specifies. The stock `MountingHole:ToolingHole_1.152mm` it copies opens only 1.3 mm. Used by
+espion-cam as TOOL1–TOOL3 (board-only footprints, no symbol).
 
 - Source: the JLCPCB article above (read 2026-10-31).
 - Copied from KiCad's stock footprint (CC-BY-SA 4.0 with the KiCad library exception); only
@@ -495,9 +504,10 @@ specifies. The stock `MountingHole:ToolingHole_1.152mm` it copies opens only 1.3
 ### SZYTF OV9281 camera module, 79° lens (3D model only)
 
 SZYTF OV9281 camera module with the 79° lens (drawing WX-1M-9281-79-V1.0), the camera on
-espion-cam's 15-pin FFC. It is an off-board part: it mounts in the 3D-printed enclosure
-10 mm behind the espion-cam PCB, so it has no symbol or footprint. The model is for the
-enclosure assembly.
+espion-cam's 15-pin FFC. It is an off-board part: the 3D-printed enclosure holds it behind
+the espion-cam PCB, its front face 2.1–9.3 mm behind the board's bottom face (lens tip
+≤ 5.4 mm below the top face, [camera](../../docs/hardware/camera.md#camera-module)), so it
+has no symbol or footprint. The model is for the enclosure assembly.
 
 - Sources: mechanical drawing WX-1M-9281-79-V1.0
   ([listing image](https://ae-pic-a1.aliexpress-media.com/kf/Sc05f84c44d8340139f90cdb8f6d23030K.jpg):

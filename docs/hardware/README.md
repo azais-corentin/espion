@@ -1,121 +1,198 @@
-# espion-cam board
+# espion-cam board design
 
-The camera board of espion. An ESP32-P4 module exposes a global-shutter IR camera at
-120 fps, finds the bright marker blobs in each frame and streams their centres to the host
-over Ethernet, on PTP time. A ring of 12 IR LEDs flashes with every exposure. The board runs
-from PoE, or from USB-C on the bench. System view: [architecture.md](../architecture.md).
+espion-cam is the camera board of [espion](../architecture.md): a 64 × 64 mm, 4-layer baseboard for
+a Waveshare ESP32-P4-Core module with an OV9281 global-shutter camera behind a lens cutout, a ring
+of twelve 850 nm LEDs around the lens, 10/100 Ethernet with an 802.3af PoE powered device, and
+USB-C for bench power, flashing and logs. The KiCad project is
+[hardware/espion-cam](../../hardware/espion-cam/README.md). It is designed for 15–30 °C, indoor
+(user decision 2026-10-31).
 
-The KiCad schematic (`hardware/espion-cam/`) is the source of truth for parts and wiring.
-These docs hold what it can't: why, derived values, accepted risks, layout and firmware rules.
+Board coordinates in these documents are KiCad board millimetres: the board spans x 100–164,
+y 100–164, y pointing down (the top edge is y 100).
 
-## Key decisions
-
-- One sheet per block. Signals cross sheets only through hierarchical pins and buses, so ERC checks every crossing; rails use global power symbols.
-- Every part on the top side. The camera module sits in the enclosure 10 mm behind the board, looking through a Ø16 mm cutout, its FFC wrapped round the bottom edge into J4; the 12 LEDs ring the cutout. One PCB, no ring connector ([layout.md](layout.md)).
-- 4 × M3 plated holes, on GND, kept ≥ 2 mm from PoE cable copper ([layout.md](layout.md)).
-- PoE first, USB-C as fallback, through a priority mux that tells firmware which one is live; no LED rail on USB alone ([power.md](power.md)).
-- VBUS is sensed on its own pin, so firmware can drop the USB D+ pull-up while VBUS is absent; the mux flag can't tell ([mcu.md](mcu.md)).
-- The LED boost sits behind a slow load switch: charging its 440 µF at power-up would otherwise pull ≈ 1.6 A, over the USB limit ([led.md](led.md)).
-- The camera's XVS/STROBE level is unknown (1.8, 2.8 or 3.3 V): a buffer reads STROBE at any of them, a divider option sets XVS, fitted for 1.8 V ([camera.md](camera.md)).
-- Camera enable is pulled down: the sensor stays off until firmware turns it on, and can be power-cycled ([camera.md](camera.md)).
-- Single-sided FPC connector: a cable inserted face-flipped makes no contact instead of putting 3.3 V on the camera's GND ([camera.md](camera.md)).
-- STROBE also goes to the P4, which timestamps every exposure ([camera.md](camera.md)).
-- PTP PPS leaves on a GPIO with a test point and loops back through a 0 Ω (R34) for capture; remove R34 if capture sees the output pad directly ([mcu.md](mcu.md)).
-- PHY crystal with ESR ≤ 40 Ω, as the IP101G needs ([ethernet.md](ethernet.md)).
-- RJ45 shield to GND through 1 nF / 2 kV in parallel with 1 MΩ ([ethernet.md](ethernet.md)).
-- One RGB status LED; the jack LEDs show link/activity (green) and 100 Mb/s (yellow) ([mcu.md](mcu.md), [ethernet.md](ethernet.md)).
-- Test points on the rails and the timing and LED signals; ADC sense of +32V and of the sink MOSFET's temperature. No UART header, no JTAG pads: USB does both.
-- IMU on its own I2C bus: wake-on-motion flags a bumped camera, gravity helps rig calibration ([imu.md](imu.md)).
-- Ethernet GPIOs are fixed; the rest are picked at placement within fixed groups ([firmware-rules.md](firmware-rules.md)).
-- Clocks: the PHY's 25 MHz crystal makes the 50 MHz RMII clock; PTP and the system timer share the P4's 40 MHz crystal ([firmware-rules.md](firmware-rules.md)).
-
-## Block diagram
+## Blocks
 
 ```mermaid
 flowchart LR
-  ETH[ethernet] -->|"{POE}"| PWR[power]
-  PWR -->|PWR_SRC| MCU[mcu]
-  ETH <-->|"{PHY}"| MCU
-  MCU <-->|"{CSI}, {CAMCTL}"| CAM[camera]
-  CAM -->|STROBE| MCU
-  CAM -->|STROBE| LED[led_driver]
-  MCU -->|"{LEDCTL}"| LED
-  LED -->|"VLED_SENSE, NTC_SENSE"| MCU
-  LED -->|LED_K| RING[led_ring]
-  MCU <-->|"{IMU}"| IMU[imu]
+  ETH["Ethernet<br/>J1 MagJack, U1 IP101GRI"] -- "PoE pairs (cable side)" --> PWR["Power<br/>U2 DP1435, U4 TPS2121, U3 TLV62569"]
+  ETH <-- "PHY bus: RMII, MDC/MDIO, reset" --> MCU["MCU<br/>U6 ESP32-P4-Core, J2 USB-C, D1"]
+  PWR -- "PWR_SRC" --> MCU
+  MCU <-- "MIPI CSI-2, SCCB, CAM_EN, XVS" --> CAM["Camera<br/>J4 FFC, J3, U7"]
+  CAM -- "STROBE" --> MCU
+  CAM -- "STROBE" --> LEDD["LED driver<br/>U8, U10, U9, U11, Q1"]
+  MCU -- "LED_PWR_EN, BST_EN, LED_EN" --> LEDD
+  LEDD -- "VLED_SENSE, NTC_SENSE" --> MCU
+  LEDD -- "+32V, LED_K" --> RING["LED ring<br/>D4–D15"]
+  MCU <-- "I2C, INT1" --> IMU["IMU<br/>U12 MSA3S02"]
 ```
 
-- **root**: the sheet blocks wired as above, and the mounting holes.
-- **power**: PoE module (802.3af, isolated, 5.15 V), LC filter, PoE/USB mux, 3.3 V buck.
-- **mcu**: P4 module, reset and BOOT, USB-C with ESD and VBUS clamp, VBUS sense, status LED, PPS loop-back.
-- **ethernet**: 10/100 PHY, its crystal, MagJack with PoE taps, shield RC, jack LEDs.
-- **camera**: FPC and aux connectors, I2C pull-ups, camera enable, XVS divider, STROBE buffer.
-- **led_driver**: load switch, 5 V → 32 V boost, storage caps, gate and timeout, ≈ 0.9 A current sink, NTC, +32V sense.
-- **led_ring**: 12 IR LEDs (850 nm) in series from +32V to the sink.
-- **imu**: 6-axis IMU with its decoupling and pull-ups.
+`+5V`, `+3V3` and `+32V` are global nets; the root sheet holds only the mounting holes H1–H4.
+
+| Block | Sheet | Document |
+|---|---|---|
+| PoE PD, power mux, 3.3 V buck, USB VBUS | Power (`power.kicad_sch`) | [power.md](power.md) |
+| ESP32-P4-Core module, USB-C, reset/boot, status LED, test points | MCU (`mcu.kicad_sch`) | [mcu.md](mcu.md) |
+| OV9281 module FFC, CSI-2 links, SCCB, XVS/STROBE | Camera (`camera.kicad_sch`) | [camera.md](camera.md) |
+| IP101GRI PHY, HR871150C MagJack, RMII | Ethernet (`ethernet.kicad_sch`) | [ethernet.md](ethernet.md) |
+| MSA3S02 accelerometer | IMU (`imu.kicad_sch`) | [imu.md](imu.md) |
+| LED power switch, boost, current sink, STROBE gate | LED driver (`led_driver.kicad_sch`) | [led.md](led.md) |
+| 12 × Amicc A-SC880IR3C | LED ring (`led_ring.kicad_sch`) | [led.md](led.md#led-ring) |
+| Mounting holes H1–H4 | root (`espion-cam.kicad_sch`) | [Board](#board) |
+| Board, stack-up, rules, routing | — | [layout.md](layout.md) |
+| GPIO map and firmware rules | — | [firmware-rules.md](firmware-rules.md) |
 
 ## Rails
 
-These are the worst-case ranges the block docs derive; reviews use this table.
+| Rail | Source | Nominal | Min–max (basis) | Loads | Max current |
+|---|---|---|---|---|---|
+| `POE_VA1`, `POE_VA2`, `POE_VB1`, `POE_VB2` (cable side, isolated) | J1.7–J1.10 centre taps (both pair sets) | 802.3af | 37–57 V (802.3af PD input; DP1435 p.5) | U2.1–U2.4 only, no capacitors | ≥ 0.32 A per pair at 37 V at the 1.96 A `+5V` peak (lower bound: 84 % is the DP1435's maximum efficiency, p.5 item 7); J1 rated 350 mA per centre tap (HR871150C p.1) |
+| `+5V_POE` | U2 DP1435-5V output | 5.15 V | 4.89–5.41 V (one ±5 % regulation term, DP1435 p.5; no set-point accuracy given) | C11, L1 | Module 2.4 A nominal, 2.6 A max; board peak 1.96 A |
+| `+5V_POE_F` | L1 (π filter) | 5.15 V | 4.85–5.41 V (`+5V_POE` minus ≤ 0.04 V across L1 at 2.6 A) | U4 IN1, C13, C14, C15, R18/R19 | as `+5V` on PoE |
+| `VBUS` | J2 USB-C | 5.0 V | 4.40–5.5 V (USB 2.0 Table 7-7 p.178, §7.2.1.3 p.173: low-power port 4.40 V minimum, a conservative floor for this high-power function, which the spec requires to run fully from 4.75 V, §7.2.1.4 p.174; USB Type-C R2.0 §4.4.2 p.141: up to 5.5 V at light load) | U4 IN2, C16, D2, R24, R27/R28 | ≈ 0.49 A on USB alone (estimate; LEDs off by firmware rule) |
+| `+5V` | U4 TPS2121 OUT (PoE first) | 5.15 V on PoE | 4.35–5.41 V steady (input range minus RON ≤ 85 mΩ); ≥ 3.26 V during a PoE → USB switchover | U3, U8, U11, R63, C10, C12, C20, C22, C23, C34, C44, TP5 | ≈ 0.87 A average nominal, ≤ 1.0 A worst case at the LED design point; 1.96 A peak (U3 0.52 A + boost 1.44 A) while the boost recharges `+32V` at its switch limit (start-up, and 2.4–6.0 ms of every frame); U4 limit ≈ 2.5–3.5 A |
+| `+3V3` | U3 TLV62569 | 3.318 V | 3.199–3.440 V DC set point (VFB 0.588–0.612 V, SLVSDG1C p.4; R16 453k / R17 100k ±1 %), used by every calculation; ≥ 3.19 V during a PoE → USB switchover. Logic-level checks that use the generic 3.3 V ± 5 % envelope (3.135–3.465 V) name it as such | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, R53 → `CAM_3V3`, pull-ups, CP2 divider, TP4 | ≈ 0.65 A (estimate); U3 rated 2 A |
+| `CAM_3V3` | `+3V3` through R53 0 Ω (0805) | 3.318 V | as `+3V3` | J4.15 (camera module), C30, C32, TP10 | ≤ 100 mA (estimate, no module datasheet) |
+| `+5V_BST` | U8 TPS22918 load switch (LED_PWR_EN) | `+5V` | `+5V` minus ≤ 0.11 V (RON ≤ 79 mΩ, TPS22918 p.5, at 1.44 A); switched on only on PoE (firmware rule) | U10 VIN, L3, C36, C38 | ≈ 0.38 A frame average nominal, ≤ 0.51 A worst case at the design point; 1.26 A average, 1.44 A peak while the boost is at its switch current limit (TPS61170 p.5) |
+| `+32V` | U10 TPS61170 boost (BST_EN) | 32.57 V | 31.30–33.93 V (VREF 1.204–1.254 V, R65 255k / R66 10k, TPS61170 SLVS789D p.5); ≤ 0.92 V droop at the end of a 0.5 ms pulse | LED string D4–D15, C43, C45, C46, C47, R65/R66, R71/R72, TP13 | Pulses 0.831 A nominal (0.759–0.915 A), ≤ 0.5 ms at ≤ 120 fps; 50 mA average nominal, 55 mA worst case (pulse × 0.5 ms × 120 Hz + 0.25 mA dividers) against ≥ 77 mA the boost delivers (77–81 mA) |
 
-| Rail | Source | Range | Main loads |
-|---|---|---|---|
-| `VBUS` | USB-C | 4.4–5.5 V (USB 2.0 low-power port minimum to Type-C maximum) | Mux USB input, VBUS sense divider, 100 kΩ bleeder |
-| `+5V_POE` | PoE module U2 | 4.64–5.67 V, 5.15 V typ (both 5 % bands stacked; 4.89–5.41 V with one) | LC filter, then the mux PoE input |
-| `+5V` | Mux U4 | On PoE: `+5V_POE_F` (4.38–5.67 V; low end after a 0.23 V load-step dip and 0.03 V in L1) less the mux drop (≤ 90 mΩ × load, ≤ 0.18 V at 2 A). On USB: VBUS less the same drop | 3.3 V buck, LED load switch, sink op-amp |
-| `+3V3` | Buck U3 | 3.20–3.44 V, 3.32 V typ (≈ 3.19–3.45 V with drift over temperature and input) | P4 module, PHY, camera, logic, status LED, IMU |
-| `CAM_3V3` | `+3V3` through 0 Ω R53 (lift it to measure the camera's current) | as `+3V3` | Camera module |
-| `+5V_BST` | Load switch U8 | as `+5V`, only while firmware enables it | Boost |
-| `+32V` | Boost U10 through D3 | 31.30–33.88 V, 32.57 V typ | LED ring, feedback and sense dividers |
+Derivations: [power.md](power.md) for the first seven rows, [led.md](led.md#boost-converter) for
+`+5V_BST` and `+32V`.
 
-`+5V` above 5.5 V (the stacked-band PoE corner) is over the recommended input of the buck,
-load switch and op-amp but under their 6 V maximum; accepted ([power.md](power.md), [led.md](led.md)).
-`+32V` uses the stock `power:+36V` symbol with Value `+32V`; the net takes its name from the Value
-(`.omp/kicad.json` `powerSymbols` maps it for `add_power`).
+## Board
 
-## Parts not from LCSC
+- **Outline:** 64 × 64 mm, 1 mm corner radius, 3840 mm². An FFC notch 18 × 3 mm in the top edge
+  (x 120.7–138.7, 0.5 mm radii) lets the camera FFC wrap round the edge to J4. The lens cutout is
+  Ø16 mm at (129.7, 130.3); the camera module sits behind the board with its lens in the cutout and
+  the LED ring around it on the top side. J1's RJ45 opening is on the right edge, the PoE module
+  along the left edge (user decision 2026-10-31, "Mirror: J1 right, DP1435 left").
+- **Holes:** 4 × M3 (H1–H4, plated, GND) 3.5 mm in from each corner (user decision 2026-10-31,
+  "4 × M3 corners"); three JLCPCB tooling holes TOOL1–TOOL3 (Ø1.152 mm).
+- **Stack-up:** JLCPCB JLC04161H-7628, 4 layers, 1.6 mm, ENIG, green mask, no impedance control
+  (user decision 2026-11-01, "No impedance control"):
 
-| Part | Order from | Notes |
-|---|---|---|
-| Waveshare ESP32-P4-Core, 16 MB flash (SKU 36096) | Waveshare | On the schematic as U6, without an LCSC number. Needs chip revision v3.x: esp-hal supports no older one |
-| OV9281 camera module (SZYTF; 79°, 110° or 160° lens) | [AliExpress 1005012566040263](https://fr.aliexpress.com/item/1005012566040263.html) | No symbol; plugs into J4 (FPC) and J3 (aux) |
-| Aux pigtail, JST-SH 4-pin, 200 mm, one end tinned: DEALON LNN100-157128-200-4P | LCSC C2999003 | Mates with J3; the tinned ends are soldered to the camera's XVS, STROBE and GND pads |
-| 850 nm bandpass filter for the lens | not chosen yet | Not a PCB part |
+  | Layer | Material | Thickness | Use |
+  |---|---|---|---|
+  | F.Cu | copper | 35 µm | parts, signals, power |
+  | | 7628 prepreg, εr 4.4 | 0.2104 mm | |
+  | In1.Cu | copper | 15.2 µm | GND plane, cut only for the PoE lane |
+  | | core, εr 4.6 | 1.065 mm | |
+  | In2.Cu | copper | 15.2 µm | GND plane, unbroken, no tracks |
+  | | 7628 prepreg, εr 4.4 | 0.2104 mm | |
+  | B.Cu | copper | 35 µm | signals, power, U6/U2/J1 |
 
-## BOM
+  Details, rules and net classes: [layout](layout.md#board-and-stack-up).
+- **Assembly:** JLCPCB Economic PCBA, single-sided: every machine-placed part is on the top
+  (185 footprints on top, 3 on the bottom). The hand-assembly list (user decision 2026-10-31) and
+  its sides (user decision 2026-10-31, "Hand parts on the bottom"):
 
-Generate it from the schematic's `Order` preset with `kicad_query` `bom` (preset `Order`), or in
-`hardware/espion-cam`: `kicad-cli sch export bom --preset Order -o espion-cam-bom.csv espion-cam.kicad_sch`.
-Never commit the output. Every sourced symbol carries Manufacturer, MPN and LCSC fields. DNP parts,
-holes, the net tie and pad test points are left out; the loop GND test points TP3, TP2 and TP7 stay in.
+  | Part | Side | Notes |
+  |---|---|---|
+  | U6 ESP32-P4-Core | bottom | Hand-soldering footprint without paste; iron only, pad by pad, no hot air (user decision 2026-11-01) — [mcu](mcu.md#module) |
+  | U2 DP1435-5V | bottom | Through-hole, soldered from the top — [power](power.md#poe-input) |
+  | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over R46, C3, R8, C1 — [layout](layout.md#assembly) |
+  | TP2, TP3, TP7 | top | Through-hole GND wire loops (RH-5002) — [mcu](mcu.md#test-points) |
 
-## Before ordering
+  J2 (USB-C) is machine-placed with its shell 0.3 mm inside the top edge (user decision
+  2026-11-01); the RESET and BOOT buttons sit on the bottom edge (user decision 2026-11-01).
+- **Revision:** 0.1 (schematic title block, dated 2026-10-29).
 
-- Measure the castellated pads of a real P4-Core and confirm the provisional land patterns
-  `Module_Waveshare:Waveshare_ESP32-P4-Core` and `_HandSolder`
-  ([hardware/lib/README.md](../../hardware/lib/README.md)).
-- Before routing J4: ohm the camera's GND pad to the cable's edge conductor to confirm which
-  edge is pin 1 ([camera.md](camera.md), FPC connector).
-- Before buying J4: check the cable type and the module connector's contact side; together
-  they pick J4's MPN ([camera.md](camera.md)).
+## Accepted risks
 
-## First boards
+Power:
+- PoE lane isolation: F.Cu copper ≥ 1.0 mm sideways from the In1 PoE tracks through one
+  0.2104 mm ply (TP10.1 at exactly 1.000 mm); design review 2026-11-01, the hipot test decides —
+  [power](power.md#poe-input), [layout](layout.md#ethernet-and-poe-isolation).
+- U2's 1.5 kVrms barrier limits the assembled hipot to 1500 Vrms / ≤ 2121 V dc — [power](power.md#accepted-risks).
+- DP1435 output set-point tolerance and maximum capacitive load not specified — [power](power.md#poe-input).
+- Mux reference CP2 taken from `+3V3`, not a precision reference — [power](power.md#power-mux).
+- USB current limited by a firmware rule only (user decision 2026-10-31); USB-alone estimate ≈ 0.49 A at the 500 mA port limit — [power](power.md#usb-vbus).
+- PoE loss with USB attached loads the host port up to the mux limit until firmware drops LED_EN, BST_EN and LED_PWR_EN — [power](power.md#power-mux).
+- PoE budget at the 1.96 A `+5V` peak: ≥ 12.0 W in and ≥ 0.32 A per pair at 37 V with the DP1435's 84 % maximum efficiency; at 78 % it would reach the 12.95 W 802.3af limit and J1's 350 mA (user decision 2026-11-02, "Accept, measure on first boards"; a firmware LED limit on PoE follows if a limit is exceeded) — [power](power.md#poe-input).
+- C15/C23 0.55–0.59 mm from U4, closer than JLCPCB's 1.0 mm QFN spacing — [power](power.md#accepted-risks).
+- C12 outboard of C10 at the buck input; `+3V3` capacitance outside TI's tested cells — [power](power.md#33-v-buck).
+- Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C14, C22 (not stated), D3 SS16 (250 °C, 10 s), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [layout](layout.md#assembly).
 
-1. Unpowered, measure each rail to GND (TP3/TP2/TP7): `VBUS` (no test point: probe C16 at U4), `+5V` (TP5), `+3V3` (TP4), `+32V` (TP13). Nothing near 0 Ω. `VBUS` ≈ 55 kΩ and `+32V` ≈ 130 kΩ, creeping up as the meter charges the caps (estimates). Compare boards for the rest.
-2. Power from USB first: a 5 V bench supply limited to ≈ 0.6 A into the USB-C port (breakout board), or a USB meter. Expect ≈ 0.25 A with firmware running and the camera on (estimate; design ceiling 0.57 A). No measured figure yet: a board well above the others has a fault.
-3. After a minute, touch or IR-check. Warm is fine for the buck U3, the P4 module and the PHY U1. Everything else should stay near room temperature on USB, including the mux U4, U8, U10, Q1 and the LEDs.
-4. Measure `+5V`, `+3V3` and `CAM_3V3` (TP10) against the Rails table.
-5. Unplug USB and power from an 802.3af PoE switch. Measure `+5V` again; the PoE module U2 may run warm (estimate).
-6. On PoE, have firmware enable the LED rail (sequence in [led.md](led.md)) and measure `+32V` at TP13: 31.3–33.9 V. The boost draws 0.8–1.3 A from `+5V` for 50–120 ms while it charges, then ≈ 0.41 A average with the LEDs pulsing. Q1 and the LEDs then get warm (Q1 junction ≈ ambient + 45 °C at its 0.73 W average).
-7. `+32V` stays charged for minutes after the boost stops (τ ≈ 58 s: still ≈ 12 V after one minute); discharge it before touching the LED side.
+Camera:
+- Camera module I/O level unknown, no sample (user decision 2026-10-31); assembly options kept — [camera](camera.md#xvs-level-options).
+- FFC pin mapping read from a vendor photo; insertion depth, stiffener and bend radius unknown — [camera](camera.md#ffc-orientation).
+- No impedance control: MIPI pairs 88–114 Ω at JLCPCB's ±20 % width tolerance (user decision 2026-11-01) — [layout](layout.md#impedance).
+- MIPI clock pairs at 2W without a GND guard (user decision 2026-11-01, "Accept 2W, no guard") — [camera](camera.md#csi-2-link).
+- In2 reference neck for the CSI bus 6.19 mm against TI's 6.83 mm, crossed at 45° with 72.5 mil a side (user decision 2026-11-01, "Use 45°, accept 71.7 mil") — [layout](layout.md#camera-and-csi-2).
+- CAM pairs 54–89 mil from the plane edge at the FFC notch (user decision 2026-11-01, "Pull planes to 0.3 mm") — [layout](layout.md#camera-and-csi-2).
+- GND planes solid under the 0 Ω link pads and J4's MIPI pads (design review 2026-11-01) — [layout](layout.md#camera-and-csi-2).
 
-## Docs
+LED:
+- Q1 1.7–1.8 mm from LEDs D15/D4 and near C46; their temperature rise is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal).
+- STROBE hardware timeout window 0.525–1.026 ms, set by U9's threshold spread (user decision 2026-11-02, "Accept 0.525–1.026 ms") — [led](led.md#strobe-gating-and-timeout).
+- Boost output capacitance (662 µF) outside the TPS61170's 1–10 µF recommended range — [led](led.md#boost-converter).
+- PHY_RST_N and NTC_SENSE run inside the LED ring, 0.5–1.1 mm from the pulsed ring copper (static/slow lines) — [layout](layout.md#led-driver-and-ring).
 
-- [power.md](power.md): PoE module, LC filter, PoE/USB mux, 3.3 V buck.
-- [mcu.md](mcu.md): P4 module, reset/BOOT, USB-C, VBUS sense, status LED, PPS loop-back.
-- [ethernet.md](ethernet.md): PHY, crystal, MagJack, shield, jack LEDs.
-- [camera.md](camera.md): camera module and cables, FPC connector, levels, XVS divider, STROBE buffer.
-- [led.md](led.md): LED ring sizing, load switch, boost, gate and timeout, current sink, NTC, rail sense, the ring.
-- [imu.md](imu.md): IMU.
-- [layout.md](layout.md): stack-up, impedance, net classes, rules, mounting holes, placement and routing.
-- [firmware-rules.md](firmware-rules.md): GPIO map, straps, clocks, the numbered firmware rules.
+MCU:
+- Status LED D1 on `+3V3`: green/blue VF up to 3.2 V at 5 mA against the `+3V3` set point of 3.199–3.440 V (user decision 2026-11-02, "Accept, check on first boards", taken on the 3.135 V minimum of the ± 5 % envelope, which is lower still) — [mcu](mcu.md#status-led).
+- USB-C shell 0.3 mm inside the edge: a plug overmold may stop ≈ 0.25 mm short of full insertion (user decision 2026-11-01) — [mcu](mcu.md#usb-c).
+- RESET/BOOT buttons on the bottom edge; the enclosure must reach them (user decision 2026-11-01) — [mcu](mcu.md#reset-and-boot).
+- U6 lies under C47, C50, U12 and R37: iron only (user decision 2026-11-01) — [mcu](mcu.md#module).
+- USB connector-side lines: one via without a GND return via, a short stretch over the In1 PoE gap (USB full speed) — [mcu](mcu.md#usb-c).
+
+Ethernet:
+- IP101GRI has no maker MSL/reflow statement (user decision 2026-10-31, "Keep IP101GRI, accept risk") — [ethernet](ethernet.md#phy).
+- MDI pairs swapped at J1: link relies on the PHY's auto-MDIX (design review 2026-11-01) — [ethernet](ethernet.md#magjack-and-mdi).
+- MDI spacing below 3× inside U1's escape and the P/N swap vias without return vias — [ethernet](ethernet.md#magjack-and-mdi).
+- ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
+- No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
+- J1's lands 0.57–0.72 mm from reflowed parts R46, C3, R8, C1 — [layout](layout.md#assembly).
+
+IMU and board:
+- C50's GND via 2.1 mm away, R74 0.64 mm from U12, IMU_SDA crossing L2's courtyard margin — [imu](imu.md#accepted-risks).
+- Stock footprint silk kept closer than 0.15 mm to pads; JLCPCB clips it (user decision 2026-11-02, "Keep stock silk, JLC clips it") — [layout](layout.md#accepted-deviations).
+
+## First-board checks
+
+Power ([power](power.md#first-board-checks)):
+1. Hipot the bare board before U2 is fitted: 2250 V dc, 60 s, PoE nets against everything else; then the assembled board at 1500 Vrms or ≤ 2121 V dc.
+2. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V.
+3. PoE cold start into the π filter: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses.
+4. Mux thresholds with a bench supply on `+5V_POE_F`: to USB at 3.49–4.08 V, back at 3.80–4.42 V.
+5. PoE pull with USB attached, idle and during LED pulses: no reset, USB stays enumerated; firmware latency `PWR_SRC` → LED_EN, BST_EN, LED_PWR_EN low.
+6. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W and ≤ 350 mA per pair, else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
+7. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A; camera share through a shunt in place of R53.
+8. `+3V3` load step 0.1 → 0.6 A: overshoot ≤ 5 %.
+9. Thermal camera on U4 and its vias, the U8 neck, U3, L1, U2 at the LED design point and during `+32V` start-up.
+10. RH-5002 loop fit in the 1.0 mm hole of TP2/TP3/TP7.
+
+LED ([led](led.md#first-board-checks)):
+11. Thermocouples on D15, D4 and C46 at 0.5 ms / 120 fps for 30 min; if an LED is above the derating curve, lower R61 — [led](led.md#thermal).
+12. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14) — [led](led.md#boost-converter).
+13. Boost start-up waveform and a 0 → 0.9 A pulse load step (output capacitance outside TI's range) — [led](led.md#boost-converter).
+14. STROBE timeout: a 0.5 ms pulse passes whole, longer ones are cut by ≈ 1.03 ms — [led](led.md#strobe-gating-and-timeout).
+
+Camera ([camera](camera.md#first-board-checks)):
+15. CSI-2 at full rate (2 lanes, 800 Mbit/s per lane) with a frame-error count (impedance, no CLK guard, solid planes under pads) — [camera](camera.md#csi-2-link).
+16. Camera I/O level, CAM_EN polarity and the XVS divider option on the first module — [camera](camera.md#xvs-level-options), [camera](camera.md#sccb-and-control).
+17. FFC with the supplied cable: pin 1 mapping, insertion depth, loop and stiffener clear of the board edge — [camera](camera.md#ffc-orientation).
+
+MCU ([mcu](mcu.md#first-board-checks)):
+18. D1: each colour's brightness at 3.3 V and the colour byte order — [mcu](mcu.md#status-led).
+19. USB-C: the cables in use (charger, flashing cable) latch and enumerate — [mcu](mcu.md#usb-c).
+20. U6 soldered with an iron only, pad by pad — [mcu](mcu.md#module).
+
+Ethernet ([ethernet](ethernet.md#first-board-checks)):
+21. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8, C1; inspect them after — [layout](layout.md#assembly).
+22. 100 Mbit/s link through auto-MDIX and an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#magjack-and-mdi), [ethernet](ethernet.md#rmii).
+
+IMU ([imu](imu.md#first-board-checks)):
+23. Accelerometer I²C and INT1 next to the running buck — [imu](imu.md#i2c-bus).
+
+## Documents
+
+- [Architecture](../architecture.md): what the product does, firmware and host overview.
+- [Power](power.md): PoE PD, power mux, 3.3 V buck, USB VBUS.
+- [MCU](mcu.md): ESP32-P4-Core module, USB-C, reset and boot, status LED, test points.
+- [Camera](camera.md): OV9281 module, FFC, CSI-2, SCCB, XVS and STROBE.
+- [Ethernet](ethernet.md): IP101GRI PHY, MagJack, RMII, straps.
+- [IMU](imu.md): MSA3S02 accelerometer and its I²C bus.
+- [LED](led.md): LED power switch, boost, current sink, STROBE gating, LED ring, thermal.
+- [Layout](layout.md): stack-up, fabrication rules, net classes, custom rules, routing, assembly.
+- [Firmware rules](firmware-rules.md): GPIO map, straps, rules the firmware must follow.
+- [KiCad project](../../hardware/espion-cam/README.md): project files and parts list.
+- [Project library](../../hardware/lib/README.md): symbols, footprints and 3D models made for this board.

@@ -1,135 +1,425 @@
 # Power
 
-This sheet makes `+5V` and `+3V3` from PoE or USB-C. An isolated PoE module (U2) makes 5.15 V from the cable and
-a damped LC filter cleans it. A priority mux (U4, TPS2121) passes PoE when it is good and USB VBUS otherwise, as
-`+5V`, which feeds the LED boost ([led.md](led.md)) and the 3.3 V buck (U3, TLV62569). The mux limits current at
-every switchover, soft-starts, and blocks back-feed. Its status pin is `PWR_SRC`. Layout: see [layout.md](layout.md).
+The Power sheet (`power.kicad_sch`) turns PoE or USB-C into the board's two supplies: `+5V` for the
+LED driver and the buck, and `+3V3` for everything else. The chain: J1's PoE centre taps → U2
+DP1435-5V (isolated) → `+5V_POE` → π filter C11/L1/C13/C14/C15 → `+5V_POE_F` → U4 TPS2121 IN1
+(priority); J2's `VBUS` → U4 IN2; U4 OUT → `+5V` → U3 TLV62569 → `+3V3`, and `+5V` → U8 → the
+LED boost ([LED driver](led.md#led-power-switch)). U4's ST output reports the source to GPIO2 as
+`PWR_SRC`. The USB VBUS parts D2, R24 and the VBUS_SENSE divider (R27, R28, C26) sit on the MCU
+sheet and are described here under [USB VBUS](#usb-vbus).
 
-## PoE module
+Rail ranges and currents for the whole board are in the [Rails table](README.md#rails). Board
+ambient is 15–30 °C, indoor (user decision 2026-10-31); the thermal figures below use 30 °C.
 
-- SDAPO DP1435-5V: 802.3af PD, bridge rectifiers, isolated flyback (1.5 kV rms), 5.15 V out, class 0 (no class
-  pin brought out). Through-hole SIP-6, standing 35.6 × 16.2 mm on the board, 14 mm tall. (DS p.1–2, p.5 item 9)
-- It takes power from both centre taps and both spare pairs, so it works with Alternative A and B PSEs. Inputs are
-  not polarity sensitive: no external diode or input cap. Bob-Smith is inside the MagJack ([ethernet.md](ethernet.md)).
-- Output 5.15 V typ, 2 A typ / 2.6 A max. Line and load regulation 5 % each: 4.64–5.67 V if both stack,
-  4.89–5.41 V with one. Ripple 200 mVpp at 250 kHz. (DS p.5 items 2–8)
-- IEEE 802.3 §33.4.1 wants 1500 V rms for 60 s (or 2250 V dc, or 10 × 2400 V impulses; from summaries) between
-  the cable and anything touchable. 802.3af gives ≈ 10.9 W out (12.95 W × 84 %), less than the module's 12.4 W.
-- No maximum capacitive load is given. The module drives ≈ 680 µF directly (C11, C13, C14, C15) and the ≈ 124 µF on
-  `+5V` through the mux's soft start (≈ 0.1 A); accepted.
+## PoE input
 
-## LC filter
+### Module
 
-- C11 10 µF at the module, L1 2.2 µH (FXL0630: 15 mΩ, I_sat 10.5 A, 5× the 2 A peak, 30 mV drop), then C13 330 µF
-  polymer ∥ C14 330 µF electrolytic ∥ C15 10 µF; the module adds ≈ 220 µF of its own (estimate, DS p.6 photo). DS p.5
-  asks for 0.33–3.3 µH and puts the 330 µF before L1; here it sits after L1, which gives more output capacitance
-  and a lower peak (the DS order gives 100–172 mΩ).
-- C14 damps the filter. With the polymer alone (5.9 kHz, Z₀ 82 mΩ, Q ≈ 2) the output impedance peaks at 151 mΩ
-  and the 120 Hz strobe steps could make it ring. C14's ESR (0.1–0.64 Ω) brings the peak to 91–123 mΩ at
-  4.1–5.0 kHz; with tolerances up to 141 mΩ (L1 +20 %) and 158 mΩ at ≈ 4.9 kHz (L1 +20 %, C13/C14 −20 %);
-  nominal close to the Middlebrook optimum R_d ≈ 1.45 Z₀ ≈ 0.12 Ω. (JVE table; estimate)
-- Stability: the converters behind it draw ≈ 10 W worst case and look like −V²/P ≈ −2.5 Ω, ≈ 20× the 123 mΩ peak
-  (16× at 158 mΩ), which meets Middlebrook's |Z_out| ≪ |Z_in|. (Erickson & Maksimović)
-- Load step: the boost starting at 1.44 A dips `+5V_POE_F` by ≈ 0.18 V (× 0.123 Ω), up to ≈ 0.23 V with
-  tolerances (× 0.158 Ω). The module's own step response is not specified; the mux threshold keeps 0.07 V above
-  this; accepted.
-- Ripple at 250 kHz: −46 dB modelled, ≥ 30 dB with real ESL (estimate), so ≤ 6 mVpp. Model: ideal source;
-  L1 + 15 mΩ; C13 + 25 mΩ; C15 ≈ 7 µF; C14 + ESR; mux ≈ 60 mΩ; `+5V` ≈ 124 µF (C22 + 30 mΩ).
+U2 is an SDAPO DP1435-5V (LCSC C5380097), an 802.3af powered-device module with an isolated
+flyback: 37–57 V in through its own bridge rectifiers, 5.15 V typ out, 2.4 A nominal (12.4 W),
+2.6 A maximum (DP1435 datasheet p.1, p.5). It is 802.3af compliant (detection and programmable
+classification) and has thermal cut-off, short-circuit, over-current and enhanced surge protection
+(p.1); SDAPO publishes no inrush figure or soft-start time. It sits on the bottom side,
+through-hole, and is hand-soldered from the top after JLCPCB's assembly (user decision
+2026-10-31: hand-assembly list).
 
-## Mux priority threshold
+- **Both pair sets.** VA1/VA2 (U2.1/U2.2) take the centre taps of pairs 1/2 and 3/6 (J1.7/J1.8),
+  VB1/VB2 (U2.3/U2.4) the spare pairs 4/5 and 7/8 (J1.9/J1.10) (DP1435 p.2; HanRun HR871150C p.1
+  schematic). The module is not polarity sensitive, so mode A and mode B PSEs both work.
+- **Nothing on the cable side.** U2.1–U2.4 connect only to J1. SDAPO's typical application
+  (p.4) wires them straight from the jack with no capacitor, and a capacitor from them to board
+  GND would bridge the isolation barrier. The decoupling check exempts these four pins. The
+  Bob-Smith termination (4 × 75 Ω, 4 × 22 nF, 1000 pF/2 kV to the shield) is inside J1
+  (HR871150C p.1).
+- **Centre-tap current.** At the board's worst +5V peak (1.96 A, see [+5V loads](#5v-loads)) the
+  module delivers 1.96 A × 5.15 V = 10.1 W. DP1435 p.5 item 7 gives "Efficiency 84% max", the
+  module's best case; no minimum is published. So the PD input is **at least** 10.1 W / 0.84 =
+  12.0 W and the centre-tap current **at least** 0.32 A at 37 V. The 802.3af PD limit (12.95 W) is
+  reached at η = 78 %, where the pair current at 37 V is 12.95 W / 37 V = 0.35 A, J1's 350 mA
+  rating per centre tap (HR871150C p.1): the real margin is unknown, about 6 % of efficiency
+  ([Accepted risks](#accepted-risks)). The four PoE tracks (class `POE_CABLE`) are 0.4 mm wide on
+  In1 (15.2 µm copper): ΔT ≈ 2 °C at 0.35 A by the external-layer IPC-2152 fit of
+  [layout](layout.md#net-classes) applied to In1's copper thickness.
 
-- The mux switches from PoE (IN1) to USB (IN2) when PoE drops below 3.91 V (3.53–4.31 V worst case). It compares
-  PR1 = IN1 × 47/147 (R18, R19; 0.315–0.324) with CP2 = `+3V3` × 60.4/160.4 (R20, R21) = 1.249 V (1.190–1.312 V
-  over the buck's 3.20–3.44 V), ±40 mV offset, ±0.1 µA pin leakage. (TPS2121 DS Table 9-3 p.18, EC p.8)
-- Upper margin 0.07 V: the lowest PoE output, 4.64 V, minus the 0.23 V load-step dip and 0.03 V in L1 is 4.38 V.
-- Lower margin 0.07 V: the buck needs 3.39 V to regulate 0.78 A (3.3 V + 0.78 A × 115 mΩ), 3.46 V at IN1 after
-  90 mΩ in U4. The 5 µs switchover adds a 0.08 V dip (2 A × 5 µs / 124 µF): at the lowest corner the buck input
-  touches 3.38 V, 0.01 V short, for 5 µs; accepted. (TLV62569 DS §7.3.2 Eq. 1; TPS2121 DS Eq. 3–4 p.15)
-- 60.4 kΩ balances the margins; 62 kΩ gives 3.61–4.35 V and only 0.03 V at the top.
-- CP2 above V_REF (1.10 V max) selects XREF mode and the 5 µs fast switchover; with CP2 grounded it takes 100 µs,
-  a 1.6 V dip that drops `+3V3` out. Until `+3V3` passes 2.65–2.96 V the mux runs in VREF mode (IN1 while above
-  ≈ 3.1–3.5 V, else the higher input, 100 µs switchover). Only at start-up with both inputs present; accepted.
-- **Intentional deviation from TI Fig. 10-12** (DS p.27), which takes CP2 from a REF3325 2.5 V reference. Using
-  `+3V3` saves that part and its rail, at the cost of the VREF-mode start-up and `+3V3` tolerance in the window.
-- **No hysteresis resistor.** TI's example adds 1 MΩ from PR1 to ST; the comparator has none of its own; the margins
-  leave no room. Accepted consequence: on a PoE fault (overload or hiccup; the normal ≤ 2 A load is within the
-  module's rating) with USB present, the mux cycles PoE ↔ USB; every handover is current-limited.
+### Isolation
 
-## Switchover
+The cable side is isolated from the board by J1's magnetics, rated 2250 V dc for 60 s (HR871150C
+p.1), and by U2's barrier, rated only 1.5 kVrms (DP1435 p.1 "Isolation level 1.5KVrms", p.5
+item 9), about 2121 V dc. IEEE 802.3 clause 33.4.1 asks for 1500 Vrms or 2250 V dc for 60 s
+between the cable and everything else.
 
-- **PoE lost, USB present.** 2 A drains the ≈ 790 µF on IN1 and `+5V` at 2.5 V/ms; 0.3–0.7 ms after PoE stops,
-  `+5V` has sagged with IN1 to the threshold, then USB turns on at once under the current limit (§9.3.7 p.16),
-  charging the caps with ≤ 3.5 A (4.5 A rated; 0.5–1.5 A at 2 A load; ≈ 0.7 A slew-limited per TI Fig. 10-8,
-  estimate), and `+5V` climbs back to VBUS without falling further. The 6.0–8.4 A fast trip (25 ms off, board
-  reset) is far away; accepted (§9.3.3 p.14). Firmware: [firmware rule 4](firmware-rules.md).
-- **PoE plugged in on USB.** The mux keeps USB through the settling time t_SET (C21), then compares. The module
-  may still be starting (start-up time not specified), so the mux can toggle until PoE is stable. Handovers are
-  current-limited and the bulk holds `+5V` at about the threshold (≥ 3.53 V; estimate, Fig. 9-9). `PWR_SRC` can
-  chatter: [firmware rule 4](firmware-rules.md). (§9.3.1 pp.12–13)
-- **USB plugged in on PoE.** The mux waits t_SET, keeps PoE, skips a second soft start; only C16 charges.
-- **USB absent.** IN1 powers `+5V` whatever PR1 reads, so there is no PoE undervoltage lockout beyond the mux's
-  2.5–2.8 V UVLO (rising); `+5V` rises at the soft-start slew. The buck's UVLO and the P4's EN RC handle it; accepted.
+On the board the four PoE nets run from J1.7–J1.10 to U2.1–U2.4 on In1, in a lane cut out of the
+In1 GND plane, with In2 GND unbroken below:
 
-## Mux limits, back-feed, heat, ratings
+- Rule `PoE isolation`: 2 mm from `POE_CABLE` copper to any other net on any layer (IEC 60664-1
+  basic insulation 1.5 mm plus margin). The rule is waived between J1's own pins, which rests on
+  HanRun's rating; J1's pads are trimmed so pin 5 (chip side) to pin 7 (cable side) is 1.09 mm and
+  pin 10 to the shield 1.97 mm.
+- F.Cu copper of other nets keeps ≥ 1.0 mm sideways from the In1 PoE copper. KiCad does not check
+  copper across layers, so this was measured by hand. The tightest point is TP10.1 (CAM_3V3) at
+  exactly 1.000 mm from POE_VA1.
+- Between F.Cu and In1 there is one 0.2104 mm 7628 ply. IPC-4101's 30 kV/mm minimum (as quoted in
+  the Isola 370HR datasheet) gives 6.3 kV, 2.8 × the 2250 V dc test. JLCPCB publishes no
+  through-thickness strength, and a single ply carries a pinhole risk (IPC-TM-650 2.5.6.2 tests two
+  plies). A 2 mm sideways keep-off would be the conservative choice; it does not fit.
 
-- R22 = 36 kΩ: I_LM = 65.2 / R^0.861 = 2.98 A typ, ≈ 2.5–3.5 A (estimate, between the EC rows), above the 2.0 A
-  peak load. OV1 and OV2 are grounded: no overvoltage cut-off on either input. (DS Eq. 2 p.13, p.4, p.8)
-- The off input leaks ≤ ±1 µA at 25 °C, ≤ ±35 µA at 85 °C (DS p.7). Open VBUS on PoE floats to ≤ 1.9 V at 85 °C
-  into the ≈ 55 kΩ of the R24 bleeder and the sense divider: `VBUS_SENSE` ≤ 1.2 V still reads "no USB". That is
-  above Type-C vSafe0V (0.8 V) at the hot corner; accepted, the board runs far cooler (estimate).
-- Open PoE input on USB: IN1 stays off below 3.53 V, which holds while the unpowered module loads its output
-  below ≈ 320 kΩ (≈ 130 kΩ keeps it under the UVLO's 2.4 V falling minimum); a flyback output loads far more (estimate).
-- A channel pushed below `+5V` turns off within 10 µs and back on within 50 mV; C20 and C23 carry it (§9.3.6).
-- R_ON ≤ 90 mΩ: +26 °C at the 2 A peak (0.36 W × 72.2 °C/W), +6.5 °C at the 1 A average (p.6–7).
-- TPS2121 inputs take 2.8–22 V and its pins ≤ 5.5 V (PR1 ≤ 1.84 V, CP2 ≤ 1.31 V; dividers 35 µA and 21 µA).
-  The TLV62569's VIN and EN (tied) are rated 5.5 V, 6 V abs max: the module's 5.67 V stacked-band case, passed at
-  light load, is 0.33 V under abs max; accepted. No other part here is outside its recommended input. (§6.1, §6.3)
-- `+5V` holds ≈ 124 µF effective at 5 V (C22 100 µF polymer, C20 47 µF → 18 µF, C10 → 5 µF, small caps), ≥ 97 µF
-  worst case. The TPS2121 sets no minimum. C22 sees ≤ 0.37 A rms of buck ripple, < 15 % of its rating.
-- C16 4.7 µF on VBUS keeps USB 2.0's 10 µF attach limit (§7.2.4.1); it is the only cap charged without soft start.
-- Soft start (USB attach, or PoE alone): C21 100 nF sets 780 V/s, so the caps draw ≈ 0.10 A for ≈ 6.4 ms (Table
-  9-1). That is 12× the charge of 10 µF; accepted. The boost's 440 µF waits behind its load switch.
-- Footprints: C14 takes `Capacitor_SMD_JIERR:CP_Elec_8x10.5` (the stock one of that name differs); U4 is a project part.
+The layout details (lane outline, distances) are in
+[layout](layout.md#ethernet-and-poe-isolation). Because U2's barrier is weaker than the jack, the
+hipot test is split in two (see [First-board checks](#first-board-checks)).
+
+### Output and filter
+
+The DP1435 output has 5 % line and 5 % load regulation, 200 mVpp ripple at 250 kHz (DP1435 p.5)
+and no stated set-point accuracy. With one 5 % term the output is 4.89–5.41 V; only if both terms
+stacked (4.64–5.67 V) would it pass the 5.5 V limit of the TLV62569 and TPS22918.
+
+A π filter cleans it before the mux:
+
+| Part | Value | Role |
+|---|---|---|
+| C11 | 10 µF 25 V X5R 0805 | The module's one output decoupling capacitor (DP1435 p.1), at U2.6 |
+| L1 | Changjiang FXL0630-2R2-M, 2.2 µH | DCR 15 mΩ, Isat 10.5 A, Irms 8.5 A (catalogue p.14): 39 mV drop at 2.6 A |
+| C13 | AISHI SVZ1CM331E09E00RAXXX, 330 µF 16 V polymer | ESR 25 mΩ, 2.6 A rms ripple (AISHI VZ p.2) |
+| C14 | JIERR JVE16V330M8X10, 330 µF 16 V aluminium | ESR 0.3 Ω at 100 kHz, 450 mA rms (JIERR JVE p.1, p.4) |
+| C15 | 10 µF 25 V X5R 0805 | U4 IN1 bypass, at the pin |
+
+- Corner frequency 1/(2π√(2.2 µH × 670 µF)) = 4.1 kHz, 60 × below the module's 250 kHz;
+  characteristic impedance √(L/C) = 57 mΩ. L1's DCR and C14's higher ESR damp the resonance
+  (Q ≈ 1.5–2.5): a 1 A load step rings by ≤ ≈ 0.15 V, far above the mux threshold.
+- Ripple at 250 kHz: X(L1) = 3.46 Ω against C13's 25 mΩ, so 200 mVpp becomes ≈ 1.4 mVpp on IN1.
+- When U4 drops IN1, L1's energy (½ × 2.2 µH × 2.6² A² = 7.4 µJ) lifts C13–C15 by ≈ 0.15 V.
+- SDAPO gives no maximum capacitive load or soft-start time. The module starts into its own output
+  capacitor plus ≈ 690 µF here; that is a first-board check.
+- L1's drop is taken as ≤ 0.04 V (2.6 A × 15 mΩ) everywhere, so `+5V_POE_F` is 4.85–5.41 V.
+
+`+5V_POE` and `+5V_POE_F` are class `PWR_5V`, 1.0 mm on F.Cu (ΔT 8.8 °C at 1.96 A, 15.5 °C at
+the module's 2.6 A, IPC-2152 fit for 35 µm outer copper). The filter output reaches U4 on B.Cu:
+from two 0.8/0.4 mm vias beside the filter (106.6, 138.45)/(106.6, 139.45) to U4's IN1 vias, a
+0.8 mm leg of 12.3 mm (11.4 °C at 1.96 A), because 1.0 mm does not pass the VBUS IN2 via.
+
+### Power budget
+
+All PD input figures use the DP1435's maximum efficiency (84 %, p.5 item 7), so they are lower
+bounds.
+
+| Case | +5V current | PD input |
+|---|---|---|
+| LED design point (0.5 ms pulses at 120 fps), logic running | ≈ 0.87 A average nominal, ≤ 1.0 A worst case | ≥ 5.3 W average (≥ 6.1 W worst case) |
+| Boost recharging `+32V` at its switch current limit (start-up, and 2.4–6.0 ms of every frame, see [+5V loads](#5v-loads)), logic running | 1.96 A peak | ≥ 12.0 W while it lasts |
+| 802.3af PD limit | | 12.95 W in; ≤ 10.9 W out at 84 % |
+| DP1435 rating | 2.4 A nominal, 2.6 A max | 12.4 W out |
+
+The module's current rating covers the 1.96 A peak. Whether the PD input stays under 12.95 W and
+the pair current under J1's 350 mA at that peak depends on the module's real efficiency, which is
+not published: accepted by user decision 2026-11-02 ("Accept, measure on first boards"), with a
+first-board measurement; if it is over, firmware limits the LEDs on PoE. The average at the design
+point is less than half the 802.3af budget. The load breakdown is under [+5V loads](#5v-loads).
+
+## Power mux
+
+U4 is a TI TPS2121RUX (LCSC C485916), a two-input priority mux: IN1 = `+5V_POE_F` (PoE, preferred),
+IN2 = `VBUS` (USB), OUT = `+5V`. Both inputs have back-to-back FETs that block reverse current
+(TI SLVSEA3F §9.3.6 p.15), so PoE never back-feeds a USB host and USB never feeds the PoE module.
+
+### Priority and hysteresis
+
+The circuit is TI's XREF priority switchover with hysteresis (SLVSEA3F §10.4 Fig. 10-12, p.27):
+
+- **PR1** senses IN1 through R18 100k / R19 47k (1 %).
+- **CP2** is the reference, from `+3V3` through R20 100k / R21 60.4k (1 %), filtered by C52
+  100 nF (Thevenin 37.7 kΩ, τ 3.8 ms) so the buck's ripple does not reach the comparator.
+  CP2 = 1.249 V nominal, 1.19–1.31 V over `+3V3` and resistor tolerance, always above
+  VREF max 1.10 V (p.8), so the XREF mode stays active.
+- **R75** 1.00 M from ST to PR1 adds the hysteresis: while IN1 is selected, ST is high (≈ +3V3
+  through R29) and pushes PR1 up; on IN2, ST is low.
+- OV1 and OV2 are tied to GND: over-voltage cut-off is not used ("Connect to GND if not
+  required", p.4).
+- IN1 is selected while PR1 > CP2 (Table 9-3, p.18).
+
+With G = 1/R18 + 1/R19 + 1/R75 and V_ST the ST voltage:
+
+| Switch | Formula | Typical (+3V3 3.318 V) | Worst case |
+|---|---|---|---|
+| PoE → USB (ST high) | V_IN1 = ((CP2 + V_OFST)·G − V_ST/R75)·R18 | 3.70 V | 3.49–4.08 V |
+| USB → PoE (ST low) | V_IN1 = (CP2 + V_OFST)·G·R18 | 4.03 V | 3.80–4.42 V |
+| Hysteresis | | 0.33 V | 0.31–0.35 V |
+
+Worst case: R ±1 %, `+3V3` 3.199–3.440 V, comparator offset V_OFST 5–40 mV (SLVSEA3F p.8);
+typical with V_OFST 0.
+
+- PoE always wins back: the lowest IN1 on PoE is 4.89 V − 0.04 V (L1) = 4.85 V, above the
+  4.42 V worst return threshold.
+- No chatter: after a PoE loss `+5V_POE_F` (≈ 670 µF) bleeds through R18 + R19 (147 kΩ, τ ≈ 98 s)
+  downward from the trip point and never re-crosses the return threshold.
+- **CP2 from +3V3, not a precision reference** (TI's figure uses a separate reference). It works
+  because the switchover never takes `+3V3` down: at the lowest trip point (3.49 V) `+5V` falls to
+  3.49 V − 1.96 A × 85 mΩ = 3.32 V, minus 0.06 V during the 5 µs switchover (1.96 A × 5 µs /
+  158 µF), ≥ 3.26 V. The TLV62569 in 100 % mode needs VOUT + IOUT × (RDS(on) + DCR) = 3.199 V +
+  0.65 A × 0.115 Ω = 3.27 V (SLVSDG1C p.6 Eq. 1), so `+3V3` sags by ≤ 10 mV and stays ≥ 3.19 V.
+  If `+3V3` were absent, CP2 < VREF and the TPS2121 falls back to its PR1-vs-VREF row (Table 9-3),
+  which still picks IN1 when PoE is present. At power-up CP2 follows `+3V3` through C52; PoE alone
+  or PoE + USB select IN1 in both rows, USB alone selects IN2, so there is no glitch.
+
+### ST → PWR_SRC
+
+ST (U4.9) is open drain, pulled up by R29 10k to `+3V3` on the MCU sheet (inside TI's 6–20 kΩ,
+p.6), and goes to U6 pin 4, GPIO2, as `PWR_SRC`: high = PoE, low = USB. It is also the hysteresis
+node, so firmware reads GPIO2 as an input with its internal pull-up off and never drives it.
+Firmware keeps the LED supply off while `PWR_SRC` is low. On its falling edge (PoE lost, now on
+USB) firmware drops LED_EN, BST_EN and LED_PWR_EN back to back with no wait, so the USB supply
+never carries the boost; the boost then stops on its collapsing input (UVLO). The normal power-down
+(with a ≥ 3 ms wait between BST_EN and LED_PWR_EN) and the power-up order are stated once in
+[firmware rules](firmware-rules.md#rules) (FW-7).
+
+### Current limit and soft start
+
+- **ILIM:** R22 36k (1 %). ILM = 65.2 / R^0.861 (R in kΩ, SLVSEA3F Eq. 2 p.13) = 2.98 A typical;
+  the p.8 table (29.8k: 3–4 A, 44.2k: 2–3 A) puts 36k at ≈ 2.5–3.5 A. R22 is inside the 18–100 kΩ
+  range (p.6). The minimum, ≈ 2.5 A, stays above the 1.96 A board peak. It does not limit a
+  USB-only load to a port's 500 mA: that is left to firmware (see [USB VBUS](#usb-vbus)).
+- **Soft start:** C21 100 nF gives 780 V/s at 5 V (Table 9-1, p.13). With ≈ 158 µF on `+5V`
+  (C20 47 µF, C22 100 µF, C10 10 µF, C34 1 µF, 100 nF parts) the inrush is 780 V/s × 158 µF =
+  0.12 A and the ramp 5.15 V / 780 V/s = 6.6 ms. A VBUS attach sees only C16 (4.7 µF) before
+  that.
+- **Capacitors:** C15 10 µF at IN1, C16 4.7 µF at IN2, C20 47 µF X5R + C22 100 µF polymer
+  (JIERR MA25V100M6x6, ESR 30 mΩ) + C23 100 nF on OUT.
+
+`+5V` stays at 4.35–5.41 V in steady state: 4.40 V USB minus RON × 0.5 A at the low end,
+5.41 V PoE at the high end (RON ≤ 85 mΩ at 85 °C, SLVSEA3F p.7). Every `+5V` load accepts this
+range: TLV62569 2.5–5.5 V, TPS22918 1–5.5 V, TLV9061 1.8–5.5 V, TPS61170 3–18 V.
+
+### +5V loads
+
+| Load | Average | Peak | Basis |
+|---|---|---|---|
+| U3 buck input | ≈ 0.49 A | ≈ 0.52 A | 3.318 V × 0.65 A / (5 V × 0.88) |
+| U8 → U10 LED boost, frame average at the design point | ≈ 0.38 A nominal, ≤ 0.51 A worst case | | `+32V` demand 50 mA nominal, 55 mA worst case ([LED driver](led.md#recovery-and-start-up)) |
+| U8 → U10 LED boost, recharging at its switch current limit | 1.26 A | 1.44 A | TPS61170 ILIM max 1.44 A (SLVS789D p.5) minus half the ripple |
+| U11, R63, U8 control | < 1 mA | | |
+| **Total** | **≈ 0.87 A** nominal, **≤ 1.0 A** worst case (design point) | **1.96 A** (U3 0.52 A + boost 1.44 A) | 1.78 A = U3 0.52 A + boost 1.26 A while the boost is at its limit |
+
+The boost runs at its switch current limit whenever it recharges `+32V`
+([Recovery and start-up](led.md#recovery-and-start-up)):
+
+- **Every frame on PoE.** After each LED pulse the boost refills the output bank at its current
+  limit for 2.4–6.0 ms of the 8.33 ms frame, so the 1.44 A `+5V_BST` peak, the 1.96 A `+5V` peak
+  and the matching PD input recur every frame, not only at start-up. The frame average stays at
+  the figures above because the charge per frame is fixed.
+- **Start-up of `+32V`.** Energy-limited: ≈ 80 ms nominal, 45–170 ms over tolerances.
+
+### Layout
+
+U4's periphery follows TI's layout example (SLVSEA3F §12.2 p.33): OUT pins 1 and 8 tied across,
+C20/C23 on the OUT side, C16 at IN2, C15 at IN1, C21 and R22 straight off SS/ILIM, the divider
+row R20, R21, R18, R75, R19 beside PR1/CP2. TI draws two vias per IN pin and four on OUT and marks
+a via in each of pads 1, 2, 7 and 8 (land pattern p.39): the board has two vias on IN1 (0.45/0.2
+and 0.6/0.3 mm), two on OUT (2 × 0.45/0.2 mm, a larger one would break 0.2 mm to C15 or U4.9) and
+one 0.6/0.3 mm on IN2 (USB current only, ≤ 0.5 A), about one via per ampere. The `PWR_5V` tracks
+neck down to ≥ 0.3 mm inside U4's courtyard to reach its 0.3–0.4 mm pads (rule
+`Power neck-down at fine-pitch pads`): a 1 mm neck of 0.3 mm × 35 µm copper is 1.6 mΩ, 9 mW at
+2.4 A. Probe `+5V` at TP5; `+5V_POE` at C11, `+5V_POE_F` at C15, VBUS at C16.
+
+### Thermal
+
+- U4: RON ≤ 90 mΩ (p.7) → 0.35 W at 1.96 A; RθJA 72.2 °C/W (p.6) → +25 °C, TJ ≈ 55 °C at 30 °C
+  ambient (74 °C at 2.6 A), against 125 °C.
+- L1: 2.6² A² × 15 mΩ = 0.1 W at the module's maximum.
+- U2: SDAPO gives no thermal resistance. At its 84 % maximum efficiency its loss is ≥ 0.85 W at
+  the design point (≥ 5.3 W in, 4.5 W out; ≥ 1.0 W in the worst case) and ≥ 1.9 W while `+5V` is
+  at its 1.96 A peak; the real loss is higher by however much the efficiency falls short of 84 %.
 
 ## 3.3 V buck
 
-- R16 453 kΩ / R17 100 kΩ give 3.318 V; 3.20–3.44 V worst case (3.19–3.45 V with Fig. 3's drift): ≈ 25 mV under
-  the PHY's 3.465 V (≈ 15 mV with drift, less the unquantified power-save lift); accepted. The P4 takes 3.0–3.6 V.
-  C17 6.8 pF is TI's feed-forward for a 100 kΩ bottom resistor. (DS EC, §8.2.2.2; IP101G Table 11)
-- EN tied to VIN (TI Fig. 5), never floating; no RC: the chip soft-starts in 0.8 ms and the P4 has its own EN RC.
-  No power-good output on the SOT-23 part. ≈ 0.29 W loss at ≈ 90 % (estimate) × 188.2 °C/W = +54 °C: give it copper.
-- L2 is the same 2.2 µH FXL0630: 0.36 A ripple, 1.00 A peak at 0.78 A, 10× under I_sat; the 3 A min current limit
-  trips first. Core loss at 1.5 MHz is unpublished and taken as small (estimate).
-- C18 10 µF (≈ 7.5 µF at 3.3 V, estimate): ≈ 4 mV ripple. C10 10 µF at the input; TI asks 4.7 µF. All of `+3V3`
-  is ≈ 43 µF effective, in the upper half of TI's 10–47 µF. Accepted: most sits behind trace inductance
-  (estimate), which is why C8 and C29 are only 4.7 µF ([mcu.md](mcu.md), [ethernet.md](ethernet.md)).
+U3 is a TI TLV62569DBVR (LCSC C141836), a 2 A synchronous buck in SOT-23-5, from `+5V` to `+3V3`.
+EN is tied to VIN (allowed: "do not leave floating", VIH ≤ 1.2 V, SLVSDG1C p.3–4), so it starts
+when the mux's soft start brings `+5V` up, with its own 800 µs soft start. It is the board's only
+3.3 V source: module, PHY, camera, accelerometer, logic and pull-ups.
 
-## Power budget
+### Output voltage
 
-- `+3V3` ≈ 0.78 A, 39 % of the buck's 2 A: P4 module 500 mA (Espressif's required supply; 150 mA measured, P4 DS
-  Tables 5-2, 5-7; Waveshare gives none), PHY 45, camera 150 (estimate from the brief's 156 mW; [camera.md](camera.md)'s
-  ≤ 250 mA is a conservative trace-sizing bound), status LED 60, logic 10, jack LEDs 14 mA.
-- `+5V`: buck 0.57 A; boost 0.41 A average, 0.8–1.3 A while recharging `+32V` (50–120 ms), at most its 1.44 A switch
-  limit. **Average ≈ 1.0 A (5.0 W), peak ≈ 2.0 A (10.3 W)**: within the module's 2.6 A max, the mux limit and 802.3af.
-- USB only: the LED rail is off: ≤ 0.57 A by budget, ≈ 0.25 A realistic, against a 500 mA port; accepted (bench).
+VOUT = VFB × (1 + R16/R17) (SLVSDG1C Eq. 2 p.9), R16 453k (GiantOhm GR0402F453KTAG00), R17 100k,
+both 1 %; VFB 0.588/0.600/0.612 V (p.4):
 
-## PWR_SRC
+| | VFB | Resistors | VOUT |
+|---|---|---|---|
+| Minimum | 0.588 V | R16 −1 %, R17 +1 % | 3.199 V |
+| Nominal | 0.600 V | nominal | 3.318 V |
+| Maximum | 0.612 V | R16 +1 %, R17 −1 % | 3.440 V |
 
-High = PoE powers `+5V`, low = USB. Also high with both inputs gone, when the P4 is off. It cannot tell whether
-USB is present on PoE. Open drain, pulled up by R29 (10 kΩ to `+3V3`, mcu sheet) so no 5 V reaches the GPIO;
-ST wants 6–20 kΩ (DS p.6, Table 9-3). Used by [firmware rules](firmware-rules.md) 4 and 10.
+3.199–3.440 V lies inside 3.3 V ± 5 % (3.135–3.465 V), which the IP101G needs on VDDIO/AVDD33
+(DS p.57); the module's VDD_LP accepts 3.0–3.6 V. R17 = 100k is under TI's 200 kΩ maximum (p.9).
+C17 6.8 pF C0G across R16 is the feed-forward capacitor TI recommends with R2 = 100k (p.9); its
+zero sits at 1/(2π × 453k × 6.8 pF) = 51.7 kHz.
+
+This DC set point, 3.199–3.440 V, is the `+3V3` range every calculation in these documents uses
+(the [Rails table](README.md#rails)). During a PoE → USB switchover `+3V3` can sag to ≥ 3.19 V
+while `+5V` passes the trip point ([Priority and hysteresis](#priority-and-hysteresis)). Where a
+logic-level check uses the generic ± 5 % envelope (3.135–3.465 V) instead, it names it as that.
+
+### Inductor and ripple
+
+L2 is a Changjiang FXL0630-2R2-M, 2.2 µH (DCR 15 mΩ, Isat 10.5 A, Irms 8.5 A, catalogue p.14).
+2.2 µH with 10 µF is TI's recommended "++" cell for VOUT ≥ 1.8 V (Table 4, p.9).
+
+- Ripple current ΔIL = VOUT × (1 − VOUT/VIN) / (L × fSW) (Eq. 3, p.10), fSW 1.5 MHz:
+  0.34 App at 5 V and nominal L; 0.57 App worst case (VIN 5.5 V, L −30 %).
+- Peak inductor current at the 2 A rating: 2 A + 0.29 A = 2.29 A; even at the IC's 3 A typical
+  high-side limit plus ripple (≈ 3.0 A) L2 is far from saturation.
+- Output ripple ΔV ≈ ΔIL / (8 × fSW × C): with the ≈ 36 µF effective on `+3V3` (below) ≈ 0.8 mV;
+  with C18 alone at −50 % (5 µF) ≈ 5.6 mV. Ceramic ESR is neglected.
+
+### Capacitors
+
+- Input: C10 10 µF 25 V X5R 0805 at VIN (C10.1 0.515 mm from U3.4), C12 100 nF beside it on the
+  outside (2.43 mm). TI's layout has one input capacitor (Fig. 20 p.13), C10's role; TI says
+  4.7 µF is enough (p.10). C12 is an extra with little high-frequency effect where it sits.
+- Output: C18 10 µF 25 V X5R + C19 100 nF at the buck, plus the rest of `+3V3`: ≈ 30 µF nominal on
+  the board (C18, C29 4.7 µF, C32 10 µF, C8 4.7 µF, the 100 nF parts) and the module's own
+  capacitors on its 3.3 V input (≈ 40 µF on the Waveshare ESP32-P4-Core schematic p.1). That is
+  ≈ 60–70 µF nominal, ≈ 36 µF effective at 3.3 V bias (estimate). TI's Table 4 tests up to
+  2 × 22 µF and says "further combinations should be checked": a first-board load-step check.
+
+### Layout
+
+U3 is turned 180° against TI's Fig. 20 (SLVSDG1C p.13), with the same loops:
+
+- L2 south of U3, L2.1 (SW) 2.25 mm from U3.3; the switch node is one 0.8 mm F.Cu track, 4.3 mm.
+- C10's VIN end 0.52 mm from U3.4; C18's GND end 0.668 mm from U3.2; C18, C19 and C10 return to
+  U3.2 on F.Cu.
+- R16, R17 and C17 at U3.5; the feedback is sensed at C18.1 and routed away from the switch node.
+- C10, C12, C18 and C19 each have two GND vias, U3.2 one under the body. In1 and In2 GND are
+  solid under U3, L2 and the switch node.
+- The accelerometer's I²C lines pass L2 on B.Cu, below both GND planes; on F.Cu they keep
+  ≥ 1.015 mm from switch-node copper, and IMU_SDA crosses the corner of L2's courtyard margin
+  (not its body) for ≈ 0.7 mm ([IMU](imu.md#i2c-bus)).
+- `+3V3` is class `PWR_3V3`, 0.65 mm (ESP32-P4 HDG §1.4.1 "at least 25 mil"); ΔT 1.6 °C at
+  0.66 A. Probe it at TP4.
+
+### +3V3 loads
+
+| Load | Current | Basis |
+|---|---|---|
+| U6 ESP32-P4-Core | ≈ 450 mA | Espressif HDG: 380 mA minimum operating supply current (incl. flash/PSRAM) + MIPI PHY 50 mA + USB PHY 20 mA |
+| U1 IP101GRI | ≈ 45 mA | < 0.15 W (IP101G DS p.1) |
+| Camera module (CAM_3V3, through R53 0 Ω) | ≤ 100 mA | estimate; the module has no datasheet |
+| D1 status LED | ≤ 15 mA | 5 mA per colour (Yongyu YY-0807BRGK26-07-FI DS p.2, p.4) |
+| J1 link/activity LEDs | ≈ 12 mA | 2 × 6 mA through R4/R5 220 Ω |
+| U12, U7, U9, pull-ups, dividers | ≤ 8 mA | |
+| **Total** | **≈ 0.65 A (estimate)** | U3 rated 2 A (SLVSDG1C p.4) |
+
+### Thermal
+
+At 0.66 A the efficiency is ≈ 95 % (SLVSDG1C p.1 efficiency curve): ≈ 0.10 W, RθJA 188.2 °C/W
+(p.4) → +19 °C, TJ ≈ 49 °C at 30 °C. Even at a pessimistic 84 % (0.4 W) TJ stays ≤ 105 °C, under
+the 150 °C shutdown. L2 dissipates ≈ 6.5 mW.
+
+## USB VBUS
+
+USB-C J2 (HRO TYPE-C-31-M-12) is a sink only: CC1/CC2 have 5.1k Rd (R25/R23), and U4's IN2 blocks
+any current back into the host. The connector, the data lines and their protection are in
+[MCU](mcu.md#usb-c). The VBUS path:
+
+- **J2 A4/A9/B4/B9 → `VBUS` → U4 IN2.** Range 4.40–5.5 V. The minimum is the USB 2.0 low-power
+  port VBUS, 4.40–5.25 V (USB 2.0 Table 7-7 p.178; §7.2.1.3 p.173). A high-power function, which
+  this board is (≈ 0.49 A on USB), must enumerate at 4.40 V and run at full power from 4.75 V
+  (§7.2.1.4 p.174, §7.2.2 p.175), so designing down to 4.40 V is a conservative floor. The
+  maximum is the 5.5 V that USB Type-C allows legacy devices to see at light
+  load (USB Type-C Cable and Connector Specification R2.0 §4.4.2, p.141: "up to 5.5V maximum").
+- **D2 TI TSD05DYFR**, a TVS at J2's VBUS pads (D2.1 under J2.A4, ≤ 5 mm from both VBUS pad pairs):
+  VRWM 5.5 V, VBR 6 V, IEC 61000-4-2 ±30 kV contact, TLP clamp 7.5 V at 16 A, 19 pF (SLVSH43C
+  p.1, p.6). TI's TPS2121 hot-plug guidance asks for a TVS on a hot-plugged input (SLVSEA3F §10.7
+  p.31–32). When IN2 turns off at ≈ 3 A, a ≈ 1 µH cable into C16 gives
+  3 A × √(1 µH / 4.7 µF) ≈ 1.4 V of overshoot, ≈ 6.9 V, far under U4's 24 V absolute maximum.
+- **C16 4.7 µF X5R** at IN2. On attach the host sees C16 plus D2's 19 pF, under the 10 µF maximum
+  load at the downstream end of a cable (USB 2.0 §7.2.4.1, p.177); the `+5V` bulk is behind U4's
+  soft start.
+- **R24 100k to GND.** With PoE only and an unpowered host plugged in, U4's IN2 leakage (≤ 5 µA up
+  to 85 °C, SLVSEA3F p.7) flows into R24 ∥ (R27 + R28) = 55 kΩ: ≤ 0.27 V on VBUS, under vSafe0V
+  (0.8 V maximum, USB Power Delivery specification, which USB Type-C R2.0 refers to for it).
+- **VBUS_SENSE:** R27 47k / R28 75k with C26 100 nF to U6 pin 8, GPIO6, a digital input. With the
+  VBUS range above, the `+3V3` set point 3.199–3.440 V and 1 % resistors: 4.40 V gives ≥ 2.68 V,
+  above VIH 0.75 × 3.440 V = 2.58 V; 5.5 V gives ≤ 3.41 V, under VDD + 0.3 V = 3.499 V at 3.199 V
+  (ESP32-P4 DS p.89). Firmware turns the USB Serial/JTAG D+ pull-up off while it is low
+  ([firmware rules](firmware-rules.md#rules)).
+- **Routing:** 0.25 mm F.Cu stubs from J2.A9/A4 to two vias (the only way out between J2's NPTH
+  pegs and the neighbouring pads; ≈ 11 °C rise per stub at 1.0 A, 3 °C at 0.5 A, 1.8 mm long), a
+  0.8 mm B.Cu link and a 1.0 mm B.Cu trunk to U4's IN2 via.
+
+**Current on USB alone.** U4's current limit (≈ 2.5–3.5 A) does not hold a USB-only load to the
+500 mA a high-power port supplies (USB 2.0 Table 7-7, ICCHPF). On USB alone the LED supply stays
+off by a firmware rule only
+(user decision 2026-10-31, "LEDs off on USB: firmware rule only"; no extra hardware gate), which
+leaves the buck input: ≈ 0.49 A at 5 V for the estimated 0.65 A on `+3V3`, right at 500 mA. The
+LED switch U8, the boost enable and the LED gate all default off through pull-downs (R57, R59,
+R56), so nothing draws LED current before firmware runs.
 
 ## Accepted risks
 
-- No hysteresis (PoE ↔ USB cycling on a PoE fault); thin margins (0.07 V, 0.07 V; buck 0.01 V short for 5 µs).
-- CP2 from `+3V3` (deviation from TI Fig. 10-12); no PoE undervoltage lockout without USB.
-- TLV62569 at 5.67 V; `+3V3` 25 mV under the PHY maximum; `+3V3` caps near TI's limit; VBUS at 1.9 V hot.
-- Not measured: module start-up and step response (watch `+5V_POE_F` and `PWR_SRC` when PoE arrives on USB and
-  when the boost starts; ringing at 4–6 kHz means C14 damps too little), buck temperature, `+3V3` at light load.
+- **Single-ply isolation under the PoE lane.** Other nets' F.Cu copper is ≥ 1.0 mm sideways
+  (TP10.1 exactly 1.000 mm) from the In1 PoE copper through one 0.2104 mm 7628 ply, rather than
+  the 2 mm a conservative design would keep. 30 kV/mm gives 6.3 kV, 2.8 × the test voltage, but
+  the fab gives no figure and a single ply can have pinholes. Accepted in the design review
+  (2026-11-01); the hipot test on the first boards decides.
+- **The PD module limits the assembled hipot.** U2's barrier is rated 1.5 kVrms (≈ 2121 V dc),
+  below J1's 2250 V dc, so a fitted board is tested at 1500 Vrms or ≤ 2121 V dc only; the
+  2250 V dc test is done on the bare board before U2 is soldered.
+- **DP1435 output tolerance and capacitive load are not specified** (DP1435 p.1–5). The rails
+  assume one 5 % regulation term (≤ 5.41 V) and start-up into ≈ 690 µF; both are first-board checks.
+- **CP2 reference from `+3V3`** instead of a precision reference (TI Fig. 10-12): the thresholds
+  move with `+3V3` (included in the worst case above), and the switchover cannot pull `+3V3` out of
+  regulation (≥ 3.19 V at the worst corner). Accepted in the schematic review (2026-11-01).
+- **USB current is limited by firmware, not hardware** (user decision 2026-10-31: LEDs off on USB
+  by a firmware rule only). The USB-only estimate, ≈ 0.49 A, is at the 500 mA port limit; a
+  firmware fault that enables the LED supply on USB draws more than a port supplies.
+- **PoE loss with USB attached.** The TPS2121 switches to IN2 at once, so the host port briefly
+  sees up to the current limit while `+5V` recharges (≈ 0.12 ms idle, ≈ 0.4 ms with the LEDs
+  running), and with the LEDs running up to ≈ 1.96 A until firmware sees `PWR_SRC` low and drops
+  LED_EN, BST_EN and LED_PWR_EN. A host whose port trips fast may cut VBUS and reset the board.
+- **PoE power budget rests on an unpublished efficiency.** DP1435 p.5 item 7 gives 84 % as the
+  maximum efficiency only. At the 1.96 A `+5V` peak, which recurs while the boost recharges
+  `+32V` ([+5V loads](#5v-loads)), the PD draws ≥ 12.0 W and ≥ 0.32 A per pair at 37 V; at 78 %
+  efficiency it would reach the 12.95 W 802.3af PD limit and J1's 350 mA per centre tap. User
+  decision 2026-11-02: "Accept, measure on first boards"; if the measurement is over either
+  limit, a firmware LED limit on PoE follows, with no design change now.
+- **C15 and C23 closer than JLCPCB's 1.0 mm QFN spacing.** C15–U4 0.545 mm and C23.1–U4.1
+  0.592 mm, kept at the pins as TI asks ("as close as possible", SLVSEA3F §11); C23 cannot move
+  because C20's courtyard abuts it.
+- **C12 outboard of C10 at the buck input.** Swapping them needs TP12 and the RMII_TX_EN track
+  moved; TI's layout has one input capacitor, which C10 is.
+- **`+3V3` capacitance outside TI's tested cells** (≈ 60–70 µF nominal with the module's own).
+- **Reflow ratings of C13, C14 and C22 are not printed** in their datasheets (JLCPCB reflows at
+  255 ± 5 °C). User decision 2026-10-31: "Ignore reflow times and temperatures. Assume it will all
+  work out."
 
-## Sources
+## First-board checks
 
-- SDAPO DP1435-5V datasheet (LCSC C5380097, PDF 7fde6577…). TI TPS2121 SLVSEA3F (Aug 2020, PDF page numbers).
-- TI TLV62569 SLVSDG1C (Oct 2017); TI TPS61170 SLVS789D; ESP32-P4 DS v0.7; IP101G-DS-R01; OV9281 brief v1.4.
-- cjiang FXL0630 (LCSC PDF 40dfb6cb…); AISHI VZ (aabe05a1…); JIERR JVE (3ad662ff…), MA (3f7d3c65…); Samsung DC-bias.
-- IEEE 802.3 §33.4.1, USB 2.0 §7.2.4.1 (from summaries); Erickson & Maksimović, *Fundamentals of Power Electronics*.
+1. **Hipot, bare board.** Before U2 is soldered: 2250 V dc for 60 s, the four PoE nets
+   (J1.7–J1.10 / U2.1–U2.4 pads) tied together against all other nets tied together. Passing it
+   accepts the single-ply 1.0 mm keep-off.
+2. **Hipot, assembled.** With U2 fitted: 1500 Vrms for 60 s, or ≤ 2121 V dc.
+3. **DP1435 output.** `+5V_POE` (at C11) at no load and at full load, with an 802.3af PSE at 44 V
+   and at 57 V: must stay ≤ 5.5 V.
+4. **PoE start-up.** Scope `+5V_POE` and `+5V_POE_F` at PoE plug-in (cold start): monotonic rise,
+   no hiccup; the module stays up through 0.5 ms / 120 fps LED pulses.
+5. **Switchover thresholds.** With U2 not fitted, a bench supply on `+5V_POE_F` (C15) and USB on
+   J2: ramp the supply down and up and read `PWR_SRC`. Expected: to USB at 3.49–4.08 V (3.70 V
+   typical), back to PoE at 3.80–4.42 V (4.03 V typical).
+6. **PoE pull with USB attached.** On a laptop port and on a bench port, unplug PoE (a) idle and
+   (b) during 0.5 ms / 120 fps LED pulses. Scope VBUS, `+5V`, `+3V3` and `PWR_SRC`: the module must
+   not reset and USB must stay enumerated. Record the firmware latency from the `PWR_SRC` falling
+   edge to LED_EN, BST_EN and LED_PWR_EN low.
+7. **PoE input power at peak load.** On a 44 V PSE, with the LEDs at 0.5 ms / 120 fps, the camera
+   streaming and Ethernet up: measure the PD input power and the pair current, and scope the
+   `+5V` current through a frame (does the boost recharge at its 1.44 A switch limit?). Limits:
+   12.95 W (802.3af PD) and 350 mA per pair (J1). If either is exceeded, firmware limits the LEDs
+   on PoE.
+8. **USB-alone current.** Measure the VBUS current on USB alone while streaming 640 × 400 at
+   120 fps with Ethernet linked (LEDs off): expected ≈ 0.49 A, must be ≤ 0.5 A. Measure the camera's
+   share by replacing R53 with a 0.1 Ω shunt.
+9. **`+3V3` load step.** 0.1 → 0.6 A at 5 V input: settles without ringing, overshoot ≤ 5 %. If
+   not, reduce C18 or remove C17.
+10. **Temperatures.** At PoE with the LEDs at 0.5 ms / 120 fps (and once during `+32V` start-up),
+    a thermal camera on U4 and its IN1/OUT vias, the U8 neck, U3, L1 and U2.
+11. **GND test loops.** Insert one RH-5002 loop into TP2's 1.0 mm plated hole before soldering:
+    the drawing (LCSC C5199802) gives no hole size; if it is loose or tight, change the drill in
+    the footprint.
