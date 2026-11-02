@@ -55511,12 +55511,12 @@
 		(uuid "0c8e1bbf-b4d8-4532-9f17-800918b6d458")
 	)
 	(segment
-		(start 124.88 144.9)
+		(start 124.8775 144.9)
 		(end 127.9 144.9)
 		(width 0.2)
 		(layer "F.Cu")
 		(net "/MCU/LED_PWR_EN")
-		(uuid "a47df64a-0071-47b5-9bc8-9da0fd1d84e3")
+		(uuid "469ba8b2-b848-4e24-bb9a-39efc4d81a3e")
 	)
 	(segment
 		(start 123.4775 144.9)
@@ -56247,14 +56247,6 @@
 		(uuid "3f6a4e61-22a5-4a4e-9867-df3c8e4552c4")
 	)
 	(segment
-		(start 160.4325 122.49)
-		(end 160.4325 122.6056)
-		(width 0.18)
-		(layer "F.Cu")
-		(net "/Ethernet/ETH_TD_P")
-		(uuid "54e61d10-4b16-4548-94c6-31ac8d794874")
-	)
-	(segment
 		(start 159.6575 125.6575)
 		(end 159.9875 125.3275)
 		(width 0.18)
@@ -56301,6 +56293,14 @@
 		(layer "F.Cu")
 		(net "/Ethernet/ETH_TD_P")
 		(uuid "92418e47-7574-46a3-88e8-1a7cd1055d81")
+	)
+	(segment
+		(start 160.4325 122.49)
+		(end 160.4325 122.6055)
+		(width 0.18)
+		(layer "F.Cu")
+		(net "/Ethernet/ETH_TD_P")
+		(uuid "9bf26205-1a0a-4f75-9bd3-c1e682b04b6e")
 	)
 	(segment
 		(start 159.2 128.126)
