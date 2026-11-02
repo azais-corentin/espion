@@ -169,15 +169,29 @@ its impossible otherwise. Avoid 90° bends." Applied as:
 - every straight track segment runs at a multiple of 45°; no arc tracks;
 - every bend (a direction change between two consecutive segments of one net on one layer, with no via at the joint)
   is exactly 45°; a 90° direction change is two 45° bends whose 45° leg is at least the track width; no acute bends;
-- T-junctions and track ends in pads or vias are not bends; no bend sits inside a pad (turns that would land on a pad
-  centre start inside the pad, off the centre);
-- exceptions only where nothing else is possible, each recorded with location and reason.
+- T-junctions and track ends in pads or vias are not bends.
+
+Pad and via entries (user instruction 2026-11-02, with example images):
+
+- every track ends at the centre of the pad or via it joins, not at its edge;
+- a track enters a round pad or a via radially, and a rectangular pad along one of the pad's axes, at right angles to the
+  edge it crosses; its last bend lies outside the pad or via, at least max(0.2 × track width, 0.04 mm) beyond its copper;
+- no acute angle between two tracks, or between a track and a pad edge;
+- where power pins of one net sit close together, a pour joins them instead of several tracks
+  ([Ground and return](#ground-and-return)).
+
+Exceptions only where nothing else is possible, each recorded with location and reason: the LED ring links
+([LED driver and ring](#led-driver-and-ring)) and the entries that placement blocks ([Pad entries](#pad-entries)).
 
 Audit at the original released design (a script over every track): 1542 tracks, 0 arcs, 0 off-angle segments,
-0 non-45° bends, 0 short 45° legs. The 2026-11-02 routing fixes leave 1568 tracks and 0 arcs. The new copper was
-audited from `kicad_query copper`, including the 64 surviving replacement segments in the XVS follow-up: every angle
-is a multiple of 45°, every non-pad/non-via bend is 45°, and the shortest diagonal between two 45° bends is 0.2121 mm
-on a 0.2 mm track. **No routing-style exceptions remain.**
+0 non-45° bends, 0 short 45° legs. Pad-entry audit (2026-11-02, a script over every track end in a pad or via, on the
+board file as `kicad_query copper` reads it), before → after: track ends off the pad or via centre 552 → 21, bends
+inside a pad or via 132 → 6, entries off the pad axis or not radial 77 → 3, bends closer than the margin above 14 → 2,
+acute junctions 16 → 0. The 32 remaining findings sit on 19 pads and vias, all in [Pad entries](#pad-entries). After:
+1619 tracks, 340 vias, 0 arcs; outside the LED ring 0 off-angle segments and 0 non-45° bends; every 90° change keeps a
+45° leg at least the track width. Reaching pad centres from lanes a few hundredths of a millimetre off left 56 short jogs
+(two opposite 45° bends with a diagonal shorter than the track width; 13 of them older, shortest 0.007 mm on SW_3V3),
+which the rules allow.
 The MDI pin escapes at U1, which once needed slanted segments, are 45°-only ([Ethernet and PoE isolation](#ethernet-and-poe-isolation));
 the CSI bus crosses its narrowest plane neck at 45° rather than the ideal 58° ([Camera and CSI-2](#camera-and-csi-2)).
 
@@ -242,12 +256,10 @@ ampere for the 1.8–2 A input and output):
 |---|---|---|---|
 | +5V and +5V_POE trunks, +5V_POE_F on F.Cu | 1.0 mm | Common +5V trunk 1.78 A while the boost is current-limited / 1.96 A board peak; 2.6 A DP1435 maximum | 8.8 °C at board peak / 15.5 °C at DP1435 maximum |
 | +5V_POE_F B.Cu leg, 12.3 mm, from the filter vias (106.6, 138.45)/(106.6, 139.45) to U4's IN1 vias (1.0 mm does not pass the VBUS IN2 via at (113.4, 139.65)) | 0.8 mm | 1.96 A | 11.4 °C |
-| +5V into U3: the 1.0 mm B.Cu trunk ends at via (139.3, 150.8), then F.Cu to C10.1 and on to U3.4 | 0.6 mm | ≤ 0.52 A (buck input peak) | ≈ 1.1 °C |
-| C10.1 → C12.1 link and C12.1 → via (140.3, 150.8), which joins the U11/R63 branch | 0.5 mm | C12's ripple current and < 1 mA | |
+| +5V into U3: the 1.0 mm B.Cu trunk ends at via (139.3, 150.8); the F.Cu pour "C12/C10/U3 +5V" joins it, via (140.3, 150.8) (the U11/R63 branch), C10.1, C12.1 and U3.4 | Pour | ≤ 0.52 A (buck input peak) | |
 | +5V B.Cu branch from via (140.3, 150.8) to R63/C44/U11 at (149.45, 145.1) | 0.8 mm | < 1 mA (U11 supply and the R63 divider) | |
-| +5V common neck from the trunk vias (122.45, 146.9) and (122.35, 146.2) into U8.1, 1.07 mm long | 0.6 mm (0.3 mm for the 0.7 mm stub from via (122.35, 146.2) into via (122.45, 146.9) inside U8's courtyard) | Boost and buck together: 1.78 A while the boost is current-limited / 1.96 A peak ([power](power.md#5v-loads)) | ≈ 15.8 °C at 1.96 A, 0.6 mm × 35 µm, as an infinite track (upper bound; a 1 mm neck between a via pair and a pad runs much cooler) |
-| U8.1 → C34.1, 0.99 mm, then east to vias (128.9, 147.9)/(129.7, 147.9) and the B.Cu trunk toward U3.4; U8.1 → U3.4 is 25.91 mm with two via heights | 0.6 mm at U8/C34; 1.0 mm trunk (0.6 mm between the east via pair) | Buck branch: ≤ 0.52 A peak | ≈ 1.1 °C at 0.52 A for 0.6 mm × 35 µm as an infinite track |
-| +5V common-trunk diagonal (121.6, 146.05) → (122.45, 146.9), B.Cu, 1.20 mm long beside U8 | 0.6 mm | Boost and buck together: 1.78 A while the boost is current-limited / 1.96 A peak | ≈ 15.8 °C at 1.96 A as an infinite track; the short neck is ≈ 0.98 mΩ / 3.8 mW, between wider copper and a via. 1.0 mm does not clear the shifted SCCB_SDA fan-out |
+| +5V common node at U8.1: the trunk vias (122.45, 146.9) and (122.35, 146.2), U8.1, C34.1 and TP5.1 in the F.Cu pour "+5V pour 100"; the B.Cu pour "+5V pour 105" brings the common trunk to the via pair | Pours | Boost and buck together: 1.78 A while the boost is current-limited / 1.96 A peak ([power](power.md#5v-loads)) | |
+| From the U8.1 pour east to vias (128.9, 147.9)/(129.7, 147.9) (pours "+5V pour 101"/"+5V pour 104" round them) and the B.Cu trunk toward U3.4; U8.1 → U3.4 is 25.82 mm with two via heights, the pours counted as straight lines | 1.0 mm trunk (0.6 mm between the east via pair and for 0.6 mm leaving the U8.1 pour) | Buck branch: ≤ 0.52 A peak | ≈ 1.1 °C at 0.52 A for 0.6 mm × 35 µm as an infinite track |
 | +3V3 trunks | 0.65 mm | 0.66 A | 1.6 °C |
 | Necks inside the U4, U8 and U10 courtyards | ≥ 0.3 mm | | 1 mm of 0.3 mm is 1.6 mΩ, 9 mW at 2.4 A |
 | Branches carrying no load current (enable pins, dividers, FB sense, op-amp supply, pull-up feeds, short stubs into pins) | 0.2–0.4 mm | µA–mA | |
@@ -263,12 +275,22 @@ J2's north side (46 mm, 0.2 mm for 8.5 mm past H1): ≈ 0.14 Ω from L2.2 to R53
 - In2 is one unbroken GND plane; In1 is GND everywhere except the PoE lane. Both pours: clearance 0.2 mm (raised by the
   custom rules near MIPI, MDI and PoE copper), thermal reliefs 0.5 mm gap / 0.5 mm spokes, islands removed. Filled area
   In1 3156 mm², In2 3362 mm² (zone boundaries, In1 PoE lane and In2 plane unchanged; the routing fixes alter antipads).
-- Every decoupling capacitor's GND pad has a GND via within 1 mm on its own short stub, never in the pad. The buck
-  capacitors C10, C12, C18 and C19 have two each; U3.2 has one under the body and joins C18.2 and C10.2 on F.Cu.
+- Local pours, 83 on F.Cu and B.Cu (priority 10–122, above the planes' 0), join power pins of one net that sit close
+  together and carry the high-current nodes: BST_SW (U10.4, L3.2, D3.2), LED_K (Q1.2 with its tab vias, D15.1) and ISNS
+  (Q1.3, R69.1; NT1 keeps its Kelvin tap from R69.1, in a lobe of the pour that carries no load current). Each pour:
+  clearance 0 (the class and custom rules still set the gap; KiCad fills to the larger), solid pad connection (no
+  thermal reliefs), minimum width 0.25 mm, islands removed; names "<parts> <net>" or "<net> pour N". The In1/In2 planes
+  keep their thermal reliefs. Where a rule is waived for parts' own pads, the pours are clipped to what the pads keep:
+  "BST_SW pour 120" stays 0.4 mm off U10's other pads (pin 4 itself keeps TI's 0.35 / 0.25 mm land gaps), "U1 GND"
+  0.225 mm off U1's MDI pins (as the exposed pad) and 0.55 mm off the MDI tracks. F.Cu pours keep ≥ 1.025 mm in plan
+  from the In1 PoE copper ([PoE isolation](#poe-isolation)); "LED_K pour 121" keeps ≥ 1.43 mm from the crystal
+  copper, so Q1's tab stays the closest LED_K copper to C2.1 (1.42 mm).
+- Every decoupling capacitor's GND pad has a GND via within 1 mm, never in the pad: on its own short stub or through a
+  GND pour that holds pad and via. The buck capacitors C10, C12, C18 and C19 and U3.2 share the F.Cu pour
+  "C19/C18/U3 GND" with ten GND vias.
 - U4.12 has its own 0.45/0.2 GND via at (114, 136.8), 0.696 mm centre to centre, on a 0.754 mm F.Cu stub
-  (0.25 mm wide, one 45° bend). C23.2 keeps its separate existing via at (113.75, 136.45); no shared pin-12 stub.
-- `decoupling_placement` (decoupling capacitor ≤ 3 mm from its power pin, GND via ≤ 1 mm from its GND pad) is clean
-  except C50 ([IMU](#imu)).
+  (0.25 mm wide, one 45° bend). The pour "GND pour 87" joins C23.2's via (113.75, 136.45) to that via.
+- `decoupling_placement` (decoupling capacitor ≤ 3 mm from its power pin, GND via ≤ 1 mm from its GND pad) is clean.
 
 ## MCU and USB
 
@@ -309,29 +331,30 @@ GPIO assignments that moved to make the routing possible are listed in
   ([mcu](mcu.md#usb-c)). The silk line across the mating face was removed from the footprint so silk stays ≥ 0.15 mm
   from the edge.
 - Connector side (USB_C_D_P/N, J2 → U5 → R31/R32): 0.2 mm tracks, mostly uncoupled (≈ 37.7 mm coupled at 0.26–0.30 mm
-  on B.Cu, 1.3 mm on F.Cu), D+ 80.18 mm with 4 vias, D− 74.39 mm with 4 vias. Full speed is electrically short here (edge ≥ 4 ns, critical
-  length ≈ 115 mm), so width, coupling and the 5.8 mm skew don't matter; impedance is not controlled.
+  on B.Cu, 1.6 mm on F.Cu), D+ 81.28 mm with 4 vias, D− 74.91 mm with 4 vias. Full speed is electrically short here (edge ≥ 4 ns, critical
+  length ≈ 115 mm), so width, coupling and the 6.4 mm skew don't matter; impedance is not controlled.
 - Both lines flow through U5 (ST USBLC6-2 DS11265 Rev 5 p.5 and Fig. 18; TI SLVA680A p.4: no stub between the TVS and
-  the protected line). D+: J2.A6 → U5.6 on F.Cu (3.59 mm, no via), a link under the package to U5.1, then via
+  the protected line). D+: J2.A6 → U5.6 on F.Cu (4.59 mm, no via), a link under the package to U5.1, then via
   (113.8, 112.89) off U5.1. D−: the J2 run comes up at via (115.2, 112.65), 0.013 mm below U5.4's pad; a 0.245 mm F.Cu
   link runs under the package to U5.3 (pins 3 and 4 also join inside the part, DS11265 Fig. 16), and the run to R32
-  leaves U5.3 through via (115.6, 113.39). Paths with via heights: J2.A7 → U5.4 12.13 mm (2 vias), U5.4 → U5.3 1.80 mm,
-  U5.3 → R32.1 60.07 mm (2 vias). GND return vias: (114.6, 112.95) 0.67 mm from the via at U5.4, (116.25, 113.39)
+  leaves U5.3 through via (115.6, 113.39). Paths with via heights: J2.A7 → U5.4 12.06 mm (2 vias), U5.4 → U5.3 1.80 mm,
+  U5.3 → R32.1 60.88 mm (2 vias). GND return vias: (114.6, 112.95) 0.67 mm from the via at U5.4, (116.25, 113.39)
   0.65 mm from the one at U5.3.
-- Module side (USB_D_P/N, R31/R32 → U6.38/U6.37): 8.58 / 7.01 mm, one via each, sharing the GND return via
+- Module side (USB_D_P/N, R31/R32 → U6.38/U6.37): 8.58 / 8.26 mm, one via each, sharing the GND return via
   (147.5, 138.85) (HDG §1.4.3: return vias at USB via transitions).
 - USB vias near U5 lie at x ≥ 113.78 and y ≤ 113.5, 2 mm from the In1 PoE copper.
 - USB_C_D_N's J2 branch leaves U5's pocket on B.Cu through a via at (114.1, 109.0); no GND via fits within 1 mm of it
   (nearest: D2.2's at (116.6, 109.9), 2.66 mm), In2 is solid GND under it. USB_C_D_P's 2.8 mm link to U5 crosses the In1
   gap of the PoE lane, with In2 GND below. Both are accepted for full-speed edges ([Accepted deviations](#accepted-deviations)).
-- VBUS: J2.A9 reaches J2.A4 through the existing 0.25 mm F.Cu north escapes, two 0.6/0.3 vias and the 0.8 mm B.Cu
-  link at y 105.65; both contacts then reach D2.1 through the existing 0.5 mm F.Cu run. The protected feed leaves inside
-  D2.1's east side at (115.25, 109.9), bends 45° to (115.65, 109.5), then reaches the new 0.6/0.3 via (115.65, 109.2),
-  all at 0.5 mm. A 0.8 mm B.Cu return goes north to (115.65, 108.2), NW to (114.65, 107.2), west to (113.6, 107.2)
+- VBUS: J2.A9/B4 (one pad, west) and the 0.6/0.3 via (110, 105.65) share the F.Cu pour "J2 VBUS"; the 0.8 mm B.Cu
+  link at y 105.65–105.9 reaches via (114.85, 105.9), and a 0.25 mm F.Cu stub runs from it into the centre of J2.A4/B9
+  (one pad, east). From there a 0.5 mm F.Cu run goes south into D2.1's centre. The protected feed leaves inside D2.1's
+  east side at (115.25, 109.9), bends 45° to (115.65, 109.5), then reaches the 0.6/0.3 via (115.65, 109.2), all at
+  0.5 mm. A 0.8 mm B.Cu return goes north to (115.65, 108.2), NW to (114.65, 107.2), west to (113.6, 107.2)
   and SW to (112.8, 108); only there does the 1.0 mm trunk start toward U4's IN2 via. Thus neither J2 VBUS contact
   bypasses D2.1's junction (TI SLVA680A p.4: flow-through TVS routing, no protected-line stub); D2.2's short GND via is
-  unchanged. D2.1 → U4.2 is 38.55 mm of track / 41.65 mm with two via heights (`lengths paths`). The narrow connector
-  escapes retain ΔT ≈ 11 °C at 1.0 A each, 3 °C at 0.5 A (1.8 mm long).
+  unchanged. D2.1 → U4.2 is 37.73 mm of track / 41.83 mm with two via heights and the B.Cu pour "VBUS pour 109" at
+  U4's IN2 via (`lengths paths`). The 0.25 mm connector stub keeps ΔT ≈ 11 °C at 1.0 A, 3 °C at 0.5 A (1.8 mm long).
 - U5.5 (clamp supply) reaches C25.1 on F.Cu; U5.2 has a GND via between the pin rows.
 
 ### Buttons and boot
@@ -412,10 +435,10 @@ All vias 0.45/0.2 mm. Via counts are equal within each pair (`viaParity`, TI SPR
 
 | Segment | Vias per leg | Where |
 |---|---|---|
-| CAM (J4 → links) | 2 | Via 1 under J4's body north of its pad (y 108.45; CLK at (133.7, 106.95)/(133.7, 107.55)); via 2 north of the link row at y 110.5 |
+| CAM (J4 → links) | 2 | Via 1 under J4's body north of its pad, on the pad axis (y 108.45; CLK at (133.7, 106.95)/(133.7, 107.55)); via 2 north of the link row at y 110.5–110.6 |
 | CSI (links → U6) | 1 | South of the link row at y 113.4 (D0_N at (136.75, 112.85), fed west from R51.1, because the PoE lane leaves no legal spot for its return via at (137.5, 113.4)) |
 
-Every signal via has a GND through via within 0.95 mm centre to centre (`via_return` limit 1.0 mm; TI SPRAAR7J §3.9
+Every signal via has a GND through via within 1.0 mm centre to centre (the D0/D1 via-1s, on J4's pad axes since 2026-11-02, at exactly 1.000 mm; `via_return` limit 1.0 mm; TI SPRAAR7J §3.9
 p.12: a return via at each transition, p.8: stitching vias "within 200 mils" of the signal vias). Neighbouring legs share
 one where the in-row spots are taken, e.g. (133.7, 108.45) serves CAM_D1_N, CAM_D0_P and CAM_CLK_N. The GND vias under J4
 at x 127.7/130.7/133.7/136.7 have F.Cu stubs to J4's GND pads 10/7/4/1.
@@ -449,17 +472,16 @@ antipad at 1.227 mm, J1.7's at 1.566 mm and J1.9's at 1.843 mm.
 The planes stay solid under the wide pads on the lanes except where the MIPI via antipads (r 0.585 mm) reach under them,
 against TI SPRAAR7J §3.10 p.13 ("voiding the SMD mounting pads of the reference plane by 100%"):
 
-- Link pads (0.54 × 0.64 mm, rotated 90°: 0.54 mm in board Y, south edge y 113.03): aligned vias at y 113.4 have their
-  north antipad boundary at y 112.815, voiding at most 0.215 mm of the south pads of R47, R50 and R46. R45/R49's CLK
-  vias are offset 0.10 mm west of their pads: at the pad centre the boundary is y 112.8236, giving 0.2064 mm depth.
-  Integrating the circular antipad over each rectangular pad gives ≈ 34 % voided area for the aligned pads and
-  ≈ 32 % for the CLK pads, not a uniform strip across their width. R51's west edge is separately voided by the
+- Link pads (0.54 × 0.64 mm, rotated 90°: 0.54 mm in board Y, south edge y 113.03): the vias at y 113.4 sit on their
+  pads' axes (the CLK vias at R45/R49 moved there 2026-11-02) with their north antipad boundary at y 112.815, voiding at
+  most 0.215 mm of the south pads of R45, R46, R47, R49 and R50. Integrating the circular antipad over each rectangular
+  pad gives ≈ 34 % voided area, not a uniform strip across their width. R51's west edge is separately voided by the
   D0_N via (136.75, 112.85), ≈ 20 % of its pad area by the same approximation. The north pads are fully backed.
 - J4's MIPI pads 2, 3, 5, 6, 8, 9 (0.6 × 1.8 mm): the via-1 antipads take ≈ 0.06 mm off pads 2, 3, 5 and 6.
-- Adjacent antipads join into one slot void along each via row (y 113.4, y 110.5 and the via-1 pairs at y 108.45).
+- Adjacent antipads join into one slot void along each via row (y 113.4, y 110.5–110.6 and the via-1 pairs at y 108.45).
 
 Estimated excess capacitance, using the same parallel-plate approximation C = ε₀ · 4.4 · backed area / 0.2104 mm:
-fully backed link pad ≈ 0.064 pF (rounded to 0.07 pF); south aligned pad ≈ 0.042 pF, south CLK pad ≈ 0.043 pF,
+fully backed link pad ≈ 0.064 pF (rounded to 0.07 pF); south aligned pad (CLK included) ≈ 0.042 pF,
 R51's south pad ≈ 0.051 pF. North link pads remain ≈ 0.07 pF and J4 pads just under 0.2 pF, a reflection of at most
 1–3 % at a 150 ps edge (rectangular-pad/circular-antipad estimate, not measured); accepted at design review
 2026-11-01, covered by the first-board CSI test.
@@ -472,15 +494,15 @@ the net length. Lengths (via heights counted; pad to pad equals net length on ev
 
 | Pair | P (mm) | N (mm) | Skew (mm), ≤ 0.127 |
 |---|---|---|---|
-| CAM_CLK | 24.7990 | 24.8295 | −0.031 |
-| CAM_D0 | 24.7578 | 24.8290 | −0.071 |
-| CAM_D1 | 24.7556 | 24.6438 | +0.112 |
-| CSI_CLK | 32.4364 | 32.4364 | 0.000 |
-| CSI_D0 | 32.5014 | 32.4737 | +0.028 |
+| CAM_CLK | 24.8350 | 24.8690 | −0.034 |
+| CAM_D0 | 24.6438 | 24.6679 | −0.024 |
+| CAM_D1 | 24.7444 | 24.7155 | +0.029 |
+| CSI_CLK | 32.3771 | 32.4599 | −0.083 |
+| CSI_D0 | 32.5014 | 32.4986 | +0.003 |
 | CSI_D1 | 32.4931 | 32.4931 | 0.000 |
 
 `lengthGroups` "CSI pairs, P4 side" and "CAM pairs, FPC side": pair-mean spread ≤ 0.381 mm per segment (HDG §1.4.6
-pair-to-pair ≤ 30 mil = 0.762 mm end to end, half per segment). Spread: CAM 0.115 mm, CSI 0.057 mm.
+pair-to-pair ≤ 30 mil = 0.762 mm end to end, half per segment). Spread: CAM 0.196 mm, CSI 0.082 mm.
 
 ### Other parts near the link field
 
@@ -516,9 +538,10 @@ Parts: U1 IP101GRI PHY at (158.6, 130.8) with its MDI pins north; J1 HanRun HR87
   vertical 0.2175 mm, +3V3 0.21–0.25 mm, the PHY_RST_N via (156.95, 126.85) 0.5275 mm. Every MDI point outside the area
   is ≥ 0.55 mm from other copper (DRC). This is a deviation from IP101G §6.2's "three times space", which has no
   exception.
-- Lengths (via heights counted; pad to pad equals the net length): TD_P / TD_N 32.9423 / 32.9423 mm, RD_P / RD_N
-  27.4155 / 27.4156 mm, skew ≤ 0.0001 mm, within TI SNLA387 p.2's 50 mil (1.27 mm) for 100 Mbit/s, which the rule "MDI
-  intra-pair skew" enforces. TD_N carries three 45° bumps and RD_N one for the matching.
+- Lengths (via heights counted; pad to pad equals the net length): TD_P / TD_N 33.2530 / 33.2188 mm, RD_P / RD_N
+  27.7055 / 27.4156 mm, skew +0.034 / +0.290 mm, within TI SNLA387 p.2's 50 mil (1.27 mm) for 100 Mbit/s, which the
+  rule "MDI intra-pair skew" enforces. TD_N carries three 45° bumps and RD_N one; the radial via and pad entries of
+  2026-11-02 added the rest to the P lines.
 - Return path: the N tracks pass the swap vias' In1 antipads (r 0.775 mm) and the tails at J1.2/J1.4 cross J1's own MDI
   antipads; accepted ([Accepted deviations](#accepted-deviations)).
 
@@ -528,11 +551,11 @@ Parts: U1 IP101GRI PHY at (158.6, 130.8) with its MDI pins north; J1 HanRun HR87
 |---|---|---|---|
 | Series resistors at the driving pin | `near` R35.1–U6.46, R36.1–U6.47, R37.1–U6.67 (TXD0, TXD1, TX_EN at the MAC); R11.1–U1.18, R12.1–U1.17, R15.1–U1.19 (RXD0, RXD1, CRS_DV at the PHY); R13.1–U1.14 (REF_CLK series resistor, HDG §1.3.14, at the PHY's 50M_CLKO) | ≤ 3 mm | 3 mm ≈ 17 ps at 5.8 ps/mm, far below any edge ≥ 0.5 ns: the resistor works as a lumped source termination |
 | Long data segments | `lengthGroups` "RMII data, long segments": RXD0/RXD1/CRS_DV after the PHY resistors, TXD0/TXD1/TX_EN after the MAC resistors | ≤ 80 mm each, no spread limit | The ESP32-P4 publishes no RMII output delay (IP101G p.61 and RMII 1.2 §7.4 give the rest), so the board takes a budget of 1.0 ns (5 % of the 20 ns period, a heuristic) for the MAC clock branch plus one TX line: (60 + 80) mm × 7.1 ps/mm = 0.99 ns. IP101G §6.1 "equal" is met within this tolerance. Derivation: [ethernet](ethernet.md#timing) |
-| REF_CLK star | `paths` "REF_CLK MAC branch" from R13.2 to U6.68 | R13.2 → U6.68 ≤ 60 mm | U1.10 sits near the source end: its edge waits on a ledge until the reflection from U6.68 returns, 2 × v × L_MAC after it arrives, so the limit is on the MAC branch measured from the star. No ledge while that round trip, the module's internal trace included, is no longer than the fastest RMII edge (1 ns, RMII 1.2 §7.4.3): L_MAC ≤ 1 ns / (2 × 7.1 ps/mm) = 70 mm, minus 10 mm reserved for the unpublished trace inside the module = 60 mm. The PHY/MAC difference (36.45 mm) is only a note against IP101G §6.1 "equal" (no tolerance given); RX/TX timing alone allows ≈ ± 420 mm ([ethernet](ethernet.md#ref_clk-branches)) |
+| REF_CLK star | `paths` "REF_CLK MAC branch" from R13.2 to U6.68 | R13.2 → U6.68 ≤ 60 mm | U1.10 sits near the source end: its edge waits on a ledge until the reflection from U6.68 returns, 2 × v × L_MAC after it arrives, so the limit is on the MAC branch measured from the star. No ledge while that round trip, the module's internal trace included, is no longer than the fastest RMII edge (1 ns, RMII 1.2 §7.4.3): L_MAC ≤ 1 ns / (2 × 7.1 ps/mm) = 70 mm, minus 10 mm reserved for the unpublished trace inside the module = 60 mm. The PHY/MAC difference (36.41 mm) is only a note against IP101G §6.1 "equal" (no tolerance given); RX/TX timing alone allows ≈ ± 420 mm ([ethernet](ethernet.md#ref_clk-branches)) |
 
-Routed (via heights counted): RXD0 18.47, RXD1 17.92, CRS_DV 18.76, TXD0 21.52, TXD1 23.77, TX_EN 40.88 mm. REF_CLK:
-R13.2 → U1.10 9.97 mm (2 vias), R13.2 → U6.68 46.42 mm (3 vias; round trip with the module's 10 mm 2 × 56.42 mm ×
-7.1 ps/mm = 0.80 ns), difference 36.45 mm.
+Routed (via heights counted): RXD0 18.47, RXD1 17.92, CRS_DV 18.76, TXD0 21.61, TXD1 23.93, TX_EN 41.26 mm. REF_CLK:
+R13.2 → U1.10 10.60 mm (2 vias), R13.2 → U6.68 47.01 mm (3 vias; round trip with the module's 10 mm 2 × 57.01 mm ×
+7.1 ps/mm = 0.81 ns), difference 36.41 mm.
 
 - The RX resistors R15/R11/R12 stand vertical in a row east of U1 with their vias south of them; U1's RX pin order is the
   reverse of U6's, so the B.Cu runs pass north of the vias to their west and arrive in U6 order without a crossing.
@@ -563,7 +586,7 @@ R13.2 → U1.10 9.97 mm (2 vias), R13.2 → U6.68 46.42 mm (3 vias; round trip w
   (118.4, 139.9) → via (117.65, 139.9). B.Cu passes (116.8, 139.05) → (116.3, 139.05) → (114.55, 137.3) →
   (114.55, 136.5) → via (113.75, 135.7); F.Cu crosses west to via (109.3, 135.7); B.Cu goes NW to
   (105.1, 131.5), then north to (105.1, 108.25) and rejoins the original north run. The detour under D3 is gone.
-  Total XVS: 103.01 mm track (F.Cu 29.63, B.Cu 73.39) / 113.87 mm with seven via heights, 8.23 mm longer than
+  Total XVS: 104.25 mm track (F.Cu 29.63, B.Cu 74.62) / 115.11 mm with seven via heights, 9.47 mm longer than
   the original 105.64 mm route. Projected copper-to-courtyard-outline gaps from the queried library polygons are
   L1 2.906 mm, L2 0.048 mm and L3 0.450 mm (to Fab body outlines: 3.252, 0.365 and 0.700 mm).
   L2's courtyard is stepped: its west boundary at U6.9's y range is x 128.36, not the bbox's x 127.39.
@@ -572,11 +595,11 @@ R13.2 → U1.10 9.97 mm (2 vias), R13.2 → U6.68 46.42 mm (3 vias; round trip w
   U10 pads 6.290 mm, C43 pads 8.194 mm, C45 pads 3.777 mm and D3 pads 5.217 mm. The boost hot loop is avoided;
   this does not claim separation from the remote +32V distribution branch that already crosses above U6.9 behind both planes.
   To open this corridor without moving parts, the B.Cu STATUS_LED/CAM_EN/STROBE/SCCB_SCL/SCCB_SDA fan-outs were
-  shifted east; total net lengths with via heights are 20.21/59.39/103.26/59.49/61.02 mm respectively, via counts unchanged.
-  PWR_SRC's B.Cu leg now goes (118.9, 139.4) → (118.9, 140.1) → (116.4, 142.6) → (116.4, 143.3),
-  making room for the (117.6, 140.57) return; total 36.17 mm, three vias. R72.2's own GND via is now (123.45, 141.4),
+  shifted east; total net lengths with via heights are 21.63/62.06/104.02/60.37/63.13 mm respectively, via counts unchanged.
+  PWR_SRC's B.Cu leg now goes (118.95, 139.3) → (118.95, 140.79) → (116.29, 143.45) → (116.29, 144.975), then jogs to
+  x 116.4, making room for the (117.6, 140.57) return; total 36.51 mm, three vias. R72.2's own GND via is now (123.45, 141.4),
   on a 0.354 mm F.Cu diagonal, and R71.2's VLED_SENSE branch passes y 141.45 through (122.75, 141.45) →
-  (122.9, 141.6) → (122.9, 141.82) → C49.1; total VLED_SENSE 13.68 mm, one via.
+  (122.9, 141.6) → (122.9, 141.82) → C49.1; total VLED_SENSE 14.47 mm of track (16.02 mm with the via height), one via.
   C35.2's GND via moves (122.655, 144.25) → (122.525, 144.18), U8.2's GND via (124.6775, 146.25) →
   (125.05, 146.3), and C34.2's GND via (122.93, 149.85) → (123.85, 151.1). Their pin-centre-to-via F.Cu stubs are
   0.875, 1.759 and 0.824 mm respectively. U8.2's full stub includes the unchanged 0.800 mm segment plus the
@@ -626,8 +649,9 @@ R13.2 → U1.10 9.97 mm (2 vias), R13.2 → U6.68 46.42 mm (3 vias; round trip w
 | C7.1–U1.31 | 3 mm | IP101G §6.1 p.56: AVDD33 decoupling |
 
 The `near` entries measure straight copper edge to edge (C6.1–U1.28 2.32 mm), not the copper path. REGOUT's path is longer:
-U1.28 → C6.1 is 5.34 mm of track with two vias, F.Cu north to via (158.8, 126.9), B.Cu to via (160.9, 128.2), F.Cu into
-C6.1 (8.44 mm with the via heights; U1.28 → C4.1 9.73 mm), because pin 28 lies between the two MDI pairs and its track
+U1.28 → C6.1 is 4.59 mm of track with two vias, F.Cu north to via (158.8, 126.9), B.Cu to via (160.9, 128.2), then the
+F.Cu pour "C6/C4 PHY_REGOUT" that holds C6.1 and C4.1 (8.51 mm with the via heights and the pour as a straight line;
+U1.28 → C4.1 9.33 mm), because pin 28 lies between the two MDI pairs and its track
 can leave only northwards inside "U1 MDI escape". A first-board check scopes REGOUT at C6
 ([ethernet](ethernet.md#first-board-checks)); accepted ([Accepted deviations](#accepted-deviations)).
 
@@ -655,9 +679,10 @@ Layer plan:
 
 Across layers (F.Cu over In1), which KiCad does not check: no F.Cu copper of another net lies over the In1 PoE copper or
 within 1.0 mm of it sideways. Closest (to the routed PoE copper): TP10.1 (CAM_3V3) exactly 1.000 mm from POE_VA1 (TP10
-cannot move: R53, J4, C25/U5 and C32 box it in), U5.1–3 1.05 mm, D6.1 and D7.2 1.09 mm, R52 1.10 mm, D5.1 1.17 mm,
-R41.1 and R43.2 1.18 mm, C32.2 1.27 mm, C3.2 1.36 mm; F.Cu tracks beside the lane: +3V3 (y 112.9) 1.20 mm, RING_2
-1.256 mm, GND (127.5, 112.8)–(128.3, 112) 1.30 mm. One 0.2104 mm 7628 ply lies between F.Cu and In1; a 2 mm sideways
+cannot move: R53, J4, C25/U5 and C32 box it in); the F.Cu pours "R41/R42 +3V3" 1.025 mm, "GND pour 92" (U5.2) and
+"R53/C32/C30 CAM_3V3" 1.03 mm (outlines clipped to keep 1.0 mm); U5.1–3 1.05 mm, D6.1 and D7.2 1.09 mm, R52 1.10 mm,
+D5.1 1.17 mm, R41.1 and R43.2 1.18 mm, C32.2 1.27 mm, C3.2 1.36 mm; F.Cu tracks beside the lane: RING_2 1.256 mm, GND
+(128.15, 112.8)–(128.95, 112) 1.30 mm. One 0.2104 mm 7628 ply lies between F.Cu and In1; a 2 mm sideways
 keep-off does not fit.
 
 J1: the rule exempts pad pairs inside J1, the jack's own pin field (HanRun rates it 2250 V dc, cable side to chip side,
@@ -681,11 +706,11 @@ R73/R74 I²C pull-ups. Circuit: [imu](imu.md).
   every pad) and runs on B.Cu to U6.69. No other vias lie under the LGA pads; the datasheet gives no via or trace keep-out
   under the package. GND pin 9 and NC pin 8 (to GND, as the datasheet recommends) run to a GND via at (138.1, 156.2); NC
   pin 4 joins C50.2 on F.Cu.
-- `near` C50.1–U12.7 ≤ 3 mm (MSA3S02 DS V1.0 p.30 Fig. 8: 100 nF at VDD): placed 1.15 mm. C50.2 has no GND via within
-  1 mm (U6's bottom pads below and the +32V F.Cu round it leave no site). Its loop to U12's GND pin 9 is C50.2 → 2.1 mm
-  of F.Cu → GND via (134.69, 159.18) → In1 → GND via (138.1, 156.2) → U12.9, 9.6 mm with 2 vias (U12.4 joins C50.2 but
-  is an NC pin, not a ground return). Harmless for a 110 µA sensor (DS p.7); accepted
-  ([Accepted deviations](#accepted-deviations)).
+- `near` C50.1–U12.7 ≤ 3 mm (MSA3S02 DS V1.0 p.30 Fig. 8: 100 nF at VDD): placed 1.15 mm. C50.2 has no GND via of its own
+  (U6's bottom pads below and the +32V F.Cu round it leave no site); the F.Cu pour "C50/U12 GND" joins it and NC pin
+  U12.4 to the GND via (134.69, 159.18), which satisfies `decoupling_placement`. Its loop to U12's GND pin 9 is C50.2 →
+  pour → GND via (134.69, 159.18) → In1 → GND via (138.1, 156.2) → pour "U12 GND" → U12.9, 9.08 mm with 2 vias (pours
+  as straight lines; U12.4 is an NC pin, not a ground return). Harmless for a 110 µA sensor (DS p.7).
 - I²C away from the buck switch node (TI SLVSDG1C §10.1 p.13: "Keep these traces away from SW nodes"): IMU_SCL and
   IMU_SDA run on B.Cu under L2 (with In1 and In2 GND between them and L2's switch pad) and come up to F.Cu only east of it,
   at vias (137.82, 152.95) and (137.28, 153.6). F.Cu distance to SW_3V3 copper: SCL 1.43 mm, SDA 1.015 mm. SDA crosses the
@@ -717,39 +742,45 @@ MOSFET at (147.1, 133); U11 TLV9061 current loop with R69 (0.1 Ω sense) and net
 
 - U10's exposed pad has 2 GND vias 1.1 mm apart (`copperArea` "U10 exposed pad vias", min 2 inside the pad; TPS61170
   DRV0006A land pattern p.35, §11.3).
-- C43.2's GND via ties to the exposed pad on F.Cu (0.6 mm) and C36.2 to its top (0.5 mm), so both capacitor loops close
-  on the top layer as in TI Fig. 23. C45.2 keeps its own via: D3.2 (BST_SW) lies between it and C43.2.
-- Pin 4 (SW) leaves at 0.3 mm, the pad width, for 0.85 mm (keeping TI's land gaps, 0.35 mm to pin 5 and 0.25 mm to the
-  exposed pad), then 0.5 mm to L3.2. It keeps the switch node small (§11.1).
-- +5V_BST necks to 0.5 mm at U10.6; BST_SW leaves U10.4 at 0.3 mm (above).
+- C43.2, C36.2 and the exposed pad (U10.3, U10.7) share the F.Cu GND pour "C36/C43/U10 GND" with four GND vias, so both
+  capacitor loops close on the top layer as in TI Fig. 23. C45.2 keeps its own via: D3.2 (BST_SW) lies between it and
+  C43.2.
+- The switch node U10.4 → L3.2/D3.2 is the F.Cu pour "BST_SW pour 120", 0.4 mm off U10's other pads, so pin 4 keeps
+  TI's land gaps (0.35 mm to pin 5, 0.25 mm to the exposed pad) and the node stays small (§11.1).
+- +5V_BST: U10.6, C36.1, C38.1, L3.1 and U8.6 share the F.Cu pour "U10/C36/L3 +5V_BST".
 
 ### +32V and the ring
 
 - +32V goes from the boost output (D3's cathode, C45.1) to C47.1, on to C46.1, then north through a corridor east of Q1 to D4.2, 0.6 mm
-  F.Cu/B.Cu with 0.6/0.3 vias (`kicad_query lengths` paths, via heights counted): C45.1 → D4.2 97.2 mm (91.0 mm of track,
-  4 vias; D3.1 → D4.2 100.5 mm), of which C45.1 → C47.1 35.6 mm, C47.1 → C46.1 37.0 mm and C46.1 → D4.2 24.6 mm (F.Cu, no
-  via). The whole +32V net is 128.6 mm (122.3 mm of track plus via heights), which adds the 0.3 mm R65/R71/TP13 feeds (20.0 mm) and short stubs. The pulse current comes from
+  F.Cu/B.Cu with 0.6/0.3 vias (`kicad_query lengths` paths, via heights counted, pours as straight lines): C45.1 → D4.2
+  97.0 mm (88.1 mm of track, 4 vias; D3.1 → D4.2 100.0 mm), of which C45.1 → C47.1 34.9 mm, C47.1 → C46.1 37.2 mm and
+  C46.1 → D4.2 24.9 mm (F.Cu, no via, ending in the pour "+32V pour 107" over D4.2's two pads). D3.1, C43.1, C45.1 and
+  TP13.1 share the F.Cu pour "D3/C45/C43 +32V". The whole +32V net is 122.8 mm (116.6 mm of track plus via heights),
+  which adds the 0.3 mm R65/R71/TP13 feeds (20.9 mm) and short stubs. The pulse current comes from
   C46: 12.9 mm at 0.45 mm (1.09 mΩ/mm) plus 11.7 mm at 0.6 mm (0.82 mΩ/mm) ≈ 24 mΩ, ≈ 22 mV at 0.915 A (35 µm copper,
   ρ 1.72 × 10⁻⁸ Ω·m). ΔT ≈ 3.5 °C at 0.915 A DC for 0.6 mm. East of Q1 it runs 0.45 mm wide
   for 12.9 mm at x 150.625 (ΔT ≈ 4.8 °C at 0.915 A DC; the pulses run at ≈ 6 % duty), held 0.4 mm from Q1's tab and from
   C2/C8 by the pad-spacing rules. The C45.1 → L2-area via run is 0.4 mm for 6.8 mm (recharge current ≤ 0.1 A average).
 - The ring links and the LED_K neck are 0.5 mm (1.0 mm breaks the 0.4 mm pad spacing to each LED's other pad): ΔT
-  ≈ 4.2 °C at 0.915 A DC. Each LED's two pads of one node are joined inside the pads.
+  ≈ 4.2 °C at 0.915 A DC. Each link leaves and enters its LED pads along the pad's own axis (the pads sit at
+  15° + k · 30° round the ring), then turns onto 45° legs; these axis stubs and their 15°–60° bends are the one
+  exception to the 45° rules ([Routing style](#routing-style)). Each LED's two pads of one node are joined centre to
+  centre. LED_K: Q1.2 and D15.1 share the F.Cu pour "LED_K pour 121".
 - Exposed pads of LED_PWR/BST_SW keep 0.4 mm to other nets, and other exposed pads keep 0.4 mm to LED_PWR/BST_SW copper
   (the two "LED_PWR pad spacing" rules). TH1 (the NTC) at (145.2, 127.8) is 0.42 mm from Q1's tab, which only tightens its
   thermal coupling to Q1.
-- PHY_RST_N (75.4 mm, 5 vias) and NTC_SENSE (≈ 55 mm, B.Cu) route round the lens inside the LED ring, PHY_RST_N ≈ 41 mm of
+- PHY_RST_N (76.4 mm, 5 vias) and NTC_SENSE (≈ 59 mm, mostly B.Cu) route round the lens inside the LED ring, PHY_RST_N ≈ 41 mm of
   it at 0.5–1.1 mm from the ring pads and links. Both are slow lines: PHY_RST_N is static with R8 pulling it down,
   NTC_SENSE has C48 at the ADC pin.
 
 ### Current sense
 
-- ISNS: Q1.3 → R69.1 0.55 mm (both pads ≥ 0.55 mm wide); NT1 takes the Kelvin tap from R69.1; TP14 by 0.25 mm.
-- R69.2 (the 0.915 A return) has three GND paths: its own via (148.54, 142.1) plus 0.4 mm F.Cu links to GND vias
-  (147.65, 142.2) and (147.5, 138.85); no via fits at the pad (U6's bottom pads 34–38 lie under R69). Return resistance
-  ≈ 0.8 mΩ (three paths of ≈ 1.0, 1.4 and 1.9 mΩ give ≈ 0.45 mΩ in parallel, plus ≈ 0.3 mΩ of spreading in the pad and
-  copper, an estimate; 35 µm copper, 0.3 mΩ per via), 0.8 % of R69,
-  which only lowers the LED current.
+- ISNS: Q1.3 and R69.1 share the F.Cu pour "ISNS pour 122" (2.63 mm pad to pad); NT1 takes the Kelvin tap from R69.1;
+  TP14 by 0.25 mm.
+- R69.2 (the 0.915 A return) sits in the F.Cu pour "GND pour 80" with C44.2 and three GND vias, (148.5375, 142.1),
+  (148.18, 142.45) and (147.65, 142.2); a 0.4 mm F.Cu link reaches the GND via (147.5, 138.85). No via fits at the pad
+  (U6's bottom pads 34–38 lie under R69). Return resistance is below the ≈ 0.8 mΩ estimated for the former three
+  0.4 mm links (0.8 % of R69), which only lowers the LED current.
 - C46.2 has four GND vias: three 0.6/0.3 (hole 0.15 mm outside the pad) and one 0.45/0.2 at (161.45, 141.6) (hole 0.25 mm
   outside the pad).
 
@@ -759,8 +790,9 @@ Q1 dissipates up to 0.73 W average at the 0.5 ms / 120 fps limit ([led](led.md#t
 110 °C/W on the minimum pad, 50 °C/W on 1 in² (645 mm²), RθJC 3.3 °C/W, TJ max 175 °C.
 
 - Drain copper (`copperArea` "Q1 drain copper", net LED_K, F.Cu + B.Cu within 15 mm of Q1: ≥ 100 mm², ≥ 12 vias): Q1's
-  6.4 × 5.8 mm tab with 16 thermal vias 0.6/0.3 (4 × 4), a little F.Cu beside it, and the B.Cu zone "Q1 drain B.Cu"
-  (x 144.8–151.0, y 126.7–137.65, solid pad connection, 61.96 mm² filled). That is the ≈ 100–120 mm² that fits; 1 in²
+  6.4 × 5.8 mm tab with 16 thermal vias 0.6/0.3 (4 × 4), the F.Cu pour "LED_K pour 121" round the tab and D15.1 (47.4 mm²
+  filled, the tab included), and the B.Cu zone "Q1 drain B.Cu"
+  (x 144.8–151.0, y 126.7–137.65, solid pad connection, 61.96 mm² filled). That is the ≈ 110–120 mm² that fits; 1 in²
   does not: `kicad_query board_free_space` finds no free 7.5 × 11.5 mm area on the top side for Q1 to move to.
 - The zone stays clear of the crystal (Y1/C5), the RMII B.Cu strip (x 152.75–157.3), the CSI bus (1.04 mm from CSI_D1_P,
   ≥ 0.54 mm) and U6's courtyard, and never reaches the ring side.
@@ -818,52 +850,47 @@ flashing cable) latch and enumerate ([mcu](mcu.md#first-board-checks)).
 
 ## Accepted deviations
 
-Every warning class in the released check pass (`kicad_check`: erc, style, footprints, fields, pulls, rules, drc, layout
-clean; unrouted 0), with its reason. A new warning not in these lists is a regression.
+Every warning class in the released check pass (`kicad_check`: erc, style, footprints, fields, pulls, rules, drc,
+decoupling_placement, layout clean; unrouted 0), with its reason. A new warning not in these lists is a regression.
 
-### track_widths (65 warnings)
+### track_widths (57 warnings)
 
 | Nets and widths | Where | Reason |
 |---|---|---|
-| +3V3 0.4 mm (F.Cu 98 mm, B.Cu 70 mm) | Ethernet branch after R38.1, north/west feed loops | ≤ 0.15 A ([Power](#power), [Ethernet and PoE isolation](#ethernet-and-poe-isolation)) |
-| +3V3 0.3 mm (F.Cu 17.5 mm, B.Cu 36 mm) | Short branches to pull-ups and U9's supply; R20's B.Cu feed to the north-west | mA loads; < 19 mV drop at R53.1 for the whole feed ([Power](#power)) |
-| +3V3 0.2 mm (F.Cu 21.7 mm, B.Cu 8.0 mm) | The loop past H1 (r 3.8 mm washer clearance, 0.4 mm does not pass J2's shell), U12.7's feed, the link under Y1 | ≤ 0.15 A, ≈ 21 mΩ over 8.5 mm |
+| +3V3 0.4 mm (F.Cu 88.8 mm, B.Cu 64.9 mm) | Ethernet branch after R38.1, north/west feed loops | ≤ 0.15 A ([Power](#power), [Ethernet and PoE isolation](#ethernet-and-poe-isolation)) |
+| +3V3 0.3 mm (F.Cu 7.8 mm, B.Cu 36 mm) | Short branches to pull-ups and U9's supply; R20's B.Cu feed to the north-west | mA loads; < 19 mV drop at R53.1 for the whole feed ([Power](#power)) |
+| +3V3 0.2 mm (F.Cu 20.5 mm, B.Cu 8.0 mm) | The loop past H1 (r 3.8 mm washer clearance, 0.4 mm does not pass J2's shell), U12.7's feed, the link under Y1 | ≤ 0.15 A, ≈ 21 mΩ over 8.5 mm |
 | +3V3 0.25 mm (0.63 mm) | R73.1 to its via | Pull-up, ≤ 0.7 mA |
-| +3V3 0.5 mm (1.2 mm) | North of L2 at (131.5–132.7, 149.55) | Short; ΔT ≈ 2.2 °C even at the full 0.66 A |
 | +3V3 0.15 mm (2.4 mm) | U1's +3V3 pin stubs (0.4 mm pitch) | Pin pitch |
-| CAM_3V3 0.5 mm (3.3 mm) | R53.2 → C32/C30/J4.15/TP10 | Camera ≤ 100 mA |
-| +5V 0.6 mm (F.Cu 5.3 mm, B.Cu 2.0 mm) | Common trunk vias → U8.1 neck; U8.1 → C34.1 and east to the buck trunk vias (128.9, 147.9)/(129.7, 147.9); trunk via (139.3, 150.8) → C10.1 → U3.4; 1.20 mm common-trunk diagonal (121.6, 146.05) → (122.45, 146.9) beside U8 | Common via-to-U8.1 neck and B.Cu diagonal carry 1.96 A peak, ≈ 15.8 °C as infinite tracks but much cooler as short necks; U8.1 → C34.1 and the downstream buck branch carry ≤ 0.52 A peak. Necks at a SOT-23-6 and U3's input capacitors; the B.Cu diagonal cannot stay 1.0 mm beside SCCB_SDA, ≈ 0.98 mΩ / 3.8 mW at 1.96 A ([Power](#power)) |
+| +5V 0.6 mm (F.Cu 0.6 mm, B.Cu 2.0 mm) | Exit east from the U8.1 pour; between the buck trunk vias (128.9, 147.9)/(129.7, 147.9) | Buck branch ≤ 0.52 A peak; the common 1.96 A node is poured ([Power](#power)) |
 | +5V 0.8 mm (B.Cu 10.2 mm) | Via (140.3, 150.8) → R63/C44/U11 at (149.45, 145.1) | < 1 mA (U11 supply and the R63 divider) |
-| +5V 0.5 mm (F.Cu 4.0 mm) | U4's OUT flare to C20/C23; C10.1 → C12.1 → via (140.3, 150.8) (joins the U11/R63 branch) | Short necks at fine-pitch pads; C12's ripple current and < 1 mA |
-| +5V 0.4 mm (F.Cu 9.8 mm, B.Cu 1.9 mm) | U3 EN feed from via (129.7, 147.9) to U3.1; U11/R63 supply stub | Enable pin and op-amp supply, mA |
-| +5V 0.3 mm (F.Cu 5.1 mm) | U4 pin necks; the 0.7 mm stub from via (122.35, 146.2) into via (122.45, 146.9) inside U8's courtyard | Necks inside the U4/U8 courtyards |
-| +5V_POE_F 0.8 mm (B.Cu 12.3 mm) | Filter vias (106.6, 138.45)/(106.6, 139.45) → U4's IN1 vias | 1.0 mm does not pass the VBUS IN2 via; 11.4 °C at 1.96 A |
-| +5V_POE_F 0.3 / 0.4 mm (F.Cu 1.5 / 1.8 mm) | U4 IN1 pad entry and neck to its vias | Neck inside U4's courtyard |
+| +5V 0.5 mm (F.Cu 0.6 mm) | Link at the west end of U4's OUT pour | Short neck |
+| +5V 0.4 mm (F.Cu 6.5 mm, B.Cu 1.9 mm) | U3 EN feed from via (129.7, 147.9) to U3.1; U11/R63 supply stub | Enable pin and op-amp supply, mA |
+| +5V 0.3 mm (F.Cu 0.9 mm) | U4 pin necks | Necks inside U4's courtyard |
+| +5V_POE_F 0.8 mm (B.Cu 12.2 mm) | Filter vias (106.6, 138.45)/(106.6, 139.45) → U4's IN1 vias | 1.0 mm does not pass the VBUS IN2 via; 11.4 °C at 1.96 A |
 | +5V_POE_F 0.25 / 0.4 mm (F.Cu 0.9, B.Cu 2.7 mm) | Feed to R18 (PR1/OV divider) | µA |
-| +5V_BST 0.5 mm (1.9 mm), 0.8 mm (2.2 mm) | At U10's VIN; toward C36 between C36 and L3 | Neck at the WSON; 0.8 mm where 1.0 mm does not fit |
-| VBUS 0.25 mm (4.5 mm) | J2.A4/A9 stubs to their vias | Only exit between J2's pegs and pads; ≈ 11 °C at 1.0 A each, 1.8 mm long |
-| VBUS 0.5 / 0.4 mm (F.Cu 2.6 / 2.9 mm) | J2.A4 → D2.1 and D2.1's flow-through exit; U4's IN2 pad entry | Short necks; the added 0.866 mm exit is no narrower than the existing 0.5 mm TVS approach |
-| VBUS 0.3 mm (F.Cu 6.0 mm, B.Cu 7.7 mm) | Feeds to R24 and R27 (VBUS_SENSE divider) | µA |
-| VBUS 0.8 mm (B.Cu 9.5 mm) | Source link between J2's VBUS vias and protected return from D2's new via to the 1.0 mm trunk | 1.0 mm does not fit; the return goes around the USB D− escape without bypassing D2.1 |
-| +32V 0.6 mm (F.Cu 62.5 mm, B.Cu 11.7 mm) | Boost output → C47 → C46 → ring | 0.915 A pulses at ≈ 6 % duty, ΔT ≈ 3.5 °C ([LED driver and ring](#led-driver-and-ring)) |
+| VBUS 0.25 mm (1.8 mm) | J2.A4/B9 stub to via (114.85, 105.9) | Only exit between J2's pegs and pads; ≈ 11 °C at 1.0 A, 1.8 mm long |
+| VBUS 0.5 / 0.4 mm (F.Cu 3.2 / 2.9 mm) | J2.A4 → D2.1 and D2.1's flow-through exit; U4's IN2 pad entry | Short necks; the added 0.866 mm exit is no narrower than the existing 0.5 mm TVS approach |
+| VBUS 0.3 mm (F.Cu 5.3 mm, B.Cu 7.7 mm) | Feeds to R24 and R27 (VBUS_SENSE divider) | µA |
+| VBUS 0.8 mm (B.Cu 9.5 mm) | Source link from the J2 VBUS pour's via (110, 105.65) to via (114.85, 105.9) and protected return from D2's via to the 1.0 mm trunk | 1.0 mm does not fit; the return goes around the USB D− escape without bypassing D2.1 |
+| +32V 0.6 mm (F.Cu 64.6 mm, B.Cu 11.4 mm) | Boost output → C47 → C46 → ring | 0.915 A pulses at ≈ 6 % duty, ΔT ≈ 3.5 °C ([LED driver and ring](#led-driver-and-ring)) |
 | +32V 0.45 mm (12.9 mm) | Corridor east of Q1 | Pad-spacing rules; ΔT ≈ 4.8 °C at 0.915 A DC |
 | +32V 0.4 mm (6.8 mm) | C45.1 → L2-area via | Recharge ≤ 0.1 A average |
-| +32V 0.5 mm (0.9 mm) | Short stub beside the D4.2 entry at x 141.51 | Short; pad spacing at the LED |
-| +32V 0.3 mm (20.0 mm) | Feeds to R65 (boost FB divider), R71 (VLED sense divider) and TP13 | µA |
+| +32V 0.3 mm (20.9 mm) | Feeds to R65 (boost FB divider), R71 (VLED sense divider) and TP13 | µA |
 | RING_1–RING_11 0.5 mm, LED_K 0.5 mm (1.2 mm) | Ring links and the LED_K neck | 1.0 mm breaks the 0.4 mm LED pad spacing; ΔT ≈ 4.2 °C at 0.915 A DC |
-| ISNS 0.55 mm (1.6 mm), 0.25 mm (6.1 mm) | Q1.3 → R69.1; the TP14 branch | Pad width; test point carries no current |
-| USB_C_D_P/N 0.2 mm (F.Cu 12.5 mm, B.Cu 119.6 mm); USB_C_D pair coupled at 0.20–0.30 mm | Connector side J2 → U5 → R31/R32 | Full speed is electrically short; impedance not controlled ([MCU and USB](#mcu-and-usb)) |
+| ISNS 0.25 mm (8.8 mm) | The TP14 branch and the tap to NT1 | No load current; Q1.3 → R69.1 is the pour "ISNS pour 122" |
+| USB_C_D_P/N 0.2 mm (F.Cu 12.1 mm, B.Cu 119.6 mm); USB_C_D pair coupled at 0.26–0.30 mm | Connector side J2 → U5 → R31/R32 | Full speed is electrically short; impedance not controlled ([MCU and USB](#mcu-and-usb)) |
 | USB_D pair coupled at 0.257 mm (1.57 mm) | Into R31/R32 | Resistor pad pitch |
-| CAM_D1 pair coupled at 0.415 mm (0.45 mm); CAM_CLK pair at 0.335 mm (0.51 mm) | CAM_D1's 0.45 mm bump flat; CAM_CLK_P's F.Cu tail into its via | Skew-compensation geometry, not coupled runs |
-| ETH_TD pair at 0.22 mm (0.65 mm); ETH_RD pair at 0.22 / 0.428 mm (1.29 mm) | U1's MDI pin escapes | 0.4 mm pin pitch |
-| RMII_REF_CLK, RMII_REF_CLK_SRC 0.15 mm (0.7 / 1.5 mm) | U1.10's pin stub and where 0.2 mm does not fit | Pin pitch |
+| CAM_D1 pair coupled at 0.285 / 0.415 mm (0.62 mm); CAM_CLK pair at 0.42 mm (0.59 mm) | CAM_D1's bump flat and via approach; CAM_CLK_P's F.Cu tail into its via | Skew-compensation and via-entry geometry, not coupled runs |
+| ETH_TD pair at 0.22 / 0.29 mm (1.64 mm); ETH_RD pair at 0.22 / 0.29 / 0.428 mm (1.89 mm) | U1's MDI pin escapes; the P legs leaving the swap vias radially | 0.4 mm pin pitch; via entries |
+| RMII_REF_CLK, RMII_REF_CLK_SRC 0.15 mm (1.1 / 2.1 mm) | U1.10's pin stub and where 0.2 mm does not fit | Pin pitch |
 | IMU_INT1 0.15 mm (F.Cu 0.9 mm, B.Cu 3.1 mm) | From U12.5 to the via under U12 | Between 0.5 mm-pitch LGA pads |
 
-### return_path (12 warnings)
+### return_path (13 warnings)
 
 | Track | Where | Reason |
 |---|---|---|
-| USB_C_D_P, 2.25 mm and 0.54 mm on F.Cu | U5 link at (113.05, 111.8–114.0) | Crosses the In1 gap of the PoE lane (2 mm from the PoE copper); In2 is solid GND below. Full-speed USB, electrically short |
+| USB_C_D_P, 1.24, 1.13 and 1.15 mm on F.Cu | U5 link at (113.05, 110.5–114.0), split at the via tee | Crosses the In1 gap of the PoE lane (2 mm from the PoE copper); In2 is solid GND below. Full-speed USB, electrically short |
 | ETH_TD_N 1.04 mm and 1.21 mm; ETH_RD_N 0.54, 1.21 and 0.54 mm (x 160.77 / 159.26, y 120.5–122.8) | Beside the P/N swap vias | The swap vias' In1 antipads (r 0.775 mm) reach under the N track; the hop sits where IP101G §6.2 allows vias |
 | ETH_TD_P 2 × 0.89 mm, ETH_RD_N 2 × 0.91 mm, ETH_TD_N 0.69 mm | TD_P passing over J1.2 into J1.1, RD_N passing under J1.4 into J1.5, TD_N leaving J1.2 | J1's MDI antipads in In1 (pad plus the 0.55 mm MDI spacing); a track leaving or passing a pin there crosses them |
 
@@ -875,11 +902,26 @@ clean; unrouted 0), with its reason. A new warning not in these lists is a regre
 | ETH_TD_P | (160.298, 122.055), (161.238, 121.115) | Same |
 | USB_C_D_N | (114.1, 109.0) | No site within 1 mm (D2, the VBUS link and the D+ track surround it); nearest GND via 2.66 mm, In2 solid below; full-speed edges ≥ 4 ns |
 
-### decoupling_placement (1 warning)
+### Pad entries (32 findings on 19 pads and vias)
 
-| Capacitor | Reason |
-|---|---|
-| C50 (U12 VDD): GND pad C50.2 has no GND via or fill within 1 mm | No via site (U6's bottom pads below, the +32V F.Cu round it); its loop to U12's GND pin 9 is C50.2 → 2.1 mm → GND via (134.69, 159.18) → In1 → via (138.1, 156.2) → U12.9, 9.6 mm with 2 vias; harmless for a 110 µA sensor ([IMU](#imu)) |
+The pad-entry audit's remaining findings ([Routing style](#routing-style)). Each one needs a part or a neighbouring via
+moved; placement is unchanged.
+
+| Pad or via | Net | Finding | Why no compliant entry |
+|---|---|---|---|
+| R1.2 → R4.1 | PHY_LED0 | Ends off-centre; R1.2's exit at 45° | R1.2 is boxed in by R7.1 (0.41 mm), R1.1 (0.48 mm) and the PHY_LED3 track; only the corner diagonal fits |
+| R7.1 | PHY_LED3 | End off-centre | R4.1 0.31 mm below, R7.2 and U1's pins / REF_CLK above |
+| R10.1, vias (155.65, 130.75) and (153.9, 132.5) | COL/RMII (U1.4) | Ends off-centre, bends inside or close to the vias | U1.4's axis runs between XTAL_X2 (a via there lands 0.075 mm from it) and RMII_TX_EN, with MDC parallel on B.Cu; R10.1 is boxed in by C5.2, R10.2 and a GND via 0.3 mm below |
+| U9.4 | LED_ON | End off-centre | A via on its axis lands 0.1 mm from R61.2 (GND) or 0.025 mm from U9.4 inside its mask opening; R61's 0.48 mm pad gap is too narrow |
+| C49.1 | VLED_SENSE | Exit at 45°, end off-centre | Only an exit to the east fits; R71.2's link comes from the west |
+| U6.16 (B.Cu) | LED_PWR_EN | End off-centre | A centre exit passes 0.19 mm from the VLED_SENSE via, which the USB_C_D_P B.Cu diagonal holds in place |
+| Via (115.95, 131.95), B.Cu | STROBE | Bend inside the via, end off-centre | Its diagonal runs 0.41 mm from the parallel STATUS_LED and CAM_EN diagonals; a via there needs 0.525 mm |
+| U11.1; MDIO via (145, 143.05) | SINK_DRV, MDIO | Ends off-centre; MDIO bends inside its via | The MDIO hop over the USB_C_D_P diagonal sits 0.48 mm east of U11.1; moving it brings MDIO within 0.1 mm of USB_C_D_N |
+| U5.3, U5.4 | USB_C_D_N | Ends off-centre | A straight on-axis link passes 0.0025 mm from U5's GND via (114.6, 112.95) |
+| D2.1, via (115.65, 109.2) | VBUS | Ends off-centre, bend inside the via | Moving the via brings its 0.8 mm B.Cu leg 0.14 mm from the GND via (116.6, 109.9) |
+| J1.7 (In1) | POE_VA1 | End off-centre | A radial approach leaves the PoE lane rule area or comes within 1.6 mm of J1.5 (2 mm isolation) |
+| J1.5 | ETH_RD_N | End off-centre | A compliant entry comes 1.73 mm from J1.7 (POE_VA1, 2 mm rule); raising the lane collides with RD_P |
+| J2.B7 | USB_C_D_N | Last bend 0.03 mm outside the pad (margin 0.04 mm) | CC1 runs 0.2 mm above the crossover |
 
 ### Other accepted deviations
 
@@ -890,12 +932,12 @@ clean; unrouted 0), with its reason. A new warning not in these lists is a regre
 | CSI In2 neck 6.19 mm vs 6.83 mm; 72.5 mil a side with the 45° crossing | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | CAM pairs 54–89 mil from the plane edge at the FFC notch (90 mil asked) | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | No GND guard round the MIPI CLK pairs | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
-| Planes solid under the link and J4 pads except where the MIPI via antipads (r 0.585 mm) reach: up to 0.215 mm into aligned south link pads (≈ 34 % area), 0.206 mm at CLK pad centres with their 0.10 mm via offset (≈ 32 % area), part of R51's west edge (≈ 20 % area), ≈ 0.06 mm off J4's MIPI pads 2, 3, 5, 6; adjacent antipads join into slot voids along each via row | Design review 2026-11-01; geometry corrected 2026-11-02 | [Camera and CSI-2](#camera-and-csi-2) |
+| Planes solid under the link and J4 pads except where the MIPI via antipads (r 0.585 mm) reach: up to 0.215 mm into the aligned south link pads R45–R47, R49, R50 (≈ 34 % area), part of R51's west edge (≈ 20 % area), ≈ 0.06 mm off J4's MIPI pads 2, 3, 5, 6; adjacent antipads join into slot voids along each via row | Design review 2026-11-01; geometry corrected 2026-11-02 | [Camera and CSI-2](#camera-and-csi-2) |
 | MDI 3W waived inside "U1 MDI escape" | Design review 2026-11-01 (0.4 mm pitch) | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | Eight RMII/strobe layer changes without a GND via within 1.1 mm (seven with none within 1.6 mm); every XVS layer change now has a return within 0.67–0.90 mm | Design review; XVS routing corrected 2026-11-02 | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | No GND guard at the crystal | Design review (IP101G: "if possible") | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | MDC, MDIO and the +3V3 feed to R14 cross under Y1 and its X1/X2 traces on B.Cu, behind the In1 and In2 GND planes; MDC runs ≈ 0.85 mm parallel to the XTAL_X2 diagonal, ≈ 0.14 mm away in plan. ETH_LED_G crosses the X1 link C2.1–Y1.1 once, at right angles | Design review 2026-11-02: no other B.Cu way west from U1's management pins (RMII fan-out, MDI, Q1 drain zone, board edge) | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
-| REGOUT path U1.28 → C6 5.34 mm of track with two vias (8.44 mm with the via heights): pin 28 lies between the MDI pairs | Design review; REGOUT ripple checked on the first boards | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
+| REGOUT path U1.28 → C6 4.59 mm of track with two vias, then the C6/C4 pour (8.51 mm with the via heights): pin 28 lies between the MDI pairs | Design review; REGOUT ripple checked on the first boards | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | F.Cu 1.0 mm (not 2 mm) from the In1 PoE copper; TP10.1 at exactly 1.000 mm | Design intent: some isolation only, no level rated or tested (user decision 2026-11-02) | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | Q1 drain copper ≈ 100–120 mm² instead of 1 in², Q1 1.7 mm from D15/D4 and 2.35 mm from Y1 | User decision 2026-11-01: measure first boards | [LED driver and ring](#led-driver-and-ring) |
 | C15/C23–U4 and R74–U12 closer than JLCPCB's 1.0 mm QFN spacing | Design review | [Assembly](#assembly) |

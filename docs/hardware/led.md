@@ -372,10 +372,12 @@ R69 is a Walsin WW12WR100FTL, 0.1 Ω 1 % 100 ppm/°C, 1206, 1/3 W at 70 °C. It 
 
 The sense is Kelvin-connected:
 
-- **High side:** net tie NT1 sits 0.525 mm from R69.1. `ISNS_K` leaves through it to R64, so the
-  0.55 mm `ISNS` track carrying the pulse is not in the measurement.
-- **Low side:** R69.2 returns the pulse to GND through three vias, ≈ 0.8 mΩ in all
-  (ρCu 1.72e-8 Ω·m, 35 µm copper, 0.3 mΩ per via). That is ≈ 0.8 % of R69, and it lowers the LED
+- **High side:** net tie NT1 sits 0.525 mm from R69.1. `ISNS_K` leaves through it to R64. The pulse
+  reaches R69.1 from Q1.3 through the F.Cu pour "ISNS pour 122"; its lobe round the tap south of
+  R69.1 carries no load current, so the pulse path is not in the measurement.
+- **Low side:** R69.2 returns the pulse to GND through the F.Cu pour "GND pour 80" with three vias,
+  plus a 0.4 mm link to a fourth; less than the ≈ 0.8 mΩ estimated for the former three 0.4 mm links
+  (ρCu 1.72e-8 Ω·m, 35 µm copper, 0.3 mΩ per via). That is ≤ 0.8 % of R69, and it lowers the LED
   current by the same amount, on the safe side of the table.
 
 ### Loop and gate

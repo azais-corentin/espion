@@ -139,7 +139,7 @@ Ethernet:
 - MDI spacing below 3× inside U1's escape and the P/N swap vias without return vias — [ethernet](ethernet.md#magjack-and-mdi).
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
-- REGOUT reaches C6 through 5.34 mm of track and two vias, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
+- REGOUT reaches C6 through 4.59 mm of track, two vias and a short pour, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
 - J1's lands 0.57–0.72 mm from reflowed parts R46, C3, R8, C1 — [layout](layout.md#assembly).
 
 IMU and board:

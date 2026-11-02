@@ -76,7 +76,7 @@ Placement:
 - **REGOUT** (pin 28) is the PHY's internal 1.1 V regulator output, 1.07–1.18 V (p.57). C4 (10 µF X5R
   25 V) and C6 (100 nF) decouple it, as the datasheet asks ("A 10uF and 0.1uF should be connected",
   p.18). Pin 28 lies between the two MDI pairs, so its track leaves north and reaches C6 over B.Cu:
-  U1.28 → C6.1 is 5.34 mm of track with two vias (8.44 mm with the via heights), although C6 is
+  U1.28 → C6.1 is 4.59 mm of track with two vias, then the C6/C4 pour (8.51 mm with the via heights), although C6 is
   2.32 mm from the pin edge to edge ([layout](layout.md#phy-side-decoupling)). A first-board check
   scopes REGOUT at C6.
 - **ISET** (pin 25) sets the transmit amplitude. R6 is 6.19 kΩ 1 % to GND, the datasheet value (p.53).
