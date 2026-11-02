@@ -192,11 +192,20 @@ export function parsePos(src: string): PosRow[] {
 	return rows.map(r => ({ ref: r[ref]!, x: Number(r[x]), y: Number(r[y]), rot: Number(r[rot]), side: r[side] === "bottom" ? "bottom" : "top" }));
 }
 
-/** The first correction whose pattern matches a footprint "Lib:Name" (`*`/`?`, case-insensitive). */
+/** An `assembly.corrections` key that is an LCSC code ("C7519") rather than a footprint pattern. */
+const LCSC_KEY = /^C\d+$/i;
+
+/**
+ * The correction for a part: the entry keyed by its LCSC code (case-insensitive) if there is one,
+ * else the first footprint pattern matching its "Lib:Name" (`*`/`?`, case-insensitive).
+ */
 export function correctionFor(
 	id: string,
 	corrections: Readonly<Record<string, PlacementCorrection>>,
+	lcsc = "",
 ): { pattern: string; correction: PlacementCorrection } | undefined {
+	const code = lcsc.trim().toUpperCase();
+	if (code) for (const [key, correction] of Object.entries(corrections)) if (LCSC_KEY.test(key) && key.toUpperCase() === code) return { pattern: key, correction };
 	for (const [pattern, correction] of Object.entries(corrections)) if (wildcards([pattern])(id)) return { pattern, correction };
 	return undefined;
 }
@@ -252,21 +261,23 @@ export function cplRow(p: PosRow, c: PlacementCorrection = {}): CplRow {
 }
 
 /**
- * CPL rows of the assembled parts (`ids`: ref → "Lib:Name") in natural reference order, the
- * corrected ones (ref → pattern) and, per footprint id that no correction matches, its references.
+ * CPL rows of the assembled parts (`parts`: ref → footprint "Lib:Name" and LCSC code) in natural
+ * reference order, the corrected ones (ref → matching key) and, per footprint id of the parts no
+ * correction matches, their references.
  */
 export function cplRows(
 	pos: PosRow[],
-	ids: ReadonlyMap<string, string>,
+	parts: ReadonlyMap<string, Pick<AsmPart, "footprint" | "lcsc">>,
 	corrections: Readonly<Record<string, PlacementCorrection>>,
 ): { rows: CplRow[]; corrected: Map<string, string>; unconfirmed: Map<string, string[]> } {
 	const rows: CplRow[] = [];
 	const corrected = new Map<string, string>();
 	const unconfirmed = new Map<string, string[]>();
 	for (const p of [...pos].sort((a, b) => natural(a.ref, b.ref))) {
-		const id = ids.get(p.ref);
-		if (id === undefined) continue;
-		const hit = correctionFor(id, corrections);
+		const part = parts.get(p.ref);
+		if (part === undefined) continue;
+		const id = part.footprint;
+		const hit = correctionFor(id, corrections, part.lcsc);
 		if (!hit) unconfirmed.set(id, [...(unconfirmed.get(id) ?? []), p.ref]);
 		else if ((hit.correction.rot ?? 0) % 360 !== 0 || (hit.correction.offset ?? [0, 0]).some(v => v !== 0)) corrected.set(p.ref, hit.pattern);
 		rows.push(cplRow(p, hit?.correction));
@@ -665,7 +676,7 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 			const pos = parsePos(await cli.pcbPos(project.boardFile, o));
 			const { parts, left, boardOnly } = assemblyParts(nl.components.values(), boardIds, new Set(pos.map(p => p.ref)), hand);
 			const rows = bomRows(parts);
-			const cpl = cplRows(pos, new Map(parts.map(p => [p.ref, p.footprint])), corrections);
+			const cpl = cplRows(pos, new Map(parts.map(p => [p.ref, p])), corrections);
 			const bomFile = path.join(dir, `${project.name}-bom.csv`);
 			const cplFile = path.join(dir, `${project.name}-cpl.csv`);
 			fs.writeFileSync(bomFile, bomCsv(rows));

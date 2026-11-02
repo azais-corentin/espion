@@ -85,6 +85,15 @@ describe("assembly: CPL", () => {
 		expect(correctionFor("Package_TO_SOT_SMD:SOT-23-5", { "Package_TO_SOT_SMD:SOT-23": {} })).toBeUndefined();
 	});
 
+	test("an LCSC-code key wins over any footprint pattern, whatever its order; other parts fall back to the patterns", () => {
+		const c = { "*:SOT-23-6": { rot: 180 }, c7519: { rot: -90 }, "C1": { rot: 90 } };
+		expect(correctionFor("Package_TO_SOT_SMD:SOT-23-6", c, " C7519 ")).toEqual({ pattern: "c7519", correction: { rot: -90 } });
+		expect(correctionFor("Package_TO_SOT_SMD:SOT-23-6", c, "C131941")?.pattern).toBe("*:SOT-23-6");
+		expect(correctionFor("Package_TO_SOT_SMD:SOT-23-6", c)?.pattern).toBe("*:SOT-23-6");
+		// a code key matches the whole code only
+		expect(correctionFor("Package_TO_SOT_SMD:SOT-23-5", c, "C12")).toBeUndefined();
+	});
+
 	test("rows of the assembled parts only; corrected and unconfirmed footprints; rot 0 confirms", () => {
 		const pos: PosRow[] = [
 			{ ref: "R10", x: 1, y: -1, rot: 0, side: "top" },
@@ -93,13 +102,13 @@ describe("assembly: CPL", () => {
 			{ ref: "D1", x: 4, y: -1, rot: 0, side: "bottom" },
 			{ ref: "U1", x: 5, y: -1, rot: 0, side: "top" },
 		];
-		const ids = new Map([
-			["R2", "Resistor_SMD:R_0603_1608Metric"],
-			["R10", "Resistor_SMD:R_0603_1608Metric"],
-			["D1", "LED_SMD:LED_0603_1608Metric"],
-			["U1", "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"],
+		const parts = new Map([
+			["R2", { footprint: "Resistor_SMD:R_0603_1608Metric", lcsc: "C22" }],
+			["R10", { footprint: "Resistor_SMD:R_0603_1608Metric", lcsc: "C23" }],
+			["D1", { footprint: "LED_SMD:LED_0603_1608Metric", lcsc: "C72041" }],
+			["U1", { footprint: "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm", lcsc: "C7593" }],
 		]);
-		const r = cplRows(pos, ids, { "LED_SMD:*": { rot: 180 }, "Package_SO:*": { rot: 0, offset: [0, 0] } });
+		const r = cplRows(pos, parts, { "LED_SMD:*": { rot: 180 }, "Package_SO:*": { rot: 0, offset: [0, 0] }, C22: { rot: 0 } });
 		// C1 (not assembled) has no row; natural order
 		expect(r.rows.map(x => [x.ref, x.rot, x.layer])).toEqual([
 			["D1", 0, "Bottom"],
@@ -108,7 +117,8 @@ describe("assembly: CPL", () => {
 			["U1", 0, "Top"],
 		]);
 		expect([...r.corrected]).toEqual([["D1", "LED_SMD:*"]]);
-		expect([...r.unconfirmed]).toEqual([["Resistor_SMD:R_0603_1608Metric", ["R2", "R10"]]]);
+		// R2 is confirmed by its LCSC code; R10, on the same footprint, is not
+		expect([...r.unconfirmed]).toEqual([["Resistor_SMD:R_0603_1608Metric", ["R10"]]]);
 		expect(cplCsv(r.rows.slice(0, 2))).toBe('"Designator","Mid X","Mid Y","Layer","Rotation"\r\n"D1","4mm","-1mm","Bottom","0"\r\n"R2","2mm","-1mm","Top","90"\r\n');
 	});
 

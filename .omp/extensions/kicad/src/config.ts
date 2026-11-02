@@ -23,7 +23,7 @@ export interface FieldsConfig {
 	exemptPrefixes: string[];
 }
 
-/** A JLCPCB placement correction for a footprint, applied to its CPL row. */
+/** A JLCPCB placement correction for a footprint or an LCSC part, applied to its CPL row. */
 export interface PlacementCorrection {
 	/** Degrees, counter-clockwise seen from the part's top, added to the CPL rotation (default 0). */
 	rot?: number;
@@ -36,9 +36,12 @@ export interface PlacementCorrection {
 
 export interface AssemblyConfig {
 	/**
-	 * JLCPCB placement corrections by footprint "Lib:Name": `*`/`?` patterns, case-insensitive,
-	 * first match wins (a project's entries before the defaults'). An entry with rot 0 and no
-	 * offset records that the footprint was checked in JLCPCB's placement preview and needs none.
+	 * JLCPCB placement corrections. A key that is an LCSC code ("C7519") applies to the parts with
+	 * that LCSC field and wins over any footprint pattern: JLCPCB's rotation follows its library
+	 * entry per part, so parts on one footprint can need different corrections. Every other key is
+	 * a footprint "Lib:Name" pattern (`*`/`?`, case-insensitive), first match wins (a project's
+	 * entries before the defaults'). An entry with rot 0 and no offset records that the parts were
+	 * checked in JLCPCB's placement preview and need none.
 	 */
 	corrections: Record<string, PlacementCorrection>;
 	/**
