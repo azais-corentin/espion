@@ -386,6 +386,64 @@ describe("schematic ops in memory", () => {
 			analysis.dispose();
 		}
 	});
+
+	test("set_symbol_field moves, turns, justifies and hides one field as it looks on the sheet, stored as KiCad stores it", async () => {
+		const ctx = await context(root);
+		const sym = (ref: string) => ctx.project.findSymbol(ref).sym;
+		const field = (ref: string, name: string) => children(sym(ref), "property").find(p => text(p) === name)!;
+		// KiCad's (at …) and (justify …) of a field: absolute position, angle and justification in the symbol's frame
+		const stored = (ref: string, name: string) => {
+			const j = child(child(field(ref, name), "effects")!, "justify");
+			return `${print(child(field(ref, name), "at")!)} ${j ? print(j) : "centred"}`;
+		};
+		const set = (args: Record<string, unknown>) => apply(ctx, "set_symbol_field", args);
+
+		// R24 (Device:R turned 90, fields at 90 so they read horizontally): by at, rounded to 0.01 mm, off the grid
+		expect(stored("R24", "Value")).toBe("(at 133.35 89.281 90) centred");
+		await set({ ref: "R24", field: "Value", at: [140.004, 90.006] });
+		expect(stored("R24", "Value")).toBe("(at 140 90.01 90) centred");
+		expect(ctx.notes.at(-1)).toBe("R24 Value at (140, 90.01) on MCU, horizontal, centred, shown");
+		// a field placed by hand: the symbol is no longer autoplaced, as KiCad clears the flag
+		expect(child(sym("R24"), "fields_autoplaced")).toBeUndefined();
+		// by offset from the symbol origin (133.35, 83.82)
+		await set({ ref: "R24", field: "Reference", offset: [0, -3] });
+		expect(stored("R24", "Reference")).toBe("(at 133.35 80.82 90) centred");
+
+		// SW2 (turned 270, fields at 90 justify left: horizontal, anchored left): vertical, anchored left bottom on the sheet
+		expect(stored("SW2", "Value")).toBe("(at 229.87 115.57 90) (justify left)");
+		await set({ ref: "SW2", field: "Value", rot: 90, justify: ["bottom", "left"] });
+		expect(stored("SW2", "Value")).toBe("(at 229.87 115.57 0) (justify right top)");
+		expect(ctx.notes.at(-1)).toBe("SW2 Value at (229.87, 115.57) on MCU, vertical, left bottom, shown");
+		// turning back keeps the look of the anchor
+		await set({ ref: "SW2", field: "Value", rot: 0 });
+		expect(stored("SW2", "Value")).toBe("(at 229.87 115.57 90) (justify left bottom)");
+		expect(ctx.notes.at(-1)).toBe("SW2 Value at (229.87, 115.57) on MCU, horizontal, left bottom, shown");
+		await set({ ref: "SW2", field: "Value", justify: [] });
+		expect(stored("SW2", "Value")).toBe("(at 229.87 115.57 90) centred");
+
+		// D1 (WS2812B mirrored y): left on the sheet is right in the symbol's frame
+		await set({ ref: "D1", field: "Value", at: [85.09, 115.57], justify: ["left"] });
+		expect(stored("D1", "Value")).toBe("(at 85.09 115.57 0) (justify right)");
+		expect(ctx.notes.at(-1)).toBe("D1 Value at (85.09, 115.57) on MCU, horizontal, left, shown");
+
+		// hiding alone keeps the position and the autoplace flag
+		await set({ ref: "R23", field: "Value", hidden: true });
+		expect(field("R23", "Value").some(x => Array.isArray(x) && print(x) === "(hide yes)")).toBe(true);
+		expect(print(child(sym("R23"), "fields_autoplaced")!)).toBe("(fields_autoplaced yes)");
+		expect(ctx.notes.at(-1)).toContain("R23 Value at ");
+		expect(ctx.notes.at(-1)).toEndWith(", hidden");
+		await set({ ref: "R23", field: "Value", hidden: true });
+		expect(ctx.notes.at(-1)).toBe("R23 Value: already as given");
+
+		await expect(set({ ref: "R999", field: "Value", hidden: true })).rejects.toThrow("no symbol with reference R999");
+		await expect(set({ ref: "R24", field: "Rating", hidden: false })).rejects.toThrow('R24 has no field "Rating" (fields: Reference, Value, Footprint, Datasheet, Description');
+		await expect(set({ ref: "R24", field: "Value", at: [0, 0], offset: [0, 0] })).rejects.toThrow("give at or offset, not both");
+		await expect(set({ ref: "R24", field: "Value" })).rejects.toThrow("give at, offset, rot, justify and/or hidden");
+		await expect(set({ ref: "R24", field: "Value", rot: 180 })).rejects.toThrow("rot must be 0 (horizontal) or 90 (vertical)");
+		await expect(set({ ref: "R24", field: "Value", justify: ["left", "right"] })).rejects.toThrow("justify: left or right, not both");
+		await expect(set({ ref: "R24", field: "Value", justify: ["top", "bottom"] })).rejects.toThrow("justify: top or bottom, not both");
+		await expect(set({ ref: "R24", field: "Value", justify: ["middle"] })).rejects.toThrow(/justify/);
+	});
 });
 
 /** On the root: a bus branch off the {IMU} bus, an entry, and R66.1 on a wire labelled with the member IMU_SDA. */
@@ -418,6 +476,39 @@ describe.skipIf(!HAS_KICAD)("bus ops through kicad_edit (kicad-cli)", () => {
 			expect(bare.report).toContain("NOT APPLIED");
 			expect(bare.report).toContain("unconnected_wire_endpoint");
 			expect(bare.report).toContain("a wire end connects to nothing (net IMU_SDA)");
+		},
+		240_000,
+	);
+});
+
+describe.skipIf(!HAS_KICAD)("set_symbol_field through kicad_edit (kicad-cli)", () => {
+	let root = "";
+	beforeAll(() => {
+		root = stageFixture();
+	});
+	afterAll(() => cleanup(root));
+
+	test(
+		"KiCad keeps the placed field as written and the edit passes ERC and the drawing rules",
+		async () => {
+			const ops = [
+				{ op: "set_symbol_field", ref: "R24", field: "Value", offset: [0, 5.71] },
+				{ op: "set_symbol_field", ref: "R24", field: "Reference", justify: ["left"] },
+				{ op: "set_symbol_field", ref: "R23", field: "Value", hidden: true },
+			];
+			const r = await runEdit({ ops }, root, undefined);
+			expect(r.report).toStartWith("Applied.");
+			expect(r.report).toContain("R24 Value at (133.35, 89.53) on MCU, horizontal, centred, shown");
+			// the file as KiCad re-saved it
+			const p = Project.open(PROJECT, root);
+			const field = (ref: string, name: string) => children(p.findSymbol(ref).sym, "property").find(f => text(f) === name)!;
+			expect(print(child(field("R24", "Value"), "at")!)).toBe("(at 133.35 89.53 90)");
+			expect(print(child(field("R24", "Reference"), "at")!)).toBe("(at 133.35 86.741 90)");
+			// left on the sheet for a symbol turned 90 is right in its frame
+			expect(print(child(child(field("R24", "Reference"), "effects")!, "justify")!)).toBe("(justify right)");
+			expect(child(p.findSymbol("R24").sym, "fields_autoplaced")).toBeUndefined();
+			expect(child(field("R23", "Value"), "hide")).toBeDefined();
+			expect(child(p.findSymbol("R23").sym, "fields_autoplaced")).toBeDefined();
 		},
 		240_000,
 	);

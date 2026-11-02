@@ -483,6 +483,147 @@ function setFieldsOn(ctx: OpContext, ref: string, fields: Record<string, unknown
 	}
 }
 
+// ---- field placement ------------------------------------------------------------------------------
+
+type HJustify = "left" | "right" | "center";
+type VJustify = "top" | "bottom" | "center";
+/** A field text as drawn on the sheet: horizontal (reads left to right) or vertical (reads upward), and where its anchor sits. */
+interface FieldLook {
+	vertical: boolean;
+	h: HJustify;
+	v: VJustify;
+}
+
+const FIELD_JUSTIFY = ["left", "right", "center", "top", "bottom"] as const;
+/** Reading direction for a field angle in quarter turns, sheet axes (y down). */
+const READ_DIR: readonly Pt[] = [
+	[1, 0],
+	[0, -1],
+	[-1, 0],
+	[0, 1],
+];
+const glyphDown = (d: Pt): Pt => [-d[1], d[0]];
+const sameDir = (a: Pt, b: Pt) => Math.round(a[0]) === Math.round(b[0]) && Math.round(a[1]) === Math.round(b[1]);
+const flipH = (h: HJustify): HJustify => (h === "left" ? "right" : h === "right" ? "left" : h);
+const flipV = (v: VJustify): VJustify => (v === "top" ? "bottom" : v === "bottom" ? "top" : v);
+
+/**
+ * Between a field's stored angle/justification and its look on the sheet. KiCad lays the text out
+ * in the symbol's frame (stored angle and justification), then applies the symbol's rotation and
+ * mirror, and draws it upright: a symbol turned 90/270 swaps horizontal and vertical, and the
+ * anchor side flips where the transform reverses the reading or glyph-down direction. The
+ * mapping is its own inverse for a given stored angle.
+ */
+function fieldFrame(sch: Sch, sym: List, quarter: number): { vertical: boolean; flipH: boolean; flipV: boolean } {
+	const { rot, mirror } = sch.pose(sym);
+	const T = (v: Pt): Pt => xform(v[0], -v[1], 0, 0, rot, mirror);
+	const d = READ_DIR[quarter]!;
+	const vertical = quarter % 2 === 1 !== (rot === 90 || rot === 270);
+	const drawn = READ_DIR[vertical ? 1 : 0]!;
+	return { vertical, flipH: !sameDir(T(d), drawn), flipV: !sameDir(T(glyphDown(d)), glyphDown(drawn)) };
+}
+
+/** The horizontal and vertical justification in `(justify …)` atoms; an axis not given is centred. */
+function justifyAxes(j: readonly string[]): { h: HJustify; v: VJustify } {
+	return {
+		h: j.includes("left") ? "left" : j.includes("right") ? "right" : "center",
+		v: j.includes("top") ? "top" : j.includes("bottom") ? "bottom" : "center",
+	};
+}
+
+function fieldLook(sch: Sch, sym: List, field: List): FieldLook {
+	const f = fieldFrame(sch, sym, ((Math.round(at(field).rot / 90) % 4) + 4) % 4);
+	const { h, v } = justifyAxes(justifyOf(field));
+	return { vertical: f.vertical, h: f.flipH ? flipH(h) : h, v: f.flipV ? flipV(v) : v };
+}
+
+/** The field angle (0 or 90) and `(justify …)` atoms KiCad stores for `look` on this symbol, horizontal before vertical. */
+function storedLook(sch: Sch, sym: List, look: FieldLook): { rot: number; justify: string[] } {
+	const { rot } = sch.pose(sym);
+	const quarter = look.vertical !== (rot === 90 || rot === 270) ? 1 : 0;
+	const f = fieldFrame(sch, sym, quarter);
+	const h = f.flipH ? flipH(look.h) : look.h;
+	const v = f.flipV ? flipV(look.v) : look.v;
+	return { rot: quarter * 90, justify: [h, v].filter(x => x !== "center") };
+}
+
+function justifyArg(v: string[]): { h: HJustify; v: VJustify } {
+	if (new Set(v).size !== v.length) throw new Error(`justify: ${JSON.stringify(v)} repeats a value`);
+	if (v.includes("left") && v.includes("right")) throw new Error("justify: left or right, not both");
+	if (v.includes("top") && v.includes("bottom")) throw new Error("justify: top or bottom, not both");
+	if (v.length > 2) throw new Error(`justify: at most one horizontal and one vertical value, got ${JSON.stringify(v)}`);
+	return justifyAxes(v);
+}
+
+const setSymbolField: OpDef = {
+	op: "set_symbol_field",
+	group: "schematic",
+	doc:
+		"Move, turn, justify or show/hide one field text of a placed symbol (Reference, Value or any other field), as eeschema's field properties do: position by `at` or `offset` (exactly one when moving; any point, rounded to 0.01 mm: fields aren't connectable), orientation and justification as the text looks on the sheet, unchanged when not given. " +
+		"Moving, turning or justifying a field clears the symbol's fields_autoplaced flag, as KiCad does, so autoplacing leaves it where it is. Several fields: several ops in one call.",
+	fields: {
+		ref: REF,
+		field: { t: "string", req: true, doc: 'field name, e.g. "Reference", "Value"' },
+		unit: { t: "integer", doc: "only this unit of a multi-unit part (default: every unit placed; at needs one unit)" },
+		at: { t: "point", doc: "text anchor position, sheet mm" },
+		offset: { t: "point", doc: "text anchor as [dx, dy] mm from the symbol origin, sheet axes (x right, y down)" },
+		rot: { t: "integer", doc: "0 horizontal (reads left to right) or 90 vertical (reads upward) on the sheet, whatever the symbol's rotation (default: unchanged)" },
+		justify: {
+			t: "strings",
+			values: FIELD_JUSTIFY,
+			doc: "where the anchor sits on the text as drawn: left|right|center and/or top|bottom|center, an axis not given centred (default: unchanged)",
+		},
+		hidden: { t: "boolean", doc: "hide (true) or show (false) the text" },
+	},
+	apply(ctx, args) {
+		if (args.at !== undefined && args.offset !== undefined) throw new Error("give at or offset, not both");
+		if (["at", "offset", "rot", "justify", "hidden"].every(k => args[k] === undefined)) throw new Error("give at, offset, rot, justify and/or hidden");
+		if (args.rot !== undefined && args.rot !== 0 && args.rot !== 90) throw new Error(`rot must be 0 (horizontal) or 90 (vertical): KiCad draws schematic fields upright, got ${args.rot}`);
+		const just = args.justify === undefined ? undefined : justifyArg(args.justify as string[]);
+		const ref = String(args.ref);
+		const name = String(args.field);
+		const all = units(ctx, ref);
+		const hits = args.unit === undefined ? all : [oneUnit(ctx, ref, args.unit)];
+		if (args.at !== undefined && hits.length > 1) {
+			throw new Error(`${ref} has ${hits.length} units placed; with at pass unit: one of ${hits.map(h => h.sheet.sch.unit(h.sym)).join(", ")} (or give offset)`);
+		}
+		const posed = ["at", "offset", "rot", "justify"].some(k => args[k] !== undefined);
+		const notes: string[] = [];
+		for (const { sheet, sym } of hits) {
+			const sch = sheet.sch;
+			const field = children(sym, "property").find(p => text(p) === name && child(p, "at"));
+			if (!field) throw new Error(`${ref} has no field "${name}" (fields: ${children(sym, "property").map(p => text(p)).join(", ")})`);
+			const was = print(field);
+			const oldBox = symBox(sch, sym);
+			if (posed) {
+				const look = fieldLook(sch, sym, field);
+				const want: FieldLook = { vertical: args.rot === undefined ? look.vertical : args.rot === 90, ...(just ?? { h: look.h, v: look.v }) };
+				const o = sch.pose(sym);
+				const offset = args.offset as Pt | undefined;
+				const to: Pt | undefined = (args.at as Pt | undefined) ?? (offset ? [o.x + offset[0], o.y + offset[1]] : undefined);
+				const p: Pt = to ? [Math.round(to[0] * 100) / 100, Math.round(to[1] * 100) / 100] : at(field).p;
+				const stored = storedLook(sch, sym, want);
+				setAt(field, p[0], p[1], stored.rot);
+				setJustify(field, stored.justify);
+			}
+			if (args.hidden !== undefined) setHidden(field, args.hidden as boolean);
+			const unitName = all.length > 1 ? `${ref} unit ${sch.unit(sym)}` : ref;
+			if (print(field) === was) {
+				notes.push(`${unitName} ${name}: already as given`);
+				continue;
+			}
+			if (posed) removeChild(sym, "fields_autoplaced");
+			ctx.project.touch(sch);
+			const nb = symBox(sch, sym);
+			ctx.touch(sheet, bbox([[oldBox[0], oldBox[1]], [oldBox[2], oldBox[3]], [nb[0], nb[1]], [nb[2], nb[3]]]));
+			const look = fieldLook(sch, sym, field);
+			const anchor = [look.h, look.v].filter(x => x !== "center").join(" ") || "centred";
+			notes.push(`${unitName} ${name} at ${fmtPt(at(field).p)} on ${sheet.name}, ${look.vertical ? "vertical" : "horizontal"}, ${anchor}, ${isHidden(field) ? "hidden" : "shown"}`);
+		}
+		ctx.notes.push(notes.join("; "));
+	},
+};
+
 const renameRef: OpDef = {
 	op: "rename_ref",
 	group: "schematic",
@@ -1347,6 +1488,7 @@ const annotate: OpDef = {
 
 export const ops: OpDef[] = [
 	setFields,
+	setSymbolField,
 	renameRef,
 	setAttrs,
 	addSymbol,
