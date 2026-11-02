@@ -25,7 +25,7 @@ project's heuristic, not a source value.
 | Other NPTH | J1 pegs Ø3.25 mm (2), J2 pegs Ø0.6 mm (2) | Part datasheets |
 
 M3 washer clearance (ISO 7089 M3 washer Ø7.0 mm, r 3.5 mm + 0.3 mm): no copper other than GND lies within r 3.8 mm
-of H1's centre (closest: the +3V3 loop round J2's north side, 3.807 mm). Measured separately from each hole centre to
+of H1's centre (closest: the 0.4 mm +3V3 loop running SW between J2's two west shield pads, 3.901 mm). Measured separately from each hole centre to
 nearby non-GND nets: H2 4.603 mm (+3V3 via (155.85, 104.8)); H3 4.165 mm (BOOT_SW via (107.6, 158.93)); H4 5.746 mm
 (+32V track near (154.7, 157.75)). All keep the r 3.8 mm washer allowance; H3 does not keep r 4.6 mm.
 
@@ -48,7 +48,8 @@ both read 2026-10-31.
 | B.Cu (L4) | Copper 1 oz | 0.035 | | Bottom parts (U2, U6, J1), signals |
 | Solder mask | LPI, both sides | 1.2 mil over substrate, 0.6 mil over copper | 3.8 | Covers every impedance-controlled track |
 
-- JLCPCB labels the finished thickness 1.59 mm ± 10 % (1.43–1.75 mm); KiCad sums the layers to 1.617 mm.
+- JLCPCB's stack-up page labels the finished thickness 1.59 mm; its capabilities page gives ± 10 % (1.44–1.76 mm for a
+  1.6 mm board, read 2026-11-02). KiCad sums the layers to 1.617 mm.
 - Why this stack-up: it is JLCPCB's default ("No requirement" on the order page), the only 4-layer 1.6 mm stack-up its
   calculator tags "Standard", it costs no stack-up fee, and Economic PCBA accepts "standard stack-up only"
   (https://jlcpcb.com/capabilities/pcb-assembly-capabilities, read 2026-10-31; JLCPCB does not publish which named
@@ -58,25 +59,28 @@ both read 2026-10-31.
 
 ## Fabrication rules
 
-Board rules in the board setup, with the JLCPCB figure behind each. Source unless stated: JLCPCB PCB capabilities,
-https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-10-31 (4-layer, 1 oz outer, 0.5 oz inner).
+Board rules in the board setup and the custom rules, with the JLCPCB figure behind each. Source unless stated: JLCPCB PCB
+capabilities, https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-11-02 (4-layer, 1 oz outer, 0.5 oz inner; the
+page gives no separate figures for 0.5 oz inner copper).
 
 | Rule | Board value | JLCPCB figure | Notes |
 |---|---|---|---|
-| Minimum track width / clearance | 0.1 / 0.1 mm | Multilayer 0.09 / 0.09 mm | The design's narrowest track is 0.15 mm and its closest copper 0.15 mm (`kicad_query stats`) |
+| Minimum track width / clearance | 0.1 / 0.1 mm | Multilayer 0.09 / 0.09 mm; pad to track 0.1 mm | The design's narrowest track is 0.15 mm and its closest copper 0.15 mm (`kicad_query stats`) |
 | Copper to board edge | 0.3 mm | Routed edge 0.2 mm; PCBA FAQ part 2 (https://jlcpcb.com/help/article/pcb-assembly-faqs-part-2, read 2026-10-31): "edges of the traces and components must be more than 0.3mm away from the edge" (≈ 0.2 mm routing tolerance at depanelling) | Also the plane pull-back at the FFC notch and the lens cutout |
-| Via size | Minimum Ø0.45 mm, hole 0.2 mm | No extra cost for a 0.2 mm hole with Ø ≥ 0.45 mm, or a hole ≥ 0.3 mm (quote page, 2026-10-31) | Used: 0.45/0.2 (304 vias), 0.6/0.3 (33: power and thermal), 0.8/0.4 (2: +5V_POE_F at the L1/C13/C14 filter output), 0.5/0.25 (1: +5V beside U8) |
-| Via annular ring | 0.075 mm | Via 0.25 mm on a 0.15 mm hole allowed | 0.45/0.2 vias have 0.125 mm |
+| Via size | Minimum Ø0.45 mm, hole 0.2 mm | "0.2mm or 0.25mm hole size with via diameter less than 0.45mm, will cost more"; preferred minimum via hole 0.2 mm | Used: 0.45/0.2 (301 vias), 0.6/0.3 (33: power and thermal), 0.8/0.4 (2: +5V_POE_F at the L1/C13/C14 filter output), 0.5/0.25 (1: +5V beside U8) |
+| Via annular ring | 0.075 mm | "Via diameter should be 0.1mm(0.15mm preferred) larger than Via hole size" (0.05 / 0.075 mm ring) | 0.45/0.2 vias have 0.125 mm |
+| Via types | Through vias only (rule "Through vias only") | Microvias "only available for board thickness ≤1mm"; blind and buried vias are HDI only | |
 | Hole to copper | 0.2 mm (rule "PTH hole to copper": 0.3 mm for through-hole pads) | Via hole to track 0.2 mm; inner-layer PTH hole to copper 0.3 mm | |
-| Hole to hole | 0.2 mm (rule "Pad hole to hole": 0.45 mm between pads) | Via hole-to-hole 0.2 mm; pad hole-to-hole 0.45 mm | |
-| PTH annular ring | | ≥ 0.15 mm absolute, 0.20 mm recommended | J1 signal pins 0.28 mm, J1 shield tabs 0.36 mm |
-| NPTH | | ≥ 0.5 mm | Smallest: J2 pegs 0.6 mm |
-| Plated slot | 0.35 mm minimum groove | 0.35 mm (multilayer) | J2 shell slots 0.6 × 1.4 / 0.6 × 1.7 mm |
-| SMD pad to pad, different nets | | 0.15 mm | Rule "U12 LGA pads" ([Custom rules](#custom-rules)) |
-| Solder mask | Openings 1:1 with pads; mask-to-copper 0.09 mm | "Pad size:soldermask opening can be 1:1"; keep 0.09 mm between openings and neighbouring traces; mask bridge 0.10 mm (green, 1 oz) | Vias tented on both sides |
-| Silkscreen | Line ≥ 0.15 mm, text ≥ 1.0 mm high with 0.15 mm stroke | Line width ≥ 0.15 mm, text height ≥ 1.0 mm, width:height 1:6, pad to silkscreen 0.15 mm | All footprint silk lines and texts are 0.15 mm or wider |
-| Silk clearance | 0.15 mm, but 0 between two silk items (rule "Silk to silk") | No silkscreen-to-silkscreen figure | See below |
-| Tolerances | | Track width ± 20 %, board thickness ± 10 %, hole position ± 0.075 mm | Width tolerance drives [Impedance](#impedance) |
+| Hole to hole | 0.2 mm, DRC severity error (rule "Pad hole to hole": 0.45 mm between pads) | Via hole-to-hole 0.2 mm; pad hole-to-hole 0.45 mm | Closest via pair 0.230 mm. KiCad's hole-to-hole check skips milled (oval) holes, so J2's slots are not covered |
+| PTH annular ring | 0.15 mm (rule "PTH annular ring"); the 0.075 mm board minimum covers vias | ≥ 0.15 mm absolute, 0.20 mm recommended | J2 shell slots exactly 0.15 mm (stock HRO land pattern, under the 0.20 mm recommended); J1 signal pins 0.28 mm, J1 shield tabs 0.36 mm |
+| NPTH | Round ≥ 0.5 mm, slots ≥ 1.0 mm (rules "NPTH hole size", "NPTH slot width") | Non-plated holes ≥ 0.50 mm; non-plated slots ≥ 1.0 mm | Smallest: J2 pegs 0.6 mm; no non-plated slots |
+| Plated slot | ≥ 0.5 mm wide (rule "Plated slot width") | "Multi-layer: 0.35mm" and "The minimum plated slot width is 0.5mm"; slot length at least 2 × its width | J2 shell slots 0.6 × 1.4 / 0.6 × 1.7 mm (2.3× / 2.8×). The board setting `min_groove_width` (0.35 mm) is KiCad's creepage groove width, not a slot check |
+| SMD pad to pad, different nets | 0.15 mm by the net classes; rule "U12 LGA pads" | 0.15 mm | |
+| Minimum SMD pad | 0.1 × 0.1 mm (rule "Minimum SMD pad"; user decision 2026-11-02: "Use 0.1mm×0.1mm for minimum pad size") | "Minimum SMD pad: 0.25mm × 0.25mm" (a note under SMD pad to pad clearance) | U1's QFN pads 0.2 × 0.8 mm (24) and U4's 0.2 × 0.6 mm (8), the manufacturers' land patterns for 0.4 mm pitch, are under JLCPCB's note and kept; the same page makes 0.2–0.25 mm BGA pads with ENIG. Smallest pads: U1's corner anchors 0.129 mm |
+| Solder mask | Openings 1:1 with pads; mask-to-copper 0.09 mm; minimum web 0.1 mm (`solder_mask_min_width`) | "Pad size:soldermask opening can be 1:1"; keep 0.09 mm between openings and neighbouring traces; minimum pad spacing for a mask bridge 0.10 mm (green, 1 oz) | Vias tented on both sides. KiCad flags and merges openings closer than 0.1 mm; the smallest web is 0.15 mm (U12) |
+| Silkscreen | Lines ≥ 0.15 mm (rule "Silk line width"), text ≥ 1.0 mm high with 0.15 mm stroke (DRC severity error) | Line width ≥ 0.15 mm, text height ≥ 1.0 mm, width:height 1:6 preferred, pad to silkscreen 0.15 mm | All silk lines and texts are 0.15 mm; 0.15 mm on 1.0 mm text is 1:6.7, slightly thinner than the preferred 1:6. The board's defaults for new silk items (Board Setup › Text & Graphics) are still 0.1 mm |
+| Silk clearance | 0.15 mm to the board edge; board-level silk 0.15 mm from pads (rule "Board silk to pads"); 0 between two silk items (rule "Silk to silk") | Pad to silkscreen 0.15 mm; no silkscreen-to-silkscreen figure | See below |
+| Tolerances | | Track width ± 20 %, board thickness ± 10 %, hole position ± 0.075 mm, plated holes +0.13 / −0.08 mm | Width tolerance drives [Impedance](#impedance) |
 
 Vias next to pads: the quote page turns "tented" into "plugged" for free, but JLCPCB plugs a via with ink only if it
 is ≥ 0.35 mm from any pad opening (https://jlcpcb.com/help/article/pcb-via-covering). Vias are never placed in pads;
@@ -84,13 +88,14 @@ where a via must sit closer, its drilled hole stays ≥ 0.10 mm (the mask bridge
 0.125 mm, C37.2's 0.107 mm, the C40.2/U11.2 via 0.100/0.130 mm, the U6.55 via beside C47.2 0.120 mm (all GND, same net
 as the pad).
 
-Silk against pads: KiCad 10 applies `min_silk_clearance` only between silk items and checks silk against pads only for
-overlap on the mask layer, so DRC does not enforce JLCPCB's 0.15 mm pad-to-silkscreen. The stock footprint silk stays
-where it is closer: 0402 resistor and capacitor outlines 0.085 mm from their own pads, test-point rings 0.125 mm, J4's
-outline 0.131 mm from its mounting pad; JLCPCB clips legend at pads (user decision 2026-11-02: "Keep stock silk, JLC
-clips it"). Polarity marks and board texts are held ≥ 0.15 mm from pads by hand ([Assembly](#assembly)). Because JLCPCB
-gives no silk-to-silk figure, the rule "Silk to silk" lets two silk items touch; without it, widening the stock silk to
-0.15 mm made 15 pairs of neighbouring 0402/SOT outlines 0.13–0.145 mm apart, which KiCad would flag.
+Silk against pads: KiCad 10's `min_silk_clearance` board setting covers silk to silk and silk to the board edge, and checks
+silk against pads only for overlap on the mask layer; a custom `silk_clearance` rule covers more. Rule "Board silk to
+pads" holds board-level silk (texts, marks) ≥ 0.15 mm from pads. Footprint silk is exempt: the stock silk stays where it
+is closer, 0402 resistor and capacitor outlines 0.085 mm from their own pads, test-point rings 0.125 mm, J4's outline
+0.131 mm from its mounting pad; JLCPCB clips legend at pads (user decision 2026-11-02: "Keep stock silk, JLC clips it").
+Polarity marks inside footprints are held ≥ 0.15 mm from pads by hand ([Assembly](#assembly)). Because JLCPCB gives no
+silk-to-silk figure, the rule "Silk to silk" lets two silk items touch; without it, widening the stock silk to 0.15 mm
+made 15 pairs of neighbouring 0402/SOT outlines 0.13–0.145 mm apart, which KiCad would flag.
 
 ## Net classes
 
@@ -117,7 +122,8 @@ Tracks narrower than their class are allowed only where a reason is recorded; ev
 
 ## Custom rules
 
-The `.kicad_dru` rules (`kicad_query rules`), in file order; the two MDI rules at the end were added last.
+The `.kicad_dru` rules (`kicad_query rules`), in file order; the two MDI rules were added after "Silk to silk", and the
+JLCPCB fabrication rules after them (2026-11-02; figures and sources in [Fabrication rules](#fabrication-rules)).
 
 | Rule | Applies to | Constraint | Reason and source |
 |---|---|---|---|
@@ -135,6 +141,14 @@ The `.kicad_dru` rules (`kicad_query rules`), in file order; the two MDI rules a
 | Silk to silk | Two non-pad items on the same silk layer | Silk clearance ≥ 0 mm | JLCPCB gives no silkscreen-to-silkscreen spacing; see [Fabrication rules](#fabrication-rules) |
 | MDI pair to pair | RD pair (ETH_RD_P/N) against TD pair (ETH_TD_P/N); same U1 exemption as "MDI spacing" (either item touching U1's courtyard or wholly inside "U1 MDI escape") | Clearance ≥ 0.54 mm (3W) | IP101G §6.2 p.56 "three times space" also between the RX and TX pairs: 3 × 0.18 mm = 0.54 mm. Closest spot: the RD_N/TD_P diagonals at (159.2–159.6, 125.2–125.6), west of R6, 0.5399 mm (`kicad_query distance`), which DRC passes |
 | MDI intra-pair skew | Each MDI pair | Skew ≤ 1.27 mm | TI SNLA387 p.2 "MDI Traces": length-match the two lines of a pair within 50 mil (1.27 mm) for 100BASE-TX |
+| PTH annular ring | Plated through-hole pads | Annular width ≥ 0.15 mm | JLCPCB absolute minimum for 1 oz multilayer (0.20 mm recommended) |
+| Plated slot width | Plated pads with an oval hole | Hole ≥ 0.5 mm | JLCPCB "The minimum plated slot width is 0.5mm" (also "Multi-layer: 0.35mm") |
+| NPTH hole size | Round non-plated holes | Hole ≥ 0.5 mm | JLCPCB "Min. Non-plated holes 0.50mm" |
+| NPTH slot width | Non-plated oval holes | Hole ≥ 1.0 mm | JLCPCB "Min. Non-Plated Slots 1.0mm". A guard for future parts: the board has no non-plated slot, so nothing exercises it yet. Its condition joins the two tested ones of "NPTH hole size" (non-plated) and "Plated slot width" (oval hole) |
+| Through vias only | Every via | Micro, blind and buried vias disallowed | JLCPCB: microvias only on boards ≤ 1 mm, blind/buried vias HDI only |
+| Silk line width | Graphic items on F.SilkS / B.SilkS | Line width ≥ 0.15 mm (assertion) | JLCPCB "Minimum Line Width ≥0.15mm"; KiCad has no board setting for it |
+| Board silk to pads | Board-level silk (not in a footprint) against pads | Silk clearance ≥ 0.15 mm | JLCPCB pad to silkscreen 0.15 mm; footprint silk exempt by user decision ([Fabrication rules](#fabrication-rules)) |
+| Minimum SMD pad | SMD pads | Size X and Y ≥ 0.1 mm (assertion) | User decision 2026-11-02, below JLCPCB's 0.25 mm note ([Fabrication rules](#fabrication-rules)). Custom-shape pads are checked on their anchor, which is smaller than the whole pad |
 
 ## Impedance
 
@@ -192,6 +206,20 @@ acute junctions 16 → 0. The 32 remaining findings sit on 19 pads and vias, all
 45° leg at least the track width. Reaching pad centres from lanes a few hundredths of a millimetre off left 56 short jogs
 (two opposite 45° bends with a diagonal shorter than the track width; 13 of them older, shortest 0.007 mm on SW_3V3),
 which the rules allow.
+
+Hooks and detours (user instruction 2026-11-02, with example images of CC2 looping round J2's shield pad and XVS_CAM
+hooking into TP8): a track runs from its pad or via toward where it goes, never leaving the other way and looping back,
+and a via that only serves one stub sits on its pad's axis (or radial ray) so the stub is one straight segment. Reworked
+2026-11-02: XVS_CAM into TP8 (one radial segment to via (149.7, 102.4), 1.02 mm from R48's GND via), LED_ON into TP12,
+CC2 (R23.1 → J2.B5, 4.81 mm instead of ≈ 9.5 mm; [MCU and USB](#usb)), ETH_SHIELD_R (R2 turned, 1.675 mm instead of
+13.3 mm with two vias; [Ethernet](#rmii)), the GND stubs of C11.2, C14.2, C22.2, R19.2 and J4's east MP pad (vias moved
+onto the pad axis), and C37.2's loop inside "GND pour 81" (removed: the pour joins pad and via). A script over every
+track chain with ≥ 135° of turning finds the loops left forced: U5.5 → C25.1 (round U5.4), R3.2's GND via (ETH_LED_Y
+under R3 on B.Cu, the MDI pair to the west), C16.2's GND via (+5V, VBUS and +5V_POE_F round it), the +5V EN feed into
+U3.1 (round C18.1), +32V from C46.1 (MDC), NTC_SENSE and VLED_SENSE (round C48.2 / R72.2), PHY_RST_N (round R8.2),
+RMII_REF_CLK on B.Cu (+3V3), and the length-matched diff pairs. After the rework: 1589 tracks, 337 vias, 0 arcs; outside
+the LED ring 0 off-angle segments and 0 non-45° bends.
+
 The MDI pin escapes at U1, which once needed slanted segments, are 45°-only ([Ethernet and PoE isolation](#ethernet-and-poe-isolation));
 the CSI bus crosses its narrowest plane neck at 45° rather than the ideal 58° ([Camera and CSI-2](#camera-and-csi-2)).
 
@@ -266,9 +294,14 @@ ampere for the 1.8–2 A input and output):
 
 The +3V3 feed to the north and west parts (U5, C25, R53 → CAM_3V3/J4, R41/R42, D1/C24, R20) cannot take a shorter
 route: the USB pair, the camera bundle, XVS and +5V_POE_F fence it on B.Cu, the PoE lane and U2 on F.Cu. It is fed from
-the U3/U6 area by a 0.3 mm B.Cu feed (15 mm), a 0.4 mm loop along the west edge (40 mm) and a 0.4 mm F.Cu loop round
-J2's north side (46 mm, 0.2 mm for 8.5 mm past H1): ≈ 0.14 Ω from L2.2 to R53.1, < 19 mV drop at R53.1 (camera 100 mA, D1
-≤ 15 mA, pull-ups; copper network solved from `kicad_query copper`), < 1 °C rise.
+the U3/U6 area by a B.Cu feed (15 mm, 0.4 mm except 0.61 mm beside the GND via (121.9, 153.075), which stays 0.3 mm;
+R20's pull-up branch off its west end, via (113.08, 143.4), stays 0.3 mm), a 0.4 mm loop along the west edge (40 mm) and a 0.4 mm F.Cu loop round
+J2's north side (≈ 45 mm). Past H1 the loop drops east of J2's north-west shield pad and runs SW between the two west
+shield pads, 3.901 mm from H1's centre, with CC1 parallel on its south-east side (2026-11-02; it necked to 0.2 mm for
+8.5 mm between H1 and the shield pad before). The R41/R42 branch's B.Cu feed from via (122.1, 112.9) is 0.5 mm except
+its last 1.5 mm beside CAM_IO1's via (116.65, 120.4). L2.2 → R53.1 ≈ 0.12 Ω (estimate: the 0.14 Ω network figure
+solved from `kicad_query copper` less the series stretches widened on 2026-11-02), < 17 mV at R53.1 (camera 100 mA,
+D1 ≤ 15 mA, pull-ups), < 1 °C rise.
 
 ### Ground and return
 
@@ -356,6 +389,10 @@ GPIO assignments that moved to make the routing possible are listed in
   unchanged. D2.1 → U4.2 is 37.73 mm of track / 41.83 mm with two via heights and the B.Cu pour "VBUS pour 109" at
   U4's IN2 via (`lengths paths`). The 0.25 mm connector stub keeps ΔT ≈ 11 °C at 1.0 A, 3 °C at 0.5 A (1.8 mm long).
 - U5.5 (clamp supply) reaches C25.1 on F.Cu; U5.2 has a GND via between the pin rows.
+- CC1 and CC2 (Rd R25/R23): CC2 runs 4.81 mm from R23.1 east under J2's pad row (y 108.64, 2.02 mm from U2.1's PoE pad)
+  and 45° up into B5's centre. CC1 leaves A5 north-west into the corridor between J2's west shield pads (y 104.675),
+  then runs SW, 0.51 mm centre to centre (0.21 mm copper gap) from the +3V3 loop, down into R25.1 (11.86 mm). R23 sits at (106.85, 108.13);
+  its GND pad joins J2's west shield pad through the pour "GND pour 96".
 
 ### Buttons and boot
 
@@ -637,7 +674,9 @@ R13.2 → U1.10 10.60 mm (2 vias), R13.2 → U6.68 47.01 mm (3 vias; round trip 
   0.4 mm after it (ΔT ≈ 0.15 °C); 0.2–0.3 mm only where nothing wider fits.
 - ETH_LED_G (25.46 mm, 3 vias) leaves J1.14 on B.Cu along y 125.2, north of the crystal, comes down at x 152.0 between C2
   and Y1 to via (151.75, 128.87) and runs on F.Cu west of the crystal (x 151.35) towards R4; ETH_LED_Y runs east (B.Cu,
-  1 via). ETH_SHIELD and ETH_SHIELD_R are 0.5 mm (chassis/ESD path).
+  1 via). ETH_SHIELD and ETH_SHIELD_R are 0.5 mm (chassis/ESD path). R2 is turned so its ETH_SHIELD_R pad faces R3:
+  ETH_SHIELD_R is one 1.675 mm F.Cu link R2.2 → R3.1, and ETH_SHIELD reaches R2.1 from the south-west under J1.12
+  (2026-11-02; ETH_SHIELD_R ran 13.3 mm round R2 with two vias before).
 
 ### PHY-side decoupling
 
@@ -853,13 +892,14 @@ flashing cable) latch and enumerate ([mcu](mcu.md#first-board-checks)).
 Every warning class in the released check pass (`kicad_check`: erc, style, footprints, fields, pulls, rules, drc,
 decoupling_placement, layout clean; unrouted 0), with its reason. A new warning not in these lists is a regression.
 
-### track_widths (57 warnings)
+### track_widths (58 warnings)
 
 | Nets and widths | Where | Reason |
 |---|---|---|
-| +3V3 0.4 mm (F.Cu 88.8 mm, B.Cu 64.9 mm) | Ethernet branch after R38.1, north/west feed loops | ≤ 0.15 A ([Power](#power), [Ethernet and PoE isolation](#ethernet-and-poe-isolation)) |
-| +3V3 0.3 mm (F.Cu 7.8 mm, B.Cu 36 mm) | Short branches to pull-ups and U9's supply; R20's B.Cu feed to the north-west | mA loads; < 19 mV drop at R53.1 for the whole feed ([Power](#power)) |
-| +3V3 0.2 mm (F.Cu 20.5 mm, B.Cu 8.0 mm) | The loop past H1 (r 3.8 mm washer clearance, 0.4 mm does not pass J2's shell), U12.7's feed, the link under Y1 | ≤ 0.15 A, ≈ 21 mΩ over 8.5 mm |
+| +3V3 0.4 mm (F.Cu 98.2 mm, B.Cu 83.7 mm) | Ethernet branch after R38.1, north/west feed loops, the B.Cu feed to them | ≤ 0.15 A ([Power](#power), [Ethernet and PoE isolation](#ethernet-and-poe-isolation)) |
+| +3V3 0.5 mm (B.Cu 9.1 mm) | R41/R42 branch feed from via (122.1, 112.9) | mA loads |
+| +3V3 0.3 mm (F.Cu 6.1 mm, B.Cu 8.1 mm) | Short branches to pull-ups and U9's supply (among them R20's branch beside the VBUS via (112.5, 143.94)); the B.Cu feed beside the GND via (121.9, 153.075); the R41/R42 feed beside CAM_IO1's via; U1's branch at the PHY_REGOUT via | mA loads; < 17 mV drop at R53.1 for the whole feed ([Power](#power)) |
+| +3V3 0.2 mm (F.Cu 12.0 mm, B.Cu 8.0 mm) | U12.7's feed, the link under Y1, U5.5 → C25.1 round U5.4 | µA–mA (IMU, R14 pull-up, U5's clamp supply) |
 | +3V3 0.25 mm (0.63 mm) | R73.1 to its via | Pull-up, ≤ 0.7 mA |
 | +3V3 0.15 mm (2.4 mm) | U1's +3V3 pin stubs (0.4 mm pitch) | Pin pitch |
 | +5V 0.6 mm (F.Cu 0.6 mm, B.Cu 2.0 mm) | Exit east from the U8.1 pour; between the buck trunk vias (128.9, 147.9)/(129.7, 147.9) | Buck branch ≤ 0.52 A peak; the common 1.96 A node is poured ([Power](#power)) |
