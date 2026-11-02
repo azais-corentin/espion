@@ -6755,26 +6755,27 @@
 		(on_board yes)
 		(in_pos_files yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "0974c9da-edaa-4973-b767-ab77afc5acfe")
 		(property "Reference" "D1"
-			(at 76.2 107.315 0)
+			(at 85.09 113.03 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
+				(justify right)
 			)
 		)
 		(property "Value" "YY-0807BRGK26-07-FI"
-			(at 76.2 109.855 0)
+			(at 85.09 115.57 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
+				(justify right)
 			)
 		)
 		(property "Footprint" "LED_SMD_Yongyu:LED_Yongyu_YY-0807_2.0x1.7mm"
