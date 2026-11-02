@@ -43,29 +43,24 @@ through-hole, and is hand-soldered from the top after JLCPCB's assembly (user de
 
 ### Isolation
 
-The cable side is isolated from the board by J1's magnetics, rated 2250 V dc for 60 s (HR871150C
-p.1), and by U2's barrier, rated only 1.5 kVrms (DP1435 p.1 "Isolation level 1.5KVrms", p.5
-item 9), about 2121 V dc. IEEE 802.3 clause 33.4.1 asks for 1500 Vrms or 2250 V dc for 60 s
-between the cable and everything else.
+The cable side is separated from the board by J1's magnetics and by U2's isolated flyback. The
+board layout is meant to give some isolation between the PoE cable nets and the rest of the board;
+no isolation level is rated or tested (user decision 2026-11-02).
 
 On the board the four PoE nets run from J1.7–J1.10 to U2.1–U2.4 on In1, in a lane cut out of the
 In1 GND plane, with In2 GND unbroken below:
 
-- Rule `PoE isolation`: 2 mm from `POE_CABLE` copper to any other net on any layer (IEC 60664-1
-  basic insulation 1.5 mm plus margin). The rule is waived between J1's own pins, which rests on
-  HanRun's rating; J1's pads are trimmed so pin 5 (chip side) to pin 7 (cable side) is 1.09 mm and
-  pin 10 to the shield 1.97 mm.
-- F.Cu copper of other nets keeps ≥ 1.0 mm sideways from the In1 PoE copper. KiCad does not check
-  copper across layers, so this was measured by hand. The tightest point is TP10.1 (CAM_3V3) at
-  exactly 1.000 mm from POE_VA1.
-- Between F.Cu and In1 there is one 0.2104 mm 7628 ply. IPC-4101's 30 kV/mm minimum (as quoted in
-  the Isola 370HR datasheet) gives 6.3 kV, 2.8 × the 2250 V dc test. JLCPCB publishes no
-  through-thickness strength, and a single ply carries a pinhole risk (IPC-TM-650 2.5.6.2 tests two
-  plies). A 2 mm sideways keep-off would be the conservative choice; it does not fit.
+- Rule `PoE isolation`: 2 mm from `POE_CABLE` copper to any other net on the same layer; copper on
+  other layers is kept ≥ 1.0 mm sideways by hand ([layout](layout.md#poe-isolation)). The rule is
+  waived between J1's own pins, the jack's pin field; J1's pads are trimmed so pin 5 (chip side) to
+  pin 7 (cable side) is 1.09 mm and pin 10 to the shield 1.97 mm.
+- F.Cu copper of other nets keeps ≥ 1.0 mm sideways from the In1 PoE copper, through the one
+  0.2104 mm 7628 ply between F.Cu and In1. KiCad does not check copper across layers, so this was
+  measured by hand. The tightest point is TP10.1 (CAM_3V3) at exactly 1.000 mm from POE_VA1. A 2 mm
+  sideways keep-off does not fit.
 
 The layout details (lane outline, distances) are in
-[layout](layout.md#ethernet-and-poe-isolation). Because U2's barrier is weaker than the jack, the
-hipot test is split in two (see [First-board checks](#first-board-checks)).
+[layout](layout.md#ethernet-and-poe-isolation).
 
 ### Output and filter
 
@@ -152,10 +147,13 @@ typical with V_OFST 0.
 - No chatter: after a PoE loss `+5V_POE_F` (≈ 670 µF) bleeds through R18 + R19 (147 kΩ, τ ≈ 98 s)
   downward from the trip point and never re-crosses the return threshold.
 - **CP2 from +3V3, not a precision reference** (TI's figure uses a separate reference). It works
-  because the switchover never takes `+3V3` down: at the lowest trip point (3.49 V) `+5V` falls to
-  3.49 V − 1.96 A × 85 mΩ = 3.32 V, minus 0.06 V during the 5 µs switchover (1.96 A × 5 µs /
-  158 µF), ≥ 3.26 V. The TLV62569 in 100 % mode needs VOUT + IOUT × (RDS(on) + DCR) = 3.199 V +
-  0.65 A × 0.115 Ω = 3.27 V (SLVSDG1C p.6 Eq. 1), so `+3V3` sags by ≤ 10 mV and stays ≥ 3.19 V.
+  because the switchover takes `+3V3` down by only ≈ 40 mV: at the lowest trip point (3.49 V) `+5V`
+  at U4 OUT falls to 3.49 V − 1.96 A × 85 mΩ = 3.32 V, minus 0.06 V during the 5 µs switchover
+  (1.96 A × 5 µs / 158 µF), ≥ 3.26 V. The board copper from U4.8 to U3.4 drops another ≈ 27 mV at
+  the 1.96 A peak (U8 1.44 A + U3 0.52 A; the `+5V` copper network solved from `kicad_query
+  copper`), so U3.4 sees ≥ 3.23 V. The TLV62569 in 100 % mode needs VOUT + IOUT × (RDS(on) + DCR) =
+  3.199 V + 0.65 A × 0.115 Ω = 3.27 V (SLVSDG1C p.6 Eq. 1) to hold the set point; below that `+3V3`
+  follows its input, 3.23 V − 0.65 A × 0.115 Ω ≈ 3.16 V, still inside the 3.135–3.465 V envelope.
   If `+3V3` were absent, CP2 < VREF and the TPS2121 falls back to its PR1-vs-VREF row (Table 9-3),
   which still picks IN1 when PoE is present. At power-up CP2 follows `+3V3` through C52; PoE alone
   or PoE + USB select IN1 in both rows, USB alone selects IN2, so there is no glitch.
@@ -252,7 +250,7 @@ C17 6.8 pF C0G across R16 is the feed-forward capacitor TI recommends with R2 = 
 zero sits at 1/(2π × 453k × 6.8 pF) = 51.7 kHz.
 
 This DC set point, 3.199–3.440 V, is the `+3V3` range every calculation in these documents uses
-(the [Rails table](README.md#rails)). During a PoE → USB switchover `+3V3` can sag to ≥ 3.19 V
+(the [Rails table](README.md#rails)). During a PoE → USB switchover `+3V3` can sag to ≥ 3.16 V
 while `+5V` passes the trip point ([Priority and hysteresis](#priority-and-hysteresis)). Where a
 logic-level check uses the generic ± 5 % envelope (3.135–3.465 V) instead, it names it as that.
 
@@ -355,19 +353,16 @@ R56), so nothing draws LED current before firmware runs.
 
 ## Accepted risks
 
-- **Single-ply isolation under the PoE lane.** Other nets' F.Cu copper is ≥ 1.0 mm sideways
-  (TP10.1 exactly 1.000 mm) from the In1 PoE copper through one 0.2104 mm 7628 ply, rather than
-  the 2 mm a conservative design would keep. 30 kV/mm gives 6.3 kV, 2.8 × the test voltage, but
-  the fab gives no figure and a single ply can have pinholes. Accepted in the design review
-  (2026-11-01); the hipot test on the first boards decides.
-- **The PD module limits the assembled hipot.** U2's barrier is rated 1.5 kVrms (≈ 2121 V dc),
-  below J1's 2250 V dc, so a fitted board is tested at 1500 Vrms or ≤ 2121 V dc only; the
-  2250 V dc test is done on the bare board before U2 is soldered.
+- **Some isolation only on the PoE lane.** Other nets' F.Cu copper is ≥ 1.0 mm sideways (TP10.1
+  exactly 1.000 mm) from the In1 PoE copper through one 0.2104 mm 7628 ply, not the 2 mm kept on
+  the same layer. The layout is meant to give some isolation only; no isolation level is rated or
+  tested (user decision 2026-11-02).
 - **DP1435 output tolerance and capacitive load are not specified** (DP1435 p.1–5). The rails
   assume one 5 % regulation term (≤ 5.41 V) and start-up into ≈ 690 µF; both are first-board checks.
 - **CP2 reference from `+3V3`** instead of a precision reference (TI Fig. 10-12): the thresholds
   move with `+3V3` (included in the worst case above), and the switchover cannot pull `+3V3` out of
-  regulation (≥ 3.19 V at the worst corner). Accepted in the schematic review (2026-11-01).
+  regulation for more than the 5 µs switchover (≥ 3.16 V at the worst corner, with the board's
+  `+5V` copper drop). Accepted in the schematic review (2026-11-01).
 - **USB current is limited by firmware, not hardware** (user decision 2026-10-31: LEDs off on USB
   by a firmware rule only). The USB-only estimate, ≈ 0.49 A, is at the 500 mA port limit; a
   firmware fault that enables the LED supply on USB draws more than a port supplies.
@@ -393,33 +388,29 @@ R56), so nothing draws LED current before firmware runs.
 
 ## First-board checks
 
-1. **Hipot, bare board.** Before U2 is soldered: 2250 V dc for 60 s, the four PoE nets
-   (J1.7–J1.10 / U2.1–U2.4 pads) tied together against all other nets tied together. Passing it
-   accepts the single-ply 1.0 mm keep-off.
-2. **Hipot, assembled.** With U2 fitted: 1500 Vrms for 60 s, or ≤ 2121 V dc.
-3. **DP1435 output.** `+5V_POE` (at C11) at no load and at full load, with an 802.3af PSE at 44 V
+1. **DP1435 output.** `+5V_POE` (at C11) at no load and at full load, with an 802.3af PSE at 44 V
    and at 57 V: must stay ≤ 5.5 V.
-4. **PoE start-up.** Scope `+5V_POE` and `+5V_POE_F` at PoE plug-in (cold start): monotonic rise,
+2. **PoE start-up.** Scope `+5V_POE` and `+5V_POE_F` at PoE plug-in (cold start): monotonic rise,
    no hiccup; the module stays up through 0.5 ms / 120 fps LED pulses.
-5. **Switchover thresholds.** With U2 not fitted, a bench supply on `+5V_POE_F` (C15) and USB on
+3. **Switchover thresholds.** With U2 not fitted, a bench supply on `+5V_POE_F` (C15) and USB on
    J2: ramp the supply down and up and read `PWR_SRC`. Expected: to USB at 3.49–4.08 V (3.70 V
    typical), back to PoE at 3.80–4.42 V (4.03 V typical).
-6. **PoE pull with USB attached.** On a laptop port and on a bench port, unplug PoE (a) idle and
+4. **PoE pull with USB attached.** On a laptop port and on a bench port, unplug PoE (a) idle and
    (b) during 0.5 ms / 120 fps LED pulses. Scope VBUS, `+5V`, `+3V3` and `PWR_SRC`: the module must
    not reset and USB must stay enumerated. Record the firmware latency from the `PWR_SRC` falling
    edge to LED_EN, BST_EN and LED_PWR_EN low.
-7. **PoE input power at peak load.** On a 44 V PSE, with the LEDs at 0.5 ms / 120 fps, the camera
+5. **PoE input power at peak load.** On a 44 V PSE, with the LEDs at 0.5 ms / 120 fps, the camera
    streaming and Ethernet up: measure the PD input power and the pair current, and scope the
    `+5V` current through a frame (does the boost recharge at its 1.44 A switch limit?). Limits:
    12.95 W (802.3af PD) and 350 mA per pair (J1). If either is exceeded, firmware limits the LEDs
    on PoE.
-8. **USB-alone current.** Measure the VBUS current on USB alone while streaming 640 × 400 at
+6. **USB-alone current.** Measure the VBUS current on USB alone while streaming 640 × 400 at
    120 fps with Ethernet linked (LEDs off): expected ≈ 0.49 A, must be ≤ 0.5 A. Measure the camera's
    share by replacing R53 with a 0.1 Ω shunt.
-9. **`+3V3` load step.** 0.1 → 0.6 A at 5 V input: settles without ringing, overshoot ≤ 5 %. If
+7. **`+3V3` load step.** 0.1 → 0.6 A at 5 V input: settles without ringing, overshoot ≤ 5 %. If
    not, reduce C18 or remove C17.
-10. **Temperatures.** At PoE with the LEDs at 0.5 ms / 120 fps (and once during `+32V` start-up),
-    a thermal camera on U4 and its IN1/OUT vias, the U8 neck, U3, L1 and U2.
-11. **GND test loops.** Insert one RH-5002 loop into TP2's 1.0 mm plated hole before soldering:
-    the drawing (LCSC C5199802) gives no hole size; if it is loose or tight, change the drill in
-    the footprint.
+8. **Temperatures.** At PoE with the LEDs at 0.5 ms / 120 fps (and once during `+32V` start-up),
+   a thermal camera on U4 and its IN1/OUT vias, the U8 neck, U3, L1 and U2.
+9. **GND test loops.** Insert one RH-5002 loop into TP2's 1.0 mm plated hole before soldering:
+   the drawing (LCSC C5199802) gives no hole size; if it is loose or tight, change the drill in
+   the footprint.

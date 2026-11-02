@@ -31,10 +31,10 @@ not the reflow variant:
 
 **Soldering.** U6 is soldered after JLCPCB's top-side reflow, with an iron, pad by pad, from
 the bottom. No hot air and no second reflow on U6 (user decision 2026-11-01: "Iron only, pad
-by pad"). Reason: about 25 top-side parts lie directly over U6's pads (among them C27, C28,
-C29, C46, C47, C50, U12, R29, R31–R34, R36–R38 and SW1), and heating the whole module area
-from below would reflow them; some even join a U6 pad through a via (R37 to U6.67, C28/C29 to
-U6.74–76).
+by pad"). Reason: about 25 top-side parts lie directly over or beside U6's pads (among them
+C27, C29, C46, C47, C50, U12, R29, R31–R34, R36–R38 and SW1; C28 1.08 mm from U6.76), and
+heating the whole module area from below would reflow them; some even join a U6 pad through a
+via (R37 to U6.67, C28/C29 to U6.74–76).
 
 **Provisional land pattern.** Waveshare publishes the outline and the pad pitch but not the
 pad size. The pad length and width are an estimate; check them against a real module before
@@ -48,12 +48,14 @@ flash and PSRAM, plus 50 mA MIPI PHY and 20 mA USB PHY); rail limits in
 [README](README.md#rails).
 
 **Decoupling.** C29 4.7 µF 25 V X5R 0805 (Samsung CL21A475KAQNNNE) and C28 100 nF 50 V X7R
-0402 (YAGEO CC0402KRX7R9BB104) at the supply pins, on the top side over pins 74–76 with vias
-into them ("as close as possible", ESP32-P4 HDG §1.3.3; no distance given, the project uses
-≤ 3 mm copper edge to edge). These add to the module's own capacitors. Each GND pin (20, 27,
-34, 55, 73) has its own GND via; U6.73 shares one with C29's ground end on purpose, the
-shortest capacitor-to-pin loop. +3V3 tracks are class `PWR_3V3`, 0.65 mm (ESP32-P4 HDG
-§1.4.1: "at least 25 mil").
+0402 (YAGEO CC0402KRX7R9BB104) at the supply pins, on the top side: C29 over pins 74–76, C28 on
+the 0.65 mm +3V3 trunk 1.08 mm north of pin 76, both beside the +3V3 via pair that feeds the
+pins ("as close as possible", ESP32-P4 HDG §1.3.3; no distance given, the project uses ≤ 3 mm
+copper edge to edge). Copper paths, via heights counted, one via each: C28.1 → U6.76 4.32 mm,
+C28.2 → U6.73 4.67 mm, C29.1 → U6.75 3.62 mm, C29.2 → U6.73 4.82 mm. These add to the module's
+own capacitors. Each GND pin (20, 27, 34, 55, 73) has its own GND via; U6.73 shares one with
+C29's and C28's ground ends on purpose, the shortest capacitor-to-pin loop. +3V3 tracks are
+class `PWR_3V3`, 0.65 mm (ESP32-P4 HDG §1.4.1: "at least 25 mil").
 
 **Unused module functions.** MIPI DSI (pins 21–26), USB 2.0 HS (pins 35/36), the module's LDO
 outputs ESP_LDO_VO1–VO4 (pins 51–54; VO3 feeds the MIPI PHY inside the module, see
@@ -88,11 +90,13 @@ debounces it.
 
 R24 100 kΩ from VBUS to GND belongs to the VBUS supply path ([power.md](power.md#usb-vbus)).
 
-**Routing.** The connector-side lines (J2 → U5 → R31/R32) are 80.2 mm (D+, 4 vias) and 73.7 mm
-(D−, 3 vias) long, 0.2 mm wide and mostly uncoupled; the module-side lines 8.6 / 7.0 mm with
-one via each. At full speed (rise time ≥ 4 ns, critical length ≈ 115 mm) the lines are
-electrically short, so impedance and length matching do not matter here; the `USB` net class
-still carries the 90 Ω geometry (0.245 / 0.15 mm). Details: [layout.md](layout.md#mcu-and-usb).
+**Routing.** The connector-side lines (J2 → U5 → R31/R32) are 80.2 mm (D+, 4 vias) and 74.4 mm
+(D−, 4 vias) long, 0.2 mm wide and mostly uncoupled; the module-side lines 8.6 / 7.0 mm with
+one via each. Both lines flow through U5 with no stub (ST DS11265 Fig. 18; TI SLVA680A p.4): in
+at one pin (U5.6 / U5.4), a link under the package, out at the other (U5.1 / U5.3). At full
+speed (rise time ≥ 4 ns, critical length ≈ 115 mm) the lines are electrically short, so
+impedance and length matching do not matter here; the `USB` net class still carries the 90 Ω
+geometry (0.245 / 0.15 mm). Details: [layout.md](layout.md#mcu-and-usb).
 
 ## Reset and boot
 

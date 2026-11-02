@@ -49,8 +49,8 @@ flowchart LR
 | `+5V_POE` | U2 DP1435-5V output | 5.15 V | 4.89–5.41 V (one ±5 % regulation term, DP1435 p.5; no set-point accuracy given) | C11, L1 | Module 2.4 A nominal, 2.6 A max; board peak 1.96 A |
 | `+5V_POE_F` | L1 (π filter) | 5.15 V | 4.85–5.41 V (`+5V_POE` minus ≤ 0.04 V across L1 at 2.6 A) | U4 IN1, C13, C14, C15, R18/R19 | as `+5V` on PoE |
 | `VBUS` | J2 USB-C | 5.0 V | 4.40–5.5 V (USB 2.0 Table 7-7 p.178, §7.2.1.3 p.173: low-power port 4.40 V minimum, a conservative floor for this high-power function, which the spec requires to run fully from 4.75 V, §7.2.1.4 p.174; USB Type-C R2.0 §4.4.2 p.141: up to 5.5 V at light load) | U4 IN2, C16, D2, R24, R27/R28 | ≈ 0.49 A on USB alone (estimate; LEDs off by firmware rule) |
-| `+5V` | U4 TPS2121 OUT (PoE first) | 5.15 V on PoE | 4.35–5.41 V steady (input range minus RON ≤ 85 mΩ); ≥ 3.26 V during a PoE → USB switchover | U3, U8, U11, R63, C10, C12, C20, C22, C23, C34, C44, TP5 | ≈ 0.87 A average nominal, ≤ 1.0 A worst case at the LED design point; 1.96 A peak (U3 0.52 A + boost 1.44 A) while the boost recharges `+32V` at its switch limit (start-up, and 2.4–6.0 ms of every frame); U4 limit ≈ 2.5–3.5 A |
-| `+3V3` | U3 TLV62569 | 3.318 V | 3.199–3.440 V DC set point (VFB 0.588–0.612 V, SLVSDG1C p.4; R16 453k / R17 100k ±1 %), used by every calculation; ≥ 3.19 V during a PoE → USB switchover. Logic-level checks that use the generic 3.3 V ± 5 % envelope (3.135–3.465 V) name it as such | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, R53 → `CAM_3V3`, pull-ups, CP2 divider, TP4 | ≈ 0.65 A (estimate); U3 rated 2 A |
+| `+5V` | U4 TPS2121 OUT (PoE first) | 5.15 V on PoE | 4.35–5.41 V steady (input range minus RON ≤ 85 mΩ); ≥ 3.26 V at U4 OUT and ≥ 3.23 V at U3.4 (≈ 27 mV copper drop at the 1.96 A peak) during a PoE → USB switchover | U3, U8, U11, R63, C10, C12, C20, C22, C23, C34, C44, TP5 | ≈ 0.87 A average nominal, ≤ 1.0 A worst case at the LED design point; 1.96 A peak (U3 0.52 A + boost 1.44 A) while the boost recharges `+32V` at its switch limit (start-up, and 2.4–6.0 ms of every frame); U4 limit ≈ 2.5–3.5 A |
+| `+3V3` | U3 TLV62569 | 3.318 V | 3.199–3.440 V DC set point (VFB 0.588–0.612 V, SLVSDG1C p.4; R16 453k / R17 100k ±1 %), used by every calculation; ≥ 3.16 V during a PoE → USB switchover. Logic-level checks that use the generic 3.3 V ± 5 % envelope (3.135–3.465 V) name it as such | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, R53 → `CAM_3V3`, pull-ups, CP2 divider, TP4 | ≈ 0.65 A (estimate); U3 rated 2 A |
 | `CAM_3V3` | `+3V3` through R53 0 Ω (0805) | 3.318 V | as `+3V3` | J4.15 (camera module), C30, C32, TP10 | ≤ 100 mA (estimate, no module datasheet) |
 | `+5V_BST` | U8 TPS22918 load switch (LED_PWR_EN) | `+5V` | `+5V` minus ≤ 0.11 V (RON ≤ 79 mΩ, TPS22918 p.5, at 1.44 A); switched on only on PoE (firmware rule) | U10 VIN, L3, C36, C38 | ≈ 0.38 A frame average nominal, ≤ 0.51 A worst case at the design point; 1.26 A average, 1.44 A peak while the boost is at its switch current limit (TPS61170 p.5) |
 | `+32V` | U10 TPS61170 boost (BST_EN) | 32.57 V | 31.30–33.93 V (VREF 1.204–1.254 V, R65 255k / R66 10k, TPS61170 SLVS789D p.5); ≤ 0.92 V droop at the end of a 0.5 ms pulse | LED string D4–D15, C43, C45, C46, C47, R65/R66, R71/R72, TP13 | Pulses 0.831 A nominal (0.759–0.915 A), ≤ 0.5 ms at ≤ 120 fps; 50 mA average nominal, 55 mA worst case (pulse × 0.5 ms × 120 Hz + 0.25 mA dividers) against ≥ 77 mA the boost delivers (77–81 mA) |
@@ -99,10 +99,9 @@ Derivations: [power.md](power.md) for the first seven rows, [led.md](led.md#boos
 ## Accepted risks
 
 Power:
-- PoE lane isolation: F.Cu copper ≥ 1.0 mm sideways from the In1 PoE tracks through one
-  0.2104 mm ply (TP10.1 at exactly 1.000 mm); design review 2026-11-01, the hipot test decides —
+- PoE lane: the layout is meant to give some isolation only (2 mm same-layer rule, In1 lane, F.Cu copper ≥ 1.0 mm
+  sideways, TP10.1 at exactly 1.000 mm); no isolation level is rated or tested (user decision 2026-11-02) —
   [power](power.md#poe-input), [layout](layout.md#ethernet-and-poe-isolation).
-- U2's 1.5 kVrms barrier limits the assembled hipot to 1500 Vrms / ≤ 2121 V dc — [power](power.md#accepted-risks).
 - DP1435 output set-point tolerance and maximum capacitive load not specified — [power](power.md#poe-input).
 - Mux reference CP2 taken from `+3V3`, not a precision reference — [power](power.md#power-mux).
 - USB current limited by a firmware rule only (user decision 2026-10-31); USB-alone estimate ≈ 0.49 A at the 500 mA port limit — [power](power.md#usb-vbus).
@@ -119,10 +118,10 @@ Camera:
 - MIPI clock pairs at 2W without a GND guard (user decision 2026-11-01, "Accept 2W, no guard") — [camera](camera.md#csi-2-link).
 - In2 reference neck for the CSI bus 6.19 mm against TI's 6.83 mm, crossed at 45° with 72.5 mil a side (user decision 2026-11-01, "Use 45°, accept 71.7 mil") — [layout](layout.md#camera-and-csi-2).
 - CAM pairs 54–89 mil from the plane edge at the FFC notch (user decision 2026-11-01, "Pull planes to 0.3 mm") — [layout](layout.md#camera-and-csi-2).
-- GND planes solid under the 0 Ω link pads and J4's MIPI pads (design review 2026-11-01) — [layout](layout.md#camera-and-csi-2).
+- GND planes solid under the 0 Ω link pads and J4's MIPI pads except where the MIPI via antipads reach under them (design review 2026-11-01) — [layout](layout.md#camera-and-csi-2).
 
 LED:
-- Q1 1.7–1.8 mm from LEDs D15/D4 and near C46; their temperature rise is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal).
+- Q1 1.7–1.8 mm from LEDs D15/D4, 2.35 mm from the crystal Y1 (rated to 85 °C) and near C46; their temperature rise is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal), [layout](layout.md#thermal).
 - STROBE hardware timeout window 0.525–1.026 ms, set by U9's threshold spread (user decision 2026-11-02, "Accept 0.525–1.026 ms") — [led](led.md#strobe-gating-and-timeout).
 - Boost output capacitance (662 µF) outside the TPS61170's 1–10 µF recommended range — [led](led.md#boost-converter).
 - PHY_RST_N and NTC_SENSE run inside the LED ring, 0.5–1.1 mm from the pulsed ring copper (static/slow lines) — [layout](layout.md#led-driver-and-ring).
@@ -140,6 +139,7 @@ Ethernet:
 - MDI spacing below 3× inside U1's escape and the P/N swap vias without return vias — [ethernet](ethernet.md#magjack-and-mdi).
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
+- REGOUT reaches C6 through 5.34 mm of track and two vias, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
 - J1's lands 0.57–0.72 mm from reflowed parts R46, C3, R8, C1 — [layout](layout.md#assembly).
 
 IMU and board:
@@ -149,36 +149,36 @@ IMU and board:
 ## First-board checks
 
 Power ([power](power.md#first-board-checks)):
-1. Hipot the bare board before U2 is fitted: 2250 V dc, 60 s, PoE nets against everything else; then the assembled board at 1500 Vrms or ≤ 2121 V dc.
-2. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V.
-3. PoE cold start into the π filter: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses.
-4. Mux thresholds with a bench supply on `+5V_POE_F`: to USB at 3.49–4.08 V, back at 3.80–4.42 V.
-5. PoE pull with USB attached, idle and during LED pulses: no reset, USB stays enumerated; firmware latency `PWR_SRC` → LED_EN, BST_EN, LED_PWR_EN low.
-6. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W and ≤ 350 mA per pair, else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
-7. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A; camera share through a shunt in place of R53.
-8. `+3V3` load step 0.1 → 0.6 A: overshoot ≤ 5 %.
-9. Thermal camera on U4 and its vias, the U8 neck, U3, L1, U2 at the LED design point and during `+32V` start-up.
-10. RH-5002 loop fit in the 1.0 mm hole of TP2/TP3/TP7.
+1. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V.
+2. PoE cold start into the π filter: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses.
+3. Mux thresholds with a bench supply on `+5V_POE_F`: to USB at 3.49–4.08 V, back at 3.80–4.42 V.
+4. PoE pull with USB attached, idle and during LED pulses: no reset, USB stays enumerated; firmware latency `PWR_SRC` → LED_EN, BST_EN, LED_PWR_EN low.
+5. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W and ≤ 350 mA per pair, else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
+6. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A; camera share through a shunt in place of R53.
+7. `+3V3` load step 0.1 → 0.6 A: overshoot ≤ 5 %.
+8. Thermal camera on U4 and its vias, the U8 neck, U3, L1, U2 at the LED design point and during `+32V` start-up.
+9. RH-5002 loop fit in the 1.0 mm hole of TP2/TP3/TP7.
 
 LED ([led](led.md#first-board-checks)):
-11. Thermocouples on D15, D4 and C46 at 0.5 ms / 120 fps for 30 min; if an LED is above the derating curve, lower R61 — [led](led.md#thermal).
-12. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14) — [led](led.md#boost-converter).
-13. Boost start-up waveform and a 0 → 0.9 A pulse load step (output capacitance outside TI's range) — [led](led.md#boost-converter).
-14. STROBE timeout: a 0.5 ms pulse passes whole, longer ones are cut by ≈ 1.03 ms — [led](led.md#strobe-gating-and-timeout).
+10. Thermocouples on D15, D4, C46 and Y1's case at 0.5 ms / 120 fps for 30 min; if an LED is above the derating curve, lower R61; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the B.Cu zone's east edge back from x 151.0 — [led](led.md#thermal), [layout](layout.md#thermal).
+11. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14) — [led](led.md#boost-converter).
+12. Boost start-up waveform and a 0 → 0.9 A pulse load step (output capacitance outside TI's range) — [led](led.md#boost-converter).
+13. STROBE timeout: a 0.5 ms pulse passes whole, longer ones are cut by ≈ 1.03 ms — [led](led.md#strobe-gating-and-timeout).
 
 Camera ([camera](camera.md#first-board-checks)):
-15. CSI-2 at full rate (2 lanes, 800 Mbit/s per lane) with a frame-error count (impedance, no CLK guard, solid planes under pads) — [camera](camera.md#csi-2-link).
-16. Camera I/O level, CAM_EN polarity and the XVS divider option on the first module — [camera](camera.md#xvs-level-options), [camera](camera.md#sccb-and-control).
-17. FFC with the supplied cable: pin 1 mapping, insertion depth, loop and stiffener clear of the board edge — [camera](camera.md#ffc-orientation).
+14. CSI-2 at full rate (2 lanes, 800 Mbit/s per lane) with a frame-error count (impedance, no CLK guard, planes under the pads) — [camera](camera.md#csi-2-link).
+15. Camera I/O level, CAM_EN polarity and the XVS divider option on the first module — [camera](camera.md#xvs-level-options), [camera](camera.md#sccb-and-control).
+16. FFC with the supplied cable: pin 1 mapping, insertion depth, loop and stiffener clear of the board edge — [camera](camera.md#ffc-orientation).
 
 MCU ([mcu](mcu.md#first-board-checks)):
-18. D1: each colour's brightness at 3.3 V and the colour byte order — [mcu](mcu.md#status-led).
-19. USB-C: the cables in use (charger, flashing cable) latch and enumerate — [mcu](mcu.md#usb-c).
-20. U6 soldered with an iron only, pad by pad — [mcu](mcu.md#module).
+17. D1: each colour's brightness at 3.3 V and the colour byte order — [mcu](mcu.md#status-led).
+18. USB-C: the cables in use (charger, flashing cable) latch and enumerate — [mcu](mcu.md#usb-c).
+19. U6 soldered with an iron only, pad by pad — [mcu](mcu.md#module).
 
 Ethernet ([ethernet](ethernet.md#first-board-checks)):
-21. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8, C1; inspect them after — [layout](layout.md#assembly).
-22. 100 Mbit/s link through auto-MDIX and an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#magjack-and-mdi), [ethernet](ethernet.md#rmii).
+20. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8, C1; inspect them after — [layout](layout.md#assembly).
+21. 100 Mbit/s link through auto-MDIX and an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#magjack-and-mdi), [ethernet](ethernet.md#rmii).
+22. REGOUT ripple at C6 with the link at 100 Mbit/s: inside 1.07–1.18 V (the REGOUT path to C6 has two vias) — [ethernet](ethernet.md#regout-and-iset).
 
 IMU ([imu](imu.md#first-board-checks)):
 23. Accelerometer I²C and INT1 next to the running buck — [imu](imu.md#i2c-bus).

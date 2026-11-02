@@ -64,12 +64,21 @@ Placement:
   and here it isn't possible. The crystal relies on distance and the In1/In2 GND planes. The nearest
   other copper is a +32V track 0.45 mm from C2's X1 pad, and the LED switch Q1's tab is 2.35 mm from
   Y1 ([layout](layout.md#ethernet-and-poe-isolation)).
+- MDC, MDIO and R14's +3V3 feed cross under Y1 and its X1/X2 traces on B.Cu, with the In1 and In2 GND
+  planes between. MDC runs ≈ 0.85 mm parallel to the X2 diagonal, against §6.1 p.56 ("Avoid signals path
+  parallel to clock signals path … such as MDC and X1"). There is no other way: U1's management pins
+  face east, U6 lies south-west, and the RMII fan-out, MDI, Q1's drain zone and the board edge close
+  every other B.Cu path. ETH_LED_G crosses only the X1 link C2–Y1, once, at right angles
+  ([layout](layout.md#ethernet-and-poe-isolation)).
 
 ### REGOUT and ISET
 
 - **REGOUT** (pin 28) is the PHY's internal 1.1 V regulator output, 1.07–1.18 V (p.57). C4 (10 µF X5R
   25 V) and C6 (100 nF) decouple it, as the datasheet asks ("A 10uF and 0.1uF should be connected",
-  p.18).
+  p.18). Pin 28 lies between the two MDI pairs, so its track leaves north and reaches C6 over B.Cu:
+  U1.28 → C6.1 is 5.34 mm of track with two vias (8.44 mm with the via heights), although C6 is
+  2.32 mm from the pin edge to edge ([layout](layout.md#phy-side-decoupling)). A first-board check
+  scopes REGOUT at C6.
 - **ISET** (pin 25) sets the transmit amplitude. R6 is 6.19 kΩ 1 % to GND, the datasheet value (p.53).
 - Both pins sit 0.2 mm from the MDI pads at the 0.4 mm pitch, so their tracks leave between the MDI
   pairs (see [MagJack and MDI](#magjack-and-mdi)).
@@ -98,17 +107,18 @@ J1 is a HanRun HR871150C (LCSC C19724786): an RJ45 with magnetics (1CT:1CT), PoE
 brought out, Bob-Smith termination, two LEDs and a shield. It is a through-hole part on the bottom
 side at the east edge, soldered by hand ([layout](layout.md#assembly)).
 
-- **Isolation.** HanRun rates the jack at 2250 V dc from the cable side to the chip side (p.1).
+- **J1 pin field.** HanRun rates the jack at 2250 V dc from the cable side to the chip side (p.1),
+  which is why the 2 mm "PoE isolation" rule exempts pad pairs inside J1
+  ([layout](layout.md#ethernet-and-poe-isolation)).
   - The J1 lands are trimmed: signal pads Ø1.45 mm on Ø0.89 mm holes, shield pads Ø2.35 mm on Ø1.63
     mm holes.
   - That gives 1.09 mm from pin 5 (chip side) to pin 7 (cable side) and 1.97 mm from pin 10 to the
     shield.
-  - The 2 mm "PoE isolation" rule exempts pad pairs inside J1 and relies on HanRun's rating
-    ([layout](layout.md#ethernet-and-poe-isolation)).
 - **PoE.** J1.7–J1.10 (VC1+, VC1−, VC2+, VC2−) carry the cable voltage from both pair sets (mode A
   and mode B) to U2 pins 1–4 (POE_VA1, POE_VA2, POE_VB1, POE_VB2). These four nets are class POE_CABLE:
-  0.4 mm tracks for the jack's 350 mA centre-tap rating (p.1), in an isolated lane on In1. The PD side,
-  the 2 mm isolation and the hipot test are in [power](power.md#poe-input).
+  0.4 mm tracks for the jack's 350 mA centre-tap rating (p.1), in a lane of their own on In1. The PD
+  side and the board's isolation (some isolation only, no level rated or tested) are in
+  [power](power.md#poe-input).
 - **Chip-side centre tap.** J1.3 (ETH_CT) goes only to C3, 100 nF to GND. The IP101G has internal
   terminations and wants no bias on the centre tap ("Do not connect to any power", p.7), and it asks
   for decoupling there (p.56).
@@ -231,15 +241,19 @@ Measured pad to pad, with via heights counted:
 |---|---|---|
 | R13.2 → U1.10 (PHY) | 9.97 mm | 2 |
 | R13.2 → U6.68 (MAC) | 46.42 mm | 3 |
-| Difference | 36.45 mm | limit 60 mm |
+| Difference | 36.45 mm | note only |
 
 The datasheet asks for equal clock lengths to the PHY and the MAC (§6.1, p.56) but gives no
-tolerance. The limit comes from signal integrity, not from timing:
+tolerance, so the difference is kept as a note. The limit comes from signal integrity, not from
+timing, and it is on the MAC branch:
 
-- **Near-end ledge.** U1.10 sits near the source end of a source-terminated line. Its edge completes
-  only when the reflection returns from U6.68, 2 × v × ΔL later. No ledge forms while that round trip
-  is no longer than the fastest RMII edge, 1 ns (RMII 1.2 §7.4.3): ΔL ≤ 1 ns/(2 × 7.1 ps/mm) = 70 mm.
-  10 mm is reserved for the unpublished trace inside the P4 module, which leaves 60 mm.
+- **Near-end ledge.** U1.10 sits near the source end of a source-terminated line. The incident edge
+  reaches it after t_PHY, and the reflection from U6.68 after 2 × t_MAC + t_PHY, so its edge sits on
+  a ledge for 2 × v × L_MAC, with L_MAC measured from the star at R13.2. No ledge forms while that
+  round trip is no longer than the fastest RMII edge, 1 ns (RMII 1.2 §7.4.3): L_MAC ≤ 1 ns/(2 ×
+  7.1 ps/mm) = 70 mm. 10 mm is reserved for the unpublished trace inside the P4 module, which leaves
+  R13.2 → U6.68 ≤ 60 mm (`paths` "REF_CLK MAC branch"). Routed: 46.42 mm, a round trip of 2 ×
+  56.42 mm × 7.1 ps/mm = 0.80 ns with the module's 10 mm.
 - **Timing.** RX/TX timing alone tolerates about ±420 mm of branch difference (next section).
 
 The clock is kept off the data lines (§6.1, "avoid signals path parallel to clock signals path"): it
@@ -306,7 +320,8 @@ U1.10, the remedies, in order:
   MDIO. MDC is always driven by the MAC and has no pull.
 - MDC must stay at or below 3.33 MHz: period ≥ 300 ns, high and low ≥ 150 ns (Table 20, p.62). That is a
   firmware setting ([firmware-rules](firmware-rules.md#rules)).
-- MDIO is 61.7 mm long with 6 vias, and MDC 35.6 mm with 3: slow signals, length doesn't matter.
+- MDIO is 61.7 mm long with 6 vias, and MDC 35.6 mm with 3: slow signals, length doesn't matter. Both
+  cross under the crystal on B.Cu ([Crystal](#crystal)).
 
 ## Straps
 
@@ -316,7 +331,7 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   datasheet's latch resistor (Table 13, p.58).
 - VIH ≥ 0.8 × VDDIO = 2.51 V at the bottom of the +3V3 ±5 % envelope (3.135 V) (p.57). These strap
   checks use the generic ±5 % envelope, 3.135–3.465 V, which is wider than the DC set point
-  3.199–3.440 V and the ≥ 3.19 V switchover minimum ([Rails](README.md#rails)).
+  3.199–3.440 V and the ≥ 3.16 V switchover minimum ([Rails](README.md#rails)).
 - LED0 and LED3 are Hi-Z during reset (p.18), so only the strap resistors and the LED paths set
   them. Both pull the same way as their strap.
 
@@ -340,8 +355,8 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 - **IP101GRI without a maker MSL or reflow statement** (JLCPCB lists MSL 3 from distributor data).
   User decision, 2026-10-31: "Keep IP101GRI, accept risk".
 - **RMII TX timing unproven.** The P4 EMAC output delay is unpublished, so the 1.0 ns board budget is a
-  heuristic. The 50M_CLKO edge rate is unknown too, so the 36.45 mm REF_CLK branch difference rests on
-  the 1 ns fastest-edge assumption. See the open item under [RMII](#rmii).
+  heuristic. The 50M_CLKO edge rate is unknown too, so the 46.42 mm REF_CLK MAC branch rests on the
+  1 ns fastest-edge assumption. See the open item under [RMII](#rmii).
 - **MDI relies on auto-MDIX.** The pairs are crossed at J1, so a firmware that disables auto-MDIX
   without setting FORCE_MDIX gets no link.
 - **MDI spacing inside U1's escape** is 0.2 mm instead of the 0.55 mm "three times space", forced by
@@ -352,6 +367,8 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 - **Crystal without a guard trace**, 0.45 mm from a +32V track and 2.35 mm from Q1's tab. Q1's tab may
   reach about 108 °C at the worst LED duty (30 °C ambient, [led](led.md#thermal)), and Y1's ±20 ppm
   holds only to 85 °C. The IP101GRI is rated to 85 °C ambient (p.57).
+- **MDC and MDIO under the crystal** on B.Cu, behind both GND planes; MDC ≈ 0.85 mm parallel to X2
+  ([Crystal](#crystal)).
 - **PHY_RST_N inside the LED ring**, 0.5–1.1 mm from the ring pads over part of its 75 mm.
 - **J1 lands 0.565–0.717 mm from reflowed parts** (R46, C3, R8, C1), to be checked in the
   hand-soldering trial.
@@ -374,8 +391,13 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 6. **LED interference.** Run the LEDs at 0.5 ms, 120 fps. Scope TP1: PHY_RST_N stays above 2.0 V
    (0.6 × VDDIO). Watch the link: it never drops while the LEDs pulse.
 7. **Temperatures.** In the LED thermal test (0.5 ms, 120 fps, 30 min, 30 °C ambient), put
-   thermocouples on Y1 and U1 too. Accept if Y1 stays ≤ 85 °C and REF_CLK stays within ± 50 ppm.
+   thermocouples on Y1 and U1 too. Accept if Y1 stays ≤ 80 °C (5 °C under its 85 °C rating, Epson
+   TSX-3225 p.1) and REF_CLK stays within ± 50 ppm; if not, lower the LED current or duty, or pull
+   the B.Cu zone "Q1 drain B.Cu"'s east edge back from x 151.0
+   ([layout](layout.md#thermal)).
 8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect R46, C3, R8 and C1 for
    bridges and shifted parts.
-9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source. The PoE isolation hipot
-   is in [power](power.md#first-board-checks).
+9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source.
+10. **REGOUT.** With the link up at 100 Mbit/s and traffic running, scope REGOUT at C6 (short ground
+    spring to C6.2): it must stay inside 1.07–1.18 V, ripple included (IP101G DS p.57). The path from
+    U1.28 to C6 has two vias ([REGOUT and ISET](#regout-and-iset)).

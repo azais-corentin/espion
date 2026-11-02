@@ -37,7 +37,7 @@
         "hand": {
           "U6": "Waveshare ESP32-P4-Core module: hand-solder footprint, no LCSC part (user decision 2026-10-31); iron only, pad by pad (docs/hardware/layout.md, Assembly; docs/hardware/mcu.md, Module)",
           "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31); lands 0.57–0.72 mm from reflowed R46, C3, R8, C1: conical tip ≤ 1 mm, Kapton over those four, inspect them after (docs/hardware/layout.md, Assembly)",
-          "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31), after the bare-board hipot (docs/hardware/layout.md, Assembly)",
+          "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
           "TP2": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
           "TP3": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
           "TP7": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)"
@@ -142,7 +142,7 @@
           {"name": "RMII data, long segments", "nets": ["/Ethernet/RMII_RXD0", "/Ethernet/RMII_RXD1", "/Ethernet/RMII_CRS_DV", "/Ethernet/RMII_TXD0", "/Ethernet/RMII_TXD1", "/Ethernet/RMII_TX_EN"], "maxLength": 80, "maxSpread": 80, "why": "docs/hardware/layout.md, Ethernet and PoE isolation (derivation: docs/hardware/ethernet.md, Timing): the ESP32-P4 publishes no RMII output delay (IP101G DS p.61 and RMII 1.2 §7.4 give the rest), so the board takes a budget of 1.0 ns (5 % of the 20 ns period, a heuristic) for the MAC clock branch plus one TX line: (60 + 80) mm × 7.1 ps/mm = 0.99 ns, so ≤ 80 mm per line; no spread limit is needed, 80 mm fills the required field"}
         ],
         "paths": [
-          {"name": "REF_CLK branches", "from": "R13.2", "to": ["U1.10", "U6.68"], "maxDiff": 60, "why": "docs/hardware/layout.md, Ethernet and PoE isolation (derivation: docs/hardware/ethernet.md, REF_CLK branches): from the star at R13 pin 2, no ledge forms at U1 pin 10 (near end) while the round trip to U6 pin 68 is no longer than the fastest RMII edge (1 ns, RMII 1.2 §7.4.3): ΔL ≤ 1 ns / (2 × 7.1 ps/mm) = 70 mm, minus 10 mm reserved for the module's internal trace = 60 mm. RX/TX timing allows ≈ ±420 mm (IP101G p.61, RMII 1.2 §7.4). IP101G §6.1 'equal' is met by this tolerance"},
+          {"name": "REF_CLK MAC branch", "from": "R13.2", "to": ["U6.68"], "maxLength": 60, "why": "docs/hardware/layout.md, Ethernet and PoE isolation (derivation: docs/hardware/ethernet.md, REF_CLK branches): from the star at R13 pin 2, the edge at U1 pin 10 (near end) sits on a ledge until the reflection from U6 pin 68 returns, 2 × v × L_MAC later; no ledge forms while that round trip is no longer than the fastest RMII edge (1 ns, RMII 1.2 §7.4.3): L_MAC ≤ 1 ns / (2 × 7.1 ps/mm) = 70 mm, minus 10 mm reserved for the module's internal trace = 60 mm. RX/TX timing allows ≈ ±420 mm of branch difference (IP101G p.61, RMII 1.2 §7.4); the PHY/MAC difference (IP101G §6.1 'equal', no tolerance) is a note only"},
           {"name": "BOOT stub", "from": "R36.1", "to": ["R39.1", "R38.2"], "maxLength": 3, "why": "docs/hardware/layout.md, MCU and USB: the BOOT strap R39 and pull-up R38 sit on the 50 MHz RMII_TXD1_MCU line, so their stubs stay ≤ 3 mm (≈ 17 ps, negligible against the edge time; project heuristic)"}
         ],
         "viaParity": [

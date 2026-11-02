@@ -43,8 +43,10 @@ The board has no separate VDDIO: the package has no such pin.
 
 **Decoupling.** C50 100 nF 50 V X7R 0402 (YAGEO CC0402KRX7R9BB104) at VDD, as Fig. 8 p.30
 draws it, 1.02 mm from U12's pads. No GND via fits within 1 mm of C50's ground end (U6's
-pads lie under it on the bottom and the +32V copper runs round it); it reaches a GND via
-2.1 mm away and U12 pin 4. Harmless for a 110 µA sensor; accepted in design review (2026-11-01).
+pads lie under it on the bottom and the +32V copper runs round it). Its loop to U12's GND pin 9 is
+C50.2 → 2.1 mm of track → GND via (134.69, 159.18) → In1 → GND via (138.1, 156.2) → U12.9, 9.6 mm
+with 2 vias; U12.4, which joins C50.2, is an NC pin and gives no return. Harmless for a 110 µA
+sensor (p.7); accepted in design review (2026-11-01).
 
 **INT1.** Push-pull, active low and non-latched after reset (registers 0x20 = 0x00 and
 0x21 = 0x00, p.24), so the line needs no pull-up. It runs 5.5 mm, one via under U12's body,
@@ -110,7 +112,7 @@ a STOP and soft-resets the sensor (register 0x00, p.20) at init
   can't move: its +3V3 pad must keep 0.4 mm from the +32V copper beside it (IPC-2221A, the
   board's LED_PWR spacing rule), and a turned R74 hits C50's GND via or L2. Accepted in design
   review (2026-11-01). C50 (1.02 mm) and R37 (1.33 mm) meet the 1.0 mm; R73 is 3.2 mm away.
-- **C50's ground path** runs 2.1 mm to its via instead of ≤ 1 mm (accepted in design review, 2026-11-01).
+- **C50's ground path** runs 2.1 mm to its via instead of ≤ 1 mm, and its loop to U12.9 is 9.6 mm with 2 vias (accepted in design review, 2026-11-01).
 - **Heat from U6 soldering.** U12 and C50 lie over U6's pads, which are iron-soldered from the
   bottom after reflow ([mcu.md](mcu.md#module)).
 - **Next to a tall capacitor.** U12's courtyard is 1.10 mm from C47 (10.8 mm tall): possible

@@ -56,7 +56,7 @@ The LEDs run only on PoE (firmware rule), so the boost input range is the one on
 | `+5V` on PoE | 4.68–5.41 V | `+5V_POE_F` 4.85–5.41 V ([Rails](README.md#rails)) minus the TPS2121 drop, RON ≤ 85 mΩ × 1.96 A board peak = 0.17 V |
 | `+5V_BST` | 4.57–5.41 V | `+5V` minus U8's drop, RON ≤ 79 mΩ (SLVSD76C p.5) × 1.44 A = 0.11 V |
 
-During a PoE → USB switchover `+5V` dips to ≥ 3.26 V for a moment ([power mux](power.md#power-mux)).
+During a PoE → USB switchover `+5V` dips to ≥ 3.26 V at U4 OUT (≈ 19 mV less at U8.1) for a moment ([power mux](power.md#power-mux)).
 The boost loses regulation then, and firmware shuts the LEDs down on the same `PWR_SRC` edge.
 
 ### Enable order
@@ -577,7 +577,7 @@ Edge-to-edge distances from Q1's tab:
 | C2 (crystal load cap) | 1.42 mm | – |
 | D15 (pad 1) | 1.74 mm | LED heating |
 | D4 (pad 2) | 1.79 mm | LED heating |
-| Y1 (25 MHz crystal) | 2.35 mm | ±20 ppm specified only over −40…+85 °C (Epson TSX-3225 p.1) |
+| Y1 (25 MHz crystal) | 2.35 mm (1.35 mm from the B.Cu zone) | Rated −40…+85 °C; ±20 ppm specified only over that range (Epson TSX-3225 p.1) |
 | C46 | 7.27 mm | Rated 105 °C |
 | C47 | 22.3 mm | Rated 105 °C |
 
@@ -635,14 +635,15 @@ It reads the drain copper, not an LED case. The first boards give the relation b
 
 1. **Thermal test** (user decision 2026-11-01). Run the LEDs at the worst duty, 0.5 ms pulses at
    120 fps, for 30 min, on PoE. Record the ambient temperature.
-   - **Thermocouples:** on the cases of D15 and D4 (nearest Q1) and on C46. Add Q1's tab, an LED
-     far from Q1 (D9 or D10) to separate self-heating from Q1 heat, and Y1.
+   - **Thermocouples:** on the cases of D15 and D4 (nearest Q1), on C46 and on Y1's case. Add Q1's
+     tab and an LED far from Q1 (D9 or D10) to separate self-heating from Q1 heat.
    - **NTC:** log `NTC_SENSE` at the same time, to calibrate it against the tab.
    - **LED limit:** take the hottest LED case temperature T as the curve's temperature, which is
      conservative. The worst-case current must stay ≤ 1000 mA − 13.3 mA/°C × (T − 25 °C). If it
      doesn't, lower R61 (table below).
-   - **Other parts:** C46 must stay well under 105 °C. Y1 above 85 °C means checking the IP101G
-     REF_CLK tolerance against the crystal's stability above its rated range, or moving copper.
+   - **Other parts:** C46 must stay well under 105 °C. Y1 must stay ≤ 80 °C (5 °C under its 85 °C
+     rating); if it doesn't, lower the LED current (R61) or the duty, or pull the B.Cu zone "Q1 drain
+     B.Cu"'s east edge back from x 151.0 ([layout](layout.md#thermal)).
 2. **LED current.** Measure the voltage across R69 at TP14 (0.1 V/A) during a pulse: expect
    ≈ 83 mV (0.831 A) at nominal rails, flat over 0.5 ms. Measure it on the unit with the highest
    +3V3 together with the thermal test, because a ground offset between R69.2 and U11's reference

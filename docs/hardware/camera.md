@@ -167,9 +167,11 @@ Each lane passes through two 0 Ω 0402 links (UNI-ROYAL 0402WGF0000TCE, LCSC C17
   to U6). Each half has its own length and skew check.
 
 The links sit at the J4 end in one row at y 112.25, pitch 1.04 mm, in U6 order from west to east:
-R51, R47, R45, R49, R50, R46. The planes stay solid under the link pads and J4's MIPI pads. The
-excess pad capacitance is estimated at about 0.07 pF per link pad and 0.2 pF per J4 pad (design
-review estimate, not measured). The first-board full-rate test covers it.
+R51, R47, R45, R49, R50, R46. The planes stay solid under the link pads and J4's MIPI pads, except
+where the MIPI via antipads reach under them: ≈ 0.27 mm off each south link pad and ≈ 0.06 mm off J4's
+pads 2, 3, 5 and 6 ([layout](layout.md#csi-bus-and-the-plane-neck)). The excess pad capacitance is
+estimated at about 0.04 pF per south link pad, 0.07 pF per north link pad and just under 0.2 pF per
+J4 pad (design review estimate, not measured). The first-board full-rate test covers it.
 
 ### Geometry and impedance
 
@@ -255,8 +257,8 @@ halves have 2 vias per line and the CSI halves 1.
   the pad. TP10 ("CAM_3V3") is the test pad.
 - **Load:** the OV9281's typical supply currents are IDD-A 24 mA, IDD-IO 2.5 mA and IDD-D 52 mA
   (datasheet Table 8-3), about 80 mA before the module's regulators. The budget takes 50–100 mA.
-- **Supply drop:** the +3V3 feed to this corner is about 0.125 Ω, which drops about 19 mV at the
-  150 mA of the north-west parts. See [Rails](README.md#rails).
+- **Supply drop:** the +3V3 feed to this corner is about 0.14 Ω (L2.2 to R53.1), which drops under
+  19 mV at R53.1 with the camera's 100 mA and the other north-west loads. See [Rails](README.md#rails).
 - There is no camera power switch. CAM_EN is the only control.
 
 ## XVS level options
@@ -272,7 +274,7 @@ Inputs to every option:
 
 - P4 output high: near its rail at the ≤ 1.1 mA these dividers draw, taken over the generic ±5 %
   envelope of +3V3, 3.135–3.465 V. That envelope is wider than the DC set point 3.199–3.440 V and
-  the ≥ 3.19 V switchover minimum ([Rails](README.md#rails)), so the results hold in both. The P4
+  the ≥ 3.16 V switchover minimum ([Rails](README.md#rails)), so the results hold in both. The P4
   guarantees only VOH ≥ 0.8 × VDD = 2.508 V (ESP32-P4 datasheet v0.7 p.89), so that floor is checked
   too.
 - Sensor input high: VIH = 1.26 V at DOVDD 1.8 V (OV9281 Table 8-3), that is 0.7 × DOVDD, taken here to
@@ -385,12 +387,12 @@ triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules)).
 - **Reference-plane edges near the CSI and CAM pairs**, under the 90 mil of TI SPRAAR7J (p.9):
   - The CSI bus crosses the In2 neck between the lens cutout and J1 at 1.84 mm (72.5 mil) a side, on a
     45° crossing (user decision, 2026-11-01: "Use 45°, accept 71.7 mil").
-  - At the FFC notch, CAM_D1_P runs 1.375 mm (54 mil) from the In1/In2 plane edge (user decision,
-    2026-11-01: "Pull planes to 0.3 mm").
+  - At the FFC notch, CAM_D1_P runs 1.375 mm (54 mil) from the In1/In2 plane edge over ≈ 6.3 mm
+    (user decision, 2026-11-01: "Pull planes to 0.3 mm").
 
   See [layout](layout.md#accepted-deviations).
-- **Solid planes under the link and J4 pads** (about 0.07–0.2 pF per pad, estimated). Accepted in
-  design review, 2026-11-01.
+- **Planes under the link and J4 pads**, solid except where the via antipads reach (about
+  0.04–0.2 pF per pad, estimated). Accepted in design review, 2026-11-01.
 - **FFC loop may stick out about 1.9 mm** past the north board edge, depending on the cable's
   stiffener and J4's insertion depth (unknown).
 - **Module-internal CSI lengths unknown.** That share of the lane skew can't be measured on this board.
