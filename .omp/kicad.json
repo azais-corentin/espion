@@ -36,7 +36,7 @@
       "assembly": {
         "hand": {
           "U6": "Waveshare ESP32-P4-Core module: hand-solder footprint, no LCSC part (user decision 2026-10-31)",
-          "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31)",
+          "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31); lands 0.57–0.72 mm from reflowed R46, C3, R8, C1: conical tip ≤ 1 mm, Kapton over those four, inspect them after (audit/requirements.md D62)",
           "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31)",
           "TP2": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31)",
           "TP3": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31)",
