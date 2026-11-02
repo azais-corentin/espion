@@ -65,3 +65,8 @@
 # between pins 5 and the exposed pad, 0.25 mm, as the pad pairs exempted above), and ISNS_K, the Kelvin tap of ISNS
 # through net tie NT1 (same node, <= 0.1 V).
 (rule "LED_PWR pad spacing (other pads)" (condition "A.Type == 'Pad' && A.NetClass != 'LED_PWR' && A.NetName != '/LED driver/BST_SW' && A.NetClass != 'POE_CABLE' && A.NetClass != 'MDI' && (B.NetClass == 'LED_PWR' || B.NetName == '/LED driver/BST_SW') && !(A.memberOfFootprint('U10') && B.intersectsCourtyard('U10')) && !(A.NetName == '/LED driver/ISNS_K' && B.NetName == '/LED driver/ISNS')") (constraint clearance (min 0.4mm)))
+
+# JLCPCB Legend capabilities (https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-10-31) set line width >= 0.15 mm,
+# text height >= 1.0 mm and pad to silkscreen 0.15 mm, but no silkscreen-to-silkscreen spacing. min_silk_clearance
+# (0.15 mm) stays for silk against pads and mask openings; between two silk items the legend may touch.
+(rule "Silk to silk" (condition "A.Type != 'Pad' && B.Type != 'Pad' && A.Layer == B.Layer && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint silk_clearance (min 0mm)))
