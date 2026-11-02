@@ -42678,6 +42678,17 @@
 			)
 		)
 	)
+	(gr_text "CAM_3V3"
+		(at 117.9 115.825 0)
+		(layer "F.SilkS")
+		(uuid "d74d4bb4-6c8f-4def-8db7-58f3a16cabbf")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
 	(gr_text "CONTACTS DOWN"
 		(at 129.7 114.3 0)
 		(layer "F.SilkS")
@@ -42722,6 +42733,28 @@
 			)
 		)
 	)
+	(gr_text "ISNS"
+		(at 147.435 147.5 0)
+		(layer "F.SilkS")
+		(uuid "6240bd49-ef66-4fa7-bc0d-dc18c38cd081")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "GND"
+		(at 160.5 152.725 0)
+		(layer "F.SilkS")
+		(uuid "f887ea8c-93cd-432f-af57-cbd61619c0b0")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
 	(gr_text "POE 57V"
 		(at 107 115.47 90)
 		(layer "F.SilkS")
@@ -42748,6 +42781,39 @@
 		(at 124.2 153.2 90)
 		(layer "F.SilkS")
 		(uuid "dcc1b30a-0f96-4df8-9d0f-8a01e2b81af7")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "+5V"
+		(at 127.875 147.25 90)
+		(layer "F.SilkS")
+		(uuid "f4e9332d-2c44-4418-b55c-591f3dcc53e6")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "LED_ON"
+		(at 142.665 149.675 90)
+		(layer "F.SilkS")
+		(uuid "fe3fb439-947e-49f8-9f86-6aa1209f7911")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "PPS"
+		(at 157.325 150.5 90)
+		(layer "F.SilkS")
+		(uuid "ca396358-99fe-4c50-b0d4-3f15caba2991")
 		(effects
 			(font
 				(size 1 1)
