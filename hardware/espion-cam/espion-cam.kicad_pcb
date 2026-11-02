@@ -34212,7 +34212,7 @@
 	(footprint "Capacitor_SMD:C_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "da5153e8-e07a-4cef-b653-6b55071660e5")
-		(at 161.25 127.07 90)
+		(at 161.4 127.07 90)
 		(descr "Capacitor SMD 0402 (1005 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C6"
@@ -42865,6 +42865,17 @@
 			)
 		)
 	)
+	(gr_text "STB"
+		(at 155.5 101.7 90)
+		(layer "F.SilkS")
+		(uuid "67ba27a4-79fa-4042-b5f0-40efba3f50fd")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
 	(gr_text "PRST"
 		(at 155.6 122.9 90)
 		(layer "F.SilkS")
@@ -51420,14 +51431,6 @@
 		(uuid "effe30f5-17c6-47ee-86cc-7b9d72455cb1")
 	)
 	(segment
-		(start 160.4 128)
-		(end 160.4 126.44)
-		(width 0.2)
-		(layer "F.Cu")
-		(net "Net-(U1-ISET)")
-		(uuid "1aef7264-0ba1-4ab6-9da7-00da098a9d47")
-	)
-	(segment
 		(start 160 128.4)
 		(end 160.4 128)
 		(width 0.2)
@@ -51436,12 +51439,20 @@
 		(uuid "3ca4726a-c6e4-4388-9f95-1bf5f882c182")
 	)
 	(segment
-		(start 160.4 126.44)
-		(end 161.2 125.64)
+		(start 160.4 128)
+		(end 160.4 126.64)
 		(width 0.2)
 		(layer "F.Cu")
 		(net "Net-(U1-ISET)")
-		(uuid "79dd5bb7-9c72-4d5b-a47a-6b97826a80c2")
+		(uuid "3cda7945-c693-4166-a060-38201bf4b52e")
+	)
+	(segment
+		(start 160.4 126.64)
+		(end 161.4 125.64)
+		(width 0.2)
+		(layer "F.Cu")
+		(net "Net-(U1-ISET)")
+		(uuid "861cbe0a-78bf-4332-a5f2-d4ce18e3595e")
 	)
 	(segment
 		(start 160 128.85)
