@@ -63,10 +63,10 @@
 # Mirror of 'LED_PWR pad spacing' (review step 6 pcb-led ISO-1): an exposed pad of any other net keeps 0.4 mm to LED_PWR / BST_SW copper,
 # tracks and vias included (IPC-2221A Table 6-1, 31-50 V row, A6 external component terminations uncoated, 0.4 mm;
 # audit/requirements.md D5/D44/D61). The first rule only fires when the exposed pad is the LED_PWR item.
-# Exempt: U10's own pads against the BST_SW copper at U10 (TI WSON land pattern, 0.65 mm pitch: pin 4's trace leaves
-# between pins 5 and the exposed pad, 0.25 mm, as the pad pairs exempted above), and ISNS_K, the Kelvin tap of ISNS
-# through net tie NT1 (same node, <= 0.1 V).
-(rule "LED_PWR pad spacing (other pads)" (condition "A.Type == 'Pad' && A.NetClass != 'LED_PWR' && A.NetName != '/LED driver/BST_SW' && A.NetClass != 'POE_CABLE' && A.NetClass != 'MDI' && (B.NetClass == 'LED_PWR' || B.NetName == '/LED driver/BST_SW') && !(A.memberOfFootprint('U10') && B.intersectsCourtyard('U10')) && !(A.NetName == '/LED driver/ISNS_K' && B.NetName == '/LED driver/ISNS')") (constraint clearance (min 0.4mm)))
+# Exempt: U10's own pads against BST_SW copper inside U10's courtyard: pin 4's 0.3 mm exit (x 116.9-117.75) keeps TI's
+# DRV0006A land spacing, 0.35 mm to pin 5 and 0.25 mm to the exposed pad (SLVS789D p.35), as the pad pairs exempted above;
+# and ISNS_K, the Kelvin tap of ISNS through net tie NT1 (same node, <= 0.1 V).
+(rule "LED_PWR pad spacing (other pads)" (condition "A.Type == 'Pad' && A.NetClass != 'LED_PWR' && A.NetName != '/LED driver/BST_SW' && A.NetClass != 'POE_CABLE' && A.NetClass != 'MDI' && (B.NetClass == 'LED_PWR' || B.NetName == '/LED driver/BST_SW') && !(A.memberOfFootprint('U10') && B.NetName == '/LED driver/BST_SW' && B.intersectsCourtyard('U10')) && !(A.NetName == '/LED driver/ISNS_K' && B.NetName == '/LED driver/ISNS')") (constraint clearance (min 0.4mm)))
 
 # JLCPCB Legend capabilities (https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-10-31) set line width >= 0.15 mm,
 # text height >= 1.0 mm and pad to silkscreen 0.15 mm, but no silkscreen-to-silkscreen spacing. min_silk_clearance

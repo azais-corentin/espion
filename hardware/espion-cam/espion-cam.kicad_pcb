@@ -48998,6 +48998,14 @@
 		(uuid "a7987c5f-cd3c-40c4-85c8-cbe5cc60b350")
 	)
 	(segment
+		(start 116.9 151.15)
+		(end 117.75 151.15)
+		(width 0.3)
+		(layer "F.Cu")
+		(net "/LED driver/BST_SW")
+		(uuid "102dd20b-a231-4d6a-8108-a5fb0b1865f3")
+	)
+	(segment
 		(start 119 153.8)
 		(end 119 151.9)
 		(width 1)
@@ -49006,12 +49014,12 @@
 		(uuid "58e30fee-cffd-47ef-bac5-9be4bb4ec61a")
 	)
 	(segment
-		(start 116.975 151.15)
+		(start 117.75 151.15)
 		(end 118.875 151.15)
 		(width 0.5)
 		(layer "F.Cu")
 		(net "/LED driver/BST_SW")
-		(uuid "953cf315-64e2-4e65-aac0-26818ff511eb")
+		(uuid "d541ca7f-c1c7-459f-b051-a8cdfe43d036")
 	)
 	(segment
 		(start 121.205 143.4)
