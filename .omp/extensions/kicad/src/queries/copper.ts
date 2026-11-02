@@ -219,7 +219,7 @@ const lengthsQuery: QueryDef = {
 	what: "lengths",
 	doc:
 		"Routed lengths, mm, as KiCad's length rules measure them: per net the total, tracks (and arcs; the part inside the pad or via a line ends in counts as the straight line from its centre to where it leaves), per layer, via count, via height (between the outermost layers joined at each via, from the stack-up, when the project counts via heights: use_height_for_length_calcs), pad-to-die lengths when pads have them and, for diff-pair nets (_P/_N, +/-), the partner and the skew (this net minus the partner). " +
-		'`paths` gives the copper length between two pads of one net instead ({from: "R13.2", to: "U1.10"}): the shortest way along tracks and arcs, through vias (a pad joins a via on its own side), across filled zones as a straight line (named in through_zones), plus the two pads\' pad-to-die lengths; `unrouted` when no copper joins them. ' +
+		'`paths` gives the copper length between two pads of one net instead ({from: "R13.2", to: "U1.10"}): the shortest way along tracks and arcs (every piece of a line, as the net length counts it: no shortcut where copper overlaps across a short piece or a pad covers a line past its end), through vias (a pad joins a via on its own side), across filled zones as a straight line (named in through_zones), plus the two pads\' pad-to-die lengths; `unrouted` when no copper joins them. ' +
 		"Without nets, class or paths: every net that has tracks.",
 	fields: {
 		nets: { t: "strings", doc: "These nets." },

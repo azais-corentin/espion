@@ -244,6 +244,35 @@ describe("copper model", () => {
 		}
 	});
 
+	test("a path takes every piece of a line, as the net length does: none skipped where its neighbours' copper overlaps across it, or where a pad covers it past the line's end", () => {
+		const w = 0.18;
+		const k = Copper.of(
+			board(
+				[
+					seg([0, 0], [5, 0], "S", "F.Cu", w),
+					// a collinear split: 0.1425 mm, shorter than the width, so its neighbours' copper overlaps across it
+					seg([5, 0], [5.1425, 0], "S", "F.Cu", w),
+					seg([5.1425, 0], [5.4725, 0.33], "S", "F.Cu", w),
+					seg([5.4725, 0.33], [9.8, 0.33], "S", "F.Cu", w),
+					// the line ends inside P1.2 short of its position: the pad covers this piece and the end of the one before
+					seg([9.8, 0.33], [9.9, 0.33], "S", "F.Cu", w),
+					`(footprint "X" (layer "F.Cu") (at 0 0) (property "Reference" "P1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "S")) (pad "2" smd rect (at 10.05 0.33) (size 0.6 0.4) (layers "F.Cu") (net "S")))`,
+				].join(" "),
+			),
+		);
+		const want = 5 + 0.1425 + Math.hypot(0.33, 0.33) + (9.8 - 5.4725) + 0.1;
+		expect(k.connectivity("S").clusters).toHaveLength(1);
+		expect(k.netLength("S", { useHeight: false }).track).toBeCloseTo(want, 5);
+		for (const [from, to] of [
+			["P1.1", "P1.2"],
+			["P1.2", "P1.1"],
+		]) {
+			const p = k.path(from!, to!, { useHeight: false })!;
+			expect(p).toBeDefined();
+			expect(p.length).toBeCloseTo(want, 5);
+		}
+	});
+
 	test("copper joins where it overlaps, as KiCad's connectivity: a track short of the pad centre, crossing tracks, a track over a pad, a copper drawing with the net; jumper pads", () => {
 		const fp = (ref: string, at: Pt, pads: string, extra = "") => `(footprint "X" (layer "F.Cu") (at ${at[0]} ${at[1]}) (property "Reference" "${ref}") ${extra} ${pads})`;
 		const pad = (n: string, at: Pt, net: string, size = 1) => `(pad "${n}" smd rect (at ${at[0]} ${at[1]}) (size ${size} ${size}) (layers "F.Cu") (net "${net}"))`;
@@ -605,23 +634,31 @@ describe.skipIf(!HAS_KICAD)("connectivity against KiCad's DRC: pad shapes, overl
 	});
 });
 
-describe("copper queries on espion-cam (183 footprints, no tracks)", () => {
+describe("copper queries on espion-cam (183 footprints)", () => {
 	const q = async (what: string, args: Record<string, unknown> = {}) => {
 		const t = performance.now();
 		const out = (await runQuery(REPO, { project: "hardware/espion-cam", what, args })) as Record<string, any>;
 		return { out, ms: performance.now() - t };
 	};
 
-	test("routing, copper, lengths and board answer fast", async () => {
+	// the live board: whatever its routing progress, each answer comes fast and agrees with the others
+	test("routing, copper, lengths and board answer fast, and agree with each other", async () => {
 		const routing = await q("routing");
 		expect(routing.ms).toBeLessThan(2000);
-		expect(routing.out.unrouted).toBeGreaterThan(100);
+		const rows = routing.out.nets as [string, number, number, number, number, number][];
+		expect(rows.length).toBeGreaterThan(100);
+		expect(rows.length).toBe(routing.out.total);
+		expect(routing.out.unrouted).toBe(rows.reduce((t, r) => t + r[5], 0));
 		const gnd = await q("routing", { net: "GND" });
 		expect(gnd.ms).toBeLessThan(2000);
-		expect(gnd.out.nets[0].unrouted.length).toBe(gnd.out.nets[0].clusters.length - 1);
+		const g = gnd.out.nets[0];
+		expect(g.unrouted.length).toBe(g.clusters.length - 1);
+		const lengths = await q("lengths", { nets: ["GND"] });
+		expect(lengths.ms).toBeLessThan(2000);
+		expect(lengths.out.nets[0].track).toBe(g.routed?.track ?? 0);
 		const copper = await q("copper");
 		expect(copper.ms).toBeLessThan(2000);
-		expect(copper.out).toEqual({ total: 0, tracks: [], vias: [], zones: [] });
+		expect(copper.out.tracks.length).toBe(Math.min(copper.out.total, 200));
 		const board = await q("board");
 		expect(board.out.copper.unrouted).toBe(routing.out.unrouted);
 		const free = await q("board_free_space", { near: [45, 43], size: [4, 4], side: "bottom" });

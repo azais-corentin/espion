@@ -1330,9 +1330,15 @@ export class Copper {
 		for (const p of c.pads) {
 			const inPad = (q: Pt) => p.shapes.some(sh => shapeHas(sh, q));
 			for (const ch of out) {
+				if (!p.copper.includes(ch.layer)) continue;
 				const [s, e] = [ch.pts[0]!, ch.pts[ch.pts.length - 1]!];
-				// only lines ending on the pad's position
-				if (!p.copper.includes(ch.layer) || (dist(s, p.at) > EPS && dist(e, p.at) > EPS)) continue;
+				if (dist(s, p.at) > EPS && dist(e, p.at) > EPS) {
+					// a line ending inside the pad elsewhere keeps its length, but the pad joins it only at that end (see path())
+					if (inPad(s)) ch.clips.push({ by: p, at: s, track: ch.first });
+					if (inPad(e)) ch.clips.push({ by: p, at: e, track: ch.last });
+					continue;
+				}
+				// only lines ending on the pad's position are clipped
 				const forward = inPad(s) ? true : inPad(e) ? false : undefined;
 				if (forward !== undefined) ch.clips.push({ by: p, at: forward ? s : e, track: forward ? ch.first : ch.last });
 				clipChain(ch, inPad, p.at, forward);
@@ -1395,9 +1401,13 @@ export class Copper {
 		const su = opts.useHeight ? this.board.stackup() : undefined;
 		// what KiCad's in-pad and in-via clipping takes off each chain end, put on the track at that end
 		const trim = new Map<Track, [number, number]>();
-		// a pad or via that clipped a chain joins it only at the clipped end (on the end track, wherever
-		// KiCad's connectivity saw them touch): its other junctions with the chain would skip the clipped length
+		// a pad or via an end of a chain lies in (and clipped, when KiCad clips there) joins it only at that end (on
+		// the end track, wherever KiCad's connectivity saw them touch): its other junctions with the chain would skip length
 		const clipped = new Map<Pad | Via, { tracks: Set<Track>; at: Pt; track: Track; layer: string }[]>();
+		// the tracks of one chain join only end to end at its joints, as the length rules follow them: where
+		// their copper also overlaps elsewhere (a short piece's neighbours reaching over it) a junction would skip length
+		const chainOfTrack = new Map<Track, Chain>();
+		const joints: { a: Track; b: Track; at: Pt; layer: string }[] = [];
 		for (const ch of this.chains(net)) {
 			const [d0, d1] = ch.trimmed;
 			const startAtTrackStart = dist(ch.first.start, ch.pts[0]!) <= dist(ch.first.end, ch.pts[0]!);
@@ -1411,9 +1421,16 @@ export class Copper {
 			if (d1) add(ch.last, !endAtTrackEnd, d1);
 			const tracks = new Set(ch.tracks);
 			for (const cl of ch.clips) clipped.set(cl.by, [...(clipped.get(cl.by) ?? []), { tracks, at: cl.at, track: cl.track, layer: ch.layer }]);
+			for (const t of ch.tracks) chainOfTrack.set(t, ch);
+			for (let k = 1; k < ch.tracks.length; k++) {
+				const [x, y] = [ch.tracks[k - 1]!, ch.tracks[k]!];
+				const at = [x.start, x.end].find(p => dist(p, y.start) < 1e-5 || dist(p, y.end) < 1e-5)!;
+				joints.push({ a: x, b: y, at, layer: ch.layer });
+			}
 		}
 		const skip = (j: Junction): boolean => {
 			const [x, y] = [c.nodes[j.a]!.item, c.nodes[j.b]!.item];
+			if ((x.kind === "track" || x.kind === "arc") && (y.kind === "track" || y.kind === "arc")) return chainOfTrack.get(x) === chainOfTrack.get(y);
 			const [by, t] = x.kind === "pad" || x.kind === "via" ? [x, y] : [y, x];
 			if (by.kind !== "pad" && by.kind !== "via") return false;
 			return (clipped.get(by) ?? []).some(cl => cl.tracks.has(t as Track));
@@ -1449,6 +1466,7 @@ export class Copper {
 		});
 		for (const j of c.junctions) if (!skip(j)) g.edge(addStop(j.a, j.pa, j.layer), addStop(j.b, j.pb, j.layer), { len: 0 });
 		const index = new Map(c.nodes.map((n, i) => [n.item, i] as const));
+		for (const jt of joints) g.edge(addStop(index.get(jt.a)!, jt.at, jt.layer), addStop(index.get(jt.b)!, jt.at, jt.layer), { len: 0 });
 		for (const [by, cls] of clipped) {
 			for (const cl of cls) g.edge(addStop(index.get(by)!, by.at, cl.layer), addStop(index.get(cl.track)!, cl.at, cl.layer), { len: 0 });
 		}
@@ -1560,7 +1578,7 @@ interface Chain {
 	first: Track;
 	last: Track;
 	trimmed: [number, number];
-	/** The vias and pads that clipped an end, that end before clipping and the track at it. */
+	/** The vias and pads an end lies in (clipped there, or a pad not at its position), that end before clipping and the track at it. */
 	clips: { by: Via | Pad; at: Pt; track: Track }[];
 }
 
