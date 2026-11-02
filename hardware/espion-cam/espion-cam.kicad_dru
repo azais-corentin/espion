@@ -57,3 +57,11 @@
 # U8 (SOT-23-6, 0.95 mm pitch) and U10 (TPS61170 WSON, 0.3 mm pads): a class-width track can't enter those pads at 0.2 mm clearance.
 # Necks are < 1 mm long (audit/requirements.md D21).
 (rule "Power neck-down at fine-pitch pads" (condition "A.Type == 'Track' && (A.NetClass == 'PWR_5V' || A.NetClass == 'LED_PWR' || A.NetName == '/LED driver/+5V_BST') && (A.intersectsCourtyard('U4') || A.intersectsCourtyard('U8') || A.intersectsCourtyard('U10'))") (constraint track_width (min 0.3mm)))
+
+# Mirror of 'LED_PWR pad spacing' (review step 6 pcb-led ISO-1): an exposed pad of any other net keeps 0.4 mm to LED_PWR / BST_SW copper,
+# tracks and vias included (IPC-2221A Table 6-1, 31-50 V row, A6 external component terminations uncoated, 0.4 mm;
+# audit/requirements.md D5/D44/D61). The first rule only fires when the exposed pad is the LED_PWR item.
+# Exempt: U10's own pads against the BST_SW copper at U10 (TI WSON land pattern, 0.65 mm pitch: pin 4's trace leaves
+# between pins 5 and the exposed pad, 0.25 mm, as the pad pairs exempted above), and ISNS_K, the Kelvin tap of ISNS
+# through net tie NT1 (same node, <= 0.1 V).
+(rule "LED_PWR pad spacing (other pads)" (condition "A.Type == 'Pad' && A.NetClass != 'LED_PWR' && A.NetName != '/LED driver/BST_SW' && A.NetClass != 'POE_CABLE' && A.NetClass != 'MDI' && (B.NetClass == 'LED_PWR' || B.NetName == '/LED driver/BST_SW') && !(A.memberOfFootprint('U10') && B.intersectsCourtyard('U10')) && !(A.NetName == '/LED driver/ISNS_K' && B.NetName == '/LED driver/ISNS')") (constraint clearance (min 0.4mm)))
