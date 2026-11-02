@@ -12,12 +12,14 @@
 	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R45') && B.memberOfFootprint('R45')) && !(A.memberOfFootprint('R46') && B.memberOfFootprint('R46')) && !(A.memberOfFootprint('R47') && B.memberOfFootprint('R47')) && !(A.memberOfFootprint('R49') && B.memberOfFootprint('R49')) && !(A.memberOfFootprint('R50') && B.memberOfFootprint('R50')) && !(A.memberOfFootprint('R51') && B.memberOfFootprint('R51'))")
 	(constraint clearance (min 0.36mm)))
 
-# Ethernet MDI: IP101G datasheet 6.2 asks for 'three times space' to other signals; read as 3W (3 x 0.18 mm = 0.54,
-# rounded up to 0.55 mm). Exempt inside U1's courtyard and the 'U1 MDI escape' rule area at U1's north row
-# (x 157.3-160.6, y 126.0-128.9; no keep-out, it only names the region): the 0.4 mm pitch QFN pads (0.2 mm gap) and the
-# four pin escapes between them can't hold it; IP101G 6.2 p.56 allows the device's own vicinity ('in close proximity
-# to device'). Default 0.2 mm clearance still applies there (audit/requirements.md D39).
-(rule "MDI spacing" (condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !(A.intersectsCourtyard('U1') || A.intersectsArea('U1 MDI escape'))") (constraint clearance (min 0.55mm)))
+# Ethernet MDI: IP101G datasheet 6.2 p.56 asks for 'three times space' between an MDI pair and other signals;
+# read as 3W (3 x 0.18 mm = 0.54, rounded up to 0.55 mm). Deviation from it at U1, forced by the 0.4 mm-pitch QFN, not
+# granted by the datasheet: pins 25 (ISET), 28 (REGOUT) and 31 (AVDD33) sit 0.2 mm from the MDI pads and their tracks
+# leave between the pairs. MDI items touching U1's courtyard, or lying wholly inside the F.Cu rule area 'U1 MDI escape'
+# (x 157.3-160.6, y 125.69-128.9; it forbids pours only and F.Cu has none, so it only names the region), keep the 0.2 mm
+# Default clearance; there only U1's own pin nets come closer than 0.55 mm (audit/requirements.md D39). A segment that
+# crosses the area edge is not exempt (enclosedByArea).
+(rule "MDI spacing" (condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !(A.intersectsCourtyard('U1') || A.enclosedByArea('U1 MDI escape'))") (constraint clearance (min 0.55mm)))
 
 # PoE: IEEE 802.3 33.4.1 isolation (1500 V rms 60 s, or 2250 V dc, or 1500 V 10/700 us impulse) between the cable
 # conductors and the board. IEC 60664-1 (2007) tables interpolated for 2250 V dc give about 1.53 mm clearance and
@@ -70,3 +72,4 @@
 # text height >= 1.0 mm and pad to silkscreen 0.15 mm, but no silkscreen-to-silkscreen spacing. min_silk_clearance
 # (0.15 mm) stays for silk against pads and mask openings; between two silk items the legend may touch.
 (rule "Silk to silk" (condition "A.Type != 'Pad' && B.Type != 'Pad' && A.Layer == B.Layer && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint silk_clearance (min 0mm)))
+
