@@ -205,7 +205,11 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
   heating of a 1.6 mm FR-4 board.
 - **Module underside over board copper.** B.Cu tracks and tented vias run under U6's body; most
   of these vias are too close to pads for JLCPCB to plug them. Waveshare's drawing does not
-  show whether the module's underside has exposed copper.
+  show whether the module's underside has exposed copper. The copper under the body carries
+  only nets the module already has at its pads (+3V3, GND, signals ≤ 3.3 V) and +5V (the buck
+  branch and two B.Cu pours); +32V was routed out from under the module (user decision
+  2026-11-03, [layout](layout.md#32v-and-the-ring)), so a mask or tenting fault there can't put
+  the LED supply on the module.
 - **Tall capacitors beside small parts.** R37 and R38 (0402) are 0.11 / 0.03 mm (courtyard)
   from C47, R34 0.08 mm from C46 (Panasonic FT size G, 10.8 mm tall): possible reflow
   shadowing; JLCPCB's spacing table has no electrolytic row.

@@ -369,6 +369,9 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   holds only to 85 °C. The IP101GRI is rated to 85 °C ambient (p.57).
 - **MDC and MDIO under the crystal** on B.Cu, behind both GND planes; MDC ≈ 0.85 mm parallel to X2
   ([Crystal](#crystal)).
+- **Unequal crystal traces.** X1 runs 7.47 mm round Y1 to its far-corner pin, X2 1.49 mm; the traces
+  enclose ≈ 3.7 × 3.6 mm over In1 GND (user decision 2026-11-03,
+  [layout](layout.md#ethernet-and-poe-isolation)).
 - **PHY_RST_N inside the LED ring**, 0.5–1.1 mm from the ring pads over part of its 75 mm.
 - **J1 lands 0.565–0.717 mm from reflowed parts** (R46, C3, R8, C1), to be checked in the
   hand-soldering trial.

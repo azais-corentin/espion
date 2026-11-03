@@ -295,16 +295,18 @@ The +32V trunk starts at D3's cathode (U10 itself is not on +32V). Lengths are f
 
 | Path | Length | Vias |
 |---|---|---|
-| D3.1 → D4.2 | 100.5 mm (94.3 mm of track) | 4 × 0.6/0.3 |
-| C45.1 → D4.2 | 97.2 mm | 4 |
-| C47.1 → D4.2 | 61.6 mm | 2 |
-| C46.1 → D4.2 | 24.6 mm | 0 |
+| D3.1 → D4.2 | 89.9 mm (84.1 mm of track) | 2 × 0.6/0.3 |
+| C45.1 → D4.2 | 92.9 mm | 2 |
+| C47.1 → D4.2 | 62.1 mm | 2 |
+| C46.1 → D4.2 | 24.9 mm | 0 |
 
-The whole `+32V` net is 128.6 mm (122.3 mm of track + 6.2 mm of via height). That includes 20.0 mm
+The whole `+32V` net is 115.7 mm (112.6 mm of track + 3.1 mm of via height). That includes 20.9 mm
 of 0.3 mm feeds to R65, R71 and TP13, which carry µA.
 
-The trunk is mostly 0.6 mm wide, 1.0 mm at D3, and necked to 0.45 mm for 12.9 mm east of Q1 and
-to 0.4 mm for 6.8 mm at C45. The pulse comes mostly from C46. Its path to D4.2 is ≈ 24 mΩ
+The trunk is mostly 0.6 mm wide, a pour at D3, and necked to 0.45 mm for 12.9 mm east of Q1. The
+21.9 mm from D3 to C47 is 0.4 mm on F.Cu along the bottom edge, kept off the board copper under the
+module U6 ([layout](layout.md#32v-and-the-ring)); it carries only the recharge current (≤ 0.22 A
+peak). The pulse comes mostly from C46. Its path to D4.2 is ≈ 24 mΩ
 (11.7 mm at 0.6 mm + 12.9 mm at 0.45 mm, 35 µm copper), ≈ 0.02 V at 0.915 A. The headroom budget
 uses ≈ 0.1 V, a bound over the whole D3 → D4 path.
 

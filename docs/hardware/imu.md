@@ -43,7 +43,8 @@ The board has no separate VDDIO: the package has no such pin.
 
 **Decoupling.** C50 100 nF 50 V X7R 0402 (YAGEO CC0402KRX7R9BB104) at VDD, as Fig. 8 p.30
 draws it, 1.02 mm from U12's pads. No GND via fits within 1 mm of C50's ground end (U6's
-pads lie under it on the bottom and the +32V copper runs round it); the F.Cu pour "C50/U12 GND"
+pads lie under it on the bottom, and the +32V copper that ran round it when it was routed left no
+site; that copper now runs along the board edge, 1.66 mm south); the F.Cu pour "C50/U12 GND"
 joins C50.2 and U12.4 to the GND via (134.69, 159.18). Its loop to U12's GND pin 9 is C50.2 → pour
 → GND via (134.69, 159.18) → In1 → GND via (138.1, 156.2) → U12.9, 9.08 mm with 2 vias (pours as
 straight lines); U12.4 is an NC pin and gives no return. Harmless for a 110 µA sensor (p.7);
@@ -110,9 +111,10 @@ a STOP and soft-resets the sensor (register 0x00, p.20) at init
 - **R74 close to U12.** R74's pad is 0.64 mm from U12 pin 2, under JLCPCB's recommended 1.0 mm
   between a chip part and a QFN-type package
   (https://jlcpcb.com/help/article/minimum-spacing-for-smd-components, read 2026-10-31). R74
-  can't move: its +3V3 pad must keep 0.4 mm from the +32V copper beside it (IPC-2221A, the
-  board's LED_PWR spacing rule), and a turned R74 hits C50's GND via or L2. Accepted in design
-  review (2026-11-01). C50 (1.02 mm) and R37 (1.33 mm) meet the 1.0 mm; R73 is 3.2 mm away.
+  was placed so its +3V3 pad kept 0.4 mm from the +32V copper beside it (IPC-2221A, the board's
+  LED_PWR spacing rule); that copper was rerouted on 2026-11-03 (R74.1 is now 4.18 mm from
+  +32V), but R74 was not moved, and a turned R74 still hits C50's GND via or L2. Accepted in
+  design review (2026-11-01). C50 (1.02 mm) and R37 (1.33 mm) meet the 1.0 mm; R73 is 3.2 mm away.
 - **C50's ground path** runs 2.1 mm to its via instead of ≤ 1 mm, and its loop to U12.9 is 9.6 mm with 2 vias (accepted in design review, 2026-11-01).
 - **Heat from U6 soldering.** U12 and C50 lie over U6's pads, which are iron-soldered from the
   bottom after reflow ([mcu.md](mcu.md#module)).
