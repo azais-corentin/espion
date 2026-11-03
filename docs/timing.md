@@ -95,10 +95,12 @@ board's state. To check in statime: changing clockClass and priority2 at runtime
     IR (sun, lamps, reflections); the P4 builds a mask from them, and their packets carry a `dark` flag.
 - No continuous-on mode: bring-up and focusing use the strobed light. Default exposure **500 µs** = 6 % LED
   duty at 120 Hz.
-- Firmware caps exposure at **0.75 ms**. A hardware timeout in the gate ends each pulse 0.78–1.32 ms after
-  STROBE rises, whatever STROBE does; it only acts if firmware fails. Exposures longer than the timeout are lit
-  only for their first 0.78–1.32 ms. The boost can sustain only ≈ 0.75 ms of light per frame at 120 fps at its
-  minimum input, ≈ 0.85 ms from 5 V ([hardware/led.md](hardware/led.md)).
+- Firmware caps exposure at **0.5 ms** and drops `LED_EN` after any lit pulse longer than 0.55 ms
+  ([hardware/firmware-rules.md](hardware/firmware-rules.md) FW-9). A hardware timeout in the gate ends each
+  pulse 0.525–1.026 ms after STROBE rises, whatever STROBE does; it only acts if firmware fails. Exposures
+  longer than the timeout are lit only for their first 0.525–1.026 ms. At full boost output and the 0.915 A
+  worst-case current the boost sustains ≥ (77 − 0.56) mA / (0.915 A × 120 Hz) ≈ 0.70 ms of light per frame at
+  120 fps, ≈ 1.2 ms typical ([hardware/led.md](hardware/led.md#boost-converter)).
 
 ## 5. Startup sequence
 

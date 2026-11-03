@@ -99,7 +99,7 @@ bounds.
 
 | Case | +5V current | PD input |
 |---|---|---|
-| LED design point (0.5 ms pulses at 120 fps), logic running | ≈ 0.87 A average nominal, ≤ 1.0 A worst case | ≥ 5.3 W average (≥ 6.1 W worst case) |
+| LED design point (0.5 ms pulses at 120 fps), logic running | ≈ 0.87 A average nominal, ≤ 1.01 A worst case, both with the boost at full scale | ≥ 5.3 W average (≥ 6.2 W worst case) |
 | Boost recharging `+32V` at its switch current limit (start-up, and 2.4–6.0 ms of every frame, see [+5V loads](#5v-loads)), logic running | 1.96 A peak | ≥ 12.0 W while it lasts |
 | 802.3af PD limit | | 12.95 W in; ≤ 10.9 W out at 84 % |
 | DP1435 rating | 2.4 A nominal, 2.6 A max | 12.4 W out |
@@ -191,10 +191,10 @@ range: TLV62569 2.5–5.5 V, TPS22918 1–5.5 V, TLV9061 1.8–5.5 V, TPS61170 3
 | Load | Average | Peak | Basis |
 |---|---|---|---|
 | U3 buck input | ≈ 0.49 A | ≈ 0.52 A | 3.318 V × 0.65 A / (5 V × 0.88) |
-| U8 → U10 LED boost, frame average at the design point | ≈ 0.38 A nominal, ≤ 0.51 A worst case | | `+32V` demand 50 mA nominal, 55 mA worst case ([LED driver](led.md#recovery-and-start-up)) |
+| U8 → U10 LED boost, frame average at the design point | ≈ 0.38 A nominal, ≤ 0.52 A worst case | | `+32V` demand 50 mA nominal, 55.5 mA worst case, both at full scale; less while the headroom loop runs +32V lower ([LED driver](led.md#recovery-and-start-up)) |
 | U8 → U10 LED boost, recharging at its switch current limit | 1.26 A | 1.44 A | TPS61170 ILIM max 1.44 A (SLVS789D p.5) minus half the ripple |
 | U11, R63, U8 control | < 1 mA | | |
-| **Total** | **≈ 0.87 A** nominal, **≤ 1.0 A** worst case (design point) | **1.96 A** (U3 0.52 A + boost 1.44 A) | 1.78 A = U3 0.52 A + boost 1.26 A while the boost is at its limit |
+| **Total** | **≈ 0.87 A** nominal, **≤ 1.01 A** worst case (design point) | **1.96 A** (U3 0.52 A + boost 1.44 A) | 1.78 A = U3 0.52 A + boost 1.26 A while the boost is at its limit |
 
 The boost runs at its switch current limit whenever it recharges `+32V`
 ([Recovery and start-up](led.md#recovery-and-start-up)):

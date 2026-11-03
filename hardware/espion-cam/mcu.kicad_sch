@@ -6611,7 +6611,7 @@
 		)
 		(uuid "7542b1d2-a669-428d-800f-815dcd7613b3")
 	)
-	(hierarchical_label "NTC_SENSE"
+	(hierarchical_label "LED_K_SENSE"
 		(shape passive)
 		(at 144.78 132.08 180)
 		(effects

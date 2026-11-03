@@ -29,13 +29,13 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   leaves room for a series value. [camera](../../docs/hardware/camera.md)
 - 850 nm LED ring for passive retroreflective markers at 2–5 m: D4–D15, 12 × Amicc
   A-SC880IR3C-P03-1T (C5355470, 90°) in one string, on r = 11.5 mm around the lens cutout.
-  U8 TPS22918 load switch (`LED_PWR_EN`, GPIO20) and U10 TPS61170 boost to 32 V (`BST_EN`,
-  GPIO53) into 2 × 330 µF storage (C46, C47 Panasonic EEEFT1H331AP), U11 TLV9061 + Q1
-  IRLR024N sink at a fixed ≈ 0.83 A (R69 0.1 Ω sense), gated by `STROBE ∧ LED_EN` (U9
-  SN74LVC1G97, `LED_EN` on GPIO11) with a 0.53–1.03 ms hardware timeout per pulse behind the
-  0.5 ms firmware exposure cap. No continuous-on mode. TH1 NTC beside Q1 (`NTC_SENSE`,
-  GPIO23) and a +32 V divider (`VLED_SENSE`, GPIO21) for firmware.
-  [led](../../docs/hardware/led.md)
+  U8 TPS22918 load switch (`LED_PWR_EN`, GPIO20) and U10 TPS61170 boost to ≤ 32 V (`BST_EN`,
+  GPIO53, PWM sets the output) into 2 × 330 µF storage (C46, C47 Panasonic EEEFT1H331AP), U11
+  TLV9061 + Q1 IRLR024N sink at a fixed ≈ 0.83 A (R69 0.1 Ω sense), gated by `STROBE ∧ LED_EN`
+  (U9 SN74LVC1G97, `LED_EN` on GPIO11) with a 0.53–1.03 ms hardware timeout per pulse behind the
+  0.5 ms firmware exposure cap. No continuous-on mode. Firmware keeps +32V just above the
+  string from a divider on Q1's drain (R70/R76, `LED_K_SENSE`, GPIO23); a +32 V divider
+  (`VLED_SENSE`, GPIO21) watches the rail. [led](../../docs/hardware/led.md)
 - U1 IP101GRI Ethernet PHY on RMII (Y1 25 MHz crystal, PHY supplies the 50 MHz REF_CLK),
   J1 HanRun HR871150C MagJack (bottom side, hand-soldered) with both centre taps and the
   spare pairs brought out, its LEDs driven by the PHY (green link/activity, yellow
@@ -93,8 +93,7 @@ Every part, as the schematic's Manufacturer, MPN and LCSC fields give it:
 | TP2, TP3, TP7 | GND | ronghe RH-5002 | C5199802 | test loop THT (hand) |
 | L1, L2 | 2.2 µH | cjiang FXL0630-2R2-M | C167218 | FXL0630 |
 | L3 | 10 µH | cjiang FNR4030S100MT | C167879 | 4030 |
-| TH1 | 10k B3380 NTC | Murata NCP15XH103F03RC | C77131 | 0402 |
-| C3, C6, C7, C9, C12, C19, C21, C23–C26, C28, C30, C31, C37, C38, C44, C48–C50, C52 | 100 nF 50 V | YAGEO CC0402KRX7R9BB104 | C131394 | 0402 |
+| C3, C6, C7, C9, C12, C19, C21, C23–C26, C28, C30, C31, C37, C38, C44, C49, C50, C52 | 100 nF 50 V | YAGEO CC0402KRX7R9BB104 | C131394 | 0402 |
 | C4, C10, C11, C15, C18, C32, C36 | 10 µF 25 V | Samsung CL21A106KAYNNNE | C15850 | 0805 |
 | C8, C16, C29 | 4.7 µF 25 V | Samsung CL21A475KAQNNNE | C1779 | 0805 |
 | C27, C34 | 1 µF 50 V | Samsung CL21B105KBFNNNE | C28323 | 0805 |
@@ -104,7 +103,7 @@ Every part, as the schematic's Manufacturer, MPN and LCSC fields give it:
 | C2, C5 | 18 pF C0G | FH 0402CG180J500NT | C1549 | 0402 |
 | C17 | 6.8 pF C0G | FH 0402CG6R8C500NT | C1576 | 0402 |
 | C39, C42 | 220 pF C0G | FH 0402CG221J500NT | C39122 | 0402 |
-| C40 | 1 nF C0G | FH 0402CG102J500NT | C53547 | 0402 |
+| C40, C48 | 1 nF C0G | FH 0402CG102J500NT | C53547 | 0402 |
 | C33, C35, C41 | 10 nF C0G 50 V | Murata GRM1885C1H103JA01D | C85973 | 0603 |
 | C13 | 330 µF 16 V | AISHI SVZ1CM331E09E00RAXXX | C3291468 | can 6.3 × 9 mm |
 | C14 | 330 µF 16 V | JIERR JVE16V330M8X10 | C48615108 | can 8 × 10.5 mm |
@@ -121,14 +120,14 @@ Every part, as the schematic's Manufacturer, MPN and LCSC fields give it:
 | R73, R74 | 4.7 kΩ 1 % | UNI-ROYAL 0402WGF4701TCE | C25900 | 0402 |
 | R1, R7, R9, R10, R23, R25 | 5.1 kΩ 1 % | UNI-ROYAL 0402WGF5101TCE | C25905 | 0402 |
 | R6 | 6.19 kΩ 1 % | FH RC-02K6191FT | C324848 | 0402 |
-| R8, R26, R29, R33, R38, R48, R58, R66, R70, R72 | 10.0 kΩ 1 % | FOJAN FRC0402F1002TS | C2906861 | 0402 |
+| R8, R26, R29, R33, R38, R48, R58, R66, R72, R76 | 10.0 kΩ 1 % | FOJAN FRC0402F1002TS | C2906861 | 0402 |
 | R22 | 36 kΩ 1 % | HWA CHN HRC0402F3602DNTO | C54920666 | 0402 |
 | R19, R27, R43 | 47 kΩ 1 % | UNI-ROYAL 0402WGF4702TCE | C25792 | 0402 |
 | R60 | 51.1 kΩ 1 % | UNI-ROYAL 0402WGF5112TCE | C25904 | 0402 |
 | R21 | 60.4 kΩ 1 % | UNI-ROYAL 0402WGF6042TCE | C25911 | 0402 |
 | R55 | 68 kΩ 1 % | UNI-ROYAL 0402WGF6802TCE | C36871 | 0402 |
 | R28 | 75 kΩ 1 % | UNI-ROYAL 0402WGF7502TCE | C25798 | 0402 |
-| R17, R18, R20, R24, R56, R57, R59, R62, R68 | 100 kΩ 1 % | UNI-ROYAL 0402WGF1003TCE | C25741 | 0402 |
+| R17, R18, R20, R24, R56, R57, R59, R62, R68, R70 | 100 kΩ 1 % | UNI-ROYAL 0402WGF1003TCE | C25741 | 0402 |
 | R16 | 453 kΩ 1 % | GiantOhm GR0402F453KTAG00 | C49653416 | 0402 |
 | R63, R75 | 1.00 MΩ 1 % | UNI-ROYAL 0402WGF1004TCE | C26083 | 0402 |
 | R65, R71 | 255 kΩ 1 % | UNI-ROYAL 0603WAF2553T5E | C23354 | 0603 |

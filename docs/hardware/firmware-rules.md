@@ -37,7 +37,7 @@ signal below is a 3.3 V signal (P4 DS Table 2-1 pp.14–16; Waveshare module sch
 | GPIO20 | 16 | `LED_PWR_EN` | U8 load switch ON (LED boost supply) | out | R57 100 kΩ ↓ | Default low. No reset pull on the pad, R57 holds it |
 | GPIO21 | 17 | `VLED_SENSE` | ADC1 channel 5: +32V monitor | analog | R71 255 kΩ / R72 10 kΩ divider, C49 100 nF at the pin | V(+32V) = 26.5 × V(pin) |
 | GPIO22 | 18 | `PHY_RST_N` | IP101G RESET_N | out, push-pull | R8 10 kΩ ↓ | Low = PHY in reset. TP1 |
-| GPIO23 | 19 | `NTC_SENSE` | ADC1 channel 7: LED driver temperature | analog | R70 10 kΩ ↑, TH1 10 kΩ B3380 NTC to GND, C48 100 nF at the pin | |
+| GPIO23 | 19 | `LED_K_SENSE` | ADC1 channel 7: LED sink drain (`LED_K`, Q1) | analog | R70 100 kΩ from `LED_K`, R76 10 kΩ to GND, C48 1 nF at the pin | V(`LED_K`) = 11.0 × V(pin). Sampled late in each LED pulse (FW-22) |
 | — | 28–33 | `CSI_D0_N`, `CSI_D0_P`, `CSI_CLK_P`, `CSI_CLK_N`, `CSI_D1_N`, `CSI_D1_P` | MIPI CSI-2 receiver, 2 lanes (dedicated pins) | in | — | Fixed lane order, no remapping or P/N swap in the P4 ([camera.md](camera.md#csi-2-link)) |
 | GPIO24 | 37 | `USB_D_N` | USB Serial/JTAG D− (USB 1.1 FS PHY) | I/O | R32 22 Ω series | Keep in USB function (FW-1) |
 | GPIO25 | 38 | `USB_D_P` | USB Serial/JTAG D+ | I/O | R31 22 Ω series; internal D+ pull-up | D+ pull-up off while `VBUS_SENSE` is low (FW-4) |
@@ -53,7 +53,7 @@ signal below is a 3.3 V signal (P4 DS Table 2-1 pp.14–16; Waveshare module sch
 | GPIO50 | 68 | `RMII_REF_CLK` | EMAC RMII clock input (`EMAC_CLK_EXT_IN`), 50 MHz from the PHY | in | none (R13 22 Ω at the PHY) | Never an output |
 | GPIO51 | 69 | `IMU_INT1` | GPIO interrupt from the accelerometer | in | none (sensor INT1 is push-pull); internal off | Active low by default |
 | GPIO52 | 70 | `MDIO` | EMAC MDIO through the GPIO matrix | I/O | R14 1.5 kΩ ↑ | PHY address 1 |
-| GPIO53 | 71 | `BST_EN` | TPS61170 CTRL (LED boost enable) | out | R59 100 kΩ ↓ (plus 800 kΩ inside the TPS61170) | Steady level only, never PWM (FW-8) |
+| GPIO53 | 71 | `BST_EN` | TPS61170 CTRL: boost enable and output set point (PWM) | out | R59 100 kΩ ↓ (plus 800 kΩ inside the TPS61170) | Steady high to start, 50 kHz PWM in operation, low ≥ 2.5 ms to stop (FW-8) |
 | — | 74 | `+3V3` | VBAT supply pin | power | | |
 | — | 75, 76 | `+3V3` | ESP_3V3 supply pins | power | | |
 | — | 20, 27, 34, 55, 73 | `GND` | Ground | | | |
@@ -64,8 +64,8 @@ pulled up on the module), 49/50 GPIO37/GPIO38 (straps, UART0), 51–54 ESP_LDO_V
 inside the module), 56 GPIO26, 57–66 GPIO39–GPIO48 and 72 GPIO54.
 
 Peripheral use: two HP I²C controllers (accelerometer on GPIO3/4, SCCB on GPIO8/9; P4 DS p.4),
-two of the four RMT TX channels (XVS, STATUS_LED; TRM pp.1007–1008), two GPIO ETM event
-channels (STROBE, PPS_IN; any GPIO 0–54 per channel, TRM p.1017), ADC1 channels 5 and 7
+three of the four RMT TX channels (XVS, STATUS_LED, the `BST_EN` PWM; TRM pp.1007–1008), two GPIO
+ETM event channels (STROBE, PPS_IN; any GPIO 0–54 per channel, TRM p.1017), ADC1 channels 5 and 7
 (P4 DS Table 2-7 pp.24–25), the EMAC in RMII mode on its IO MUX function-3 pins (P4 DS
 Table 2-3 pp.21–22) with MDC/MDIO and PPS through the GPIO matrix (TRM p.1002, p.1007), and
 USB Serial/JTAG on GPIO24/25 (P4 DS p.28 note 1).
@@ -137,20 +137,20 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   falling edge (PoE lost) as an interrupt and run the PoE-loss power-down of FW-7 at once.
 - **FW-7** LED supply sequence. This is the one place it is stated; [led.md](led.md) and
   [power.md](power.md) follow it.
-  - **Normal power-down** (any LED shutdown while on PoE): `LED_EN` low, `BST_EN` low, wait
-    ≥ 3 ms, then `LED_PWR_EN` low. `LED_EN` first stops the LED current pulses. The TPS61170
-    enters shutdown only after CTRL has been low for more than 2.5 ms (TI TPS61170 SLVS789D
-    p.5 t_off, §8.3.5 p.10); a shorter low only lowers its feedback reference through the
-    180 µs t_REF filter (§8.4.2 p.11, p.5). The 3 ms (2.5 ms plus margin) lets the boost shut
-    down by its own enable before U8 removes its input.
+  - **Normal power-down** (any LED shutdown while on PoE): `LED_EN` low, `BST_EN` low (PWM
+    stopped, pin held low), wait ≥ 3 ms, then `LED_PWR_EN` low. `LED_EN` first stops the LED
+    current pulses. The TPS61170 enters shutdown only after CTRL has been low for more than
+    2.5 ms (TI TPS61170 SLVS789D p.5 t_off, §8.3.5 p.10); a shorter low only lowers its feedback
+    reference through the 180 µs t_REF filter (§8.4.2 p.11, p.5). The 3 ms (2.5 ms plus margin)
+    lets the boost shut down by its own enable before U8 removes its input.
   - **PoE-loss power-down** (on the `PWR_SRC` falling edge, the board now running on USB):
     `LED_EN` low, `BST_EN` low, `LED_PWR_EN` low, back to back with no wait, because the USB
     supply must not carry the boost. The boost then stops on its collapsing input, through its
     undervoltage lockout (p.5); this is accepted, as `LED_EN` is already low and no LED
     current flows.
   - **Power-up** (on PoE only, FW-6): `LED_PWR_EN` high; wait a fixed 50 ms for `+5V_BST`
-    (below); `BST_EN` high (FW-8); wait for +32V by `VLED_SENSE` (FW-8); then `LED_EN` and the
-    strobe pulses.
+    (below); `BST_EN` steady high (FW-8); wait for +32V by `VLED_SENSE` (FW-8); then `LED_EN`,
+    the strobe pulses and the headroom loop (FW-22).
   - `LED_PWR_EN` is an output, default low (R57 holds it low until the firmware drives it).
   - The `+5V_BST` wait is fixed (the board has no `+5V_BST` sense): **50 ms** until the
     first-board scope gives a measured value. C35 10 nF on the TPS22918's CT pin sets
@@ -158,21 +158,36 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
     Eq. 3 p.14; Table 2: 26.6 ms typical at 5 V). That is a 10–90 % figure: 27.7 ms at
     5.0 V and 30 ms at 5.41 V for 10–90 %, so ≈ 35 ms (≈ 37 ms at 5.41 V) for the full
     swing, plus the turn-on delay. All typical values, none guaranteed.
-- **FW-8** `BST_EN` (GPIO53, TPS61170 CTRL): drive it steadily high to run the boost, never
-  PWM it. Within 1 ms of a start from shutdown, no low pulse ≥ 260 µs (that enters EasyScale
-  mode, default feedback 200 mV); to shut down, hold it low ≥ 2.5 ms (TI TPS61170 SLVS789D
-  p.5, pp.10–11). Before raising `LED_EN`, confirm the boost is up by reading `VLED_SENSE`
-  (FW-10): +32V is 32.57 V nominal (TPS61170 feedback 1.229 V × 26.5 from R65 255 kΩ /
-  R66 10 kΩ) and ≥ 31.30 V on every unit, so wait until V(+32V) ≥ 31.3 V, i.e.
-  V_ADC ≥ 1.18 V less the ADC and 1 % divider errors. Before the boost runs, +32V only
-  follows `+5V_BST` through the inductor and diode, a few volts, far below the LED string's
-  forward voltage.
+- **FW-8** `BST_EN` (GPIO53, TPS61170 CTRL) is both the boost's enable and its output set point,
+  in the TPS61170's PWM mode: V_FB = duty × 1.229 V (TI TPS61170 SLVS789D §8.4.2 p.11;
+  [led.md](led.md#headroom-control)).
+  - **Start:** drive it steadily high (duty 1). Within 1 ms of a start from shutdown, no low
+    pulse ≥ 260 µs: that enters EasyScale mode, default feedback 200 mV (pp.10–11). Before raising
+    `LED_EN`, confirm the boost is up by reading `VLED_SENSE` (FW-10): at duty 1 +32V is 32.57 V
+    nominal (1.229 V × 26.5 from R65 255 kΩ / R66 10 kΩ) and ≥ 31.30 V on every unit, so wait
+    until V(+32V) ≥ 31.3 V, i.e. V_ADC ≥ 1.18 V less the ADC and 1 % divider errors. Before the
+    boost runs, +32V only follows `+5V_BST` through the inductor and diode, a few volts, far
+    below the LED string's forward voltage.
+  - **Run:** a 50 kHz PWM, duty 0.62–1, set by the headroom loop (FW-22), with a step of
+    ≤ 0.13 % of the period (≤ 41 mV at the output; 800 ticks of a 40 MHz RMT clock, for example).
+    Stay within 5–100 kHz: below 5 kHz the TPS61170 can mistake the PWM for EasyScale, above
+    100 kHz its 40 ns on-time error grows (p.11). The low phases (≤ 7.6 µs at duty 0.62) never
+    reach the EasyScale or shutdown times. esp-hal 1.2.2 has an RMT driver for the P4 but no
+    LEDC or MCPWM driver ([architecture](../architecture.md#esp-hal-support-and-gaps)): the plan
+    is a third RMT TX channel in loop mode.
+  - **Stop:** hold it low ≥ 2.5 ms (p.5).
 - **FW-9** LED pulse ≤ 0.5 ms per frame at ≤ 120 fps (user decision 2026-10-31, exact answer:
   "≤ 0.5 ms at ≤ 120 fps (6 %)"). The STROBE hardware timeout (0.525–1.026 ms over all
   tolerances; the spread comes from U9's input threshold) is only a backstop: it passes any
   pulse up to 0.525 ms whole, and its upper end was accepted as a backstop only (user decision
   2026-11-02). The firmware keeps the sensor's strobe width within 0.5 ms; this rule, not the
   timeout, is the limit. [led.md](led.md#strobe-gating-and-timeout)
+  - **Pulse-width fault:** time every STROBE pulse from both edges (FW-16). If a lit pulse is
+    longer than 0.55 ms, drive `LED_EN` low before the next frame and report; raise it again
+    only once the exposure is back within 0.5 ms. The 0.55 ms assumes STROBE's width matches the
+    set exposure within 50 µs, which [led.md](led.md#first-board-checks) check 5 measures. At full
+    boost output a run of pulses at the 1.026 ms timeout would put ≈ 1.40 W into Q1, TJ ≈ 184 °C,
+    above its 175 °C ([led.md](led.md#q1-protection)).
   - **Pending (first-board measurement):** a firmware LED limit on PoE power. The PoE power
     budget was accepted to be measured on the first boards (user decision 2026-11-02: "Accept,
     measure on first boards"); if the measured PD input exceeds the IEEE 802.3af 12.95 W PD
@@ -182,8 +197,47 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   error after calibration, P4 DS Table 5-6 p.90), which covers both inputs:
   - `VLED_SENSE` on channel 5 (GPIO21): V(+32V) = V_ADC × 26.5 (R71 255 kΩ / R72 10 kΩ);
     the +32V maximum (≈ 33.9 V) gives ≈ 1.28 V at the pin.
-  - `NTC_SENSE` on channel 7 (GPIO23): R70 10 kΩ to +3V3 over TH1 10 kΩ B3380 to GND;
-    V = 3.3 V × R_NTC / (10 kΩ + R_NTC), 1.65 V at 25 °C, 2.44 V at 0 °C.
+  - `LED_K_SENSE` on channel 7 (GPIO23): V(`LED_K`) = V_ADC × 11.0 (R70 100 kΩ / R76 10 kΩ);
+    ≤ 3.14 V at the pin between pulses (+32V ≤ 33.93 V, 1 % resistors), 55–82 mV in the headroom
+    band; ±0.18 V at `LED_K` near 0.6 V. C48 is 1 nF (τ 9.1 µs), so a sample settles ≥ 0.1 ms
+    into a pulse.
+- **FW-22** Headroom loop: while the LEDs pulse, hold V(`LED_K`) at the end of each pulse in
+  0.6–0.9 V by the `BST_EN` duty ([led.md](led.md#headroom-control); user decision 2026-11-03,
+  design option 1b).
+  - **Sample** `LED_K_SENSE` ≥ 0.1 ms after a lit pulse starts and within its last 0.05 ms,
+    timed from the STROBE edge capture (FW-16) and the set exposure, and once more between
+    pulses in the same frame, 6.0–7.5 ms after the pulse ends (the reference for the sink-off
+    fault; by then the bank has recovered its droop, 2.4–6.0 ms).
+    Skip dark (LED-off) frames.
+  - **Step** the duty once per average of a few samples (e.g. 8): below 0.6 V raise it one step,
+    above 0.9 V lower it one step. Raise at least 4× as often as it lowers. Clamp to 0.62–1.
+  - **Start** at duty 1 on every power-up (FW-8). After the first average V of lit-pulse readings,
+    make one coarse step, D = 1 − (V − 1.2 V) / 34.3 V (clamped to 0.62–1), and hold D until two
+    averages in a row differ by < 0.1 V (only the pulses pull +32V down, ≈ 0.63 V a pulse); then
+    fine steps. This lands V(`LED_K`) in 0.77–2.8 V and reaches the band in ≈ 3 s at 120 fps;
+    fine steps alone would take ≈ 12 s ([led.md](led.md#headroom-control)).
+  - **Fall back** to duty 1 and report when there is no valid reading for 1 s or the ADC fails.
+  - **Faults:** an in-pulse reading less than 1.5 V below the same frame's between-pulse reading
+    means the sink isn't conducting or the sample missed the pulse. Conducting, the string's
+    forward voltage rises from its µA value to its pulse value, ≈ 12 × 0.65 V ≈ 7.8 V typical,
+    ≥ ≈ 12 × 0.25 V = 3.0 V on a low-VF unit at the lowest pulse current (Amicc Fig. 3 p.4, an
+    inference: VF is given only at 1 A), and the late reference adds the recovered droop
+    (≥ 0.48 V): ≥ ≈ 3.3 V with the reading error. With the sink off both readings are the same
+    node at the same +32V, equal within ≈ 0.2 V (±15 mV × 11 each; the resistor ratio cancels).
+    1.5 V leaves ≥ 1.3 V each side; it is a first value, and first-board check 7 in
+    [led.md](led.md#first-board-checks) measures both differences on a low-VF and a high-VF unit
+    and sets it. An absolute test can't work: the pulse and off levels of different units
+    overlap (string 17.4–29 V conducting, unknown at µA).
+    After a few in a row, `LED_EN` low and report. A reading below 1 V between pulses while +32V
+    is up means the string is open: `LED_EN` low and report. Still below 0.6 V at duty 1: the
+    string needs more than full scale, report. Still above 0.9 V at duty 0.62: a shorted LED,
+    report.
+  - **Q1 power:** keep (V(`LED_K`) at the end + 0.44 V) × 0.915 A × LED duty ≤ 0.80 W. The pulse
+    average is the end reading plus half the worst droop (0.87 V); at duty 1 the rule computes
+    ≤ 0.75 W on any unit in tolerance, reading error included, so it doesn't trip there, and
+    0.80 W holds TJ ≤ 118 °C ([led.md](led.md#q1-protection)). Above it, shorten the exposure
+    until it holds; if it can't, `LED_EN` low and report. In the band it computes
+    0.057–0.074 W.
 
 ### Ethernet and PTP
 
@@ -219,8 +273,10 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   1 V above its I/O supply (OV9281 datasheet v1.1 Table 8-1), and nothing on the board gates
   `XVS` by `CAM_EN`. Until the `CAM_EN` polarity is measured (FW-17), treat both `CAM_EN`
   levels as possibly off and start triggers only after an SCCB ACK.
-- **FW-16** `STROBE` = GPIO12: input, captured with a GPIO ETM event channel. Never configure it
-  as an output (U7 drives it).
+- **FW-16** `STROBE` = GPIO12: input, captured on both edges with one GPIO ETM event channel,
+  whose rise-edge and fall-edge events each trigger a capture (`GPIO_EVT_CHn_RISE_EDGE` /
+  `_FALL_EDGE` in SOC_ETM, esp32p4 PAC 0.3.0): the pulse width for FW-9, the sample timing for
+  FW-22. Never configure it as an output (U7 drives it).
 - **FW-17** SCCB on GPIO8 (SDA) / GPIO9 (SCL), ≤ 400 kHz, with the bus recovery of FW-20 at
   init. `CAM_EN` = GPIO10: R43 holds it low through reset; whether low means sensor on or off
   is not known and is measured on the first module (supply current with `CAM_EN` low and
@@ -279,4 +335,5 @@ GPIO24–27): none of them is a strap, JTAG or USB pin.
 | `VBUS_SENSE` | GPIO20 (U6.16), ADC1 ch 4 | GPIO6 (U6.8), digital only | Swapped with `LED_PWR_EN`. GPIO6 has no ADC, which is fine: the firmware only needs the level (FW-4). The divider output meets the GPIO6 input levels ([power.md](power.md#usb-vbus)) |
 
 Not GPIO moves, but firmware-visible part changes in the same revision: the accelerometer is
-now the MSA3S02 (FW-19) and the status LED the YY-0807BRGK26-07-FI (FW-21).
+now the MSA3S02 (FW-19), the status LED the YY-0807BRGK26-07-FI (FW-21), GPIO23 reads the LED
+sink's drain (`LED_K_SENSE`) instead of an NTC, and `BST_EN` carries a PWM (FW-8, FW-22).

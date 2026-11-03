@@ -21,7 +21,7 @@ flowchart LR
   CAM -- "STROBE" --> MCU
   CAM -- "STROBE" --> LEDD["LED driver<br/>U8, U10, U9, U11, Q1"]
   MCU -- "LED_PWR_EN, BST_EN, LED_EN" --> LEDD
-  LEDD -- "VLED_SENSE, NTC_SENSE" --> MCU
+  LEDD -- "VLED_SENSE, LED_K_SENSE" --> MCU
   LEDD -- "+32V, LED_K" --> RING["LED ring<br/>D4–D15"]
   MCU <-- "I2C, INT1" --> IMU["IMU<br/>U12 MSA3S02"]
 ```
@@ -49,11 +49,11 @@ flowchart LR
 | `+5V_POE` | U2 DP1435-5V output | 5.15 V | 4.89–5.41 V (one ±5 % regulation term, DP1435 p.5; no set-point accuracy given) | C11, L1 | Module 2.4 A nominal, 2.6 A max; board peak 1.96 A |
 | `+5V_POE_F` | L1 (π filter) | 5.15 V | 4.85–5.41 V (`+5V_POE` minus ≤ 0.04 V across L1 at 2.6 A) | U4 IN1, C13, C14, C15, R18/R19 | as `+5V` on PoE |
 | `VBUS` | J2 USB-C | 5.0 V | 4.40–5.5 V (USB 2.0 Table 7-7 p.178, §7.2.1.3 p.173: low-power port 4.40 V minimum, a conservative floor for this high-power function, which the spec requires to run fully from 4.75 V, §7.2.1.4 p.174; USB Type-C R2.0 §4.4.2 p.141: up to 5.5 V at light load) | U4 IN2, C16, D2, R24, R27/R28 | ≈ 0.49 A on USB alone (estimate; LEDs off by firmware rule) |
-| `+5V` | U4 TPS2121 OUT (PoE first) | 5.15 V on PoE | 4.35–5.41 V steady (input range minus RON ≤ 85 mΩ); ≥ 3.26 V at U4 OUT and ≥ 3.23 V at U3.4 (≈ 27 mV copper drop at the 1.96 A peak) during a PoE → USB switchover | U3, U8, U11, R63, C10, C12, C20, C22, C23, C34, C44, TP5 | ≈ 0.87 A average nominal, ≤ 1.0 A worst case at the LED design point; 1.96 A peak (U3 0.52 A + boost 1.44 A) while the boost recharges `+32V` at its switch limit (start-up, and 2.4–6.0 ms of every frame); U4 limit ≈ 2.5–3.5 A |
+| `+5V` | U4 TPS2121 OUT (PoE first) | 5.15 V on PoE | 4.35–5.41 V steady (input range minus RON ≤ 85 mΩ); ≥ 3.26 V at U4 OUT and ≥ 3.23 V at U3.4 (≈ 27 mV copper drop at the 1.96 A peak) during a PoE → USB switchover | U3, U8, U11, R63, C10, C12, C20, C22, C23, C34, C44, TP5 | ≈ 0.87 A average nominal, ≤ 1.01 A worst case at the LED design point (boost at full scale); 1.96 A peak (U3 0.52 A + boost 1.44 A) while the boost recharges `+32V` at its switch limit (start-up, and 2.4–6.0 ms of every frame); U4 limit ≈ 2.5–3.5 A |
 | `+3V3` | U3 TLV62569 | 3.318 V | 3.199–3.440 V DC set point (VFB 0.588–0.612 V, SLVSDG1C p.4; R16 453k / R17 100k ±1 %), used by every calculation; ≥ 3.16 V during a PoE → USB switchover. Logic-level checks that use the generic 3.3 V ± 5 % envelope (3.135–3.465 V) name it as such | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, R53 → `CAM_3V3`, pull-ups, CP2 divider, TP4 | ≈ 0.65 A (estimate); U3 rated 2 A |
 | `CAM_3V3` | `+3V3` through R53 0 Ω (0805) | 3.318 V | as `+3V3` | J4.15 (camera module), C30, C32, TP10 | ≤ 100 mA (estimate, no module datasheet) |
-| `+5V_BST` | U8 TPS22918 load switch (LED_PWR_EN) | `+5V` | `+5V` minus ≤ 0.11 V (RON ≤ 79 mΩ, TPS22918 p.5, at 1.44 A); switched on only on PoE (firmware rule) | U10 VIN, L3, C36, C38 | ≈ 0.38 A frame average nominal, ≤ 0.51 A worst case at the design point; 1.26 A average, 1.44 A peak while the boost is at its switch current limit (TPS61170 p.5) |
-| `+32V` | U10 TPS61170 boost (BST_EN) | 32.57 V | 31.30–33.93 V (VREF 1.204–1.254 V, R65 255k / R66 10k, TPS61170 SLVS789D p.5); ≤ 0.92 V droop at the end of a 0.5 ms pulse | LED string D4–D15, C43, C45, C46, C47, R65/R66, R71/R72, TP13 | Pulses 0.831 A nominal (0.759–0.915 A), ≤ 0.5 ms at ≤ 120 fps; 50 mA average nominal, 55 mA worst case (pulse × 0.5 ms × 120 Hz + 0.25 mA dividers) against ≥ 77 mA the boost delivers (77–81 mA) |
+| `+5V_BST` | U8 TPS22918 load switch (LED_PWR_EN) | `+5V` | `+5V` minus ≤ 0.11 V (RON ≤ 79 mΩ, TPS22918 p.5, at 1.44 A); switched on only on PoE (firmware rule) | U10 VIN, L3, C36, C38 | ≈ 0.38 A frame average nominal, ≤ 0.52 A worst case at the design point (boost at full scale); 1.26 A average, 1.44 A peak while the boost is at its switch current limit (TPS61170 p.5) |
+| `+32V` | U10 TPS61170 boost (BST_EN) | 32.57 V at full scale; ≈ 25 V in operation for a typical string (firmware set point) | Full scale (`BST_EN` steady high): 31.30–33.93 V (VREF 1.204–1.254 V, R65 255k / R66 10k, TPS61170 SLVS789D p.5). In operation the headroom loop sets ≈ 21.8–31.0 V by PWM duty ≈ 0.67–0.95 nominal (clamped to 0.62–1, [led](led.md#headroom-control)); ≤ 0.92 V droop at the end of a 0.5 ms pulse | LED string D4–D15, C43, C45, C46, C47, R65/R66, R71/R72, TP13; R70/R76 through the string | Pulses 0.831 A nominal (0.759–0.915 A), ≤ 0.5 ms at ≤ 120 fps; 50 mA average nominal, 55.5 mA worst case (pulse × 0.5 ms × 120 Hz + 0.25 mA dividers + ≤ 0.31 mA `LED_K_SENSE` divider) against ≥ 77 mA the boost delivers at full scale (77–81 mA) |
 
 Derivations: [power.md](power.md) for the first seven rows, [led.md](led.md#boost-converter) for
 `+5V_BST` and `+32V`.
@@ -121,10 +121,13 @@ Camera:
 - GND planes solid under the 0 Ω link pads and J4's MIPI pads except where the MIPI via antipads reach under them (design review 2026-11-01) — [layout](layout.md#camera-and-csi-2).
 
 LED:
-- Q1 1.7–1.8 mm from LEDs D15/D4, 2.35 mm from the crystal Y1 (rated to 85 °C) and near C46; their temperature rise is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal), [layout](layout.md#thermal).
+- Q1 1.7–1.8 mm from LEDs D15/D4, 2.35 mm from the crystal Y1 (rated to 85 °C) and near C46; their temperature rise at full boost output (up to 0.73 W in Q1; ≤ 0.083 W with the headroom loop) is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal), [layout](layout.md#thermal).
+- LED boost output set by a firmware headroom loop (PWM on `BST_EN`, `LED_K_SENSE` on GPIO23); without it the boost runs at full scale and Q1 dissipates as before (user decision 2026-11-03, design option 1b) — [led](led.md#headroom-control).
+- No temperature sensor: the NTC was dropped for `LED_K_SENSE` (user decision 2026-11-03); C48 is 1 nF instead of HDG's 0.1 µF at that ADC pin — [led](led.md#led_k-sense).
 - STROBE hardware timeout window 0.525–1.026 ms, set by U9's threshold spread (user decision 2026-11-02, "Accept 0.525–1.026 ms") — [led](led.md#strobe-gating-and-timeout).
+- A firmware failure that leaves +32V at full scale and lets STROBE run to the timeout would put ≈ 1.40 W into Q1 (TJ ≈ 184 °C > 175 °C); only firmware prevents it (FW-9 pulse-width fault, FW-22 power rule; design review 2026-11-03) — [led](led.md#q1-protection).
 - Boost output capacitance (662 µF) outside the TPS61170's 1–10 µF recommended range — [led](led.md#boost-converter).
-- PHY_RST_N and NTC_SENSE run inside the LED ring, 0.5–1.1 mm from the pulsed ring copper (static/slow lines) — [layout](layout.md#led-driver-and-ring).
+- PHY_RST_N and LED_K_SENSE run inside the LED ring, 0.5–1.1 mm from the pulsed ring copper (static line; 9.09 kΩ node read late in each pulse) — [layout](layout.md#led-driver-and-ring).
 
 MCU:
 - Status LED D1 on `+3V3`: green/blue VF up to 3.2 V at 5 mA against the `+3V3` set point of 3.199–3.440 V (user decision 2026-11-02, "Accept, check on first boards", taken on the 3.135 V minimum of the ± 5 % envelope, which is lower still) — [mcu](mcu.md#status-led).
@@ -160,10 +163,10 @@ Power ([power](power.md#first-board-checks)):
 9. RH-5002 loop fit in the 1.0 mm hole of TP2/TP3/TP7.
 
 LED ([led](led.md#first-board-checks)):
-10. Thermocouples on D15, D4, C46 and Y1's case at 0.5 ms / 120 fps for 30 min; if an LED is above the derating curve, lower R61; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the B.Cu zone's east edge back from x 151.0 — [led](led.md#thermal), [layout](layout.md#thermal).
-11. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14) — [led](led.md#boost-converter).
+10. Thermocouples on D15, D4, C46 and Y1's case at 0.5 ms / 120 fps for 30 min, with the headroom loop and at full boost output; if an LED is above the derating curve, lower R61; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the B.Cu zone's east edge back from x 151.0 — [led](led.md#thermal), [layout](layout.md#thermal).
+11. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14), at full scale and down to the loop's lowest set point; `LED_K_SENSE` × 11 against Q1's drain, the drain voltage where the current starts to sag, the in-pulse vs between-pulse `LED_K_SENSE` difference with Q1 conducting and off on a low-VF and a high-VF unit (sets FW-22's sink-off threshold), the start-up coarse step and the ADC conversion time — [led](led.md#boost-converter), [led](led.md#first-board-checks).
 12. Boost start-up waveform and a 0 → 0.9 A pulse load step (output capacitance outside TI's range) — [led](led.md#boost-converter).
-13. STROBE timeout: a 0.5 ms pulse passes whole, longer ones are cut by ≈ 1.03 ms — [led](led.md#strobe-gating-and-timeout).
+13. STROBE timeout: a 0.5 ms pulse passes whole, longer ones are cut by ≈ 1.03 ms; STROBE's width matches the set exposure within 50 µs, and a 0.6 ms STROBE trips FW-9's pulse-width fault — [led](led.md#strobe-gating-and-timeout), [led](led.md#first-board-checks).
 
 Camera ([camera](camera.md#first-board-checks)):
 14. CSI-2 at full rate (2 lanes, 800 Mbit/s per lane) with a frame-error count (impedance, no CLK guard, planes under the pads) — [camera](camera.md#csi-2-link).

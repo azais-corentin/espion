@@ -1335,7 +1335,7 @@
 				(justify right)
 			)
 		)
-		(pin "NTC_SENSE" passive
+		(pin "LED_K_SENSE" passive
 			(at 167.64 91.44 0)
 			(uuid "cc25a0c8-9f79-48aa-bc4d-6c24a31def11")
 			(effects
@@ -1431,7 +1431,7 @@
 				(justify left)
 			)
 		)
-		(pin "NTC_SENSE" passive
+		(pin "LED_K_SENSE" passive
 			(at 215.9 91.44 180)
 			(uuid "1ab82e0f-f0c1-4c69-86ed-7841ea9e75ff")
 			(effects
@@ -1662,5 +1662,4 @@
 			(page "1")
 		)
 	)
-	(embedded_fonts no)
 )

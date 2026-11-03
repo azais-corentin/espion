@@ -1493,279 +1493,6 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "Device:Thermistor_NTC"
-			(pin_numbers
-				(hide yes)
-			)
-			(pin_names
-				(offset 0)
-			)
-			(exclude_from_sim no)
-			(in_bom yes)
-			(on_board yes)
-			(in_pos_files yes)
-			(duplicate_pin_numbers_are_jumpers no)
-			(property "Reference" "TH"
-				(at -4.445 0 90)
-				(show_name no)
-				(do_not_autoplace no)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Value" "Thermistor_NTC"
-				(at 3.175 0 90)
-				(show_name no)
-				(do_not_autoplace no)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Footprint" ""
-				(at 0 1.27 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Datasheet" ""
-				(at 0 1.27 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "Description" "Temperature dependent resistor, negative temperature coefficient"
-				(at 0 0 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "ki_keywords" "thermistor NTC resistor sensor RTD"
-				(at 0 0 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(property "ki_fp_filters" "R_* RV_*"
-				(at 0 0 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
-				)
-			)
-			(symbol "Thermistor_NTC_0_1"
-				(arc
-					(start -3.175 2.413)
-					(mid -3.0506 2.3165)
-					(end -3.048 2.159)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(arc
-					(start -3.048 2.794)
-					(mid -2.9736 2.9736)
-					(end -2.794 3.048)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(arc
-					(start -2.794 3.048)
-					(mid -2.6144 2.9736)
-					(end -2.54 2.794)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(arc
-					(start -2.794 2.54)
-					(mid -2.9736 2.6144)
-					(end -3.048 2.794)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(arc
-					(start -2.794 1.905)
-					(mid -2.9736 1.9794)
-					(end -3.048 2.159)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(arc
-					(start -2.54 2.159)
-					(mid -2.6144 1.9794)
-					(end -2.794 1.905)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(arc
-					(start -2.159 2.794)
-					(mid -2.434 2.5608)
-					(end -2.794 2.54)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -2.54 2.159) (xy -2.54 2.794)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -2.54 -3.683) (xy -2.54 -1.397) (xy -2.794 -2.159) (xy -2.286 -2.159) (xy -2.54 -1.397) (xy -2.54 -1.651)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type outline)
-					)
-				)
-				(polyline
-					(pts
-						(xy -1.778 2.54) (xy -1.778 1.524) (xy 1.778 -1.524) (xy 1.778 -2.54)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -1.778 -1.397) (xy -1.778 -3.683) (xy -2.032 -2.921) (xy -1.524 -2.921) (xy -1.778 -3.683)
-						(xy -1.778 -3.429)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type outline)
-					)
-				)
-				(rectangle
-					(start -1.016 2.54)
-					(end 1.016 -2.54)
-					(stroke
-						(width 0.254)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-			)
-			(symbol "Thermistor_NTC_1_1"
-				(pin passive line
-					(at 0 3.81 270)
-					(length 1.27)
-					(name ""
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-					(number "1"
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-				)
-				(pin passive line
-					(at 0 -3.81 90)
-					(length 1.27)
-					(name ""
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-					(number "2"
-						(effects
-							(font
-								(size 1.27 1.27)
-							)
-						)
-					)
-				)
-			)
-			(embedded_fonts no)
-		)
 		(symbol "Power_Management:TPS22917DBV"
 			(exclude_from_sim no)
 			(in_bom yes)
@@ -3312,6 +3039,12 @@
 		(uuid "bedbae08-9512-4974-bbb7-5006d5cb7ee8")
 	)
 	(junction
+		(at 223.52 106.68)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "befcbf8f-6292-4783-98fd-12354c1a2284")
+	)
+	(junction
 		(at 193.04 121.92)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3810,16 +3543,6 @@
 	)
 	(wire
 		(pts
-			(xy 223.52 116.84) (xy 223.52 115.57)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "5e91b1c9-5593-4470-a93e-daaf7057b407")
-	)
-	(wire
-		(pts
 			(xy 60.96 114.3) (xy 60.96 99.06)
 		)
 		(stroke
@@ -4217,6 +3940,16 @@
 			(type default)
 		)
 		(uuid "b150bce6-aa55-4bea-b528-971706a38ab9")
+	)
+	(wire
+		(pts
+			(xy 223.52 116.84) (xy 223.52 106.68)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b1d5bd8d-7234-4f81-84a3-f97d3756b405")
 	)
 	(wire
 		(pts
@@ -4792,7 +4525,7 @@
 		)
 		(uuid "c9f803e4-7d5a-4ce1-a16b-7df8ef317bbc")
 	)
-	(hierarchical_label "NTC_SENSE"
+	(hierarchical_label "LED_K_SENSE"
 		(shape passive)
 		(at 266.7 127 0)
 		(effects
@@ -6052,7 +5785,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "1nF C0G"
 			(at 240.03 134.62 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6074,7 +5807,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf"
 			(at 236.22 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -6096,7 +5829,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "FH"
 			(at 236.22 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -6107,7 +5840,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "0402CG102J500NT"
 			(at 236.22 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -6118,7 +5851,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C53547"
 			(at 236.22 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -8342,84 +8075,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/4ed43f8e-75af-4908-b656-d4c6559ec6b2"
 					(reference "C40")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:+3V3")
-		(at 223.52 115.57 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "6e6cf63f-81c6-4cd7-9a4e-5c2a72d3360c")
-		(property "Reference" "#PWR0132"
-			(at 223.52 119.38 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "+3V3"
-			(at 223.52 112.014 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 223.52 115.57 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 223.52 115.57 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"+3V3\""
-			(at 223.52 115.57 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "64a3fd9c-288e-47d8-9a64-f0fc75f6a5ea")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/4ed43f8e-75af-4908-b656-d4c6559ec6b2"
-					(reference "#PWR0132")
 					(unit 1)
 				)
 			)
@@ -11388,7 +11043,7 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:Thermistor_NTC")
+		(lib_id "Device:R")
 		(at 223.52 133.35 0)
 		(unit 1)
 		(body_style 1)
@@ -11397,10 +11052,9 @@
 		(on_board yes)
 		(in_pos_files yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "c2000259-a003-4514-8e2b-c6b1254565ac")
-		(property "Reference" "TH1"
-			(at 219.71 132.08 0)
+		(property "Reference" "R76"
+			(at 220.98 132.08 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -11410,8 +11064,8 @@
 				(justify right)
 			)
 		)
-		(property "Value" "10k B3380"
-			(at 219.71 134.62 0)
+		(property "Value" "10.0k 1%"
+			(at 220.98 134.62 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -11432,7 +11086,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://www.murata.com/-/media/webrenewal/products/thermistor/ntc/ncp/ncp15.ashx"
+		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11443,7 +11097,7 @@
 				)
 			)
 		)
-		(property "Description" "Temperature dependent resistor, negative temperature coefficient"
+		(property "Description" "Resistor"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11454,7 +11108,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Murata"
+		(property "Manufacturer" "FOJAN"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11465,7 +11119,7 @@
 				)
 			)
 		)
-		(property "MPN" "NCP15XH103F03RC"
+		(property "MPN" "FRC0402F1002TS"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11476,7 +11130,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C77131"
+		(property "LCSC" "C2906861"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11496,7 +11150,7 @@
 		(instances
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/4ed43f8e-75af-4908-b656-d4c6559ec6b2"
-					(reference "TH1")
+					(reference "R76")
 					(unit 1)
 				)
 			)
@@ -12810,7 +12464,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10.0k 1%"
+		(property "Value" "100k 1%"
 			(at 226.06 121.92 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12832,7 +12486,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 223.52 120.65 0)
 			(hide yes)
 			(show_name no)
@@ -12854,7 +12508,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 223.52 120.65 0)
 			(hide yes)
 			(show_name no)
@@ -12865,7 +12519,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1003TCE"
 			(at 223.52 120.65 0)
 			(hide yes)
 			(show_name no)
@@ -12876,7 +12530,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25741"
 			(at 223.52 120.65 0)
 			(hide yes)
 			(show_name no)

@@ -222,7 +222,7 @@ CC2 (R23.1 → J2.B5, 4.81 mm instead of ≈ 9.5 mm; [MCU and USB](#usb)), ETH_S
 onto the pad axis), and C37.2's loop inside "GND pour 81" (removed: the pour joins pad and via). A script over every
 track chain with ≥ 135° of turning finds the loops left forced: U5.5 → C25.1 (round U5.4), R3.2's GND via (ETH_LED_Y
 under R3 on B.Cu, the MDI pair to the west), C16.2's GND via (+5V, VBUS and +5V_POE_F round it), the +5V EN feed into
-U3.1 (round C18.1), +32V from C46.1 (MDC), NTC_SENSE and VLED_SENSE (round C48.2 / R72.2), PHY_RST_N (round R8.2),
+U3.1 (round C18.1), +32V from C46.1 (MDC), LED_K_SENSE and VLED_SENSE (round C48.2 / R72.2), PHY_RST_N (round R8.2),
 RMII_REF_CLK on B.Cu (+3V3), and the length-matched diff pairs. After the rework: 1589 tracks, 337 vias, 0 arcs; outside
 the LED ring 0 off-angle segments and 0 non-45° bends.
 
@@ -353,7 +353,7 @@ U5 USBLC6-2 and D2 TSD05 ESD protection at J2; SW1 (RESET) and SW2 (BOOT) on the
 | C28.1–U6.76 | 3 mm | HDG §1.4.1: 0.1 µF per power pin |
 | R33.2–U6.1, C27.1–U6.1 | 3 mm | HDG §1.3.3: RC at CHIP_PU (ESP_EN), short trace |
 | R31.2–U6.38, R32.2–U6.37 | 3 mm | HDG §1.3.12 / §1.4.3: USB series resistors at the chip end (D+ / D−) |
-| C48.1–U6.19 | 3 mm | HDG §1.3.10: 0.1 µF at an ADC pin (NTC_SENSE) |
+| C48.1–U6.19 | 3 mm | HDG §1.3.10: filter capacitor at an ADC pin (LED_K_SENSE). 1 nF here, not the HDG's 0.1 µF, so the reading settles within an LED pulse ([led](led.md#led_k-sense)) |
 | C49.1–U6.17 | 3 mm | HDG §1.3.10: 0.1 µF at an ADC pin (VLED_SENSE, GPIO21 / ADC1_CH5); placed 2.0 mm |
 | U5–J2.A6 | 3 mm | USBLC6 Rev 5 §2.3 p.5–6: protection as close as possible to the connector, short I/O tracks |
 | D2.1–J2.A4, D2.1–J2.A9 | 5 mm | TI SLVA680A p.4 (cited by the TSD05 datasheet §6.1): "place the TVS as near to the connector as design rules allow"; 5 mm reaches both VBUS pad pairs |
@@ -839,11 +839,15 @@ MOSFET at (147.1, 133); U11 TLV9061 current loop with R69 (0.1 Ω sense) and net
   exception to the 45° rules ([Routing style](#routing-style)). Each LED's two pads of one node are joined centre to
   centre. LED_K: Q1.2 and D15.1 share the F.Cu pour "LED_K pour 121".
 - Exposed pads of LED_PWR/BST_SW keep 0.4 mm to other nets, and other exposed pads keep 0.4 mm to LED_PWR/BST_SW copper
-  (the two "LED_PWR pad spacing" rules). TH1 (the NTC) at (145.2, 127.8) is 0.42 mm from Q1's tab, which only tightens its
-  thermal coupling to Q1.
-- PHY_RST_N (76.4 mm, 5 vias) and NTC_SENSE (≈ 59 mm, mostly B.Cu) route round the lens inside the LED ring, PHY_RST_N ≈ 41 mm of
-  it at 0.5–1.1 mm from the ring pads and links. Both are slow lines: PHY_RST_N is static with R8 pulling it down,
-  NTC_SENSE has C48 at the ADC pin.
+  (the two "LED_PWR pad spacing" rules). R70 (the `LED_K_SENSE` divider's 100 kΩ) sits where the NTC TH1 was, at
+  (145.2, 127.8), rotated 180°: R70.1 (`LED_K`) joins Q1's tab copper by a 0.3 mm, 1.1 mm stub and keeps 0.406 mm to the
+  +32V trunk; R70.2 (`LED_K_SENSE`) keeps 0.40 mm to "LED_K pour 121". TH1's GND via and pour "GND pour 90" went with it.
+  R76 (10.0 kΩ to GND) took R70's old place beside C48 at U6.19, rotated 270°, R76.2 on a 0.2 mm stub to the GND via
+  (129.77, 145.4); R70's old +3V3 feed (two vias) is gone.
+- PHY_RST_N (76.4 mm, 5 vias) and LED_K_SENSE (58.6 mm, 46.0 mm of it on B.Cu, 2 vias) route round the lens inside the LED
+  ring, PHY_RST_N ≈ 41 mm of it at 0.5–1.1 mm from the ring pads and links. Both tolerate that: PHY_RST_N is static with R8
+  pulling it down; LED_K_SENSE is a 9.09 kΩ node with C48 1 nF at the ADC pin, read late in each pulse after the ring's
+  edges have settled ([led](led.md#led_k-sense)).
 
 ### Current sense
 
@@ -858,29 +862,32 @@ MOSFET at (147.1, 133); U11 TLV9061 current loop with R69 (0.1 Ω sense) and net
 
 ### Thermal
 
-Q1 dissipates up to 0.73 W average at the 0.5 ms / 120 fps limit ([led](led.md#thermal)). IRLR024N datasheet p.1: RθJA
+Q1 dissipates up to 0.73 W average at the 0.5 ms / 120 fps limit with the boost at full scale, ≤ 0.083 W with the
+headroom loop running ([led](led.md#thermal)); the copper is sized for full scale. IRLR024N datasheet p.1: RθJA
 110 °C/W on the minimum pad, 50 °C/W on 1 in² (645 mm²), RθJC 3.3 °C/W, TJ max 175 °C.
 
 - Drain copper (`copperArea` "Q1 drain copper", net LED_K, F.Cu + B.Cu within 15 mm of Q1: ≥ 100 mm², ≥ 12 vias): Q1's
-  6.4 × 5.8 mm tab with 16 thermal vias 0.6/0.3 (4 × 4), the F.Cu pour "LED_K pour 121" round the tab and D15.1 (47.4 mm²
+  6.4 × 5.8 mm tab with 16 thermal vias 0.6/0.3 (4 × 4), the F.Cu pour "LED_K pour 121" round the tab and D15.1 (47.6 mm²
   filled, the tab included), and the B.Cu zone "Q1 drain B.Cu"
-  (x 144.8–151.0, y 126.7–137.65, solid pad connection, 61.96 mm² filled). That is the ≈ 110–120 mm² that fits; 1 in²
+  (x 144.8–151.0, y 126.7–137.65, solid pad connection, 63.71 mm² filled). That is the ≈ 110–120 mm² that fits; 1 in²
   does not: `kicad_query board_free_space` finds no free 7.5 × 11.5 mm area on the top side for Q1 to move to.
 - The zone stays clear of the crystal (Y1/C5), the RMII B.Cu strip (x 152.75–157.3), the CSI bus (1.04 mm from CSI_D1_P,
   ≥ 0.54 mm) and U6's courtyard, and never reaches the ring side.
-- Estimate at 30 °C ambient: TJ ≤ 30 + 0.73 × 110 = 110 °C on any copper at least the minimum pad (the datasheet gives
-  nothing between that and 1 in²); case ≤ 108 °C. Both are inside TJ 175 °C.
+- Estimate at 30 °C ambient and full scale: TJ ≤ 30 + 0.73 × 110 = 110 °C on any copper at least the minimum pad (the
+  datasheet gives nothing between that and 1 in²); case ≤ 108 °C. Both are inside TJ 175 °C. With the headroom loop,
+  TJ ≤ 39 °C.
 - Q1's tab is 1.74 mm from D15 and 1.79 mm from D4, C46 7.27 mm, C47 22.3 mm. The LED current is set for only 1.35 °C of
-  LED heating above ambient, which a tab at up to ≈ 108 °C nearby almost certainly exceeds; C46/C47 are rated to 105 °C.
-  Accepted pending measurement (user decision 2026-11-01: "Measure first boards").
+  LED heating above ambient, which a tab at up to ≈ 108 °C (full scale) nearby almost certainly exceeds; C46/C47 are rated
+  to 105 °C. Accepted pending measurement (user decision 2026-11-01: "Measure first boards").
 - The Ethernet crystal Y1 sits 2.35 mm from Q1's tab (Q1.2 to Y1.2) and 1.35 mm sideways from the B.Cu zone "Q1 drain
   B.Cu" (its east edge x 151.0 to Y1.1, on the other side of the board); Y1 is rated −40…+85 °C, and its ±20 ppm holds only
   over that range (Epson TSX-3225 X1E0000210139 p.1). U1 (IP101GRI, 85 °C ambient, DS p.57) is 6.25 mm from the tab and
   5.25 mm from the zone. No figure bounds their temperature next to a tab at up to ≈ 108 °C; measured on the first boards.
 
-First-board check: thermocouples on D15 and D4 cases, on C46 and on Y1's case at 0.5 ms / 120 fps for 30 min; if the LEDs
-run above the derating curve, lower the LED current; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the
-B.Cu zone's east edge back from x 151.0 ([led](led.md#first-board-checks)).
+First-board check: thermocouples on D15 and D4 cases, on C46 and on Y1's case at 0.5 ms / 120 fps for 30 min, with the
+headroom loop and at full scale; if the LEDs run above the derating curve, lower the LED current; Y1 must stay ≤ 80 °C,
+else lower the LED current or duty, or pull the B.Cu zone's east edge back from x 151.0
+([led](led.md#first-board-checks)).
 
 ## Assembly
 
@@ -953,6 +960,7 @@ decoupling_placement, layout clean; unrouted 0), with its reason. A new warning 
 | +32V 0.4 mm (21.9 mm) | D3.1 → C47 along the bottom edge, off the copper under U6 | Recharge ≤ 0.1 A average, ≈ 0.22 A peak; ΔT ≈ 0.3 °C |
 | +32V 0.3 mm (20.9 mm) | Feeds to R65 (boost FB divider), R71 (VLED sense divider) and TP13 | µA |
 | RING_1–RING_11 0.5 mm, LED_K 0.5 mm (1.2 mm) | Ring links and the LED_K neck | 1.0 mm breaks the 0.4 mm LED pad spacing; ΔT ≈ 4.2 °C at 0.915 A DC |
+| LED_K 0.3 mm (1.1 mm) | R70.1 → Q1's tab copper | `LED_K_SENSE` divider, ≤ 0.31 mA |
 | ISNS 0.25 mm (8.8 mm) | The TP14 branch and the tap to NT1 | No load current; Q1.3 → R69.1 is the pour "ISNS pour 122" |
 | USB_C_D_P/N 0.2 mm (F.Cu 12.1 mm, B.Cu 119.6 mm); USB_C_D pair coupled at 0.26–0.30 mm | Connector side J2 → U5 → R31/R32 | Full speed is electrically short; impedance not controlled ([MCU and USB](#mcu-and-usb)) |
 | USB_D pair coupled at 0.257 mm (1.57 mm) | Into R31/R32 | Resistor pad pitch |
