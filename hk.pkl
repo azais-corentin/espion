@@ -1,0 +1,46 @@
+// Git hooks: every commit follows Conventional Commits (rules in cog.toml).
+// The dev shell installs these hooks (flake.nix shellHook); keep the hk version below at
+// the one nixpkgs provides.
+amends "package://github.com/jdx/hk/releases/download/v2.8.1/hk@2.8.1#/Config.pkl"
+
+hooks {
+  ["commit-msg"] {
+    steps {
+      // Builtins.cocogitto_commit_msg, letting fixup!/squash!/amend! commits through so
+      // they can be folded with `git rebase --autosquash`; pre-push rejects them.
+      ["cocogitto"] {
+        check = "cog --quiet verify --ignore-fixup-commits --file {{commit_msg_file}}"
+      }
+    }
+  }
+  ["pre-push"] {
+    steps {
+      // Checks every commit being pushed, including ones made with --no-verify, and
+      // rejects fixup!/squash!/amend! commits.
+      ["cocogitto"] {
+        check = """
+          status=0
+          while read -r local_ref local_sha remote_ref remote_sha; do
+            case "$local_sha" in *[!0]*) ;; *) continue ;; esac # branch deletion
+            if case "$remote_sha" in *[!0]*) true ;; *) false ;; esac \\
+              && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+              commits=$(git rev-list --reverse --no-merges "$remote_sha..$local_sha")
+            else
+              # New branch or unknown remote tip: the commits on no remote branch.
+              commits=$(git rev-list --reverse --no-merges "$local_sha" --not --remotes)
+            fi
+            for commit in $commits; do
+              if ! git log -1 --format=%B "$commit" | cog --quiet verify --file -; then
+                echo "in $(git log -1 --format='%h %s' "$commit") ($local_ref)" >&2
+                status=1
+              fi
+            done
+          done <<'EOF'
+          {{hook_stdin}}
+          EOF
+          exit $status
+          """
+      }
+    }
+  }
+}

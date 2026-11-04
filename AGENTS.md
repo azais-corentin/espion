@@ -94,6 +94,19 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
   shell and restart omp.
 - Hardware is CERN-OHL-P-2.0 (`hardware/LICENSE`); code is MIT OR Apache-2.0.
 
+## Commits
+
+- Every commit follows [Conventional Commits](https://www.conventionalcommits.org/):
+  `type(scope): description`, e.g. `fix(espion-cam): …`. The types are cocogitto's
+  defaults; the allowed scopes are the `scopes` list in `cog.toml` (a commit may also have
+  no scope). A new crate, board or tool adds its scope there in the same commit.
+- The hk hooks in `hk.pkl` check this: `commit-msg` on every commit, `pre-push` on every
+  commit being pushed. The dev shell installs them; commit and push from inside it. Never
+  bypass them (`--no-verify`, `HK=0`).
+- `fixup!`/`squash!`/`amend!` commits are allowed locally; fold them
+  (`git rebase -i --autosquash`) before pushing, pre-push rejects them. Git's default
+  `Revert "…"` message is rejected: write `revert: …` instead.
+
 ## Hygiene
 
 - Never commit generated files or build outputs (`target/`, Gerbers/BOM exports, KiCad

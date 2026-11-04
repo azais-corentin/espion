@@ -1,0 +1,36 @@
+# Conventional Commits rules, checked by the hk hooks in hk.pkl (commit-msg and pre-push).
+# Commit types are cocogitto's defaults: feat, fix, docs, chore, refactor, test, build, ci,
+# perf, style, revert.
+
+# Allowed scopes. A commit may also have no scope. A new crate, board or tool adds its
+# scope here.
+scopes = [
+  # hardware/espion-cam: the camera board.
+  "espion-cam",
+  # docs/hardware and hardware-wide changes.
+  "hardware",
+  # hardware/lib: symbols, footprints, 3D models.
+  "hardware-lib",
+  # .omp/extensions/kicad.
+  "kicad-toolkit",
+  # .omp skills.
+  "skills",
+  # crates/espion-proto.
+  "proto",
+  # firmware/cam-p4.
+  "cam-p4",
+  # firmware/esp32p4-csi.
+  "esp32p4-csi",
+  # host/espion-server, espion-viewer, espion-calib, espion-sync.
+  "server",
+  "viewer",
+  "calib",
+  "sync",
+  # flake.nix, flake.lock and the dev shell.
+  "nix",
+]
+
+ignore_merge_commits = true
+# fixup!/squash!/amend! commits are allowed locally (the commit-msg hook passes
+# --ignore-fixup-commits) but the pre-push hook rejects them: fold them before pushing.
+ignore_fixup_commits = false

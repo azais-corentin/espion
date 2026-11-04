@@ -100,6 +100,9 @@
               # Datasheets: pdftoppm/pdftotext (kicad_datasheet) and image crops.
               pkgs.poppler-utils
               pkgs.imagemagick
+              # Git hooks (hk.pkl): Conventional Commits checked with cocogitto (cog.toml).
+              pkgs.hk
+              pkgs.cocogitto
             ];
 
             KICAD_LIBRARY_TOOLS = "${kicad-library-tools}";
@@ -127,6 +130,23 @@
                     ln -sfn "$target" "$link"
                   fi
                 done
+              fi
+
+              # Install the hk hooks (in .git/config, shared by every worktree) when hk or
+              # hk.pkl changed since the last install, so parallel shells don't all rewrite
+              # .git/config.
+              if root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -f "$root/hk.pkl" ]; then
+                stamp="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)/hk-install.stamp"
+                want="${pkgs.hk} $(sha256sum < "$root/hk.pkl")"
+                if [ "$(cat "$stamp" 2>/dev/null)" != "$want" ] \
+                  || ! git -C "$root" config --get-regexp '^hook\.hk-' >/dev/null; then
+                  if out=$(cd "$root" && hk install 2>&1); then
+                    printf '%s\n' "$want" > "$stamp"
+                  else
+                    printf '%s\n' "$out" >&2
+                    echo "espion: hk install failed; the commit hooks are not installed" >&2
+                  fi
+                fi
               fi
             '';
           };

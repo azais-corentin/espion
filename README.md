@@ -47,6 +47,10 @@ direnv allow        # or: nix develop
 
 Local overrides (e.g. `ESPFLASH_PORT`) go in `.envrc.local`, which is git-ignored.
 
+Entering the dev shell installs the git hooks (`hk.pkl`): commit messages must follow
+[Conventional Commits](https://www.conventionalcommits.org/), with the scopes in
+`cog.toml`. See the Commits section of `AGENTS.md`.
+
 ## Build, flash, run
 
 Host workspace (repo root; includes `espion-proto`):
