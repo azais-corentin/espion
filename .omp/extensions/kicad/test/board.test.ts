@@ -372,6 +372,47 @@ describe.skipIf(!HAS_KICAD)("board ops, queries, check and render on the fixture
 		expect((await pcbDrc(boardFile, o(), true)).parity).toEqual([]);
 	}, 180_000);
 
+	test("update_footprint_from_library takes a library change onto the placed footprint: placement, side, lock, uuid, field texts and pad nets stay", async () => {
+		await imported();
+		const placed = await edit([
+			{ op: "place_footprint", ref: "D1", at: [10, 10], rot: 90, side: "bottom", locked: true },
+			{ op: "set_footprint_field", ref: "D1", field: "Value", offset: [0, 2], hidden: false },
+		]);
+		if (!placed.applied) throw new Error(placed.report);
+		const before = await fp("D1");
+		const uuid = text(children(Board.load(boardFile).footprint("D1"), "uuid")[0]!, 1);
+		// pad 1 grows; a second pad 2 (as shield tabs share a number) joins pad 2 inside its copper
+		const lib = await edit([
+			{
+				op: "lib_edit_footprint",
+				library: "Fixture",
+				name: "LED_Fixture_0603",
+				pads: [{ pad: "1", size: [1.0, 0.95] }],
+				add_pads: [{ number: "2", type: "smd", shape: "roundrect", at: [0.7875, 0.3], size: [0.3, 0.3] }],
+			},
+		]);
+		if (!lib.applied) throw new Error(lib.report);
+		// update_from_schematic leaves it: the Footprint field did not change
+		expect((await edit([{ op: "update_from_schematic" }], { dry_run: true })).report).toContain("update_from_schematic: 0 added, 0 updated, 0 replaced, 0 removed");
+
+		const r = await edit([{ op: "update_footprint_from_library", ref: "D1" }]);
+		if (!r.applied) throw new Error(r.report);
+		expect(r.report).toContain("D1 updated from library Fixture:LED_Fixture_0603");
+		const after = await fp("D1");
+		expect([after.at, after.rot, after.side, after.locked]).toEqual([before.at, before.rot, "bottom", true]);
+		const netOf = new Map(before.pads.map((p: { number: string; net?: string }) => [p.number, p.net]));
+		const pads = after.pads.map((p: { number: string; net?: string; size: number[] }) => [p.number, p.net, p.size]).sort((a: string[], b: string[]) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+		expect(pads).toEqual([
+			["1", netOf.get("1"), [1.0, 0.95]],
+			["2", netOf.get("2"), [0.3, 0.3]],
+			["2", netOf.get("2"), [0.875, 0.95]],
+		]);
+		expect(new Set(after.pads.flatMap((p: { layers: string[] }) => p.layers))).toEqual(new Set(["B.Cu", "B.Mask", "B.Paste"]));
+		expect(after.fields).toEqual(before.fields);
+		expect(text(children(Board.load(boardFile).footprint("D1"), "uuid")[0]!, 1)).toBe(uuid);
+		expect((await pcbDrc(boardFile, o(), true)).parity).toEqual([]);
+	}, 180_000);
+
 	test("place_footprint moves and turns a footprint as KiCad sees it: pads where IPC-D-356 puts them, texts turned with it; locked ones stay", async () => {
 		await imported();
 		const before = (await fp("R1")).pads.map((p: { at: Pt }) => p.at);

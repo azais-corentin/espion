@@ -31,7 +31,7 @@ import { mm } from "../fpgfx";
 import { type Box, bbox, type Pt } from "../geom";
 import type { Project } from "../project";
 import { newUuid } from "../sch";
-import { child, children, head, isList, L, type List, parse, setChild, str, text } from "../sexpr";
+import { child, children, clone, head, isList, L, type List, parse, setChild, str, text } from "../sexpr";
 import { type Fields, validate } from "../spec";
 import type { OpDef } from "../types";
 
@@ -408,6 +408,56 @@ const updateFromSchematic: OpDef = {
 	},
 };
 
+const updateFootprintFromLibrary: OpDef = {
+	op: "update_footprint_from_library",
+	group: "board",
+	doc:
+		"KiCad's Update Footprint from Library for one placed footprint: replaces it with the current library copy of its own footprint id (pads, drawings, zones, 3D models, the footprint type), at the same position, rotation, side and lock. " +
+		"Its field texts (values, positions, layers, visibility), symbol link, uuid, the dnp / exclude_from_bom / exclude_from_pos_files flags and the pad nets (by pad number) stay. Use it after a library footprint change, in a separate kicad_edit call from that change; update_from_schematic only replaces a footprint whose Footprint field changed. Several footprints: several ops in one call.",
+	fields: { ref: { t: "string", req: true, doc: "reference" } },
+	apply(ctx, args) {
+		const board = ctx.project.board();
+		const ref = String(args.ref);
+		const old = board.footprint(ref);
+		const id = fpId(old);
+		const pl = placement(old);
+		const fp = instantiate(parse(fs.readFileSync(ctx.libs.footprintFile(id), "utf8")), id, newUuid);
+		if (pl.side === "bottom") flipToBack(fp, board.copperLayers());
+		setPlacement(fp, pl.at, pl.rot);
+		setLocked(fp, pl.locked);
+		// the board copy's own data: uuid, field texts as placed, symbol link, flags, pad nets
+		setChild(fp, clone(child(old, "uuid")!));
+		const firstProp = fp.findIndex(c => isList(c) && head(c) === "property");
+		const kept = children(old, "property").map(p => clone(p));
+		for (let i = fp.length - 1; i >= 0; i--) if (isList(fp[i]) && head(fp[i] as List) === "property") fp.splice(i, 1);
+		fp.splice(firstProp < 0 ? fp.findIndex(c => isList(c) && head(c) === "at") + 1 : firstProp, 0, ...kept);
+		const link = text(children(old, "path")[0]);
+		if (link) setLink(fp, { path: link, sheetname: text(child(old, "sheetname")) ?? "", sheetfile: text(child(old, "sheetfile")) ?? "" });
+		const flags = fpAttrs(old);
+		setAttrFlags(fp, Object.fromEntries(["dnp", "exclude_from_bom", "exclude_from_pos_files"].map(k => [k, flags.includes(k)])));
+		const nets = new Map<string, { name: string; pinfunction?: string; pintype?: string }>();
+		for (const pad of children(old, "pad")) {
+			const name = text(child(pad, "net"));
+			if (name !== undefined) nets.set(text(pad, 1) ?? "", { name, pinfunction: text(child(pad, "pinfunction")), pintype: text(child(pad, "pintype")) });
+		}
+		// pads sharing a number (shield tabs) all take that number's net
+		const numbers = new Set<string>();
+		for (const pad of children(fp, "pad")) {
+			const n = text(pad, 1) ?? "";
+			setPadNet(pad, nets.get(n));
+			numbers.add(n);
+		}
+		const missing = [...nets.keys()].filter(n => !numbers.has(n)).map(n => `${ref}.${n}`);
+		const before = courtyardBox(old)?.box;
+		board.tree[board.tree.indexOf(old)] = fp;
+		const after = courtyardBox(fp)?.box;
+		ctx.project.touchBoard();
+		const boxes = [before, after].filter((b): b is Box => !!b);
+		ctx.touchBoard(boxes.length ? bbox(boxes.flatMap(b => [[b[0], b[1]] as Pt, [b[2], b[3]] as Pt])) : undefined, [ref]);
+		ctx.notes.push(`${ref} updated from library ${id}${missing.length ? `; pads gone from the library footprint, their nets dropped: ${missing.join(", ")}` : ""}`);
+	},
+};
+
 // ---- placement ------------------------------------------------------------------------------------
 
 const placeFootprint: OpDef = {
@@ -616,4 +666,4 @@ const setBoardSetup: OpDef = {
 	},
 };
 
-export const ops: OpDef[] = [setStackup, setBoardRules, setBoardEdges, updateFromSchematic, placeFootprint, setFootprintField, setBoardSetup];
+export const ops: OpDef[] = [setStackup, setBoardRules, setBoardEdges, updateFromSchematic, updateFootprintFromLibrary, placeFootprint, setFootprintField, setBoardSetup];
