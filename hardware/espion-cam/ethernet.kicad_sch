@@ -3245,6 +3245,17 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "MDI pairs swapped at J1 (MDI-X wiring) and each pair P/N-inverted on purpose:\nU1 TX pair TP/TN (pins 30/29) -> J1 RD-/RD+ (pins 5/4),\nU1 RX pair RP/RN (pins 27/26) -> J1 TD-/TD+ (pins 2/1).\nRelies on IP101G polarity handling (page 16 reg 18[8] POLARITY, p.27) and auto-MDIX\n(page 16 reg 16[11] AUTO_MDIX_DIS = 0, the default): never disable auto-MDIX;\nif it must be off, set page 16 reg 30[3] FORCE_MDIX = 1."
+		(exclude_from_sim no)
+		(at 76.2 148.59 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "c60df52f-bb04-488d-977c-3b175dba90d0")
+	)
 	(text "IP101G straps: PHY address 1 (PHY_AD0 = 1 by R1, PHY_AD3 = 0 by R7),\nRMII mode (COL/RMII = 1 by R10), LED mode 2 (CRS/LEDMOD = 1 by R9),\nTP mode (FX_HEN internal pull-down)."
 		(exclude_from_sim no)
 		(at 167.64 154.94 0)
@@ -3255,17 +3266,6 @@
 			(justify left bottom)
 		)
 		(uuid "cad838b6-5b9a-4a14-a295-44f04bc4349d")
-	)
-	(text "MDI pairs crossed at J1 (MDI-X wiring): U1 TX pair (pins 30/29) -> J1 RD+/RD- (pins 4/5),\nU1 RX pair (pins 27/26) -> J1 TD+/TD- (pins 1/2), P to P, N to N.\nRelies on IP101G auto-MDIX (page 16 reg 16[11] AUTO_MDIX_DIS = 0, the default):\nnever disable it; if it must be off, set page 16 reg 30[3] FORCE_MDIX = 1."
-		(exclude_from_sim no)
-		(at 76.2 146.05 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "e134d0e0-1817-43ce-b311-decb9369b927")
 	)
 	(junction
 		(at 172.72 78.74)
@@ -4835,6 +4835,16 @@
 		)
 		(uuid "3c098d72-3744-4a0a-8da5-7593aa2977d4")
 	)
+	(label "ETH_TD_N"
+		(at 114.3 71.12 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "3f0d36b9-7649-41b6-9205-1552d40e3b92")
+	)
 	(label "PHY_LED0"
 		(at 116.84 83.82 0)
 		(effects
@@ -4845,16 +4855,6 @@
 		)
 		(uuid "459eac6a-ca1d-4862-a10c-b0826fcb5177")
 	)
-	(label "ETH_TD_P"
-		(at 114.3 71.12 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "46bb4ff1-6137-4190-a821-e96b1cfb614e")
-	)
 	(label "POE_VB1"
 		(at 72.39 58.42 0)
 		(effects
@@ -4864,6 +4864,16 @@
 			(justify left bottom)
 		)
 		(uuid "476a3088-6b70-4262-8987-49cc89d09484")
+	)
+	(label "ETH_RD_N"
+		(at 114.3 66.04 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "47b795b7-09a3-471c-a824-7f6f19ca9f2c")
 	)
 	(label "MDC"
 		(at 246.38 101.6 0)
@@ -4884,6 +4894,16 @@
 			(justify left bottom)
 		)
 		(uuid "581b822b-a8d0-431e-a448-e9d3e2186f8b")
+	)
+	(label "ETH_TD_P"
+		(at 114.3 73.66 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "598eeb55-e909-48fd-b560-aed1a3373cd9")
 	)
 	(label "PHY_REGOUT"
 		(at 105.41 119.38 0)
@@ -4944,16 +4964,6 @@
 			(justify left bottom)
 		)
 		(uuid "92a539bd-e25f-4324-9519-f7a85fa1f117")
-	)
-	(label "ETH_RD_P"
-		(at 114.3 66.04 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "94ea58a0-3c62-4846-aa91-929e940a7d15")
 	)
 	(label "XTAL_X1"
 		(at 95.25 91.44 0)
@@ -5065,15 +5075,15 @@
 		)
 		(uuid "db4ce7d2-5794-4963-a601-670e77ff80a8")
 	)
-	(label "ETH_TD_N"
-		(at 114.3 73.66 0)
+	(label "ETH_RD_P"
+		(at 114.3 68.58 0)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
 			(justify left bottom)
 		)
-		(uuid "df7757ea-d177-457e-aa48-12be747797a4")
+		(uuid "de55dccc-fd4d-4218-901f-500f140e055b")
 	)
 	(label "ETH_RD_P"
 		(at 85.09 40.64 180)
@@ -5124,16 +5134,6 @@
 			(justify left bottom)
 		)
 		(uuid "f7451350-c366-4fbc-8a2c-4bdc606628a4")
-	)
-	(label "ETH_RD_N"
-		(at 114.3 68.58 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "fa803ea4-bda7-4934-9ad9-7cba870d068a")
 	)
 	(label "ETH_SHIELD_R"
 		(at 17.78 81.28 0)

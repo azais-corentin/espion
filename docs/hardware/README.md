@@ -139,7 +139,8 @@ MCU:
 Ethernet:
 - IP101GRI has no maker MSL/reflow statement (user decision 2026-10-31, "Keep IP101GRI, accept risk") — [ethernet](ethernet.md#phy).
 - MDI pairs swapped at J1: link relies on the PHY's auto-MDIX (design review 2026-11-01) — [ethernet](ethernet.md#magjack-and-mdi).
-- MDI spacing below 3× inside U1's escape and the P/N swap vias without return vias — [ethernet](ethernet.md#magjack-and-mdi).
+- MDI pairs P/N-inverted between U1 and J1 (no swap vias): link relies on the IP101G's polarity handling, at both ends of the cable (user decision 2026-11-04: "This obviously means that polarity reversion is supported.") — [ethernet](ethernet.md#mdi-pairs-crossed-at-j1).
+- MDI spacing below 3× inside U1's escape — [ethernet](ethernet.md#magjack-and-mdi).
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
 - REGOUT reaches C6 through 4.59 mm of track, two vias and a short pour, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
@@ -180,7 +181,7 @@ MCU ([mcu](mcu.md#first-board-checks)):
 
 Ethernet ([ethernet](ethernet.md#first-board-checks)):
 20. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8, C1; inspect them after — [layout](layout.md#assembly).
-21. 100 Mbit/s link through auto-MDIX and an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#magjack-and-mdi), [ethernet](ethernet.md#rmii).
+21. Link at 10 and 100 Mbit/s with a straight and a crossover cable (auto-MDIX), auto-negotiated at full duplex at both speeds (half duplex means the reversed link pulses weren't recognised); page 16 register 18 bit 8 POLARITY must read 1 on the 10 Mbit/s links and is recorded at 100 Mbit/s (receive pair inverted on purpose); an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#first-board-checks), [ethernet](ethernet.md#rmii).
 22. REGOUT ripple at C6 with the link at 100 Mbit/s: inside 1.07–1.18 V (the REGOUT path to C6 has two vias) — [ethernet](ethernet.md#regout-and-iset).
 
 IMU ([imu](imu.md#first-board-checks)):

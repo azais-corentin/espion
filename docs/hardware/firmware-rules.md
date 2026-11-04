@@ -256,10 +256,13 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   MDIO address 1 (P4 DS Table 2-3 pp.21–22; TRM p.1002). MDC ≤ 3.33 MHz: period ≥ 300 ns,
   high and low ≥ 150 ns (IP101G datasheet Table 20 p.62).
 - **FW-13** Never disable the IP101G's auto-MDI/MDIX: never set page 16 register 16 bit 11
-  (AUTO_MDIX_DIS). The board's MDI pairs are swapped at the jack so both route without vias,
-  which makes the straight (MDI) wiring the PHY's MDI-X channel. If auto-MDIX ever has to be
-  off, set page 16 register 30 bit 3 (FORCE_MDIX) = 1 (IP101G datasheet p.25, p.29, §5.1.6
-  p.46). [ethernet.md](ethernet.md#magjack-and-mdi)
+  (AUTO_MDIX_DIS). The board's MDI pairs are swapped at the jack, which makes the straight (MDI)
+  wiring the PHY's MDI-X channel. If auto-MDIX ever has to be off, set page 16 register 30 bit 3
+  (FORCE_MDIX) = 1 (IP101G datasheet p.25, p.29, §5.1.6 p.46). Both pairs are also P/N-inverted
+  between U1 and J1 on purpose, so both route on F.Cu without vias (user decision 2026-11-04):
+  the read-only POLARITY status bit, page 16 register 18 bit 8 (p.27), may read reversed (1) on
+  the receive pair, at least at 10 Mbit/s. That is the board's wiring, not a fault: never raise an
+  error, retry or reset the PHY on it. [ethernet.md](ethernet.md#magjack-and-mdi)
 - **FW-14** PPS: route `emac_ptp_pps_pad_out` to GPIO32 (TRM p.1007). GPIO33 (`PPS_IN`, tied to
   GPIO32 by R34 0 Ω) is an input only and is captured with a GPIO ETM event channel (TRM
   p.1017); as an output it would fight GPIO32 through R34.

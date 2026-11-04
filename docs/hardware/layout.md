@@ -67,7 +67,7 @@ page gives no separate figures for 0.5 oz inner copper).
 |---|---|---|---|
 | Minimum track width / clearance | 0.1 / 0.1 mm | Multilayer 0.09 / 0.09 mm; pad to track 0.1 mm | The design's narrowest track is 0.15 mm and its closest copper 0.15 mm (`kicad_query stats`) |
 | Copper to board edge | 0.3 mm | Routed edge 0.2 mm; PCBA FAQ part 2 (https://jlcpcb.com/help/article/pcb-assembly-faqs-part-2, read 2026-10-31): "edges of the traces and components must be more than 0.3mm away from the edge" (≈ 0.2 mm routing tolerance at depanelling) | Also the plane pull-back at the FFC notch and the lens cutout |
-| Via size | Minimum Ø0.45 mm, hole 0.2 mm | "0.2mm or 0.25mm hole size with via diameter less than 0.45mm, will cost more"; preferred minimum via hole 0.2 mm | Used: 0.45/0.2 (298 vias), 0.6/0.3 (31: power and thermal), 0.8/0.4 (2: +5V_POE_F at the L1/C13/C14 filter output), 0.5/0.25 (1: +5V beside U8) |
+| Via size | Minimum Ø0.45 mm, hole 0.2 mm | "0.2mm or 0.25mm hole size with via diameter less than 0.45mm, will cost more"; preferred minimum via hole 0.2 mm | Used: 0.45/0.2 (294 vias), 0.6/0.3 (31: power and thermal), 0.8/0.4 (2: +5V_POE_F at the L1/C13/C14 filter output), 0.5/0.25 (1: +5V beside U8) |
 | Via annular ring | 0.075 mm | "Via diameter should be 0.1mm(0.15mm preferred) larger than Via hole size" (0.05 / 0.075 mm ring) | 0.45/0.2 vias have 0.125 mm |
 | Via types | Through vias only (rule "Through vias only") | Microvias "only available for board thickness ≤1mm"; blind and buried vias are HDI only | |
 | Hole to copper | 0.2 mm (rule "PTH hole to copper": 0.3 mm for through-hole pads) | Via hole to track 0.2 mm; inner-layer PTH hole to copper 0.3 mm | |
@@ -145,7 +145,7 @@ JLCPCB fabrication rules after them (2026-11-02; figures and sources in [Fabrica
 | Power neck-down at fine-pitch pads | PWR_5V, LED_PWR and +5V_BST tracks touching the courtyard of U4, U8 or U10 | Track width ≥ 0.3 mm | A 1.0 mm class track cannot enter U4's 0.4 mm pads (0.3 mm gaps, TI TPS2121 land pattern p.39), U8's SOT-23-6 (0.95 mm pitch) or U10's 0.3 mm WSON pads (TPS61170 DRV0006A, p.35) at 0.2 mm clearance; a 1 mm long 0.3 mm neck is 1.6 mΩ, 9 mW at 2.4 A ([Power](#power)) |
 | LED_PWR pad spacing (other pads) | An exposed pad of any other net against LED_PWR or BST_SW copper (tracks and vias included) | Clearance ≥ 0.4 mm | The mirror of "LED_PWR pad spacing", which only fires when the exposed pad is the LED_PWR item; same IPC-2221A source. Exempt: U10's own pads against BST_SW copper inside U10's courtyard (pin 4's 0.3 mm exit keeps TI's DRV0006A land gaps, 0.35 mm to pin 5 and 0.25 mm to the exposed pad) and ISNS_K against ISNS (the Kelvin tap through net tie NT1, same node, ≤ 0.1 V) |
 | Silk to silk | Two non-pad items on the same silk layer | Silk clearance ≥ 0 mm | JLCPCB gives no silkscreen-to-silkscreen spacing; see [Fabrication rules](#fabrication-rules) |
-| MDI pair to pair | RD pair (ETH_RD_P/N) against TD pair (ETH_TD_P/N); same U1 exemption as "MDI spacing" (either item touching U1's courtyard or wholly inside "U1 MDI escape") | Clearance ≥ 0.54 mm (3W) | IP101G §6.2 p.56 "three times space" also between the RX and TX pairs: 3 × 0.18 mm = 0.54 mm. Closest spot: the RD_N/TD_P diagonals at (159.2–159.6, 125.2–125.6), west of R6, 0.5399 mm (`kicad_query distance`), which DRC passes |
+| MDI pair to pair | RD pair (ETH_RD_P/N) against TD pair (ETH_TD_P/N); same U1 exemption as "MDI spacing" (either item touching U1's courtyard or wholly inside "U1 MDI escape") | Clearance ≥ 0.54 mm (3W) | IP101G §6.2 p.56 "three times space" also between the RX and TX pairs: 3 × 0.18 mm = 0.54 mm. Closest spot: the RD_P/TD_N diagonals at (159.2–159.6, 125.2–125.6), west of R6, 0.5399 mm (`kicad_query distance`), which DRC passes |
 | MDI intra-pair skew | Each MDI pair | Skew ≤ 1.27 mm | TI SNLA387 p.2 "MDI Traces": length-match the two lines of a pair within 50 mil (1.27 mm) for 100BASE-TX |
 | PTH annular ring | Plated through-hole pads | Annular width ≥ 0.15 mm | JLCPCB absolute minimum for 1 oz multilayer (0.20 mm recommended) |
 | Plated slot width | Plated pads with an oval hole | Hole ≥ 0.5 mm | JLCPCB "The minimum plated slot width is 0.5mm" (also "Multi-layer: 0.35mm") |
@@ -230,7 +230,7 @@ Geometry cleanup (2026-11-03, after the +32V reroute in [+32V and the ring](#32v
 on a pad, a via, a pour of its net or exactly on another track's centreline (ten joints that overlapped instead, among
 them USB_C_D_P's J2.A6/B6 tie, MDIO, ETH_LED_Y and four +3V3 branches, were rebuilt; VLED_SENSE's branch into the C49.1
 run keeps its 45° T, now on the centreline); the stubs inside U1.1 and U1.32 are gone; collinear segments of one width
-were merged, except ETH_TD_P at (159.66, 125.80), where the split keeps the lower segment wholly inside "U1 MDI escape"
+were merged, except the U1.27 escape at (159.66, 125.80) (ETH_TD_P then, ETH_TD_N since 2026-11-04), where the split keeps the lower segment wholly inside "U1 MDI escape"
 as the "MDI spacing" exemption needs. After: 1556 tracks, 335 vias, 0 arcs; outside the LED ring 0 off-angle segments and
 0 non-45° bends; lengths of the MIPI, MDI and RMII nets unchanged.
 
@@ -241,6 +241,9 @@ floating USB_C_D_N diagonal in U5.3, the +5V tails in U4.1, U4.8, C23.1 and C20.
 in L1.2 and +3V3's in L2.2 and C18.1). No connectivity changed; the pours already join those pads and vias. A script over
 every track end (pad shapes in their absolute rotation) confirms each lies on a pad, a via, a pour of its net, another
 track's end or another track's centreline. After: 1512 tracks, 332 vias, 0 arcs.
+
+MDI P/N inversion (2026-11-04, [MDI](#mdi)): the four MDI vias and the two B.Cu hops were removed. After: 1500 tracks, 328
+vias, 0 arcs (`kicad_query board`); every MDI bend is 45°.
 
 The MDI pin escapes at U1, which once needed slanted segments, are 45°-only ([Ethernet and PoE isolation](#ethernet-and-poe-isolation));
 the CSI bus crosses its narrowest plane neck at 45° rather than the ideal 58° ([Camera and CSI-2](#camera-and-csi-2)).
@@ -329,7 +332,7 @@ D1 ≤ 15 mA, pull-ups), < 1 °C rise.
 
 - In2 is one unbroken GND plane; In1 is GND everywhere except the PoE lane. Both pours: clearance 0.2 mm (raised by the
   custom rules near MIPI, MDI and PoE copper), thermal reliefs 0.5 mm gap / 0.5 mm spokes, islands removed. Filled area
-  In1 3160 mm², In2 3366 mm² (zone boundaries, In1 PoE lane and In2 plane unchanged; the routing fixes alter antipads).
+  In1 3167 mm², In2 3373 mm² (zone boundaries, In1 PoE lane and In2 plane unchanged; the routing fixes alter antipads).
 - Local pours, 83 on F.Cu and B.Cu (priority 10–122, above the planes' 0), join power pins of one net that sit close
   together and carry the high-current nodes: BST_SW (U10.4, L3.2, D3.2), LED_K (Q1.2 with its tab vias, D15.1) and ISNS
   (Q1.3, R69.1; NT1 keeps its Kelvin tap from R69.1, in a lobe of the pour that carries no load current). Each pour:
@@ -580,29 +583,38 @@ Parts: U1 IP101GRI PHY at (158.6, 130.8) with its MDI pins north; J1 HanRun HR87
 ### MDI
 
 - U1 sits next to J1 so MDI is short (IP101G §6.2 p.56: keep vias out of MDI except "in close proximity to device"). MDI
-  runs on F.Cu, 0.18 mm tracks at 0.155 mm gap, from U1 up the east strip (route reservations x 157.3–160.6,
-  y 122–128.9 and x 158.3–161, y 106.8–122) and between J1's pegs and LED pins to J1 pins 1, 2, 4, 5.
-- The two pairs are swapped at J1 so they reach it without crossing (U1.30/29 → J1.4/5, U1.27/26 → J1.1/2; net names
-  follow the J1 pin); this relies on the PHY's auto-MDIX, which firmware must never disable
+  runs on F.Cu only, with no vias, 0.18 mm tracks at 0.155 mm gap, from U1 up the east strip (MDI copper within
+  x 157.7–161.2, y 120.2–128.9, between J1.13/J1.14 and R6) and diagonally between J1's pegs and LED pins to J1 pins 1,
+  2, 4, 5.
+- The two pairs are swapped at J1 so they reach it without crossing, and each pair is P/N-inverted on purpose so it runs
+  straight (U1.30/29 → J1.5/4, U1.27/26 → J1.2/1; net names follow the J1 pin: U1.30 ETH_RD_N, U1.29 ETH_RD_P, U1.27
+  ETH_TD_N, U1.26 ETH_TD_P). This relies on the PHY's auto-MDIX, which firmware must never disable, and on its
+  polarity handling (IP101G p.27, register 18 bit 8 POLARITY; user decision 2026-11-04)
   ([ethernet](ethernet.md#magjack-and-mdi), [firmware rules](firmware-rules.md#rules)).
-- Inside each pair P must end north of N at J1 but leaves U1 on the west, so P hops once under N: two 0.45/0.2 vias and a
-  1.33 mm B.Cu hop, 6–8 mm from U1's pins: RD_P vias (158.788, 122.105)/(159.728, 121.165), TD_P vias
-  (160.298, 122.055)/(161.238, 121.115). N stays on F.Cu. RD_P to TD_P is ≥ 0.607 mm via to via.
+- Until 2026-11-04 each P line hopped under its N line (two 0.45/0.2 vias and a 1.33 mm B.Cu hop per pair). With the
+  inversion the hops, the four vias and the N lines' old skew bumps are gone. Each pair now jogs east once, at 45° as a
+  coupled pair, onto the lanes of the diagonals toward J1: RD by 0.335 mm at y 121.2–121.6 (lanes x 158.92/159.26 →
+  159.26/159.59), TD by 0.78 mm at y 122.3–123.2 (x 159.99/160.32 → 160.77/161.10). The U1.27 escape (now ETH_TD_N)
+  keeps its split at (159.66, 125.80), so its lower segment stays wholly inside "U1 MDI escape".
 - Spacing: MDI keeps 0.55 mm (3W) to other nets (rule "MDI spacing") and RD keeps ≥ 0.54 mm (3W) from TD edge to edge
-  (rule "MDI pair to pair"; closest the RD_N–TD_P diagonals at (159.2–159.6, 125.2–125.6), west of R6, at 0.5399 mm, which DRC passes). At U1's north row the 0.4 mm pitch makes 3W impossible: pins 25 (ISET), 28
+  (rule "MDI pair to pair"; closest the RD_P–TD_N diagonals at (159.2–159.6, 125.2–125.6), west of R6, at 0.5399 mm,
+  which DRC passes). At U1's north row the 0.4 mm pitch makes 3W impossible: pins 25 (ISET), 28
   (REGOUT) and 31 (AVDD33, +3V3) sit 0.2 mm from the MDI pads and their tracks leave between or beside the pairs. Each MDI
   pin escapes 0.55 mm north inside U1's courtyard, then 45°-only inside the F.Cu rule area "U1 MDI escape"
   (x 157.3–160.6, y 125.69–128.9), where the rule "MDI spacing" is waived. Inside it only U1's own pin nets come closer
   than 0.55 mm: the pads 0.2 mm (land pattern), the REGOUT track 0.21 mm and its via (158.8, 126.9) 0.286 mm, ISET's
   vertical 0.2175 mm, +3V3 0.21–0.25 mm, the PHY_RST_N via (156.95, 126.85) 0.5275 mm. Every MDI point outside the area
-  is ≥ 0.55 mm from other copper (DRC). This is a deviation from IP101G §6.2's "three times space", which has no
-  exception.
-- Lengths (via heights counted; pad to pad equals the net length): TD_P / TD_N 33.2530 / 33.2188 mm, RD_P / RD_N
-  27.7055 / 27.4156 mm, skew +0.034 / +0.290 mm, within TI SNLA387 p.2's 50 mil (1.27 mm) for 100 Mbit/s, which the
-  rule "MDI intra-pair skew" enforces. TD_N carries three 45° bumps and RD_N one; the radial via and pad entries of
-  2026-11-02 added the rest to the P lines.
-- Return path: the N tracks pass the swap vias' In1 antipads (r 0.775 mm) and the tails at J1.2/J1.4 cross J1's own MDI
-  antipads; accepted ([Accepted deviations](#accepted-deviations)).
+  is ≥ 0.55 mm from other copper (DRC; closest pads J1.14 0.5525 mm, R46.2 0.565 mm, R6 0.5675 mm, J1.13 0.5774 mm;
+  the GND via (161.3, 123.55) 0.631 mm from TD_P's jog). This is a deviation from IP101G §6.2's "three times space",
+  which has no exception.
+- Lengths (`kicad_query lengths`, U1 pad → J1 pad, no vias; pad to pad equals the net length): TD_P / TD_N 29.8731 /
+  29.8730 mm, RD_P / RD_N 25.6674 / 25.6674 mm, skew +0.0001 / 0.0000 mm, within TI SNLA387 p.2's 50 mil (1.27 mm) for
+  100 Mbit/s, which the rule "MDI intra-pair skew" enforces. J1.1 and J1.5 sit 2.54 mm west of J1.2 and J1.4, so TD_P
+  and RD_N have the longer way; TD_N carries two 45° trapezoid bumps (0.878 mm deep, south of its run at
+  x 150.99–153.61, y 113.37) and RD_P one (0.852 mm deep, north of its run at x 148.24–149.30, y 115.49), next to the
+  mismatch at J1.
+- Return path: In1 GND lies under every MDI track except where the tails at J1.2/J1.4 cross J1's own MDI antipads;
+  accepted ([Accepted deviations](#accepted-deviations)).
 
 ### RMII
 
@@ -971,27 +983,25 @@ decoupling_placement, layout clean; unrouted 0), with its reason. A new warning 
 | USB_C_D_P/N 0.2 mm (F.Cu 12.1 mm, B.Cu 119.6 mm); USB_C_D pair coupled at 0.26–0.30 mm | Connector side J2 → U5 → R31/R32 | Full speed is electrically short; impedance not controlled ([MCU and USB](#mcu-and-usb)) |
 | USB_D pair coupled at 0.257 mm (1.57 mm) | Into R31/R32 | Resistor pad pitch |
 | CAM_D1 pair coupled at 0.285 / 0.415 mm (0.62 mm); CAM_CLK pair at 0.42 mm (0.59 mm) | CAM_D1's bump flat and via approach; CAM_CLK_P's F.Cu tail into its via | Skew-compensation and via-entry geometry, not coupled runs |
-| ETH_TD pair at 0.22 / 0.29 mm (1.64 mm); ETH_RD pair at 0.22 / 0.29 / 0.428 mm (1.89 mm) | U1's MDI pin escapes; the P legs leaving the swap vias radially | 0.4 mm pin pitch; via entries |
+| ETH_TD pair at 0.22 mm (0.65 mm); ETH_RD pair at 0.22 / 0.428 mm (1.29 mm) | U1's MDI pin escapes | 0.4 mm pin pitch |
 | RMII_REF_CLK, RMII_REF_CLK_SRC 0.15 mm (1.1 / 2.1 mm) | U1.10's pin stub and where 0.2 mm does not fit | Pin pitch |
 | IMU_INT1 0.15 mm (F.Cu 0.9 mm, B.Cu 3.1 mm) | From U12.5 to the via under U12 | Between 0.5 mm-pitch LGA pads |
 
-### return_path (8 warnings)
+### return_path (6 warnings)
 
 | Track | Where | Reason |
 |---|---|---|
 | USB_C_D_P, 1.24, 1.13 and 1.15 mm on F.Cu | U5 link at (113.05, 110.5–114.0), split at the via tee | Crosses the In1 gap of the PoE lane (2 mm from the PoE copper); In2 is solid GND below. Full-speed USB, electrically short |
-| ETH_TD_N 2.30 mm; ETH_RD_N 2.30 mm (x 160.77 / 159.26, y 120.4–122.8) | Beside the P/N swap vias | The swap vias' In1 antipads (r 0.775 mm) reach under the N track; the hop sits where IP101G §6.2 allows vias |
 | ETH_TD_P 1.78 mm, ETH_RD_N 1.82 mm, ETH_TD_N 0.69 mm | TD_P passing over J1.2 into J1.1, RD_N passing under J1.4 into J1.5, TD_N leaving J1.2 | J1's MDI antipads in In1 (pad plus the 0.55 mm MDI spacing); a track leaving or passing a pin there crosses them |
 
-The count fell from 13 when the 2026-11-03 cleanup merged collinear segments: the check reports per segment, and the
-uncovered stretches are the same.
+The count fell from 13 when the 2026-11-03 cleanup merged collinear segments (the check reports per segment, and the
+uncovered stretches are the same), and from 8 to 6 when the MDI swap vias went (2026-11-04): their In1 antipads no
+longer reach under ETH_TD_N and ETH_RD_N.
 
-### via_return (3 warnings)
+### via_return (1 warning)
 
 | Net | Vias | Reason |
 |---|---|---|
-| ETH_RD_P | (159.728, 121.165), (158.788, 122.105) | A GND via must keep ≥ 1.0 mm from an MDI via ("MDI spacing" 0.55 + 2 × 0.225 mm), and J1.13/J1.14 take the only spots at exactly 1.0 mm. MDI is short at 100 Mbit/s |
-| ETH_TD_P | (160.298, 122.055), (161.238, 121.115) | Same |
 | USB_C_D_N | (114.1, 109.0) | No site within 1 mm (D2, the VBUS link and the D+ track surround it); nearest GND via 2.66 mm, In2 solid below; full-speed edges ≥ 4 ns |
 
 ### Pad entries (32 findings on 19 pads and vias)
@@ -1026,6 +1036,7 @@ moved; placement is unchanged.
 | No GND guard round the MIPI CLK pairs | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | Planes solid under the link and J4 pads except where the MIPI via antipads (r 0.585 mm) reach: up to 0.215 mm into the aligned south link pads R45–R47, R49, R50 (≈ 34 % area), part of R51's west edge (≈ 20 % area), ≈ 0.06 mm off J4's MIPI pads 2, 3, 5, 6; adjacent antipads join into slot voids along each via row | Design review 2026-11-01; geometry corrected 2026-11-02 | [Camera and CSI-2](#camera-and-csi-2) |
 | MDI 3W waived inside "U1 MDI escape" | Design review 2026-11-01 (0.4 mm pitch) | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
+| Both MDI pairs P/N-inverted between U1 and J1 (no swap vias), relying on the IP101G's polarity handling; the link partner receives our transmit pair inverted | User decision 2026-11-04 | [Ethernet and PoE isolation](#mdi) |
 | Eight RMII/strobe layer changes without a GND via within 1.1 mm (seven with none within 1.6 mm); every XVS layer change now has a return within 0.67–0.90 mm | Design review; XVS routing corrected 2026-11-02 | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | No GND guard at the crystal | Design review (IP101G: "if possible") | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | Crystal loop: XTAL_X1 7.47 mm round Y1 against XTAL_X2 1.49 mm, ≈ 3.7 × 3.6 mm over In1 GND | User decision 2026-11-03 | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |

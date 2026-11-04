@@ -134,64 +134,88 @@ side at the east edge, soldered by hand ([layout](layout.md#assembly)).
 
 ### MDI pairs crossed at J1
 
-The pairs are swapped at J1, so that both route on F.Cu without crossing:
+The pairs are swapped at J1, and inside each pair P and N are inverted on purpose, so that both pairs
+route on F.Cu without crossing each other or themselves, and without vias:
 
 | U1 pin | PHY function | Net | J1 pin | Jack function |
 |---|---|---|---|---|
-| U1.30 | MDI_TP (transmit +) | ETH_RD_P | J1.4 | RD+ (RJ45 3) |
-| U1.29 | MDI_TN (transmit −) | ETH_RD_N | J1.5 | RD− (RJ45 6) |
-| U1.27 | MDI_RP (receive +) | ETH_TD_P | J1.1 | TD+ (RJ45 1) |
-| U1.26 | MDI_RN (receive −) | ETH_TD_N | J1.2 | TD− (RJ45 2) |
+| U1.30 | MDI_TP (transmit +) | ETH_RD_N | J1.5 | RD− (RJ45 6) |
+| U1.29 | MDI_TN (transmit −) | ETH_RD_P | J1.4 | RD+ (RJ45 3) |
+| U1.27 | MDI_RP (receive +) | ETH_TD_N | J1.2 | TD− (RJ45 2) |
+| U1.26 | MDI_RN (receive −) | ETH_TD_P | J1.1 | TD+ (RJ45 1) |
 
 - The PHY transmits on RJ45 pins 3/6. That is MDI-X wiring, and it works because the IP101G swaps its
   pairs itself.
-- The net names follow the J1 pin they reach. P stays on P and N on N, so no polarity is inverted.
+- The net names follow the J1 pin they reach. Each PHY + pin reaches the jack's − pin and each − pin
+  its + pin, so both pairs are P/N-inverted between U1 and J1. In each pair the U1 pin that leaves on
+  the west ends on the south lane at J1 (J1.5, J1.2), so the pair runs straight.
 - The Ethernet sheet carries a note at U1/J1 saying so.
 
-IP101G register facts the crossing relies on:
+IP101G register facts the wiring relies on:
 
 - "Supports Auto MDI/MDIX function" (p.1).
 - Page 16, register 16 bit 11, AUTO_MDIX_DIS: R/W, default 0. "Set high to disable the automatic switch
   of MDI and MDI-X modes" (p.25).
 - With auto-MDIX on, the PHY "will switch TX and RX pairs automatically", in auto-negotiation and in
   forced mode (§5.1.6 p.46).
-- Register 18 bit 9 (MDI/MDIX) and bit 8 (POLARITY) are read-only status bits (p.27).
+- Register 18 bit 9 (MDI/MDIX) and bit 8 (POLARITY) are read-only status bits (p.27). Bit 8:
+  "To indicate the polarity of twist pair N/P is reversed".
 - Page 16, register 30 bit 3, FORCE_MDIX: default 0, which means MDI when auto-MDIX is off (p.29).
 
 So the firmware must never set AUTO_MDIX_DIS. If auto-MDIX ever has to be off, it must set
 FORCE_MDIX = 1, because the board's wiring is the PHY's MDI-X channel
 ([firmware-rules](firmware-rules.md#rules)).
 
-The datasheet claims no automatic polarity correction. That is why each pair keeps P and N physically
-correct, with a short via hop, rather than swapping P and N at the jack.
+The P/N inversion rests on a user decision (2026-11-04): "The IP101GRI datasheet on page 27 explicitly
+says: POLARITY — To indicate the polarity of twist pair N/P is reversed … This obviously means that
+polarity reversion is supported." Until then each P line hopped under its N line on B.Cu through two
+vias to keep P on P. Consequences:
+
+- The PHY's receive pair arrives inverted whichever pair auto-MDIX picks. At 10 Mbit/s register 18
+  bit 8 (POLARITY) is expected to read 1. At 100 Mbit/s the data doesn't depend on polarity and the
+  bit may read 0 or 1: it can only come from the auto-negotiation link pulses, and p.27 doesn't say
+  when it updates. The firmware must not treat a reversed reading as a fault
+  ([firmware-rules](firmware-rules.md#rules)).
+- Residual: the polarity-sensitive parts are 10BASE-T (Manchester data and its link pulses) and the
+  auto-negotiation link pulses (FLP), which are exchanged before a 100 Mbit/s auto-negotiated link
+  too. So both the IP101G (for our receive pair, p.27) and the link partner (for our transmit pair)
+  must handle reversed link pulses for auto-negotiation at either speed, and reversed data at
+  10 Mbit/s. 100BASE-TX data itself is unaffected: "Wrong polarity affects 10BASE-Te connections.
+  100BASE-TX is immune to polarity problems because 100BASE-TX uses MLT-3 encoding" (TI DP83822
+  datasheet Rev. H, https://www.ti.com/lit/ds/symlink/dp83822i.pdf, §7.4.5.4 p.41). The first-board
+  link check runs at 10 and 100 Mbit/s with a straight and a crossover cable
+  ([First-board checks](#first-board-checks)).
 
 ### MDI routing
 
 - **Geometry.** Class MDI: 0.18 mm tracks with a 0.15 mm gap on F.Cu over the In1 GND plane. That is
-  100 Ω differential nominal, the same geometry as the MIPI pairs. At about 33 mm the MDI lines are
+  100 Ω differential nominal, the same geometry as the MIPI pairs. At 26–30 mm the MDI lines are
   electrically short for 100BASE-TX, so the 88–114 Ω spread without impedance control doesn't matter
   ([layout](layout.md#impedance)).
 - **Vias.** IP101G §6.2 (p.56) says "it is best not use via to place anywhere other than in close
-  proximity to device". The crossing at J1 fixes the order of the two pairs, but inside each pair P
-  must pass over N once. Each P line takes two vias and a 1.33 mm hop on B.Cu, 6–8 mm from U1's pins.
-  The N lines have no vias.
+  proximity to device". The MDI lines have none: both pairs run on F.Cu only, from U1's pins to J1's,
+  with no P/N crossing (the swap vias and B.Cu hops went on 2026-11-04).
 - **Length matching.** TI SNLA387 (p.2, "MDI Traces") asks for P/N matching within 50 mil (1.27 mm)
-  for 100 Mbit/s; the DRC rule "MDI intra-pair skew" holds it. Measured pad to pad, with via heights
-  counted:
+  for 100 Mbit/s; the DRC rule "MDI intra-pair skew" holds it. Measured pad to pad, no vias:
 
   | Pair | P (mm) | N (mm) | Skew |
   |---|---|---|---|
-  | TD (U1.27/26 → J1.1/2) | 32.9422 | 32.9423 | 0.0001 mm |
-  | RD (U1.30/29 → J1.4/5) | 27.4155 | 27.4156 | 0.0001 mm |
+  | TD (U1.26/27 → J1.1/2) | 29.8731 | 29.8730 | +0.0001 mm |
+  | RD (U1.29/30 → J1.4/5) | 25.6674 | 25.6674 | 0.0000 mm |
 
+  J1.1 and J1.5 sit 2.54 mm further west than J1.2 and J1.4, so TD_P and RD_N have the longer way to
+  the jack; TD_N carries two 45° trapezoid bumps and RD_P one to match them
+  ([layout](layout.md#mdi)).
 - **Spacing.** IP101G §6.2 asks for "three times space" between an MDI pair and other signals. The DRC
   rule "MDI spacing" holds 0.55 mm (3 × 0.18 mm, rounded up).
   - Inside U1's escape area (x 157.3–160.6, y 125.69–128.9) the 0.4 mm pitch makes that impossible.
     ISET (pin 25), REGOUT (pin 28) and AVDD33 (pin 31) sit 0.2 mm from the MDI pads, so only the
     0.2 mm default clearance applies there. This is an accepted deviation; the datasheet grants no
     exception.
+  - Outside it the closest pads are J1.14 at 0.5525 mm (ETH_RD_N), R46.2 at 0.565 mm and R6's pads
+    at 0.5675 mm (ETH_TD_P) and J1.13 at 0.5774 mm (ETH_RD_N); pours keep the rule's 0.55 mm.
   - The TX and RX pairs keep ≥ 0.54 mm (3W) from each other outside the same U1 exemption (DRC rule
-    "MDI pair to pair"). The closest spot is the RD_N–TD_P diagonal pair south of R6, at 0.5399 mm,
+    "MDI pair to pair"). The closest spot is the RD_P–TD_N diagonal pair west of R6, at 0.5399 mm,
     which the DRC passes.
 
 ### LEDs
@@ -361,9 +385,9 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   without setting FORCE_MDIX gets no link.
 - **MDI spacing inside U1's escape** is 0.2 mm instead of the 0.55 mm "three times space", forced by
   the 0.4 mm pitch.
-- **MDI vias.** Each P line takes two vias 6–8 mm from U1. IP101G §6.2 allows vias near the device. The
-  return-path and via-return check findings at those vias are accepted, because 0.55 mm MDI spacing
-  leaves no GND via within 1.0 mm.
+- **MDI relies on the IP101G's polarity handling.** Both pairs are P/N-inverted between U1 and J1
+  (user decision 2026-11-04, [MDI pairs crossed at J1](#mdi-pairs-crossed-at-j1)); the link partner
+  also receives our transmit pair inverted.
 - **Crystal without a guard trace**, 0.45 mm from a +32V track and 2.35 mm from Q1's tab. Q1's tab may
   reach about 108 °C at the worst LED duty (30 °C ambient, [led](led.md#thermal)), and Y1's ±20 ppm
   holds only to 85 °C. The IP101GRI is rated to 85 °C ambient (p.57).
@@ -380,8 +404,11 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 
 1. **Link at 10 and 100 Mbit/s, with both cable types.** Bring up a link at each speed (forced on the
    link partner, then auto-negotiated), once with a straight cable and once with a crossover cable.
-   Read page 16 register 18: bit 9 (MDI/MDIX) must show both states across the two cables, and bit 8
-   (POLARITY) must stay normal.
+   The auto-negotiated links must come up at full duplex at both speeds with both cables; a
+   half-duplex result means the reversed link pulses weren't recognised. Read page 16 register 18
+   each time: bit 9 (MDI/MDIX) must show both states across the two cables; bit 8 (POLARITY) must
+   read 1 on the 10 Mbit/s links (the receive pair is inverted on purpose), and at 100 Mbit/s record
+   its value.
 2. **Throughput.** Run iperf at 100 Mbit/s full duplex in both directions with zero CRC errors on the
    link partner. This is the test for the RMII TX timing open item.
 3. **REF_CLK.** Count the clock at R13: 50 MHz ± 50 ppm. Probe U1.10 and U6.68 for a ledge between
