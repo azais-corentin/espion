@@ -1,55 +1,55 @@
 (version 1)
 
 # espion-cam spacing rules. Each rule's reason, source and calculation: docs/hardware/layout.md, Custom rules.
-# Stack-up JLCPCB JLC04161H-7628 (1.6 mm, 1 oz outer / 0.5 oz inner); fab limits from JLCPCB's capabilities pages read 2026-11-02.
+# Stack-up JLCPCB JLC04161H-7628 (4 layers, 1.6 mm); fab limits from JLCPCB's capabilities pages read 2026-11-02.
 # Track widths and diff-pair geometry are in the net classes.
 
-# MIPI CSI-2: >= 2W (0.36 mm) to everything except the pair's own partner (Espressif ESP32-P4 HDG, PCB layout,
+# MIPI CSI-2: >= 2W (W: the pair's track width, net class MIPI_CSI) to everything except the pair's own partner (Espressif ESP32-P4 HDG, PCB layout,
 # MIPI: "maintain a minimum spacing of 2W between MIPI trace pairs"; the 3W to other high-speed and clock signals is the
-# rule 'MIPI_CSI to clocks and high-speed'). It also keeps the GND pour >= 0.36 mm away, the spacing the 100 ohm
-# geometry (0.18/0.15 mm) is calculated with (docs/hardware/layout.md, Impedance). The two pads of each 0 ohm link
+# rule 'MIPI_CSI to clocks and high-speed'). It also keeps the GND pour 2W away, the spacing the 100 ohm
+# geometry (net class MIPI_CSI) is calculated with (docs/hardware/layout.md, Impedance). The two pads of each 0 ohm link
 # R45-R47, R49-R51 carry the two halves of one lane and are exempt. Design: docs/hardware/layout.md, Camera and CSI-2.
 (rule "MIPI_CSI spacing"
 	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R45') && B.memberOfFootprint('R45')) && !(A.memberOfFootprint('R46') && B.memberOfFootprint('R46')) && !(A.memberOfFootprint('R47') && B.memberOfFootprint('R47')) && !(A.memberOfFootprint('R49') && B.memberOfFootprint('R49')) && !(A.memberOfFootprint('R50') && B.memberOfFootprint('R50')) && !(A.memberOfFootprint('R51') && B.memberOfFootprint('R51'))")
 	(constraint clearance (min 0.36mm)))
 
 # Ethernet MDI: IP101G datasheet 6.2 p.56 asks for 'three times space' between an MDI pair and other signals;
-# read as 3W (3 x 0.18 mm = 0.54, rounded up to 0.55 mm). Deviation from it at U1, forced by the 0.4 mm-pitch QFN, not
-# granted by the datasheet: pins 25 (ISET), 28 (REGOUT) and 31 (AVDD33) sit 0.2 mm from the MDI pads and their tracks
+# read as 3W (W: the MDI track width, net class MDI), rounded up. Deviation from it at U1, forced by the 0.4 mm-pitch QFN, not
+# granted by the datasheet: pins 25 (ISET), 28 (REGOUT) and 31 (AVDD33) sit next to the MDI pads and their tracks
 # leave between the pairs. MDI items touching U1's courtyard, or lying wholly inside the F.Cu rule area 'U1 MDI escape'
-# (x 157.3-160.6, y 125.69-128.9; it forbids pours only and F.Cu has none, so it only names the region), keep the 0.2 mm
-# Default clearance; there only U1's own pin nets come closer than 0.55 mm (docs/hardware/layout.md, Ethernet and PoE isolation). A segment
+# (it forbids pours only and F.Cu has none, so it only names the region), keep the Default
+# clearance; there only U1's own pin nets come closer than the rule's value (docs/hardware/layout.md, Ethernet and PoE isolation). A segment
 # that crosses the area edge is not exempt (enclosedByArea).
 (rule "MDI spacing" (condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !(A.intersectsCourtyard('U1') || A.enclosedByArea('U1 MDI escape'))") (constraint clearance (min 0.55mm)))
 
 # PoE: keeps the cable side (POE_CABLE nets: J1's centre taps to U2.1-U2.4, on In1) apart from the rest of the board.
 # The layout is meant to give some isolation only; no isolation level is rated or tested (user decision 2026-11-02).
-# 2 mm is the chosen same-layer gap. Pad pairs inside J1 are exempt: that pin field is the jack's own (HanRun HR871150C
-# p.1 rates it 2250 V dc, cable side to chip side); its pads are trimmed to O1.45 / O2.35 so pin 5-7 is 1.09 mm and
-# SH-10 1.97 mm. Same-layer only: the In1 PoE lane's distance to copper on other layers is kept by hand (F.Cu >= 1.0 mm
+# The same-layer gap is a chosen value, not derived from a rating. Pad pairs inside J1 are exempt: that pin field is the jack's own (HanRun HR871150C
+# p.1 rates it 2250 V dc, cable side to chip side); its pads are trimmed in the footprint to widen the gaps between cable-side and chip-side pins.
+# Same-layer only: the In1 PoE lane's distance to copper on other layers is kept by hand (F.Cu >= 1.0 mm
 # sideways). Distances: docs/hardware/layout.md, Ethernet and PoE isolation.
 (rule "PoE isolation" (condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J1') && B.memberOfFootprint('J1'))") (constraint clearance (min 2mm)))
 
 # MIPI CSI-2: Espressif ESP32-P4 HDG 1.4.6 allows 10 mil (0.254 mm) P/N skew per lane. Each lane is two pairs in series
-# (U6 -> 0 ohm link -> J4), so each segment gets half: 0.127 mm.
+# (U6 -> 0 ohm link -> J4), so each segment gets half.
 (rule "MIPI_CSI intra-pair skew" (condition "A.NetClass == 'MIPI_CSI'") (constraint skew (max 0.127mm) (within_diff_pairs)))
 
 # MEMSensing MSA3S02 LGA-12 2x2 mm: the project's land pattern (derived from the datasheet V1.0 p. 31 package drawing;
-# the datasheet gives no land pattern) has 0.15 mm between neighbouring pads of different nets (corner lands shortened
-# to 0.375 mm on their inner end for it), under the 0.2 mm class clearance. JLCPCB capabilities (2026-10-31): 'SMD pad
+# the datasheet gives no land pattern) leaves less than the class clearance between neighbouring pads of different nets
+# (corner lands shortened on their inner end for it). JLCPCB capabilities (2026-10-31): 'SMD pad
 # to pad clearance (different nets) 0.15mm'; soldermask bridge 0.10 mm (docs/hardware/layout.md, IMU). Pad pairs inside
 # U12 only; tracks keep the class clearance.
 (rule "U12 LGA pads" (condition "A.memberOfFootprint('U12') && B.memberOfFootprint('U12')") (constraint clearance (min 0.15mm)))
 
-# LED_PWR (+32V, LED_K, ISNS, RING_*) and BST_SW reach 33.9 V (TPS61170 set point worst case, docs/hardware/led.md,
+# LED_PWR (+32V, LED_K, ISNS, RING_*) and BST_SW reach more than 31 V (worst case of the TPS61170 set point, docs/hardware/led.md,
 # Boost converter). IPC-2221A Table 6-1, 31-50 V row: A6 (external component leads/terminations, uncoated) 0.4 mm; B4
-# (permanent polymer coating, i.e. solder mask) 0.13 mm, so mask-covered tracks keep the 0.2 mm class clearance. Exposed
-# pads keep 0.4 mm to any other net. Pad pairs inside U10 (TI land pattern) and inside one LED (one forward voltage apart)
-# are exempt. POE_CABLE and MDI copper are left out: 'PoE isolation' (2 mm) and 'MDI spacing' (0.55 mm) ask more there.
+# (permanent polymer coating, i.e. solder mask) 0.13 mm, so mask-covered tracks keep the class clearance. Exposed
+# pads keep the A6 value to any other net. Pad pairs inside U10 (TI land pattern) and inside one LED (one forward voltage apart)
+# are exempt. POE_CABLE and MDI copper are left out: 'PoE isolation' and 'MDI spacing' ask more there.
 (rule "LED_PWR pad spacing" (condition "A.Type == 'Pad' && (A.NetClass == 'LED_PWR' || A.NetName == '/LED driver/BST_SW') && B.NetClass != 'POE_CABLE' && B.NetClass != 'MDI' && !(A.memberOfFootprint('U10') && B.memberOfFootprint('U10')) && !(A.memberOfFootprint('D4') && B.memberOfFootprint('D4')) && !(A.memberOfFootprint('D5') && B.memberOfFootprint('D5')) && !(A.memberOfFootprint('D6') && B.memberOfFootprint('D6')) && !(A.memberOfFootprint('D7') && B.memberOfFootprint('D7')) && !(A.memberOfFootprint('D8') && B.memberOfFootprint('D8')) && !(A.memberOfFootprint('D9') && B.memberOfFootprint('D9')) && !(A.memberOfFootprint('D10') && B.memberOfFootprint('D10')) && !(A.memberOfFootprint('D11') && B.memberOfFootprint('D11')) && !(A.memberOfFootprint('D12') && B.memberOfFootprint('D12')) && !(A.memberOfFootprint('D13') && B.memberOfFootprint('D13')) && !(A.memberOfFootprint('D14') && B.memberOfFootprint('D14')) && !(A.memberOfFootprint('D15') && B.memberOfFootprint('D15'))") (constraint clearance (min 0.4mm)))
 
 # Espressif ESP32-P4 HDG, MIPI PCB layout: keep MIPI pairs >= 3W from other high-speed and fast signals
-# (3 x 0.18 mm = 0.54 mm). Includes USB, MDI, all PHY/MAC RMII nets, XVS and STROBE on both sides of their series links.
+# (W: the MIPI_CSI track width). Includes USB, MDI, all PHY/MAC RMII nets, XVS and STROBE on both sides of their series links.
 # Design: docs/hardware/layout.md, Camera and CSI-2.
 (rule "MIPI_CSI to clocks and high-speed" (condition "A.NetClass == 'MIPI_CSI' && (B.NetClass == 'USB' || B.NetClass == 'MDI' || B.NetName == '/Camera/XVS' || B.NetName == '/Camera/XVS_CAM' || B.NetName == '/Camera/STROBE' || B.NetName == '/Camera/STROBE_CAM' || B.NetName == '/Ethernet/RMII_*' || B.NetName == '/MCU/RMII_*')") (constraint clearance (min 0.54mm)))
 
@@ -59,27 +59,27 @@
 # JLCPCB capabilities (2026-10-31): pad hole-to-hole spacing 0.45 mm (vias: 0.2 mm, the board minimum).
 (rule "Pad hole to hole" (condition "A.Type == 'Pad' && B.Type == 'Pad'") (constraint hole_to_hole (min 0.45mm)))
 
-# Power classes (PWR_5V 1.0 mm, LED_PWR 1.0 mm) neck down to >= 0.3 mm only inside the courtyards of U4 (TPS2121 RUX,
-# 0.4 mm pads, 0.3 mm gaps, TI p.39), U8 (SOT-23-6, 0.95 mm pitch) and U10 (TPS61170 WSON, 0.3 mm pads): a class-width
-# track can't enter those pads at 0.2 mm clearance. Neck widths, lengths and losses: docs/hardware/layout.md, Power.
+# Power classes (PWR_5V, LED_PWR) neck down below their class width, to this rule's minimum, only inside the courtyards of U4 (TPS2121 RUX,
+# TI land pattern p.39), U8 (SOT-23-6) and U10 (TPS61170 WSON): a class-width
+# track can't enter those pads at the class clearance. Neck widths, lengths and losses: docs/hardware/layout.md, Power.
 (rule "Power neck-down at fine-pitch pads" (condition "A.Type == 'Track' && (A.NetClass == 'PWR_5V' || A.NetClass == 'LED_PWR' || A.NetName == '/LED driver/+5V_BST') && (A.intersectsCourtyard('U4') || A.intersectsCourtyard('U8') || A.intersectsCourtyard('U10'))") (constraint track_width (min 0.3mm)))
 
-# Mirror of 'LED_PWR pad spacing': an exposed pad of any other net keeps 0.4 mm to LED_PWR / BST_SW copper, tracks and
+# Mirror of 'LED_PWR pad spacing': an exposed pad of any other net keeps the same distance to LED_PWR / BST_SW copper, tracks and
 # vias included (IPC-2221A Table 6-1, 31-50 V row, A6 external component terminations uncoated, 0.4 mm; docs/hardware/layout.md, LED driver
 # and ring). The first rule only fires when the exposed pad is the LED_PWR item.
-# Exempt: U10's own pads against BST_SW copper inside U10's courtyard: pin 4's 0.3 mm exit (x 116.9-117.75) keeps TI's
+# Exempt: U10's own pads against BST_SW copper inside U10's courtyard: pin 4's narrow exit keeps TI's
 # DRV0006A land spacing, 0.35 mm to pin 5 and 0.25 mm to the exposed pad (SLVS789D p.35), as the pad pairs exempted above;
-# and ISNS_K, the Kelvin tap of ISNS through net tie NT1 (same node, <= 0.1 V).
+# and ISNS_K, the Kelvin tap of ISNS through net tie NT1 (same node, Kelvin tap).
 (rule "LED_PWR pad spacing (other pads)" (condition "A.Type == 'Pad' && A.NetClass != 'LED_PWR' && A.NetName != '/LED driver/BST_SW' && A.NetClass != 'POE_CABLE' && A.NetClass != 'MDI' && (B.NetClass == 'LED_PWR' || B.NetName == '/LED driver/BST_SW') && !(A.memberOfFootprint('U10') && B.NetName == '/LED driver/BST_SW' && B.intersectsCourtyard('U10')) && !(A.NetName == '/LED driver/ISNS_K' && B.NetName == '/LED driver/ISNS')") (constraint clearance (min 0.4mm)))
 
 # JLCPCB Legend capabilities (https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-11-02) set line width >= 0.15 mm,
 # text height >= 1.0 mm and pad to silkscreen 0.15 mm, but no silkscreen-to-silkscreen spacing, so two silk items may touch.
 # KiCad 10's min_silk_clearance board setting covers silk to silk and silk to board edge only; silk against pads needs a custom rule.
 # Rule "Board silk to pads" holds board-level silk >= 0.15 mm from pads. Footprint silk is exempt: stock 0402/test-point/J4 silk lies
-# 0.085-0.131 mm from pads and JLCPCB clips it (user decision 2026-11-02; docs/hardware/layout.md, Fabrication rules).
+# closer to pads than that and JLCPCB clips it (user decision 2026-11-02; docs/hardware/layout.md, Fabrication rules).
 (rule "Silk to silk" (condition "A.Type != 'Pad' && B.Type != 'Pad' && A.Layer == B.Layer && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint silk_clearance (min 0mm)))
 
-# Ethernet MDI: IP101G datasheet 6.2 p.56 'three times space' also between the RX and TX pairs: 3W = 3 x 0.18 mm = 0.54 mm.
+# Ethernet MDI: IP101G datasheet 6.2 p.56 'three times space' also between the RX and TX pairs: 3W (W: the MDI track width, net class MDI).
 # Same U1 exemption as 'MDI spacing' (U1's 0.4 mm-pitch pins and the 'U1 MDI escape' area).
 # Design: docs/hardware/layout.md, Ethernet and PoE isolation.
 (rule "MDI pair to pair" (condition "(A.NetName == '/Ethernet/ETH_RD_P' || A.NetName == '/Ethernet/ETH_RD_N') && (B.NetName == '/Ethernet/ETH_TD_P' || B.NetName == '/Ethernet/ETH_TD_N') && !(A.intersectsCourtyard('U1') || A.enclosedByArea('U1 MDI escape') || B.intersectsCourtyard('U1') || B.enclosedByArea('U1 MDI escape'))") (constraint clearance (min 0.54mm)))
@@ -88,7 +88,7 @@
 # Design: docs/hardware/layout.md, Ethernet and PoE isolation.
 (rule "MDI intra-pair skew" (condition "A.NetClass == 'MDI'") (constraint skew (max 1.27mm) (within_diff_pairs)))
 
-# Plated through-hole pads: annular ring >= 0.15 mm. JLCPCB PCB capabilities, https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-11-02: multilayer 1 oz "Recommended 0.20 mm or above; absolute minimum 0.15 mm". J2's shell slots sit at 0.15.
+# Plated through-hole pads: annular ring >= 0.15 mm. JLCPCB PCB capabilities, https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-11-02: multilayer 1 oz "Recommended 0.20 mm or above; absolute minimum 0.15 mm". J2's shell slots need the absolute minimum.
 (rule "PTH annular ring" (condition "A.Type == 'Pad' && A.Pad_Type == 'Through-hole'") (constraint annular_width (min 0.15mm)))
 
 # Plated slots >= 0.5 mm wide. JLCPCB PCB capabilities, https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-11-02: "Multi-layer: 0.35mm" and "The minimum plated slot width is 0.5mm"; 0.5 meets both.
@@ -111,9 +111,9 @@
 (rule "Board silk to pads" (condition "B.Type == 'Pad' && !A.memberOfFootprint('*') && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint silk_clearance (min 0.15mm)))
 
 # Minimum SMD pad 0.1 x 0.1 mm (user decision 2026-11-02). JLCPCB's capabilities page notes "Minimum SMD pad: 0.25mm x 0.25mm"
-# (under SMD pad to pad clearance); U1's and U4's 0.4 mm-pitch land patterns (0.2 mm wide) are under that and kept.
+# (under SMD pad to pad clearance); U1's and U4's 0.4 mm-pitch land patterns are under that and kept.
 # Custom-shape pads are checked on their anchor pad, which is smaller than the whole pad.
 (rule "Minimum SMD pad" (condition "A.Type == 'Pad' && A.Pad_Type == 'SMD'") (constraint assertion "A.Size_X >= 0.1mm && A.Size_Y >= 0.1mm"))
 
-# 0402 parts with one pad inside a solid-connected local pour (C17.1 in "C17/R16 +3V3", R17.2 in "GND pour 76", R21.2 in "C26/R28/R21 GND"): a thermal relief on that pad, so both pads heat alike in reflow (tombstoning). Board review 2026-11-04.
+# 0402 parts with one pad inside a solid-connected local pour (C17.1, R17.2, R21.2): a thermal relief on that pad, so both pads heat alike in reflow (tombstoning). Board review 2026-11-04.
 (rule "0402 pour pads thermal" (condition "A.Type == 'Pad' && ((A.memberOfFootprint('C17') && A.Pad_Number == '1') || (A.memberOfFootprint('R17') && A.Pad_Number == '2') || (A.memberOfFootprint('R21') && A.Pad_Number == '2'))") (constraint zone_connection thermal_reliefs) (constraint thermal_relief_gap (min 0.2mm)) (constraint thermal_spoke_width (min 0.25mm)))

@@ -13,7 +13,7 @@ flowchart LR
     S -- "STROBE (ETM capture)" --> P4
     P4 -- LED_EN --> G
     G --> L[850 nm LED ring<br/>12 × Amicc A-SC880IR3C]
-    P4 -- RMII --> PHY[IP101GRI PHY]
+    P4 -- RMII --> PHY[IP101G PHY]
     PHY --> J[RJ45 + PoE PD]
     P4 <-- "I2C, INT1" --> IMU[MSA3S02 accelerometer]
   end
@@ -29,14 +29,14 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 |---|---|
 | [Waveshare ESP32-P4-Core](https://docs.waveshare.com/ESP32-P4-Core), 16 MB flash (SKU 36096) | ESP32-P4 (rev v3.x) with 32 MB PSRAM: camera control, capture, blob detection, trigger, LED gating, Ethernet MAC with PTP clock |
 | OV9281 camera module ([AliExpress](https://fr.aliexpress.com/item/1005012566040263.html)) | 1 MP mono global-shutter sensor, run at 640×400 (2×2 binned), RAW8, 120 fps, triggered on XVS |
-| IP101GRI | 10/100 Ethernet PHY on RMII; supplies the 50 MHz RMII clock |
+| IP101G | 10/100 Ethernet PHY on RMII; supplies the 50 MHz RMII clock |
 | HanRun HR871150C RJ45 MagJack | Ethernet jack with magnetics; passes both PoE pair sets to the PD |
-| SDAPO DP1435-5V | 802.3af PoE PD module, isolated, 5.15 V out |
+| SDAPO DP1435-5V | 802.3af PoE PD module, isolated |
 | TI TPS2121 | Picks PoE 5 V or USB-C VBUS, PoE first, no back-feed into USB |
 | TI TLV62569 | 3.3 V buck for the module, the PHY and the camera |
-| 850 nm LED ring and driver | 12 LEDs in series at ≈ 0.83 A (0.76–0.92 A worst case), lit only while `STROBE ∧ LED_EN`, ≤ 0.5 ms per frame at ≤ 120 fps; a hardware timeout cuts a pulse after 0.525–1.026 ms as a backstop |
+| 850 nm LED ring and driver | 12 LEDs in series at a fixed sink current ([hardware/led.md](hardware/led.md)), lit only while `STROBE ∧ LED_EN`, ≤ 0.5 ms per frame at ≤ 120 fps; a hardware timeout cuts a pulse as a backstop |
 | USB-C | Bench power, flashing, logs and JTAG (P4 USB Serial/JTAG, no hub) |
-| Yongyu YY-0807BRGK26-07-FI RGB LED | Status LED (WS2812-type protocol), driven by RMT |
+| Yongyu YY-0807BRGK26 RGB LED | Status LED (WS2812-type protocol), driven by RMT |
 | MEMSensing MSA3S02 accelerometer | 3-axis, no gyroscope. Detects bumps (rig calibration may be stale) and gives the gravity vector |
 
 Board design: [hardware/README.md](hardware/README.md)
@@ -151,7 +151,7 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 | EMAC IEEE 1588 (PTP clock, timestamps, PPS) | ❌ | The clock (sub-second increment, addend, time update) and PPS are EMAC MAC registers: PAC-level code in `cam-p4`. The RX/TX timestamps sit in the DMA descriptors that esp-hal's driver owns, and it ignores descriptor words 4–7. That needs an esp-hal change: carry it as a `[patch.crates-io]` fork and upstream it |
 | Per-packet timestamps to statime | n/a | embassy-net sockets carry no per-packet metadata. The driver matches PTP event frames (UDP 319) to their descriptor timestamps by message type and `sequenceId` and hands them to statime |
 | RMT | ⚒ | XVS edge schedule, as in esp-wifi-sync `wave.rs` (TX channel 0), the status LED (WS2812-type protocol, channel 2 or 3) and the 50 kHz `BST_EN` PWM that sets the LED boost's output (a third TX channel in loop mode, [hardware/firmware-rules.md](hardware/firmware-rules.md) FW-8) |
-| ETM | ❌ | Needed from day one: the PPS edge and the STROBE edge (GPIO events) trigger timer capture tasks. PAC-level code in `cam-p4`. Still to confirm in the TRM: which timer has the capture task, and whether a GPIO event fires on a pad the EMAC drives as PPS output (the board also loops PPS into a second GPIO through 0 Ω, so either way works) |
+| ETM | ❌ | Needed from day one: the PPS edge and the STROBE edge (GPIO events) trigger timer capture tasks. PAC-level code in `cam-p4`. Still to confirm in the TRM: which timer has the capture task, and whether a GPIO event fires on a pad the EMAC drives as PPS output (the board also loops PPS into a second GPIO through R34, so either way works) |
 | MCPWM / PCNT / LEDC | ❌ (no LEDC or MCPWM driver for the P4) | Not needed: STROBE gates the LEDs, and the `BST_EN` PWM runs on RMT |
 | ADC (one-shot) | ⚒ `unstable` | ADC1 channels 5 (`VLED_SENSE`) and 7 (`LED_K_SENSE`). `LED_K_SENSE` is read late in each LED pulse for the boost headroom loop (FW-22), so the conversion is timed from the STROBE capture; check the one-shot conversion time against that window |
 | SYSTIMER, TIMG | ⚒ | Local timebase, embassy time driver |

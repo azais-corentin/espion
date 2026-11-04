@@ -42,4 +42,4 @@ Build it with SolidCraft (`solidcraft-modeling` skill) from the package drawing,
 Have every new or changed part reviewed by an independent subagent with the `kicad-library-review` skill, and fix its findings, before the part is placed or committed.
 
 ## 8. Use it
-Place the part with a separate `kicad_edit` call (`add_symbol`, or `change_symbol` when it replaces a placed part; `kicad-schematic-edit` skill). After editing a part that is already placed, refresh the placed copies with `change_symbol {ref}`. Add the Parts entry in `hardware/lib/README.md` and update the board's docs in the same commit.
+Place the part with a separate `kicad_edit` call (`add_symbol`, or `change_symbol` when it replaces a placed part; `kicad-schematic-edit` skill). After editing a part that is already placed, refresh the placed copies with `change_symbol {ref}`. Add the Parts entry in `hardware/lib/README.md` in the same commit, and update the board's docs where the part changes a requirement, formula, decision or accepted risk (never its values or part numbers).

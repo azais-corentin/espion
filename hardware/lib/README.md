@@ -203,7 +203,7 @@ TI TPS61170 1.2 A, 40 V boost converter (LCSC C15163), the 5 V → 32 V LED boos
   `_ThermalVias` variant adds TI's two optional vias as footprint pads (Ø0.5 mm, 0.2 mm
   hole); espion-cam stopped using it (2026-10-30, when those pads raised library-footprint
   DRC errors on the board) and uses the plain one as U10, with the two exposed-pad vias
-  placed as board vias instead (GND, 0.45/0.2 mm, 1.1 mm apart). CC-BY-SA 4.0 with the KiCad
+  placed as board vias instead (GND). CC-BY-SA 4.0 with the KiCad
   library exception.
 - 3D model: KiCad's stock WSON-6 model (same body).
 

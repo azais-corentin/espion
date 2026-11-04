@@ -2,10 +2,10 @@
 
 Items carry an ID that findings and passes cite (`"item": "PWR-3"`). Every item applies in `change` mode (to the parts and nets in scope) and in `standard` and `full` mode, except those marked **(full)**: those run in `full` mode only. **Auto:** names the `kicad_check` check that already proves the item: read its result and don't redo it by hand. An item that doesn't apply to the scope is `na`, not a pass.
 
-Numbers come from the datasheet (document, page, table/figure) or from `kicad_query`; computed numbers show the formula and its inputs. Worst case means component tolerance and rail min/max (the rail ranges are in `docs/hardware/README.md`), as limited by the review skill's **Design assumptions** (`skill://kicad-schematic-review`): sources within their standard, accessories working, ±5 % rails in spec, no TCR or maximum-temperature leakage stacking, latest silicon revision. A case those assumptions exclude is not a finding under any item below.
+Numbers come from the datasheet (document, page, table/figure) or from `kicad_query`; computed numbers show the formula and its inputs. Worst case means component tolerance and rail min/max (worked out from the schematic's values with the block docs' formulas; the required ranges are in `docs/hardware/README.md`), as limited by the review skill's **Design assumptions** (`skill://kicad-schematic-review`): sources within their standard, accessories working, ±5 % rails in spec, no TCR or maximum-temperature leakage stacking, latest silicon revision. A case those assumptions exclude is not a finding under any item below.
 
 ## ARCH: architecture (orchestrator, phase 1)
-- **ARCH-1** Power tree: every rail, its source, its loads and its range at min/max input. Matches the Rails table in `docs/hardware/README.md` and `docs/architecture.md`.
+- **ARCH-1** Power tree: every rail, its source, its loads and its range at min/max input, worked out from the schematic. Sources and loads match the Rails table in `docs/hardware/README.md` and `docs/architecture.md`, and each range meets the table's required range.
 - **ARCH-2** External interfaces: every connector, button, exposed pad and shield, with the nets that reach it. Feeds PROT.
 - **ARCH-3** Blocks vs design docs: every block of the `docs/hardware/README.md` block diagram exists as a sheet, with the parts its block doc names (`kicad_query hierarchy`, `symbols`).
 - **ARCH-4** Reference designs: for each major IC, the vendor's application circuit or hardware design guide (for the ESP32-P4: Espressif's hardware design guidelines and schematic checklist). Deviations from it are intentional and written down in the block's doc in `docs/hardware/`; an undocumented deviation is a finding.
@@ -75,7 +75,7 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 
 ## FW: firmware and bring-up
 - **FW-1** GPIO map: every MCU pin's reset function, its use on this board, its pull, and its constraints (strap, ADC-capable, USB, input-only) match `docs/hardware/firmware-rules.md` (GPIO map, straps) and the schematic (`kicad_query symbol` on the MCU). Each peripheral instance and each signal is used once.
-- **FW-2** The rules in `docs/hardware/firmware-rules.md` are complete and correct for the circuits in scope: every behaviour the hardware relies on firmware for has a rule, and its numbers match the schematic and the block docs. Whether `firmware/cam-p4` follows them is out of scope: a schematic review doesn't read the firmware code.
+- **FW-2** The rules in `docs/hardware/firmware-rules.md` are complete and correct for the circuits in scope: every behaviour the hardware relies on firmware for has a rule, its formulas name the right parts, and the values worked out from them with the schematic's parts are consistent with the block docs' requirements. Whether `firmware/cam-p4` follows them is out of scope: a schematic review doesn't read the firmware code.
 - **FW-3** Debug and programming access without soldering (USB Serial/JTAG, UART console), and a boot-mode entry.
 - **FW-4** A probe point on every rail and on the signals bring-up will probe (clocks, PPS, strobe, reset); at least one status indicator. A pad of an accessible passive on the net (series resistor, pull resistor, divider, decoupling capacitor) is a probe point: such a net needs no dedicated test point. Ask for a test point only where no such pad exists (e.g. a net between two IC pins, or one under a shield or module).
 - **FW-5** Firmware can measure what it needs to decide (power source, rail sense, temperature) and can switch off what it must (load switches, LED power).
@@ -88,7 +88,7 @@ Numbers come from the datasheet (document, page, table/figure) or from `kicad_qu
 ## DOC: documentation and drawing
 - **DOC-1** ERC is clean, and every exclusion carries a reason. **Auto:** `erc`.
 - **DOC-2** Drawing rules. **Auto:** `style`. Readability the check can't see (crowding, signal flow left to right, misleading placement) by looking with `kicad_render`.
-- **DOC-3** `docs/hardware/` matches the schematic wherever it states something: values, reference designators, rails, net classes, GPIO numbers (`kicad_query symbols`, `symbol`, `netclasses`, `net`). Say which side you think is wrong.
+- **DOC-3** `docs/hardware/` matches the schematic wherever it states something: reference designators, rails, nets, net classes, GPIO numbers, IC families, and the parts each formula takes (`kicad_query symbols`, `symbol`, `netclasses`, `net`). Say which side you think is wrong. A part value, part number or result calculated from them written in `docs/hardware/` is a minor finding, fixed by removing it.
 - **DOC-4** Net names say what the net is (no `Net-(…)` on nets that cross sheets or that bring-up will probe), and names are consistent across sheets.
 - **DOC-5** Title block filled on every sheet (`kicad_query sheet`).
 

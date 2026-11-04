@@ -10,7 +10,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, Ethernet/UDP, PTP, PPS capture via ETM) | `cargo build --release` in that directory |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
-| `hardware/espion-cam/` | KiCad project; its design (decisions, values, layout constraints, firmware rules) is in `docs/hardware/`; the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, decoupling, pulls, BOM lines, rules; on the board `drc`, track widths, return paths and vias, decoupling and footprint placement, `layout` constraints); board set-up and layout with the `kicad_edit` board ops (stack-up, board rules, outline, update from schematic, placement, tracks, diff pairs, vias, zones, rule areas, board text); fab outputs (Gerbers, JLCPCB BOM/CPL, hand-assembly list from `assembly.hand` in `.omp/kicad.json`, assembly drawings, STEP): `kicad_export`; BOM: `kicad_query` `bom` (preset `Order`) |
+| `hardware/espion-cam/` | KiCad project; it is the source of every part value and board figure; its design (requirements, decisions, formulas, layout constraints, firmware rules) is in `docs/hardware/`; the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, decoupling, pulls, BOM lines, rules; on the board `drc`, track widths, return paths and vias, decoupling and footprint placement, `layout` constraints); board set-up and layout with the `kicad_edit` board ops (stack-up, board rules, outline, update from schematic, placement, tracks, diff pairs, vias, zones, rule areas, board text); fab outputs (Gerbers, JLCPCB BOM/CPL, hand-assembly list from `assembly.hand` in `.omp/kicad.json`, assembly drawings, STEP): `kicad_export`; BOM: `kicad_query` `bom` (preset `Order`) |
 | `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad toolkit: `kicad_edit` library ops, `kicad_check` `klc`; model rebuild in `hardware/lib/README.md` |
 | `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`, including the board's `layout` constraints) and its `kicad-*` skills (including `kicad-pcb-layout` and `kicad-pcb-review` for the board); the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its `solidcraft-*` skills, which the dev shell links from the flake input (`solidcraftSkills` in `flake.nix`) | `bun test` in `.omp/extensions/kicad` |
 | `docs/` | Architecture, wire protocol, timing; `hardware/`: the camera board's design (per block, layout, firmware rules) | — |
@@ -66,11 +66,18 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 - `kicad_edit` checks for KiCad's lock files itself: it ignores a stale one (this host and
   user, no KiCad running) and refuses while KiCad has the project open. Then ask the user
   to close it; never delete lock files.
-- The schematic is the source of truth for connections and parts; `docs/hardware/` holds
-  what it can't: decisions, derived values, accepted risks, layout constraints and firmware
-  rules. A schematic change updates `docs/hardware/` in the same commit when it changes one
-  of those or a part, and the board list in `hardware/espion-cam/README.md` when a part
-  changes. Keep ERC at 0 violations.
+- The KiCad files are the source of every value that can change with the schematic or the
+  layout: connections, parts and their values, positions, distances, lengths, rule values
+  (net classes, `.kicad_dru`, the `layout` section of `.omp/kicad.json`). `docs/hardware/`
+  holds what they can't: requirements and their sources, decisions, formulas (with the
+  datasheet constants and the refdes they take), accepted risks named by the limit they
+  break, layout constraints, firmware rules and first-board checks. It never states a
+  part value, a part number, a measured board figure, a rule's value or a result
+  calculated from them; query the KiCad files instead. A change updates `docs/hardware/`
+  in the same commit when it changes a requirement, a formula, a decision, a risk, a
+  constraint or a firmware rule, and the board list in `hardware/espion-cam/README.md`
+  when it adds or removes a block or changes an IC or module family. Keep ERC at 0
+  violations.
 - There is no hand-kept BOM file. Every sourced symbol carries Manufacturer, MPN and LCSC
   fields; set them when you add or change a part. The BOM comes from the project's `Order`
   preset and is never committed (see Hygiene).
