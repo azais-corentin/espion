@@ -86,8 +86,9 @@ for `+5V_BST` and `+32V`. Current budgets: [power.md](power.md), [led.md](led.md
   | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over R46, C3, R8, C1 — [layout](layout.md#assembly) |
   | TP2, TP3, TP7 | top | Through-hole GND wire loops (RH-5002) — [mcu](mcu.md#test-points) |
 
-  J2 (USB-C) is machine-placed with its shell 0.3 mm inside the top edge (user decision
-  2026-11-01); the RESET and BOOT buttons sit on the bottom edge (user decision 2026-11-01).
+  J2 (USB-C) is machine-placed with its shell overhanging the top edge by HRO's recommended
+  amount (user decision 2026-11-04); the RESET and BOOT buttons sit on the bottom edge (user
+  decision 2026-11-01).
 
 ## Accepted risks
 
@@ -128,7 +129,7 @@ LED:
 
 MCU:
 - Status LED D1 on `+3V3`: green/blue VF up to 3.2 V at 5 mA (datasheet) against the lowest `+3V3` set point (user decision 2026-11-02, "Accept, check on first boards", taken on the lower minimum of the ± 5 % envelope) — [mcu](mcu.md#status-led).
-- USB-C shell 0.3 mm inside the edge: a plug overmold may stop short of full insertion (user decision 2026-11-01) — [mcu](mcu.md#usb-c).
+- USB-C shell overhangs the top edge, nearer the routed edge than JLCPCB's part-to-edge limit: order note, no tab or rail at J2 (user decision 2026-11-04) — [layout](layout.md#assembly).
 - RESET/BOOT buttons on the bottom edge; the enclosure must reach them (user decision 2026-11-01) — [mcu](mcu.md#reset-and-boot).
 - U6 lies under C47, C50, U12 and R37: iron only (user decision 2026-11-01) — [mcu](mcu.md#module).
 - USB connector-side lines: one via without a GND return via, a short stretch over the In1 PoE gap (USB full speed) — [mcu](mcu.md#usb-c).

@@ -67,7 +67,7 @@ flashing, console and JTAG. Power path from VBUS onward: [power.md](power.md#usb
 
 | Part | Role | Decision and reason |
 |---|---|---|
-| J2 HRO TYPE-C-31-M-12 | USB-C receptacle, top edge | Machine-placed by JLCPCB, shell front 0.3 mm inside the board edge (user decision 2026-11-01: "Keep machine-placed, 0.3 mm inside"; JLCPCB Economic PCBA keeps parts ≥ 0.3 mm from routed edges). SBU pins open, shield and GND pins to GND |
+| J2 HRO TYPE-C-31-M-12 | USB-C receptacle, top edge | Machine-placed by JLCPCB, shell overhanging the board edge by HRO's recommended amount (HRO TYPE-C-31-M-12 drawing p.1, PCB EDGE line; user decision 2026-11-04: "HRO recommended", "Keep machine-placed, add an order note"), so a plug overmold seats fully. JLCPCB Economic PCBA keeps parts ≥ 0.3 mm from routed edges, hence an order note ([layout](layout.md#assembly)). SBU pins open, shield and GND pins to GND |
 | R25 (CC1), R23 (CC2) | Rd pull-downs | Make the board a USB-C sink (Rd per the USB Type-C specification), so a Type-C source turns VBUS on. No USB PD |
 | U5 ST USBLC6-2SC6 | ESD clamp on D+/D− at J2 | 2.5–3.5 pF line to GND (ST datasheet p.2), negligible at 12 Mbit/s. Its supply pin 5 is on +3V3 with decoupling C25, not on VBUS as ST draws it: on VBUS, the P4's D+ pull-up would back-power an unplugged VBUS through U5's upper diode. On +3V3 an unplugged VBUS stays at 0 V, and D2 clamps VBUS |
 | D2 TI TSD05 | VBUS TVS at J2's VBUS pads | VRWM 5.5 V ≥ the 5.5 V VBUS maximum the design assumes, IEC 61000-4-2 ±30 kV contact (TI SLVSH43C §5.1, §5.7). Close to both VBUS pad pairs (`near` entries D2.1 → J2.A4 and J2.A9). Same part as D16 (one BOM line) |
@@ -211,10 +211,9 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
 - **D1 on +3V3** (user decision 2026-11-02): green and blue may be dim at the low end of the
   rail. D1's byte order G, R, B (datasheet p.7) contradicts its name and is confirmed on the
   first board.
-- **J2 0.3 mm inside the edge** (user decision 2026-11-01). The shell sits further in than
-  HRO's recommended 0.46 mm overhang (HRO TYPE-C-31-M-12 drawing p.1), so a plug overmold
-  taller than the margin that leaves can stop on the board edge before full insertion (USB
-  Type-C specification R2.0 Fig. 3-3 p.47).
+- **J2 overhangs the board edge** (user decision 2026-11-04). It sits nearer the routed
+  edge than JLCPCB's ≥ 0.3 mm for parts, so the order carries a note: no break-off tab, rail
+  or neighbouring board within the overhang along J2 ([layout](layout.md#assembly)).
 - **USB routing.** The full-speed lines are narrow, long and mostly uncoupled, and the D−
   via at J2's side has its nearest GND via farther than the ≤ 1 mm return-via limit (no
   legal site; `kicad_query distance`): electrically short at 12 Mbit/s, accepted in design
@@ -240,7 +239,7 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
    released, it boots from flash. Flash and log over USB. Then, with the firmware running and
    Ethernet linked, hold BOOT during an iperf run and check for lost or corrupt frames.
 6. **USB-C:** plug in each cable in use (charger, flashing cable): it latches fully and
-   enumerates. If one doesn't seat, a relief in the board edge at J2 is the fix.
+   enumerates. Check the panel left J2's shell and the board edge in front of it undamaged.
 7. **`VBUS_SENSE`:** measure GPIO6 with a USB host (VBUS × R28 / (R27 + R28) at the measured
    VBUS) and without (0 V); watch the edge for bounce when plugging.
 8. **D1:** set full red, then green, then blue at +3V3 and judge brightness; confirm the byte

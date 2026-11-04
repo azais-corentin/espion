@@ -316,8 +316,10 @@ The +3V3 feed to the north and west parts (U5, C25, R53 → CAM_3V3/J4, R41/R42,
 route: the USB pair, the camera bundle, XVS and +5V_POE_F fence it on B.Cu, the PoE lane and U2 on F.Cu. It is fed from
 the U3/U6 area by a B.Cu feed (narrowed beside a GND via; R20's pull-up branch off its west end also narrow), a loop along
 the west edge and a F.Cu loop round J2's north side, narrow because it carries mA loads only (camera, D1, pull-ups).
-Past H1 the loop drops east of J2's north-west shield pad and runs SW between the two west shield pads, outside H1's
-washer clearance, with CC1 parallel on its south-east side. The R41/R42 branch's B.Cu feed from the +3V3 via is wider
+Past H1 the loop drops east of J2's north-west shield pad and runs SW between the two west shield pads, then round the
+south-west shield pad's top in short 45° steps, outside H1's washer clearance, with CC1 parallel on its south-east side.
+There, between H1's washer clearance and that pad, both run as close as their clearances allow and the loop is narrowed
+(the tightest gap on the board's top edge). The R41/R42 branch's B.Cu feed from the +3V3 via is wider
 except beside CAM_IO1's via. The drop to R53.1 follows from the network resistance (`kicad_query copper`) and those
 loads.
 
@@ -375,7 +377,7 @@ Circuit: [mcu](mcu.md).
 | R31.2–U6.38, R32.2–U6.37 | HDG §1.3.12 / §1.4.3: USB series resistors at the chip end (D+ / D−) |
 | C48.1–U6.19 | HDG §1.3.10: filter capacitor at an ADC pin (LED_K_SENSE). Smaller than the HDG's 0.1 µF, so the reading settles within an LED pulse ([led](led.md#led_k-sense)) |
 | C49.1–U6.17 | HDG §1.3.10: 0.1 µF at an ADC pin (VLED_SENSE, GPIO21 / ADC1_CH5) |
-| U5–J2.A6 | USBLC6 Rev 5 §2.3 p.5–6: protection as close as possible to the connector, short I/O tracks |
+| U5–J2.A6 | USBLC6 Rev 5 §2.3 p.5–6: protection as close as possible to the connector, short I/O tracks. The limit was raised when J2 moved out to its overhang: U5 cannot follow it north, D2's courtyard abuts it (user decision 2026-11-04: "Raise the limit") |
 | D2.1–J2.A4, D2.1–J2.A9 | TI SLVA680A p.4 (cited by the TSD05 datasheet §6.1): "place the TVS as near to the connector as design rules allow"; the limit reaches both VBUS pad pairs |
 | D16.1–SW2.1 | D16 (TSD05) at the BOOT button's exposed contact, same source; its anode has a GND via |
 | `paths` "BOOT stub": R36.1 → R39.1 and R36.1 → R38.2 | The BOOT strap R39 and pull-up R38 hang on the 50 MHz RMII_TXD1_MCU line; their stubs stay short, negligible against the edge |
@@ -389,11 +391,11 @@ GPIO assignments that moved to make the routing possible are listed in
 
 ### USB
 
-- J2 is locked and machine-placed at the top edge with its shell front 0.3 mm inside the edge (user decision 2026-11-01:
-  "Keep machine-placed, 0.3 mm inside"; JLCPCB PCBA FAQ part 2: components ≥ 0.3 mm from depanel-routed edges). HRO's
-  drawing p.1 lets the shell overhang the edge by ≈ 0.46 mm, so a plug overmold taller than ≈ 2.6 mm stops on the FR-4 edge
-  slightly before full insertion ([mcu](mcu.md#usb-c)). The silk line across the mating face was removed from the
-  footprint so silk stays clear of the edge.
+- J2 is locked and machine-placed at the top edge with its shell overhanging the edge by HRO's recommended amount: the
+  board edge on the drawing's PCB EDGE line, 5.79 mm from the pegs (HRO drawing p.1), so a plug overmold seats fully
+  (user decision 2026-11-04: "HRO recommended", "Keep machine-placed, add an order note"). That puts J2 closer to the
+  routed edge than JLCPCB's ≥ 0.3 mm for components (PCBA FAQ part 2); the order carries a note ([Assembly](#assembly)).
+  The footprint's silk stops short of that edge line (`hardware/lib/README.md`).
 - Connector side (USB_C_D_P/N, J2 → U5 → R31/R32): narrow tracks, mostly uncoupled. Full speed is electrically short here
   (edge ≥ 4 ns), so width, coupling and skew don't matter; impedance is not controlled.
 - Both lines flow through U5 (ST USBLC6-2 DS11265 Rev 5 p.5 and Fig. 18; TI SLVA680A p.4: no stub between the TVS and
@@ -415,7 +417,8 @@ GPIO assignments that moved to make the routing possible are listed in
   via is unchanged. The narrow connector stub is the only exit between J2's pegs and pads ([Accepted deviations](#accepted-deviations)).
 - U5.5 (clamp supply) reaches C25.1 on F.Cu; U5.2 has a GND via between the pin rows.
 - CC1 and CC2 (Rd R25/R23): CC2 runs from R23.1 east under J2's pad row and 45° up into B5's centre. CC1 leaves A5
-  north-west into the corridor between J2's west shield pads, then runs SW parallel to the +3V3 loop, down into R25.1.
+  north-west into the corridor between J2's west shield pads, then steps SW round the south-west shield pad, parallel to
+  the +3V3 loop on its south-east side ([Power](#power)), down into R25.1.
   R23's GND pad joins J2's west shield pad through the pour "GND pour 96".
 
 ### Buttons and boot
@@ -869,8 +872,9 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
   copper/footprint keep-out ring (JLCPCB "How to add tooling holes for PCB assembly order",
   https://jlcpcb.com/help/article/How-to-add-tooling-holes-for-PCB-assembly-order, read 2026-10-31: "For Economic PCBA
   type, tooling holes are a must"; 2–3 holes in opposite corners; 1.152 mm round non-plated, 0.148 mm mask expansion).
-- J2 sits with its shell front 0.3 mm inside the top edge ([MCU and USB](#mcu-and-usb)); JLCPCB PCBA FAQ part 2 asks for
-  components ≥ 0.3 mm from depanel-routed edges.
+- J2 overhangs the top edge ([USB](#usb)), nearer the routed edge than JLCPCB's ≥ 0.3 mm from depanel-routed edges
+  (PCBA FAQ part 2). Order note: no mouse bites (no break-off tab), panel rail or neighbouring board within the overhang
+  along J2's stretch of the top edge, so the shell clears the panel when it is routed and depanelled.
 - Part spacing: JLCPCB's 1.0 mm from a QFN to any part holds at U1 and U10. Exceptions: C15–U4 and C23.1–U4.1 (TPS2121
   bypass "as close as possible"; C23 cannot move west, C20's courtyard abuts it) and R74.2–U12.2 ([IMU](#imu)).
 - Small parts beside big ones (possible reflow shadowing; no source gives a number): R5 and C8 beside C46 (10.8 mm tall),
@@ -991,7 +995,7 @@ moved; placement is unchanged.
 | Small parts beside big ones: R5/C8 at C46, R67/C33/R68 at Q1, R70 at Q1, U12 at L2 | Board review 2026-11-04: first-board inspection | [Assembly](#assembly) |
 | J1 lands close to reflowed SMD pads | First-board soldering trial | [Assembly](#assembly) |
 | U2.5/U2.6 close to reflowed C11/C52 pads | First-board soldering trial | [Assembly](#assembly) |
-| J2 shell further in than HRO's recommended overhang | User decision 2026-11-01 | [MCU and USB](#usb) |
+| J2 overhangs the top edge, nearer the routed edge than JLCPCB's component-to-edge limit; order note | User decision 2026-11-04 | [MCU and USB](#usb), [Assembly](#assembly) |
 | Buttons on the bottom edge | User decision 2026-11-01 | [MCU and USB](#buttons-and-boot) |
 | B.Cu under U2's flyback magnetics: VBUS, USB_C_D_P/N, CAM_EN, SCCB_SDA/SCL, STROBE, STATUS_LED and a short XVS hop; XVS's long west run kept west of it | User decision 2026-11-04: "Partial + document"; first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
 | CAM_CLK_P/N split on F.Cu between J4 and their vias: P detours north of N to take up the length, uncoupled for a stretch | User decision 2026-11-04: "Accept + record" (re-coupling needs trapezoid bumps drawn in pcbnew) | [Lengths and skew](#lengths-and-skew) |

@@ -326,9 +326,10 @@ Korean Hroparts TYPE-C-31-M-12 USB-C 2.0 receptacle (LCSC C165948), for the stoc
 - Copy of KiCad's footprint of the same name with every pad, hole and shield slot corrected
   to the drawing: outer pads at 6.40 / 4.80 mm pitch, Ø0.60 mm NPTH, 0.6 × 1.7 / 0.6 × 1.4 mm
   slots (CC-BY-SA 4.0 with the KiCad library exception).
-- Silkscreen (2026-11-02): KiCad's line across the mating face is left out and the side
-  lines end at Y 3.6 (the face is at Y 3.65), so the shell front can sit 0.3 mm inside a
-  board edge without the silk breaking the 0.15 mm silk-to-edge clearance (espion-cam J2).
+- Silkscreen (2026-11-04): KiCad's line across the mating face is left out and the side
+  lines end at Y 2.9, short of HRO's PCB edge line (5.79 mm from the pegs, so at Y 3.19), so
+  the shell can overhang a board edge by HRO's recommended amount without the silk breaking
+  the 0.15 mm silk-to-edge clearance (espion-cam J2).
 - 3D model: `Connector_USB_HRO.3dshapes/`, from `3d-src/` (KiCad ships none for this part).
 
 ### `Capacitor_SMD_AISHI:CP_Elec_6.3x9`, `Capacitor_SMD_JIERR:CP_Elec_8x10.5`
