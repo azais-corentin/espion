@@ -110,6 +110,7 @@ Power:
 - C15/C23 0.55–0.59 mm from U4, closer than JLCPCB's 1.0 mm QFN spacing — [power](power.md#accepted-risks).
 - C12 outboard of C10 at the buck input; `+3V3` capacitance outside TI's tested cells — [power](power.md#33-v-buck).
 - Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C14, C22 (not stated), D3 SS16 (250 °C, 10 s), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [layout](layout.md#assembly).
+- VBUS, the connector-side USB pair, CAM_EN, SCCB and a 1.7 mm XVS hop run on B.Cu right under U2's flyback magnetics; XVS's long run moved just west of them (user decision 2026-11-04, "Partial + document") — [layout](layout.md#bcu-under-u2).
 
 Camera:
 - Camera module I/O level unknown, no sample (user decision 2026-10-31); assembly options kept — [camera](camera.md#xvs-level-options).
@@ -119,6 +120,7 @@ Camera:
 - In2 reference neck for the CSI bus 6.19 mm against TI's 6.83 mm, crossed at 45° with 72.5 mil a side (user decision 2026-11-01, "Use 45°, accept 71.7 mil") — [layout](layout.md#camera-and-csi-2).
 - CAM pairs 54–89 mil from the plane edge at the FFC notch (user decision 2026-11-01, "Pull planes to 0.3 mm") — [layout](layout.md#camera-and-csi-2).
 - GND planes solid under the 0 Ω link pads and J4's MIPI pads except where the MIPI via antipads reach under them (design review 2026-11-01) — [layout](layout.md#camera-and-csi-2).
+- CAM_CLK_P/N uncoupled for ≈ 4.5 mm between J4 and their vias, where P takes up its 1.6 mm (user decision 2026-11-04, "Accept + record") — [layout](layout.md#lengths-and-skew).
 
 LED:
 - Q1 1.7–1.8 mm from LEDs D15/D4, 2.35 mm from the crystal Y1 (rated to 85 °C) and near C46; their temperature rise at full boost output (up to 0.73 W in Q1; ≤ 0.083 W with the headroom loop) is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal), [layout](layout.md#thermal).
@@ -128,6 +130,7 @@ LED:
 - A firmware failure that leaves +32V at full scale and lets STROBE run to the timeout would put ≈ 1.40 W into Q1 (TJ ≈ 184 °C > 175 °C); only firmware prevents it (FW-9 pulse-width fault, FW-22 power rule; design review 2026-11-03) — [led](led.md#q1-protection).
 - Boost output capacitance (662 µF) outside the TPS61170's 1–10 µF recommended range — [led](led.md#boost-converter).
 - PHY_RST_N and LED_K_SENSE run inside the LED ring, 0.5–1.1 mm from the pulsed ring copper (static line; 9.09 kΩ node read late in each pulse) — [layout](layout.md#led-driver-and-ring).
+- Small parts beside big ones: R5/C8 beside C46 (courtyards 0.01 / 0.00 mm), R67/C33/R68 beside Q1 (pads 1.00–1.19 mm), R70 beside Q1 (courtyards 0.02 mm), U12 beside L2 (courtyards touching): possible reflow shadowing, inspected on the first boards — [led](led.md#accepted-risks), [layout](layout.md#assembly).
 
 MCU:
 - Status LED D1 on `+3V3`: green/blue VF up to 3.2 V at 5 mA against the `+3V3` set point of 3.199–3.440 V (user decision 2026-11-02, "Accept, check on first boards", taken on the 3.135 V minimum of the ± 5 % envelope, which is lower still) — [mcu](mcu.md#status-led).
@@ -145,6 +148,8 @@ Ethernet:
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
 - REGOUT reaches C6 through 4.59 mm of track, two vias and a short pour, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
 - J1's lands 0.57–0.72 mm from reflowed parts R46, C3, R8, C1 — [layout](layout.md#assembly).
+- ETH_SHIELD within 0.20–0.21 mm of GND copper (F.Cu at J1.12, In1/In2 round J1.SH): that gap, not C1's 2 kV, sets the shield-to-GND withstand — [ethernet](ethernet.md#magjack-and-mdi).
+- C4 (0805 MLCC) 0.425 mm from the east edge: ordered without mouse bites there (user decision 2026-11-04, "Note only") — [layout](layout.md#assembly).
 
 IMU and board:
 - C50's GND via 2.1 mm away, R74 0.64 mm from U12, IMU_SDA crossing L2's courtyard margin — [imu](imu.md#accepted-risks).
@@ -162,30 +167,31 @@ Power ([power](power.md#first-board-checks)):
 7. `+3V3` load step 0.1 → 0.6 A: overshoot ≤ 5 %.
 8. Thermal camera on U4 and its vias, the U8 neck, U3, L1, U2 at the LED design point and during `+32V` start-up.
 9. RH-5002 loop fit in the 1.0 mm hole of TP2/TP3/TP7.
+10. XVS and SCCB edges at J4 and USB enumeration and transfer at the 1.96 A PoE peak, against USB power alone (B.Cu under U2's magnetics) — [layout](layout.md#bcu-under-u2).
 
 LED ([led](led.md#first-board-checks)):
-10. Thermocouples on D15, D4, C46 and Y1's case at 0.5 ms / 120 fps for 30 min, with the headroom loop and at full boost output; if an LED is above the derating curve, lower R61; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the B.Cu zone's east edge back from x 151.0 — [led](led.md#thermal), [layout](layout.md#thermal).
-11. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14), at full scale and down to the loop's lowest set point; `LED_K_SENSE` × 11 against Q1's drain, the drain voltage where the current starts to sag, the in-pulse vs between-pulse `LED_K_SENSE` difference with Q1 conducting and off on a low-VF and a high-VF unit (sets FW-22's sink-off threshold), the start-up coarse step and the ADC conversion time — [led](led.md#boost-converter), [led](led.md#first-board-checks).
-12. Boost start-up waveform and a 0 → 0.9 A pulse load step (output capacitance outside TI's range) — [led](led.md#boost-converter).
-13. STROBE timeout: a 0.5 ms pulse passes whole, longer ones are cut by ≈ 1.03 ms; STROBE's width matches the set exposure within 50 µs, and a 0.6 ms STROBE trips FW-9's pulse-width fault — [led](led.md#strobe-gating-and-timeout), [led](led.md#first-board-checks).
+11. Thermocouples on D15, D4, C46 and Y1's case at 0.5 ms / 120 fps for 30 min, with the headroom loop and at full boost output; if an LED is above the derating curve, lower R61; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the B.Cu zone's east edge back from x 151.0 — [led](led.md#thermal), [layout](layout.md#thermal).
+12. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14), at full scale and down to the loop's lowest set point; `LED_K_SENSE` × 11 against Q1's drain, the drain voltage where the current starts to sag, the in-pulse vs between-pulse `LED_K_SENSE` difference with Q1 conducting and off on a low-VF and a high-VF unit (sets FW-22's sink-off threshold), the start-up coarse step and the ADC conversion time — [led](led.md#boost-converter), [led](led.md#first-board-checks).
+13. Boost start-up waveform and a 0 → 0.9 A pulse load step (output capacitance outside TI's range) — [led](led.md#boost-converter).
+14. STROBE timeout: a 0.5 ms pulse passes whole, longer ones are cut by ≈ 1.03 ms; STROBE's width matches the set exposure within 50 µs, and a 0.6 ms STROBE trips FW-9's pulse-width fault — [led](led.md#strobe-gating-and-timeout), [led](led.md#first-board-checks).
 
 Camera ([camera](camera.md#first-board-checks)):
-14. CSI-2 at full rate (2 lanes, 800 Mbit/s per lane) with a frame-error count (impedance, no CLK guard, planes under the pads) — [camera](camera.md#csi-2-link).
-15. Camera I/O level, CAM_EN polarity and the XVS divider option on the first module — [camera](camera.md#xvs-level-options), [camera](camera.md#sccb-and-control).
-16. FFC with the supplied cable: pin 1 mapping, insertion depth, loop and stiffener clear of the board edge — [camera](camera.md#ffc-orientation).
+15. CSI-2 at full rate (2 lanes, 800 Mbit/s per lane) with a frame-error count (impedance, no CLK guard, planes under the pads) — [camera](camera.md#csi-2-link).
+16. Camera I/O level, CAM_EN polarity and the XVS divider option on the first module — [camera](camera.md#xvs-level-options), [camera](camera.md#sccb-and-control).
+17. FFC with the supplied cable: pin 1 mapping, insertion depth, loop and stiffener clear of the board edge — [camera](camera.md#ffc-orientation).
 
 MCU ([mcu](mcu.md#first-board-checks)):
-17. D1: each colour's brightness at 3.3 V and the colour byte order — [mcu](mcu.md#status-led).
-18. USB-C: the cables in use (charger, flashing cable) latch and enumerate — [mcu](mcu.md#usb-c).
-19. U6 soldered with an iron only, pad by pad — [mcu](mcu.md#module).
+18. D1: each colour's brightness at 3.3 V and the colour byte order — [mcu](mcu.md#status-led).
+19. USB-C: the cables in use (charger, flashing cable) latch and enumerate — [mcu](mcu.md#usb-c).
+20. U6 soldered with an iron only, pad by pad — [mcu](mcu.md#module).
 
 Ethernet ([ethernet](ethernet.md#first-board-checks)):
-20. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8, C1; inspect them after — [layout](layout.md#assembly).
-21. Link at 10 and 100 Mbit/s with a straight and a crossover cable (auto-MDIX), auto-negotiated at full duplex at both speeds (half duplex means the reversed link pulses weren't recognised); page 16 register 18 bit 8 POLARITY must read 1 on the 10 Mbit/s links and is recorded at 100 Mbit/s (receive pair inverted on purpose); an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#first-board-checks), [ethernet](ethernet.md#rmii).
-22. REGOUT ripple at C6 with the link at 100 Mbit/s: inside 1.07–1.18 V (the REGOUT path to C6 has two vias) — [ethernet](ethernet.md#regout-and-iset).
+21. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8, C1; inspect them after — [layout](layout.md#assembly).
+22. Link at 10 and 100 Mbit/s with a straight and a crossover cable (auto-MDIX), auto-negotiated at full duplex at both speeds (half duplex means the reversed link pulses weren't recognised); page 16 register 18 bit 8 POLARITY must read 1 on the 10 Mbit/s links and is recorded at 100 Mbit/s (receive pair inverted on purpose); an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#first-board-checks), [ethernet](ethernet.md#rmii).
+23. REGOUT ripple at C6 with the link at 100 Mbit/s: inside 1.07–1.18 V (the REGOUT path to C6 has two vias) — [ethernet](ethernet.md#regout-and-iset).
 
 IMU ([imu](imu.md#first-board-checks)):
-23. Accelerometer I²C and INT1 next to the running buck — [imu](imu.md#i2c-bus).
+24. Accelerometer I²C and INT1 next to the running buck — [imu](imu.md#i2c-bus).
 
 ## Documents
 

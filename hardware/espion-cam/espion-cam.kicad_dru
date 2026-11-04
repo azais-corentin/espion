@@ -114,3 +114,6 @@
 # (under SMD pad to pad clearance); U1's and U4's 0.4 mm-pitch land patterns (0.2 mm wide) are under that and kept.
 # Custom-shape pads are checked on their anchor pad, which is smaller than the whole pad.
 (rule "Minimum SMD pad" (condition "A.Type == 'Pad' && A.Pad_Type == 'SMD'") (constraint assertion "A.Size_X >= 0.1mm && A.Size_Y >= 0.1mm"))
+
+# 0402 parts with one pad inside a solid-connected local pour (C17.1 in "C17/R16 +3V3", R17.2 in "GND pour 76", R21.2 in "C26/R28/R21 GND"): a thermal relief on that pad, so both pads heat alike in reflow (tombstoning). Board review 2026-11-04.
+(rule "0402 pour pads thermal" (condition "A.Type == 'Pad' && ((A.memberOfFootprint('C17') && A.Pad_Number == '1') || (A.memberOfFootprint('R17') && A.Pad_Number == '2') || (A.memberOfFootprint('R21') && A.Pad_Number == '2'))") (constraint zone_connection thermal_reliefs) (constraint thermal_relief_gap (min 0.2mm)) (constraint thermal_spoke_width (min 0.25mm)))

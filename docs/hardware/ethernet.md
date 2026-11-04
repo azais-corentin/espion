@@ -57,16 +57,18 @@ Load capacitors C2 = C5 = 18 pF C0G ±5 % (FH 0402CG180J500NT, LCSC C1549):
 
 Placement:
 
-- XTAL_X2 runs 3.0 mm from U1.3 straight to Y1.3. XTAL_X1 (8.7 mm) loops over the crystal to Y1.1.
+- XTAL_X2 runs 1.49 mm from U1.3 to Y1.3. XTAL_X1 (7.47 mm) loops round the crystal's north side to Y1.1.
   At 25 MHz both lines are electrically short.
 - Y1 is 1.0 mm from U1.
 - There is no GND guard trace round the crystal. The datasheet asks for one "if possible" (§6.1 p.56),
   and here it isn't possible. The crystal relies on distance and the In1/In2 GND planes. The nearest
   other copper is a +32V track 0.45 mm from C2's X1 pad, and the LED switch Q1's tab is 2.35 mm from
   Y1 ([layout](layout.md#ethernet-and-poe-isolation)).
-- MDC, MDIO and R14's +3V3 feed cross under Y1 and its X1/X2 traces on B.Cu, with the In1 and In2 GND
-  planes between. MDC runs ≈ 0.85 mm parallel to the X2 diagonal, against §6.1 p.56 ("Avoid signals path
-  parallel to clock signals path … such as MDC and X1"). There is no other way: U1's management pins
+- MDC, MDIO, R14's +3V3 feed and the COL/RMII strap cross under Y1, C5 and the X1/X2 traces on B.Cu,
+  with the In1 and In2 GND planes between. MDC crosses the X2 diagonal at right angles and the X2
+  vertical at 45°, under the Y1.3 and C5.1 pad corners; it runs along a clock trace only under U1.2's
+  pad and its X1 stub, against §6.1 p.56 ("Avoid signals path parallel to clock signals path … such
+  as MDC and X1"). There is no other way: U1's management pins
   face east, U6 lies south-west, and the RMII fan-out, MDI, Q1's drain zone and the board edge close
   every other B.Cu path. ETH_LED_G crosses only the X1 link C2–Y1, once, at right angles
   ([layout](layout.md#ethernet-and-poe-isolation)).
@@ -128,7 +130,9 @@ side at the east edge, soldered by hand ([layout](layout.md#assembly)).
   - a DC bleed of R2 + R3, two 499 kΩ Yageo RV1206 high-voltage resistors in series (≈ 1 MΩ). Two parts
     in series halve the voltage across each one.
 
-  The shield tracks are 0.5 mm wide.
+  The shield tracks are 0.5 mm wide. On the board the shield copper comes within 0.21 mm of GND on
+  F.Cu (at J1.12) and 0.20 mm on In1/In2 (round J1.SH): those gaps, not C1's 2 kV rating, set the
+  shield-to-GND withstand ([layout](layout.md#other-accepted-deviations)).
 - **Hand-soldering trial.** J1's lands are 0.565–0.717 mm from four reflowed parts: R46 (a CSI link),
   C3, R8 and C1. J1's hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over those four.
 
@@ -391,8 +395,8 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 - **Crystal without a guard trace**, 0.45 mm from a +32V track and 2.35 mm from Q1's tab. Q1's tab may
   reach about 108 °C at the worst LED duty (30 °C ambient, [led](led.md#thermal)), and Y1's ±20 ppm
   holds only to 85 °C. The IP101GRI is rated to 85 °C ambient (p.57).
-- **MDC and MDIO under the crystal** on B.Cu, behind both GND planes; MDC ≈ 0.85 mm parallel to X2
-  ([Crystal](#crystal)).
+- **MDC and MDIO under the crystal** on B.Cu, behind both GND planes; MDC crosses X2 and runs along
+  X1 only under U1.2's pad and stub ([Crystal](#crystal)).
 - **Unequal crystal traces.** X1 runs 7.47 mm round Y1 to its far-corner pin, X2 1.49 mm; the traces
   enclose ≈ 3.7 × 3.6 mm over In1 GND (user decision 2026-11-03,
   [layout](layout.md#ethernet-and-poe-isolation)).

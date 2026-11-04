@@ -90,7 +90,7 @@ A π filter cleans it before the mux:
 `+5V_POE` and `+5V_POE_F` are class `PWR_5V`, 1.0 mm on F.Cu (ΔT 8.8 °C at 1.96 A, 15.5 °C at
 the module's 2.6 A, IPC-2152 fit for 35 µm outer copper). The filter output reaches U4 on B.Cu:
 from two 0.8/0.4 mm vias beside the filter (106.6, 138.45)/(106.6, 139.45) to U4's IN1 vias, a
-0.8 mm leg of 12.3 mm (11.4 °C at 1.96 A), because 1.0 mm does not pass the VBUS IN2 via.
+0.8 mm leg of 12.2 mm (11.4 °C at 1.96 A), because 1.0 mm does not pass the VBUS IN2 via.
 
 ### Power budget
 
@@ -288,7 +288,7 @@ U3 is turned 180° against TI's Fig. 20 (SLVSDG1C p.13), with the same loops:
 - C10, C12, C18 and C19 each have two GND vias, U3.2 one under the body. In1 and In2 GND are
   solid under U3, L2 and the switch node.
 - The accelerometer's I²C lines pass L2 on B.Cu, below both GND planes; on F.Cu they keep
-  ≥ 1.015 mm from switch-node copper, and IMU_SDA crosses the corner of L2's courtyard margin
+  ≥ 0.915 mm from switch-node copper, and IMU_SDA crosses the corner of L2's courtyard margin
   (not its body) for ≈ 0.7 mm ([IMU](imu.md#i2c-bus)).
 - `+3V3` is class `PWR_3V3`, 0.65 mm (ESP32-P4 HDG §1.4.1 "at least 25 mil"); ΔT 1.6 °C at
   0.66 A. Probe it at TP4.
@@ -414,3 +414,8 @@ R56), so nothing draws LED current before firmware runs.
 9. **GND test loops.** Insert one RH-5002 loop into TP2's 1.0 mm plated hole before soldering:
    the drawing (LCSC C5199802) gives no hole size; if it is loose or tight, change the drill in
    the footprint.
+10. **B.Cu under U2.** At the 1.96 A PoE peak (LEDs at 0.5 ms / 120 fps, camera streaming,
+    Ethernet up), scope XVS and SCCB_SCL/SDA at J4 for ringing or extra edges, and run USB
+    enumeration and a bulk transfer; repeat on USB power alone as the reference. VBUS, the USB pair,
+    CAM_EN, SCCB and a short XVS hop run on B.Cu right under the module's flyback magnetics
+    ([layout](layout.md#bcu-under-u2)).

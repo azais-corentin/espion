@@ -368,9 +368,9 @@ of 0.3 mm feeds to R65, R71 and TP13, which carry µA.
 The trunk is mostly 0.6 mm wide, a pour at D3, and necked to 0.45 mm for 12.9 mm east of Q1. The
 21.9 mm from D3 to C47 is 0.4 mm on F.Cu along the bottom edge, kept off the board copper under the
 module U6 ([layout](layout.md#32v-and-the-ring)); it carries only the recharge current (≤ 0.22 A
-peak). The pulse comes mostly from C46. Its path to D4.2 is ≈ 24 mΩ
-(11.7 mm at 0.6 mm + 12.9 mm at 0.45 mm, 35 µm copper), ≈ 0.02 V at 0.915 A. The headroom budget
-uses ≈ 0.1 V, a bound over the whole D3 → D4 path.
+peak). The pulse comes mostly from C46. Its path to D4.2 is ≈ 21.7 mΩ (22.19 mm of track:
+9.28 mm at 0.6 mm + 12.91 mm at 0.45 mm, 35 µm copper), ≈ 0.02 V at 0.915 A. The headroom
+budget uses ≈ 0.1 V, a bound over the whole D3 → D4 path.
 
 See [layout](layout.md#led-driver-and-ring) for the copper and spacing rules.
 
@@ -751,6 +751,11 @@ doesn't feel; the hardware timeout stays the backstop if the firmware itself fai
   C2.1, and the Q1 drain zone overlaps C2.1 in plan view on B.Cu, with both inner GND planes in
   between. A guard track doesn't fit, and IP101G §6.1 p.56 asks for guards only "if possible".
   Accepted in design review, 2026-11-01 ([layout](layout.md#led-driver-and-ring)).
+- **Small parts beside C46 and Q1.** R5 and C8 sit beside C46 (10.8 mm tall), courtyards 0.01 /
+  0.00 mm apart (pads 4.45 / 4.40 mm); R67, C33 and R68 beside Q1's TO-252, pads 1.00 / 1.19 /
+  1.10 mm from Q1.1 (courtyards 0.08 / 0.31 / 0.33 mm); R70 beside Q1's tab, courtyards 0.02 mm,
+  R70.1–Q1.2 0.42 mm (no other site keeps R70.1's short link to the tab): possible reflow shadowing;
+  no source gives a number ([layout](layout.md#assembly), [first-board check 8](#first-board-checks)).
 
 ## First-board checks
 
@@ -812,6 +817,8 @@ doesn't feel; the hardware timeout stays the backstop if the firmware itself fai
      within 0.77–2.8 V, inside the band within ≈ 5 s;
    - time the `LED_K_SENSE` one-shot conversion: it must fit the last 0.05 ms of a
      pulse.
+8. **Joints beside big parts:** AOI or a visual check of R5 and C8 (beside C46) and R67, C33, R68
+   and R70 (beside Q1) for wetting, tombstoning and shifted parts.
 
 If the thermal test fails, pick R61 from this table. Worst case uses the same inputs as
 [LED current](#led-current), with 1 % E96 values. The table gives the highest temperature at which

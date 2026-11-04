@@ -93,7 +93,7 @@ the MSA3S02's VOL 0.1 × VDD. All on the same +3V3.
 
 **Routing.** SDA 20.5 mm and SCL 20.7 mm, one via each. They leave U6 on B.Cu and stay on B.Cu
 under the buck inductor L2 (In1/In2 GND between them and L2's switch node), coming up to F.Cu
-only east of L2: on F.Cu, SDA is 1.015 mm and SCL 1.43 mm from the switch-node copper (TI
+only east of L2: on F.Cu, SDA is 0.915 mm and SCL 1.43 mm from the switch-node copper (TI
 TLV62569 SLVSDG1C §10.1 p.13: keep traces away from switch nodes). SDA's last diagonal still
 crosses the corner of L2's courtyard margin for ≈ 0.7 mm, 0.69 mm from the body corner, to
 reach U12 pin 2. Details: [layout.md](layout.md#imu).
@@ -115,11 +115,12 @@ a STOP and soft-resets the sensor (register 0x00, p.20) at init
   LED_PWR spacing rule); that copper was rerouted on 2026-11-03 (R74.1 is now 4.18 mm from
   +32V), but R74 was not moved, and a turned R74 still hits C50's GND via or L2. Accepted in
   design review (2026-11-01). C50 (1.02 mm) and R37 (1.33 mm) meet the 1.0 mm; R73 is 3.2 mm away.
-- **C50's ground path** runs 2.1 mm to its via instead of ≤ 1 mm, and its loop to U12.9 is 9.6 mm with 2 vias (accepted in design review, 2026-11-01).
+- **C50's ground path** runs 2.1 mm to its via instead of ≤ 1 mm, and its loop to U12.9 is 9.08 mm with 2 vias (accepted in design review, 2026-11-01).
 - **Heat from U6 soldering.** U12 and C50 lie over U6's pads, which are iron-soldered from the
   bottom after reflow ([mcu.md](mcu.md#module)).
-- **Next to a tall capacitor.** U12's courtyard is 1.10 mm from C47 (10.8 mm tall): possible
-  reflow shadowing; no source gives a number.
+- **Next to tall parts.** U12's courtyard touches L2's (FXL0630, 3.0 mm tall; 1.92 mm pad to pad,
+  U12.1–L2.1) and is 1.10 mm from C47's (10.8 mm tall): possible reflow shadowing; no source gives
+  a number.
 - **Estimated bus capacitance.** The MSA3S02's pin capacitance is not published; the rise-time
   margin rests on the I²C 10 pF per-pin limit.
 - **Supply headroom.** +3V3 at its 3.440 V set-point maximum is 0.16 V under the sensor's

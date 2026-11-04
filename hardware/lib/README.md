@@ -77,6 +77,13 @@ Expected checker messages (`.omp/kicad.json`: `klcExpected` for rules every part
 - **F5.1** on `MountingHole_JLCPCB:ToolingHole_1.152mm_JLCPCB` (waiver): the Reference stays
   hidden, as in the stock tooling hole it copies (a tooling hole carries no designator).
 
+Silkscreen lines stay at KLC's nominal 0.12 mm (F5.1 rejects 0.15 mm), like the stock
+footprints. A board that needs a wider line widens its own copies with `kicad_edit`
+`set_footprint_graphics_width`; espion-cam raises every footprint's silk to JLCPCB's 0.15 mm
+this way (`docs/hardware/layout.md`, Fabrication rules). Updating a footprint on the board
+from the library brings back 0.12 mm, which the board's "Silk line width" rule then flags,
+so widen it again in the same edit.
+
 ## 3D models
 
 Built with [SolidCraft](https://github.com/tangency-labs/solidcraft) (in the dev shell) from

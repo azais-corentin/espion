@@ -51,10 +51,10 @@ flash and PSRAM, plus 50 mA MIPI PHY and 20 mA USB PHY); rail limits in
 0402 (YAGEO CC0402KRX7R9BB104) at the supply pins, on the top side: C29 over pins 74–76, C28 on
 the 0.65 mm +3V3 trunk 1.08 mm north of pin 76, both beside the +3V3 via pair that feeds the
 pins ("as close as possible", ESP32-P4 HDG §1.3.3; no distance given, the project uses ≤ 3 mm
-copper edge to edge). Copper paths, via heights counted, one via each: C28.1 → U6.76 4.32 mm,
-C28.2 → U6.73 4.67 mm, C29.1 → U6.75 3.62 mm, C29.2 → U6.73 4.82 mm. These add to the module's
-own capacitors. Each GND pin (20, 27, 34, 55, 73) has its own GND via; U6.73 shares one with
-C29's and C28's ground ends on purpose, the shortest capacitor-to-pin loop. +3V3 tracks are
+copper edge to edge). Copper paths, via heights counted, one via each: C28.1 → U6.76 4.22 mm,
+C28.2 → U6.73 4.67 mm, C29.1 → U6.75 4.92 mm, C29.2 → U6.73 4.70 mm (loops 8.89 mm for C28,
+9.62 mm for C29). These add to the module's own capacitors. Each GND pin (20, 27, 34, 55, 73)
+has its own GND via; U6.73 shares one with C29's and C28's ground ends on purpose. +3V3 tracks are
 class `PWR_3V3`, 0.65 mm (ESP32-P4 HDG §1.4.1: "at least 25 mil").
 
 **Unused module functions.** MIPI DSI (pins 21–26), USB 2.0 HS (pins 35/36), the module's LDO
