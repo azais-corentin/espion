@@ -1,0 +1,64 @@
+# Publishes the espion-cam schematic and PCB to GitHub Pages with Ferrite's web viewer
+# (packages.<system>.espion-cam-viewer in flake.nix). The viewer imports the KiCad project in
+# the browser; nothing is exported or rendered here.
+#
+# Requires, once per repository:
+# - Settings → Pages → Source: GitHub Actions;
+# - the secret FERRITE_READ_TOKEN: a fine-grained token with read-only Contents access to
+#   azais-corentin/ferrite, which is private, so that Nix can fetch the `ferrite` flake input.
+name: viewer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "hardware/espion-cam/**"
+      - "hardware/lib/**"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/viewer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits rather than cancelling one in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.FERRITE_READ_TOKEN }}
+      # The viewer bundle depends only on the locked Ferrite revision: key the store on flake.lock.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: viewer-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: viewer-${{ runner.os }}-
+          gc-max-store-size-linux: 5G
+      - name: Build the site
+        run: |
+          nix build .#espion-cam-viewer --print-build-logs
+          cp -rL result site
+          chmod -R u+w site
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
