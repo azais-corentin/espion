@@ -134,6 +134,7 @@ MCU:
 - Status LED D1 on `+3V3`: green/blue VF up to 3.2 V at 5 mA (datasheet) against the lowest `+3V3` set point (user decision 2026-11-02, "Accept, check on first boards", taken on the lower minimum of the ± 5 % envelope) — [mcu](mcu.md#status-led).
 - USB-C shell overhangs the top edge, nearer the routed edge than JLCPCB's part-to-edge limit: order note, no tab or rail at J2 (user decision 2026-11-04) — [layout](layout.md#assembly).
 - RESET/BOOT buttons on the bottom edge; the enclosure must reach them (user decision 2026-11-01) — [mcu](mcu.md#reset-and-boot).
+- BOOT button SW2 without a clamp: a discharge reaches GPIO35 through R39 only (user decision 2026-11-09, D16 removed) — [mcu](mcu.md#reset-and-boot).
 - U6 lies under C47, C50, U12 and R37: iron only (user decision 2026-11-01) — [mcu](mcu.md#module).
 - USB connector-side lines: one via without a GND return via, a short stretch over the In1 PoE gap (USB full speed) — [mcu](mcu.md#usb-c).
 

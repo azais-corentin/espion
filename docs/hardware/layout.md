@@ -390,7 +390,6 @@ Circuit: [mcu](mcu.md).
 | C49.1–U6.17 | HDG §1.3.10: 0.1 µF at an ADC pin (VLED_SENSE, GPIO21 / ADC1_CH5) |
 | U5–J2.A6 | TI SLVA680A p.4: protection as near to the connector as design rules allow, short I/O tracks. The limit was raised when J2 moved out to its overhang: U5 cannot follow it north, D2's courtyard abuts it (user decision 2026-11-04: "Raise the limit") |
 | D2.1–J2.A4, D2.1–J2.A9 | TI SLVA680A p.4: "place the TVS as near to the connector as design rules allow"; the limit reaches both VBUS pad pairs |
-| D16.1–SW2.1 | D16 (H7VHD3UA) at the BOOT button's exposed contact, same source; its anode has a GND via |
 | `paths` "BOOT stub": R36.1 → R39.1 and R36.1 → R38.2 | The BOOT strap R39 and pull-up R38 hang on the 50 MHz RMII_TXD1_MCU line; their stubs stay short, negligible against the edge |
 
 C29 sits over U6.74–76; C28 sits on the +3V3 trunk just north of U6.76's pad, beside the +3V3 via pair that feeds pins
@@ -436,10 +435,9 @@ GPIO assignments that moved to make the routing possible are listed in
 
 - SW1 (RESET) and SW2 (BOOT) stay on the bottom edge (user decision 2026-11-01: "Keep on the bottom edge"); the enclosure
   must give access to both there. Labels "BOOT" and "RST" sit between them.
-- BOOT_SW leaves D16.1 westward directly to a via, rather than branching toward the module from SW2's east pin-1 pad.
-  SW2's two pin-1 pads keep their F.Cu link and enter D16.1 from the east; only D16.1 has the outbound protected run (TI
-  SLVA680A p.4). D16.2's short GND via is unchanged. On B.Cu the net runs south-east, south, then east along the bottom
-  edge below U6's bottom pad row, tented, with copper clear of the edge.
+- BOOT_SW leaves SW2's west pin-1 pad westward on F.Cu directly to a via; SW2's two pin-1 pads keep their F.Cu link. The
+  button has no clamp (user decision 2026-11-09: D16 removed, [mcu](mcu.md#reset-and-boot)). On B.Cu the net runs
+  south-east, south, then east along the bottom edge below U6's bottom pad row, tented, with copper clear of the edge.
 
 ### Module pads
 

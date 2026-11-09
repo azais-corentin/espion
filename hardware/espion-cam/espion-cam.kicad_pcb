@@ -34360,317 +34360,6 @@
 			)
 		)
 	)
-	(footprint "Diode_SMD:D_SOD-323_HandSoldering"
-		(layer "F.Cu")
-		(uuid "de446b2a-a53a-4c3c-b4af-68be79d32a4f")
-		(at 108.3 160.18 -90)
-		(descr "SOD-323")
-		(tags "SOD-323")
-		(property "Reference" "D16"
-			(at 0 0 90)
-			(layer "F.Fab")
-			(uuid "ad446f5e-776e-4273-998c-145d445531cf")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Value" "H7VHD3UA"
-			(at 0.1 1.9 270)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "0e5bdf47-1854-4c02-b727-2ea3c9932d4b")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/6a909619d64003f76bc6f2824383eb13.pdf"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "4f833077-1d01-4e84-9f5e-619c10453548")
-			(effects
-				(font
-					(size 1.27 1.27)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Description" "Unidirectional TVS diode, VRWM 7 V, SOD-323"
-			(at 0 0 270)
-			(unlocked yes)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "ee76246b-7193-43f9-bccb-80835d9abe71")
-			(effects
-				(font
-					(size 1.27 1.27)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "Manufacturer" "R+O"
-			(at 0 0 270)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "2b39aa10-490d-4602-a165-c92e19ad999e")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "MPN" "H7VHD3UA"
-			(at 0 0 270)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "84b72904-a35d-41dc-a4e8-f8138b1d118f")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "LCSC" "C20615807"
-			(at 0 0 270)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "931fb77e-af52-4400-9e61-01b7a80c7eb4")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property ki_fp_filters "TO-???* *_Diode_* *SingleDiode* D_*")
-		(path "/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b/7221087a-c5a3-4920-8ae7-b712c5ca28d6")
-		(sheetname "/MCU/")
-		(sheetfile "mcu.kicad_sch")
-		(attr smd)
-		(duplicate_pad_numbers_are_jumpers no)
-		(fp_line
-			(start -2.01 0.85)
-			(end 1.25 0.85)
-			(stroke
-				(width 0.15)
-				(type solid)
-			)
-			(layer "F.SilkS")
-			(uuid "d12ddd98-cf68-4065-965b-5e0b4c4ed7c8")
-		)
-		(fp_line
-			(start -2.01 -0.85)
-			(end -2.01 0.85)
-			(stroke
-				(width 0.15)
-				(type solid)
-			)
-			(layer "F.SilkS")
-			(uuid "0e8bfb9b-2ae6-411b-aaba-dc6f6f4c063b")
-		)
-		(fp_line
-			(start -2.01 -0.85)
-			(end 1.25 -0.85)
-			(stroke
-				(width 0.15)
-				(type solid)
-			)
-			(layer "F.SilkS")
-			(uuid "3ea790d8-367e-463b-9b2f-2eb26910c7f4")
-		)
-		(fp_line
-			(start -2 0.95)
-			(end 2 0.95)
-			(stroke
-				(width 0.05)
-				(type solid)
-			)
-			(layer "F.CrtYd")
-			(uuid "fd3e442d-f9ef-44c6-81ff-cfc0d6231d51")
-		)
-		(fp_line
-			(start -2 -0.95)
-			(end -2 0.95)
-			(stroke
-				(width 0.05)
-				(type solid)
-			)
-			(layer "F.CrtYd")
-			(uuid "54b88642-ccae-4c80-a4a6-e68152765a61")
-		)
-		(fp_line
-			(start -2 -0.95)
-			(end 2 -0.95)
-			(stroke
-				(width 0.05)
-				(type solid)
-			)
-			(layer "F.CrtYd")
-			(uuid "c72adc94-763b-4c4d-8fa3-f5fd61cb24b6")
-		)
-		(fp_line
-			(start 2 -0.95)
-			(end 2 0.95)
-			(stroke
-				(width 0.05)
-				(type solid)
-			)
-			(layer "F.CrtYd")
-			(uuid "aa307dbf-cd67-41ce-b97e-7270ed88e041")
-		)
-		(fp_line
-			(start -0.9 0.7)
-			(end -0.9 -0.7)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "6325c7da-6324-4e7a-80fc-9c8715cd0d07")
-		)
-		(fp_line
-			(start 0.9 0.7)
-			(end -0.9 0.7)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "3c072fc6-bafd-44bc-9cf3-e69064b703f3")
-		)
-		(fp_line
-			(start 0.2 0.35)
-			(end -0.3 0)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "d84c6af8-1623-4607-aa2b-7d0c43d955b9")
-		)
-		(fp_line
-			(start -0.3 0)
-			(end -0.5 0)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "e932e72b-3076-4c20-8a73-ce117dd23534")
-		)
-		(fp_line
-			(start -0.3 0)
-			(end 0.2 -0.35)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "65c56bea-ad8b-4a4b-875e-bdd5a4c2e5fd")
-		)
-		(fp_line
-			(start 0.2 0)
-			(end 0.45 0)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "2d9224cb-c06b-4982-bb3d-847e6a84d137")
-		)
-		(fp_line
-			(start -0.3 -0.35)
-			(end -0.3 0.35)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "1b48c1be-74d6-4855-aa23-77a415323a7e")
-		)
-		(fp_line
-			(start 0.2 -0.35)
-			(end 0.2 0.35)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "2beef555-c5f5-471b-95ad-cb54d94e3999")
-		)
-		(fp_line
-			(start -0.9 -0.7)
-			(end 0.9 -0.7)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "feeb6b94-4acb-4c12-8f12-31d49b9027ee")
-		)
-		(fp_line
-			(start 0.9 -0.7)
-			(end 0.9 0.7)
-			(stroke
-				(width 0.1)
-				(type solid)
-			)
-			(layer "F.Fab")
-			(uuid "d4d7926a-e4b5-4d5b-aea6-2d04db23fff9")
-		)
-		(fp_text user "${REFERENCE}"
-			(at 0 -1.85 270)
-			(layer "F.Fab")
-			(uuid "3dab9149-8a49-4b9d-9bd4-745a3e7ff6c0")
-			(effects
-				(font
-					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(pad "1" smd roundrect
-			(at -1.25 0 270)
-			(size 1 1)
-			(layers "F.Cu" "F.Mask" "F.Paste")
-			(roundrect_rratio 0.25)
-			(net "/MCU/BOOT_SW")
-			(pinfunction "K_1")
-			(pintype "passive")
-			(uuid "9db39d35-8503-4c06-ae60-64e7d3b28949")
-		)
-		(pad "2" smd roundrect
-			(at 1.25 0 270)
-			(size 1 1)
-			(layers "F.Cu" "F.Mask" "F.Paste")
-			(roundrect_rratio 0.25)
-			(net "GND")
-			(pinfunction "A_2")
-			(pintype "passive")
-			(uuid "99f61c14-cb05-4c5a-bd22-2a42a134ad3b")
-		)
-		(embedded_fonts no)
-		(model "${KICAD10_3DMODEL_DIR}/Diode_SMD.3dshapes/D_SOD-323.stpZ"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
-	)
 	(footprint "Resistor_SMD:R_0603_1608Metric"
 		(layer "F.Cu")
 		(uuid "de8157ae-6262-4ad9-8dbc-0c104750d50a")
@@ -44695,14 +44384,6 @@
 		(uuid "a1e29f8d-0ba9-4a8b-9084-b41beec178d5")
 	)
 	(segment
-		(start 108.3 161.43)
-		(end 107.45 161.43)
-		(width 0.3)
-		(layer "F.Cu")
-		(net "GND")
-		(uuid "a2ae49de-1844-4b6f-a185-1aac6ea0341e")
-	)
-	(segment
 		(start 121.9 154.025)
 		(end 121.9 153.075)
 		(width 0.4)
@@ -45877,14 +45558,6 @@
 		(layers "F.Cu" "B.Cu")
 		(net "GND")
 		(uuid "d7511668-5c8f-4332-99be-ef5e5dcda57f")
-	)
-	(via
-		(at 107.45 161.43)
-		(size 0.45)
-		(drill 0.2)
-		(layers "F.Cu" "B.Cu")
-		(net "GND")
-		(uuid "d786ddc0-73db-4cc3-b8d3-1902d58f9b90")
 	)
 	(via
 		(at 109.7 135)
@@ -55551,46 +55224,6 @@
 		(uuid "f1a31416-4074-46d3-9c0a-244bf3a1f17a")
 	)
 	(segment
-		(start 108.98 158.455)
-		(end 108.775 158.455)
-		(width 0.2)
-		(layer "F.Cu")
-		(net "/MCU/BOOT_SW")
-		(uuid "0a035d9e-0672-461a-a7f7-c215ec030537")
-	)
-	(segment
-		(start 109.45 158.925)
-		(end 108.98 158.455)
-		(width 0.2)
-		(layer "F.Cu")
-		(net "/MCU/BOOT_SW")
-		(uuid "18f8b8ed-3d79-4b6b-911e-5b25f0a7581c")
-	)
-	(segment
-		(start 108.3 158.93)
-		(end 107.6 158.93)
-		(width 0.2)
-		(layer "F.Cu")
-		(net "/MCU/BOOT_SW")
-		(uuid "2660d0e7-00c8-4de7-a753-ab62e8d45fb6")
-	)
-	(segment
-		(start 110 158.925)
-		(end 109.45 158.925)
-		(width 0.2)
-		(layer "F.Cu")
-		(net "/MCU/BOOT_SW")
-		(uuid "3bb6605c-0201-4693-947f-17c1dc4ea22f")
-	)
-	(segment
-		(start 108.3 158.93)
-		(end 108.775 158.455)
-		(width 0.2)
-		(layer "F.Cu")
-		(net "/MCU/BOOT_SW")
-		(uuid "5c793937-9fb7-40e3-b3c7-24f39a81c234")
-	)
-	(segment
 		(start 154.6 152.465)
 		(end 154.6 152.8)
 		(width 0.2)
@@ -55605,6 +55238,14 @@
 		(layer "F.Cu")
 		(net "/MCU/BOOT_SW")
 		(uuid "c535ae78-f861-45ad-8139-a93db77b3e77")
+	)
+	(segment
+		(start 110 158.925)
+		(end 107.6 158.93)
+		(width 0.2)
+		(layer "F.Cu")
+		(net "/MCU/BOOT_SW")
+		(uuid "f1ab67ce-1ca5-4384-89b9-b99081fc8df3")
 	)
 	(segment
 		(start 110 158.925)

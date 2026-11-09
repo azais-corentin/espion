@@ -40,7 +40,7 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   firmware turns the D+ pull-up off while no USB host supplies VBUS.
   [mcu](../../docs/hardware/mcu.md#usb-c)
 - **Status and buttons:** D1 YY-0807BRGK26 RGB status LED (`STATUS_LED`, GPIO13); SW1
-  RESET and SW2 BOOT (BOOT with D16 H7VHD3UA ESD clamp).
+  RESET and SW2 BOOT.
   [mcu](../../docs/hardware/mcu.md#status-led)
 - **IMU:** U12 MSA3S02 3-axis accelerometer on its own I²C bus (GPIO3/4), INT1 on GPIO51: the
   motion interrupt flags a bumped camera, the accelerometer gives the gravity vector for rig
