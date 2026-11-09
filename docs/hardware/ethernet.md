@@ -148,7 +148,6 @@ route on F.Cu without crossing each other or themselves, and without vias:
 - The net names follow the J1 pin they reach. Each PHY + pin reaches the jack's − pin and each − pin
   its + pin, so both pairs are P/N-inverted between U1 and J1. In each pair the U1 pin that leaves on
   the west ends on the south lane at J1 (J1.5, J1.2), so the pair runs straight.
-- The Ethernet sheet carries a note at U1/J1 saying so.
 
 IP101G register facts the wiring relies on:
 
@@ -322,9 +321,19 @@ U1.10, the remedies, in order:
 ### MDC and MDIO
 
 - MDC (GPIO31) and MDIO (GPIO52) reach the P4 through the GPIO matrix. R14, a pull-up to +3V3, pulls up
-  MDIO. MDC is always driven by the MAC and has no pull. R14 is the same part as the SCCB pull-ups
-  (one BOM line, user decision 2026-11-09); whichever side drives MDIO low sinks
-  (+3V3 max − VOL) / R14 at R14's low tolerance.
+  MDIO alongside the pin's internal pull-up (p.16). MDC is always driven by the MAC and has no pull. R14
+  is the same part as the strap resistors R1, R7, R9 and R10 (one BOM line; user decision 2026-11-09,
+  replacing the SCCB pull-up part to lower the sink current). Whichever side drives MDIO low sinks
+  (+3V3 max − VOL) / R14 at R14's low tolerance. R14 sets no edge rate: it only holds MDIO while
+  neither side drives it (idle and the first turnaround bit of a read, which the MAC does not
+  sample); every sampled bit is driven by the MAC or the PHY (inference from IEEE 802.3 clause 22
+  framing; the IP101G and P4 documents don't state their MDIO driver type).
+- **Levels.** The P4's outputs into the PHY (TXD0, TXD1, TX_EN, MDC, MDIO) guarantee only
+  VOH ≥ 0.8 × VDD (ESP32-P4 datasheet Table 5-4 p.89) against the IP101G's VIH ≥ 0.8 × VDDIO (p.57),
+  both on +3V3: no margin on paper. PHY_RST_N has its own RESETB threshold, 0.4–0.6 × VDDIO (p.57),
+  with margin. The PHY's inputs are CMOS with µA loads, so the P4 output sits
+  near its rail (inference: the P4 publishes no VOH-versus-current curve). The other way the PHY's
+  VOH ≥ 0.9 × VDDIO and VOL ≤ 0.1 × VDDIO (p.57) clear the P4's VIH 0.75 × VDD and VIL 0.25 × VDD.
 - MDC must stay at or below 3.33 MHz: period ≥ 300 ns, high and low ≥ 150 ns (Table 20, p.62). That is a
   firmware setting ([firmware-rules](firmware-rules.md#rules)).
 - MDC and MDIO are slow signals, so length doesn't matter. Both cross under the crystal on B.Cu
@@ -355,7 +364,6 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 - The firmware addresses the PHY at MDIO address 1.
 - The firmware must not enable GPIO28's internal pull-up while RESET_N rises: it fights the 104 kΩ
   pull-down and can latch FX_HEN = 1 (fiber mode).
-- The Ethernet sheet carries a strap note with this summary.
 
 ## Accepted risks
 
@@ -379,6 +387,8 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   decision 2026-11-09); the first-board link test covers it.
 - **MDC and MDIO under the crystal** on B.Cu, behind both GND planes; MDC crosses X2 and runs along
   X1 only under U1.2's pad and stub ([Crystal](#crystal)).
+- **P4 → PHY logic high at zero datasheet margin** (VOH and VIH both 0.8 × the shared rail); relies on
+  the light CMOS load ([MDC and MDIO](#mdc-and-mdio)). The throughput and reset-order checks cover it.
 - **Unequal crystal traces.** X1 runs round Y1 to its far-corner pin, X2 is short; the traces
   enclose a small loop over In1 GND (user decision 2026-11-03,
   [layout](layout.md#ethernet-and-poe-isolation)).

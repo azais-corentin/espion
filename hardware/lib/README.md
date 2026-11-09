@@ -417,7 +417,8 @@ Yongyu YY-0807BRGK26-07-FI addressable RGB LED, 2.0 × 1.7 × 0.85 mm, single-wi
   Datasheet, Description and keywords: p. 2 gives the same package, the same pins (1 DOUT,
   2 VDD, 3 DIN, 4 GND) and the same suggested pad (0.85 × 0.75 mm, 0.20 / 0.97 mm gaps) as
   the RGBJ26 part, so it uses `LED_SMD_Yongyu:LED_Yongyu_YY-0807_2.0x1.7mm` and its 3D model
-  unchanged.
+  unchanged. Since 2026-11-09 the footprint's description names this part and its datasheet
+  (the RGBJ26 part fits it too).
 - Timing (p. 6): T0H 0.3 µs, T1H 0.6 µs, T0L 0.6 µs, T1L 0.3 µs, each ±0.05 µs; reset ≥ 80 µs.
   Default output current 5 mA per channel (p. 2, p. 4). VDD abs-max 3.0–7.5 V (p. 3).
 - Byte order: the p. 7 data structure sends G7…G0, R7…R0, B7…B0 (MSB first, "GRB"), while

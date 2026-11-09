@@ -172,7 +172,7 @@
 				)
 			)
 		)
-		(property "Value" "1.2k 1%"
+		(property "Value" "5.1k 1%"
 			(at 0 1.17 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -222,7 +222,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1201TCE"
+		(property "MPN" "0402WGF5101TCE"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -234,7 +234,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25862"
+		(property "LCSC" "C25905"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -3426,7 +3426,7 @@
 		(layer "F.Cu")
 		(uuid "1326ea58-5879-4612-aff9-c10fa2506b6e")
 		(at 115.14 124.47)
-		(descr "Yongyu 0807 addressable RGB LED with integrated controller (YY-0807RGBJ26-07-FJ), 2.0x1.7mm body, 0.85mm high, Yongyu suggested soldering pad (p. 2), https://datasheet.lcsc.com/datasheet/pdf/f9afa0e15f6569ed1e35edd063d6a18f.pdf")
+		(descr "Yongyu 0807 addressable RGB LED with integrated controller (YY-0807BRGK26-07-FI; same package and pad as YY-0807RGBJ26-07-FJ), 2.0x1.7mm body, 0.85mm high, Yongyu suggested soldering pad (p. 2), https://datasheet.lcsc.com/datasheet/pdf/f10321733b2b8242740cb1ad891264de.pdf")
 		(tags "LED RGB addressable WS2812 Yongyu 0807")
 		(property "Reference" "D1"
 			(at 0 0 0)
@@ -3523,7 +3523,7 @@
 				(type solid)
 			)
 			(layer "F.SilkS")
-			(uuid "d4c3cb76-d876-4c8e-8e7b-d94d8db26cc7")
+			(uuid "3cfc1551-f1ef-4268-8d0a-89923e8275d4")
 		)
 		(fp_line
 			(start -0.225 0.96)
@@ -3533,7 +3533,7 @@
 				(type solid)
 			)
 			(layer "F.SilkS")
-			(uuid "3411c808-8ea3-4fa3-b1c6-5cf1bb03904c")
+			(uuid "2303a3ec-ca81-4e74-b916-96cfa4d35f72")
 		)
 		(fp_poly
 			(pts
@@ -3545,7 +3545,7 @@
 			)
 			(fill yes)
 			(layer "F.SilkS")
-			(uuid "e2bfe419-c3b0-4d50-a91a-82fad819c23a")
+			(uuid "a5d394e5-673b-4e51-b94c-2b82b1b74046")
 		)
 		(fp_line
 			(start -1.49 -1.2)
@@ -3555,7 +3555,7 @@
 				(type solid)
 			)
 			(layer "F.CrtYd")
-			(uuid "e9499b61-9351-4de6-811d-0b9d3cddd5a9")
+			(uuid "6c56d9d0-669d-4fc3-9ade-979a295e0fb6")
 		)
 		(fp_line
 			(start -1.49 1.2)
@@ -3565,7 +3565,7 @@
 				(type solid)
 			)
 			(layer "F.CrtYd")
-			(uuid "62e552ff-485a-453b-81bc-22fb7bb991e1")
+			(uuid "24dd733b-5791-48dd-bd82-5569372fcec1")
 		)
 		(fp_line
 			(start 1.49 -1.2)
@@ -3575,7 +3575,7 @@
 				(type solid)
 			)
 			(layer "F.CrtYd")
-			(uuid "74cc8ac0-4257-459c-9b34-a447d668c70b")
+			(uuid "70d0ba34-9710-4ca0-ada6-c809306cb4ee")
 		)
 		(fp_line
 			(start 1.49 1.2)
@@ -3585,7 +3585,7 @@
 				(type solid)
 			)
 			(layer "F.CrtYd")
-			(uuid "fb0638fb-b004-4472-8e15-07313cb1d589")
+			(uuid "7100b824-c273-47ca-99e3-96686a49a843")
 		)
 		(fp_poly
 			(pts
@@ -3597,12 +3597,12 @@
 			)
 			(fill no)
 			(layer "F.Fab")
-			(uuid "abe2a64e-9c39-46e1-91ca-210ccb8fd639")
+			(uuid "1512af2a-a6fa-4301-a736-d2451f6a1fbd")
 		)
 		(fp_text user "${REFERENCE}"
 			(at 0 0 0)
 			(layer "F.Fab")
-			(uuid "f34f5ac3-e8ea-4d56-a0f5-c818d5e15066")
+			(uuid "9ce26d41-5291-41e7-b6d9-d3f35decb339")
 			(effects
 				(font
 					(size 0.5 0.5)
@@ -3618,7 +3618,7 @@
 			(net "unconnected-(D1-DOUT-Pad1)")
 			(pinfunction "DOUT_1")
 			(pintype "output+no_connect")
-			(uuid "606343a9-3702-4789-a48a-70954820fa33")
+			(uuid "781342b7-8f34-4d42-8683-487d40c96ac1")
 		)
 		(pad "2" smd roundrect
 			(at 0.86 -0.525)
@@ -3628,7 +3628,7 @@
 			(net "+3V3")
 			(pinfunction "VDD_2")
 			(pintype "power_in")
-			(uuid "42a35905-1f95-4473-9616-2d78eca51e93")
+			(uuid "21671dfb-fbd5-461a-9b7c-955ea313695b")
 		)
 		(pad "3" smd roundrect
 			(at 0.86 0.525)
@@ -3638,7 +3638,7 @@
 			(net "/MCU/STATUS_LED_DIN")
 			(pinfunction "DIN_3")
 			(pintype "input")
-			(uuid "54922d8d-f4e2-4659-b3f4-b183ae261ee0")
+			(uuid "f15260fe-1216-4cf2-acd0-d4ced108ac9c")
 		)
 		(pad "4" smd roundrect
 			(at -0.86 0.525)
@@ -3648,7 +3648,7 @@
 			(net "GND")
 			(pinfunction "GND_4")
 			(pintype "power_in")
-			(uuid "64e43134-51d4-4f51-bbc7-74b1d72f4935")
+			(uuid "973330f2-35e4-4598-8116-25f83c9213de")
 		)
 		(embedded_fonts no)
 		(model "${KIPRJMOD}/../lib/LED_SMD_Yongyu.3dshapes/LED_Yongyu_YY-0807_2.0x1.7mm.step"

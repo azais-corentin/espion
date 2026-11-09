@@ -133,9 +133,10 @@ The circuit is TI's XREF priority switchover with hysteresis (SLVSEA3F §10.4 Fi
 
 - **PR1** senses IN1 through the divider R18 (top) / R19 (bottom).
 - **CP2** is the reference, from `+3V3` through the divider R20 / R21, filtered by C52 so the
-  buck's ripple does not reach the comparator (time constant (R20 ∥ R21) × C52). CP2 =
-  `+3V3` × R21 / (R20 + R21). Requirement: CP2 stays above VREF max (1.10 V, p.8) over the `+3V3`
-  range and the resistor tolerance, so the XREF mode stays active.
+  buck's ripple does not reach the comparator (time constant (R20 ∥ R21) × C52). C52 also holds
+  CP2 through a fast PoE loss (below). CP2 = `+3V3` × R21 / (R20 + R21). Requirement: CP2 stays
+  above VREF max (1.10 V, p.8) over the `+3V3` range and the resistor tolerance, so the XREF mode
+  stays active.
 - **R75** from ST to PR1 adds the hysteresis: while IN1 is selected, ST is high (≈ `+3V3` through
   R29) and pushes PR1 up; on IN2, ST is low.
 - OV1 and OV2 are tied to GND: over-voltage cut-off is not used ("Connect to GND if not
@@ -161,8 +162,13 @@ compares against these formulas, worked out from the schematic.
   constant (R18 + R19) × (C13 + C14 + C15)) downward from the trip point and never re-crosses the
   return threshold.
 - **CP2 from +3V3, not a precision reference** (TI's figure uses a separate reference). It works
-  because the switchover takes `+3V3` down only slightly. Requirement: U3 keeps `+3V3` inside
-  3.3 V ± 5 % through a switchover. Chain, at the lowest PoE → USB trip point and the +5V peak:
+  only while `+3V3` holds its set point down to the trip. With V_ST = `+3V3` and CP2 following
+  `+3V3`, the PoE → USB trip moves by k = (R21/(R20 + R21) × G − 1/R75) × R18 per volt of `+3V3`,
+  and k > 1. If U3 drops out before IN1 reaches the trip, `+3V3` follows IN1 down and the trip falls
+  faster than IN1, so the XREF comparison never trips. The TPS2121 then hands over only in its
+  PR1-vs-VREF row, once CP2 falls under VREF (Table 9-3, p.18), with `+3V3` already sagging and the
+  100 µs tSW instead of 5 µs (p.7). Requirement: U3 still holds its set point at the lowest
+  PoE → USB trip point, at the +5V peak. Chain:
   - `+5V` at U4 OUT = V_trip,min − I(+5V peak) × RON(U4), minus the switchover droop
     I(+5V peak) × 5 µs / C(`+5V`), with RON ≤ 85 mΩ at 85 °C (p.7) and C(`+5V`) the sum of the
     capacitors on `+5V` (the same capacitance as in the soft-start inrush below).
@@ -170,10 +176,16 @@ compares against these formulas, worked out from the schematic.
     copper network solved from `kicad_query copper`), so U3.4 sees VIN(U3) = U4 OUT minus that
     drop.
   - The TLV62569 in 100 % mode needs VIN ≥ VOUT + IOUT × (RDS(on) + DCR) (SLVSDG1C p.6 Eq. 1),
-    VOUT being the buck's minimum set point, to hold the set point. IOUT is the `+3V3` total from
-    [+3V3 loads](#3v3-loads), RDS(on) is U3's (SLVSDG1C p.6) and DCR is L2's (Changjiang FXL0630
-    catalogue p.14). Below that `+3V3` follows its input, VIN − IOUT × (RDS(on) + DCR), which must
-    still be inside 3.3 V ± 5 %.
+    VOUT being the buck's set point at the same corner as V_trip, to hold it. IOUT is the `+3V3`
+    total from [+3V3 loads](#3v3-loads), RDS(on) is U3's (SLVSDG1C p.6) and DCR is L2's
+    (Changjiang FXL0630 catalogue p.14). Equivalently, the drop from U4 IN1 to `+3V3`,
+    I(+5V peak) × (RON(U4) + R_copper) + IOUT × (RDS(on) + DCR), stays below V_trip − V(`+3V3`).
+  - **C52's second job.** With the boost recharging at its switch limit that static drop leaves no
+    margin (estimate, design review 2026-11-09). A PoE pull covers it: `+5V_POE_F` falls at the
+    load current over C13–C15, so IN1 passes the trip within a fraction of (R20 ∥ R21) × C52, and
+    C52 holds CP2 at its pre-sag value meanwhile. Only a sag of IN1 slower than that time constant
+    (a PSE or cable fault, not a pull) meets the static chain; first-board checks 3 and 4 record
+    `+3V3` at the trip.
   - If `+3V3` were absent, CP2 < VREF and the TPS2121 falls back to its PR1-vs-VREF row (Table
     9-3), which still picks IN1 when PoE is present. At power-up CP2 follows `+3V3` through C52;
     PoE alone or PoE + USB select IN1 in both rows, USB alone selects IN2, so there is no glitch.
@@ -384,7 +396,10 @@ leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)):
   move with `+3V3` (included in the worst case above), and the switchover cannot pull `+3V3` out of
   regulation for more than the 5 µs switchover (chain in
   [Priority and hysteresis](#priority-and-hysteresis), with the board's `+5V` copper drop).
-  Accepted in the schematic review (2026-11-01).
+  Accepted in the schematic review (2026-11-01). If U3 drops out before the trip, CP2 sags with
+  `+3V3` and the XREF trip is lost; at the +5V peak the static chain has no margin, and only C52's
+  hold covers a PoE pull, not a slow sag of IN1 (design review 2026-11-09; first-board checks 3
+  and 4).
 - **USB current is limited by firmware, not hardware** (user decision 2026-10-31: LEDs off on USB
   by a firmware rule only). The USB-only load, from the buck input, is at the 500 mA port limit; a
   firmware fault that enables the LED supply on USB draws more than a port supplies.
@@ -421,11 +436,14 @@ leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)):
 3. **Switchover thresholds.** With U2 not fitted, a bench supply on `+5V_POE_F` (C15) and USB on
    J2: ramp the supply down and up and read `PWR_SRC`. Expected: to USB inside the PoE → USB worst
    case band and back to PoE inside the USB → PoE band, both from the R18/R19/R75 formulas in
-   [Priority and hysteresis](#priority-and-hysteresis), worked out from the schematic.
+   [Priority and hysteresis](#priority-and-hysteresis), worked out from the schematic. Repeat the
+   slow ramp down with the LEDs at 0.5 ms / 120 fps (the boost recharging every frame) and record
+   `+3V3` at the `PWR_SRC` edge: it must still be at its set point (static chain in
+   [Priority and hysteresis](#priority-and-hysteresis)).
 4. **PoE pull with USB attached.** On a laptop port and on a bench port, unplug PoE (a) idle and
    (b) during 0.5 ms / 120 fps LED pulses. Scope VBUS, `+5V`, `+3V3` and `PWR_SRC`: the module must
-   not reset and USB must stay enumerated. Record the firmware latency from the `PWR_SRC` falling
-   edge to LED_EN, BST_EN and LED_PWR_EN low.
+   not reset and USB must stay enumerated. Record the `+3V3` minimum and the firmware latency from
+   the `PWR_SRC` falling edge to LED_EN, BST_EN and LED_PWR_EN low.
 5. **PoE input power at peak load.** On a 44 V PSE, with the LEDs at 0.5 ms / 120 fps, the camera
    streaming and Ethernet up: measure the PD input power and the pair current, and scope the
    `+5V` current through a frame (does the boost recharge at its 1.44 A switch limit?). Limits:

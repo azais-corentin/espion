@@ -28,8 +28,8 @@ signal below is a 3.3 V signal (P4 DS Table 2-1 pp.14–16; Waveshare module sch
 | GPIO4 | 6 | `IMU_SCL` | I²C controller A, SCL | out, open drain | R73 ↑; internal off | MTMS pad: select the GPIO/matrix function |
 | GPIO6 | 8 | `VBUS_SENSE` | Digital input: USB host power present | in | R27/R28 divider from VBUS, C26; internal off | VDD_LP pad, no ADC on this pin (touch channel only). The RC edge (R27 ∥ R28 × C26) is slow and the P4 publishes no input hysteresis: debounce |
 | GPIO7 | 9 | `XVS` | RMT TX: camera frame trigger | out | R40/R44 divider to GND: the camera sees V(GPIO7) × R44/(R40 + R44) | Load R40 + R44. RMT through the GPIO matrix |
-| GPIO8 | 10 | `SCCB_SDA` | I²C controller B, SDA (camera SCCB) | I/O, open drain | R41 ↑; internal off | ≤ 400 kHz |
-| GPIO9 | 11 | `SCCB_SCL` | I²C controller B, SCL | out, open drain | R42 ↑; internal off | |
+| GPIO8 | 10 | `SCCB_SDA` | I²C controller B, SDA (camera SCCB) | I/O, open drain | R41 ↑; internal off | ≤ 400 kHz. Held low while the camera is off (FW-17) |
+| GPIO9 | 11 | `SCCB_SCL` | I²C controller B, SCL | out, open drain | R42 ↑; internal off | Held low while the camera is off (FW-17) |
 | GPIO10 | 12 | `CAM_EN` | Camera module PWDN (FFC pin 11) | out | R43 ↓ | Polarity unknown until measured (FW-17). R52 (not fitted) can also route it to FFC pin 12 |
 | GPIO11 | 13 | `LED_EN` | LED gate enable (U9 input) | out | R56 ↓ | Default low. TP11 |
 | GPIO12 | 14 | `STROBE` | GPIO ETM event: STROBE edge capture | in | none (driven push-pull by U7) | Never an output: U7 drives the net, which also feeds the STROBE timeout (R54). TP9 |
@@ -299,6 +299,12 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   init. `CAM_EN` = GPIO10: R43 holds it low through reset; whether low means sensor on or off
   is not known and is measured on the first module (supply current with `CAM_EN` low and
   high). Record the measured polarity here.
+  - Drive GPIO8 and GPIO9 low from boot until the camera is powered, and again whenever the
+    firmware turns it off: R41/R42 would otherwise hold both lines at +3V3 against an unpowered
+    I/O ring, above the OV9281's DOVDD + 1 V limit (OV9281 datasheet v1.1 Table 8-1;
+    [camera.md](camera.md#sccb)). Release SCL first, then SDA (a STOP), once `CAM_3V3` is up and
+    `CAM_EN` is at its on level; until the polarity is measured, release them only while trying
+    a level for an SCCB ACK (FW-15).
 - **FW-18** The ESP32-P4-Core powers its MIPI PHY from `ESP_LDO_VO3`, which is 0 V by default:
   the CSI driver sets it to 2.5 V before starting the CSI host
   ([architecture](../architecture.md)).

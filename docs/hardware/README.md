@@ -98,7 +98,7 @@ Power:
   rated or tested (user decision 2026-11-02) — [power](power.md#poe-input),
   [layout](layout.md#ethernet-and-poe-isolation).
 - DP1435 output set-point tolerance and maximum capacitive load not specified — [power](power.md#poe-input).
-- Mux reference CP2 taken from `+3V3`, not a precision reference — [power](power.md#power-mux).
+- Mux reference CP2 taken from `+3V3`, not a precision reference; at the `+5V` peak U3 may drop out before the PoE → USB trip, and only C52's hold on CP2 keeps the XREF trip for a PoE pull, not for a slow sag (design review 2026-11-09) — [power](power.md#power-mux).
 - USB current limited by a firmware rule only (user decision 2026-10-31); the USB-alone estimate sits against the 500 mA port limit — [power](power.md#usb-vbus).
 - VBUS_SENSE pin current while `+3V3` is off is an open point: the P4 datasheet gives no injection limit, and the fee-free R27/R28 values raised it (user decision 2026-11-09) — [power](power.md#usb-vbus), [mcu](mcu.md#usb-c).
 - PoE loss with USB attached loads the host port up to the mux limit until firmware drops LED_EN, BST_EN and LED_PWR_EN — [power](power.md#power-mux).
@@ -111,6 +111,7 @@ Power:
 Camera:
 - Camera module I/O level unknown, no sample (user decision 2026-10-31); assembly options kept — [camera](camera.md#xvs-level-options).
 - Module SCCB pull-ups must be weak: with the fee-free R41/R42 (user decision 2026-11-09) a module pull-up in parallel must keep the pair at or above the I²C sink limit's R_min — [camera](camera.md#accepted-risks).
+- SCCB pull-ups R41/R42 feed the module's I/O clamps through reset and boot if pin 11 low turns the module off (Raspberry Pi precedent; firmware holds GPIO8/9 low once it runs, FW-17; design review 2026-11-09) — [camera](camera.md#accepted-risks).
 - FFC pin mapping read from a vendor photo; insertion depth, stiffener and bend radius unknown — [camera](camera.md#ffc-orientation).
 - No impedance control: MIPI pair impedance follows JLCPCB's ±20 % width tolerance (user decision 2026-11-01) — [layout](layout.md#impedance).
 - MIPI clock pairs at 2W without a GND guard (user decision 2026-11-01, "Accept 2W, no guard") — [camera](camera.md#csi-2-link).
@@ -145,6 +146,7 @@ Ethernet:
 - MDI spacing below 3× inside U1's escape — [ethernet](ethernet.md#magjack-and-mdi).
 - ISET resistor R6's ±1 % band ends slightly above the IP101G's 6.19 kΩ ±1 % (user decision 2026-11-09, fee-free value) — [ethernet](ethernet.md#regout-and-iset).
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
+- P4 → PHY logic high (TXD, TX_EN, MDC, MDIO) at zero datasheet margin, VOH and VIH both 0.8 × the shared `+3V3`; relies on the PHY's µA CMOS load (design review 2026-11-09) — [ethernet](ethernet.md#mdc-and-mdio).
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
 - REGOUT reaches C6 through a long track, two vias and a short pour, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
 - J1's lands close to reflowed parts R46, C3, R8 — [layout](layout.md#assembly).
@@ -160,8 +162,8 @@ IMU and board:
 Power ([power](power.md#first-board-checks)):
 1. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V, the input limit of U3 and U8.
 2. PoE cold start into the π filter: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses.
-3. Mux thresholds with a bench supply on `+5V_POE_F`: switches to USB before `+5V_POE_F` falls below U3's minimum input, and back to PoE above it; thresholds from the R18/R19/R75 formulas in power.md, worked out from the schematic.
-4. PoE pull with USB attached, idle and during LED pulses: no reset, USB stays enumerated; firmware latency `PWR_SRC` → LED_EN, BST_EN, LED_PWR_EN low.
+3. Mux thresholds with a bench supply on `+5V_POE_F`: switches to USB before `+5V_POE_F` falls below U3's minimum input, and back to PoE above it; thresholds from the R18/R19/R75 formulas in power.md, worked out from the schematic; a slow ramp down with the LEDs pulsing keeps `+3V3` at its set point at the `PWR_SRC` edge.
+4. PoE pull with USB attached, idle and during LED pulses: no reset, USB stays enumerated; the `+3V3` minimum; firmware latency `PWR_SRC` → LED_EN, BST_EN, LED_PWR_EN low.
 5. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W (802.3af) and ≤ 350 mA per pair (J1), else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
 6. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A (USB port limit); camera share through a shunt in place of R53.
 7. `+3V3` load step from light load to the estimated maximum load (power.md budget): overshoot ≤ 5 %.
@@ -177,7 +179,7 @@ LED ([led](led.md#first-board-checks)):
 
 Camera ([camera](camera.md#first-board-checks)):
 15. CSI-2 at full rate (2 lanes, 800 Mbit/s per lane) with a frame-error count (impedance, no CLK guard, planes under the pads) — [camera](camera.md#csi-2-link).
-16. Camera I/O level, CAM_EN polarity and the XVS divider option on the first module — [camera](camera.md#xvs-level-options), [camera](camera.md#sccb-and-control).
+16. Camera I/O level, CAM_EN polarity, DOVDD and SDA/SCL with pin 11 low against the board's pull-ups, and the XVS divider option on the first module — [camera](camera.md#xvs-level-options), [camera](camera.md#sccb-and-control).
 17. FFC with the supplied cable: pin 1 mapping, insertion depth, loop and stiffener clear of the board edge — [camera](camera.md#ffc-orientation).
 
 MCU ([mcu](mcu.md#first-board-checks)):

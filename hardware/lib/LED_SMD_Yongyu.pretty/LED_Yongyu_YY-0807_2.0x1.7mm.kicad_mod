@@ -3,7 +3,7 @@
 	(generator "pcbnew")
 	(generator_version "10.0")
 	(layer "F.Cu")
-	(descr "Yongyu 0807 addressable RGB LED with integrated controller (YY-0807RGBJ26-07-FJ), 2.0x1.7mm body, 0.85mm high, Yongyu suggested soldering pad (p. 2), https://datasheet.lcsc.com/datasheet/pdf/f9afa0e15f6569ed1e35edd063d6a18f.pdf")
+	(descr "Yongyu 0807 addressable RGB LED with integrated controller (YY-0807BRGK26-07-FI; same package and pad as YY-0807RGBJ26-07-FJ), 2.0x1.7mm body, 0.85mm high, Yongyu suggested soldering pad (p. 2), https://datasheet.lcsc.com/datasheet/pdf/f10321733b2b8242740cb1ad891264de.pdf")
 	(tags "LED RGB addressable WS2812 Yongyu 0807")
 	(property "Reference" "REF**"
 		(at 0 -1.9 0)

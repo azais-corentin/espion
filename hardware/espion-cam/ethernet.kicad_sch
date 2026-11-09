@@ -3245,28 +3245,6 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "MDI pairs swapped at J1 (MDI-X wiring) and each pair P/N-inverted on purpose:\nU1 TX pair TP/TN (pins 30/29) -> J1 RD-/RD+ (pins 5/4),\nU1 RX pair RP/RN (pins 27/26) -> J1 TD-/TD+ (pins 2/1).\nRelies on IP101G polarity handling (page 16 reg 18[8] POLARITY, p.27) and auto-MDIX\n(page 16 reg 16[11] AUTO_MDIX_DIS = 0, the default): never disable auto-MDIX;\nif it must be off, set page 16 reg 30[3] FORCE_MDIX = 1."
-		(exclude_from_sim no)
-		(at 76.2 148.59 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "c60df52f-bb04-488d-977c-3b175dba90d0")
-	)
-	(text "IP101G straps: PHY address 1 (PHY_AD0 = 1 by R1, PHY_AD3 = 0 by R7),\nRMII mode (COL/RMII = 1 by R10), LED mode 2 (CRS/LEDMOD = 1 by R9),\nTP mode (FX_HEN internal pull-down)."
-		(exclude_from_sim no)
-		(at 167.64 154.94 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "cad838b6-5b9a-4a14-a295-44f04bc4349d")
-	)
 	(junction
 		(at 172.72 78.74)
 		(diameter 0)
@@ -8115,7 +8093,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1.2k 1%"
+		(property "Value" "5.1k 1%"
 			(at 218.44 110.49 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8170,7 +8148,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1201TCE"
+		(property "MPN" "0402WGF5101TCE"
 			(at 215.9 109.22 0)
 			(hide yes)
 			(show_name no)
@@ -8181,7 +8159,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25862"
+		(property "LCSC" "C25905"
 			(at 215.9 109.22 0)
 			(hide yes)
 			(show_name no)

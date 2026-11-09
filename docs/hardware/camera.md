@@ -108,8 +108,6 @@ the J4 end, the opposite-face contacts face down, onto J4's lower contacts.
   the module, fit the top-contact JUSHUO AFA07-S15ECA-00 as J4 instead. The project
   footprint's description gives it the same land pattern.
 
-The Camera sheet's note at J4 points here.
-
 ### Bend room
 
 - The cable is 16 mm wide ((15 + 1) × 1.0 mm, JUSHUO "recommended FPC/FFC dimension"). Centred on
@@ -221,6 +219,14 @@ p.12), held by the `viaParity` entries "CSI lanes, P4 side" and "CAM lanes, FPC 
   left out, as long as the parallel value stays ≥ R_min. With R41/R42 fitted, a module pull-up
   R_mod in parallel must keep R41 ∥ R_mod at its low tolerance ≥ R_min; the fee-free R41/R42 value
   (user decision 2026-11-09) leaves little room, so R_mod must be large ([Accepted risks](#accepted-risks)).
+- **Unpowered module:** R41/R42 hold SCL/SDA at +3V3 whenever the board is powered, and R43 holds
+  module pin 11 low from reset. If that level is the module's off state and pin 11 gates its
+  regulators, the sensor's I/O ring is unpowered while both lines sit above its "DOVDD + 1 V"
+  limit (OV9281 Table 8-1); each line then feeds up to (V(+3V3) max − V_clamp)/R at R41/R42's low
+  tolerance into the I/O clamps, V_clamp being a diode drop above the unpowered DOVDD. Firmware holds
+  GPIO8/GPIO9 low while the camera is off (FW-17), but nothing covers reset and boot. A host on the
+  Raspberry Pi pinout presents the same condition (inference: Pi-compatible modules tolerate it).
+  [Accepted risks](#accepted-risks), first-board check 2.
 - **Bus recovery:** the firmware can clock SCL nine times on GPIO9. CAM_EN (module PWDN) may serve as
   a camera reset once its polarity is measured; until then the SCCB bus clear is the only recovery
   ([firmware-rules](firmware-rules.md#rules)).
@@ -264,7 +270,7 @@ and R44 (to GND) to XVS_CAM, then J3 pin 1, a short pigtail and the module's bac
 sensor's FSIN, high impedance by default, OV9281 Table 1-2). TP8 ("XVS") is on XVS_CAM.
 
 The module's I/O level (DOVDD) is unknown. So the divider is an assembly option, fitted by default
-for 1.8 V I/O (user decision, 2026-10-31). The Camera sheet's note points here for the other levels.
+for 1.8 V I/O (user decision, 2026-10-31).
 
 The high level is V_XVS_CAM = V_GPIO × R44/(R40 + R44), worked out with the resistor tolerance
 in the direction that makes each result worst. The fitted values are in the schematic.
@@ -367,6 +373,11 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
   with R_low the board pull-up at its low tolerance. The fee-free R41/R42 value (user decision
   2026-11-09) sits close to R_min, so only a weak module pull-up fits; a stronger one means
   removing R41/R42 (first-board check 2).
+- **SCCB pull-ups into an unpowered module.** If pin 11 low turns the module off, R41/R42 feed the
+  sensor's I/O clamps through reset and boot, above the OV9281's DOVDD + 1 V limit
+  ([SCCB](#sccb)); firmware holds GPIO8/GPIO9 low only once it runs (FW-17). Accepted on the
+  Raspberry Pi precedent until first-board check 2 shows what pin 11 does (design review
+  2026-11-09).
 - **FFC pin map and mating from vendor material.**
   - The pin table comes from the vendor drawing.
   - That the module connector is bottom-contact comes from a vendor photo (the stiffener on the lens
@@ -402,6 +413,10 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
    - Measure the idle voltage on SDA/SCL: it shows any on-module pull-ups and their rail.
    - Power the module with pin 11 low, then high. Measure DOVDD, AVDD and DVDD and check for an SCCB
      ACK. Record pin 11's polarity for the firmware.
+   - With pin 11 low, pull SDA and SCL to 3.3 V through the board's R41/R42 value and measure DOVDD
+     and the SDA/SCL voltage. If DOVDD is off and SDA/SCL sit near 3.3 V, the lines feed an unpowered
+     I/O ring ([SCCB](#sccb)): before the board takes the module, drop R41/R42 for module pull-ups, or
+     move R43 to +3V3 so the module is on from reset.
    - Then choose the XVS option above and decide on R41/R42.
 3. **XVS.** Scope TP8 while the P4 sends triggers: the high level meets the requirement of
    [XVS level options](#xvs-level-options) for the fitted option (worked out from the schematic), and
