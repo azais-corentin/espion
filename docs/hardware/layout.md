@@ -362,7 +362,7 @@ XVS's west run is kept out of it: B.Cu just west of the box, across on F.Cu behi
 ([Ethernet and PoE isolation](#rmii)). What stays in the box on B.Cu, because the camera module area, the lens cutout
 and the CSI bus leave no other way from J2 and J4 to U6: VBUS (the PWR_5V trunk), USB_C_D_P/N, CAM_EN, SCCB_SDA, a short XVS
 hop, STATUS_LED, STROBE and a stub of SCCB_SCL (user decision 2026-11-04: "Partial + document"). Added with the BOM
-change of 2026-11-09 (a design-review item, not a user decision): the +3V3 west-edge loop, a decoupled DC rail, runs on
+change of 2026-11-09 (user decision 2026-11-09: "Accept"): the +3V3 west-edge loop, a decoupled DC rail, runs on
 B.Cu down the filter column just east of XVS's west run. C14's larger can closed its F.Cu way, F.Cu is full of the C14
 and C13 pads beside it, and west of it XVS's run and the board edge leave no B.Cu lane. First-board check
 ([power](power.md#first-board-checks) 10): at the PoE input's peak load (LEDs 0.5 ms / 120 fps, camera streaming,
@@ -900,9 +900,11 @@ First-board checks: J1 iron trial and inspection of R46, C3, R8; U2 iron solderi
 soldering; visual/AOI of the joints of R5, C8 (beside C46); USB-C cables in use (charger,
 flashing cable) latch and enumerate ([mcu](mcu.md#first-board-checks)); voids under U1's and U10's exposed pads, where
 the thermal vias are open ([Fabrication rules](#fabrication-rules)): X-ray if available, else check the
-backside fillets in the vias and U1/U10/Q1 temperatures in the thermal runs. At the next fab export, check U7 (SOT-23-5)
-and Q1 (SOT-23) in JLCPCB's placement preview: their parts have no `assembly.corrections` entry yet, so `kicad_export`
-lists them as unconfirmed; then add an LCSC-keyed entry for each (`{"rot": 0}` when it needs none).
+backside fillets in the vias and U1/U10/Q1 temperatures in the thermal runs. U5, U7 and Q1 were checked in JLCPCB's
+placement preview on 2026-11-09 and have their `assembly.corrections` entries. D1 and the can part of C14, C46 and
+C47 have no 3D model in that preview, so it shows neither D1's pin 1 nor the cans' polarity: check them in the
+order's DFM Analysis (Order History, a few hours after ordering) before approving production, then add D1's
+LCSC-keyed entry (`{"rot": 0}` when it needs none).
 
 ## Accepted deviations
 
@@ -1006,7 +1008,7 @@ moved; placement is unchanged.
 | J2 overhangs the top edge, nearer the routed edge than JLCPCB's component-to-edge limit; order note | User decision 2026-11-04 | [MCU and USB](#usb), [Assembly](#assembly) |
 | Buttons on the bottom edge | User decision 2026-11-01 | [MCU and USB](#buttons-and-boot) |
 | B.Cu under U2's flyback magnetics: VBUS, USB_C_D_P/N, CAM_EN, SCCB_SDA/SCL, STROBE, STATUS_LED and a short XVS hop; XVS's long west run kept west of it | User decision 2026-11-04: "Partial + document"; first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
-| B.Cu under U2's flyback magnetics: the +3V3 west-edge loop down the filter column (BOM change 2026-11-09, C14's larger can) | Design review 2026-11-09: no F.Cu way past C14, no B.Cu lane west of XVS; decoupled DC rail; first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
+| B.Cu under U2's flyback magnetics: the +3V3 west-edge loop down the filter column (BOM change 2026-11-09, C14's larger can) | User decision 2026-11-09: "Accept" (no F.Cu way past C14, no B.Cu lane west of XVS; decoupled DC rail); first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
 | CAM_CLK_P/N split on F.Cu between J4 and their vias: P detours north of N to take up the length, uncoupled for a stretch | User decision 2026-11-04: "Accept + record" (re-coupling needs trapezoid bumps drawn in pcbnew) | [Lengths and skew](#lengths-and-skew) |
 | C4 (0805 MLCC) pads close to the east edge; order without mouse bites beside it | User decision 2026-11-04: "Note only" | [Assembly](#assembly) |
 | R72.2's GND via hole closer to the pad opening than the mask bridge | Board review 2026-11-04: no site further out | [Fabrication rules](#fabrication-rules) |
