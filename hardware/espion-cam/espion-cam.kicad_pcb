@@ -21137,7 +21137,7 @@
 				)
 			)
 		)
-		(property "Value" "1.2k 1%"
+		(property "Value" "5.1k 1%"
 			(at 0 1.17 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -21187,7 +21187,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1201TCE"
+		(property "MPN" "0402WGF5101TCE"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -21199,7 +21199,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25862"
+		(property "LCSC" "C25905"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -31574,7 +31574,7 @@
 				)
 			)
 		)
-		(property "Value" "1.2k 1%"
+		(property "Value" "5.1k 1%"
 			(at 0 1.17 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -31624,7 +31624,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1201TCE"
+		(property "MPN" "0402WGF5101TCE"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -31636,7 +31636,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25862"
+		(property "LCSC" "C25905"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
