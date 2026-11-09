@@ -36,7 +36,7 @@
       "assembly": {
         "hand": {
           "U6": "Waveshare ESP32-P4-Core module: hand-solder footprint, no LCSC part (user decision 2026-10-31); iron only, pad by pad (docs/hardware/layout.md, Assembly; docs/hardware/mcu.md, Module)",
-          "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31); lands close to reflowed R46, C3, R8, C1 (`kicad_query distance` gives the gaps): conical tip ≤ 1 mm, Kapton over those four, inspect them after (docs/hardware/layout.md, Assembly)",
+          "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31); lands close to reflowed R46, C3, R8 (`kicad_query distance` gives the gaps): conical tip ≤ 1 mm, Kapton over those three, inspect them after (docs/hardware/layout.md, Assembly)",
           "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
           "TP2": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
           "TP3": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
@@ -55,7 +55,6 @@
           "C398358": { "rot": -90 },
           "C131941": { "rot": 180 },
           "C128411": { "rot": 180 },
-          "C7519": { "rot": -90 },
           "Package_SON_TI:Texas_DRV0006A_WSON-6-1EP_2x2mm_P0.65mm_EP1x1.6mm": { "rot": 0 },
           "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm": { "rot": 0 },
           "Connector_JST:JST_SH_SM04B-SRSS-TB_1x04-1MP_P1.00mm_Horizontal": { "rot": 0 },
@@ -161,7 +160,7 @@
             "name": "lens view cone", "center": [129.7, 130.3], "r0": 7.0, "slope": 0.83,
             "heights": {
               "Capacitor_SMD_JIERR:CP_Elec_8x10.5": 11.0,
-              "Capacitor_SMD:CP_Elec_10x10": 10.8,
+              "Capacitor_SMD:CP_Elec_10x10": 11.0,
               "Capacitor_SMD_AISHI:CP_Elec_6.3x9": 9.5,
               "Capacitor_SMD:CP_Elec_6.3x5.8": 6.5,
               "TestPoint:TestPoint_Loop_D2.50mm_Drill1.0mm": 4.72,

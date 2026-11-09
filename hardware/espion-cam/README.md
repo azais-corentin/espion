@@ -34,12 +34,12 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - **Power:** U2 DP1435-5V IEEE 802.3af PoE PD module (isolated, bottom side, hand-soldered)
   through an LC filter (L1, C13, C14), OR-ed with USB-C 5 V by U4 TPS2121 priority mux (source
   on `PWR_SRC`, GPIO2); U3 TLV62569 buck to 3.3 V. [power](../../docs/hardware/power.md)
-- **USB-C:** J2 straight to the P4's USB Serial/JTAG (no hub, GPIO24/25), U5 USBLC6-2SC6 ESD
-  protection, D2 TSD05 VBUS TVS. VBUS is sensed on GPIO6 (`VBUS_SENSE`, R27/R28 divider):
+- **USB-C:** J2 straight to the P4's USB Serial/JTAG (no hub, GPIO24/25), U5 SRV05-4 ESD
+  protection, D2 H7VHD3UA VBUS TVS. VBUS is sensed on GPIO6 (`VBUS_SENSE`, R27/R28 divider):
   firmware turns the D+ pull-up off while no USB host supplies VBUS.
   [mcu](../../docs/hardware/mcu.md#usb-c)
 - **Status and buttons:** D1 YY-0807BRGK26 RGB status LED (`STATUS_LED`, GPIO13); SW1
-  RESET and SW2 BOOT (BOOT with D16 TSD05 ESD clamp).
+  RESET and SW2 BOOT (BOOT with D16 H7VHD3UA ESD clamp).
   [mcu](../../docs/hardware/mcu.md#status-led)
 - **IMU:** U12 MSA3S02 3-axis accelerometer on its own I²C bus (GPIO3/4), INT1 on GPIO51: the
   motion interrupt flags a bumped camera, the accelerometer gives the gravity vector for rig

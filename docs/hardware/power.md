@@ -261,8 +261,8 @@ nominal resistors. Maximum: VFB max with R16 high and R17 low.
 
 The whole range must lie inside 3.3 V ± 5 %, which the IP101G needs on VDDIO/AVDD33 (DS p.57); the
 module's VDD_LP accepts 3.0–3.6 V. R17 must be under TI's 200 kΩ maximum (p.9). C17 across R16 is
-the feed-forward capacitor TI recommends for its R2 = 100k (p.9); its zero sits at
-1/(2π × R16 × C17).
+TI's feed-forward capacitor (p.9: 6.8 pF for R2 = 100 kΩ). With a lower-impedance divider, C17 is
+scaled so that its zero 1/(2π × R16 × C17) stays where TI's values put it (user decision 2026-11-09).
 
 This DC set-point range is the `+3V3` range every calculation in these documents uses (the
 [Rails table](README.md#rails)). During a PoE → USB switchover `+3V3` can sag below it while `+5V`
@@ -337,12 +337,12 @@ blocks any current back into the host. The connector, the data lines and their p
   4.75 V (§7.2.1.4 p.174, §7.2.2 p.175), so designing down to 4.40 V is a conservative floor. The
   maximum is the 5.5 V that USB Type-C allows legacy devices to see at light
   load (USB Type-C Cable and Connector Specification R2.0 §4.4.2, p.141: "up to 5.5V maximum").
-- **D2 TI TSD05D**, a TVS at J2's VBUS pads: VRWM 5.5 V, VBR 6 V, IEC 61000-4-2 ±30 kV contact, TLP
-  clamp 7.5 V at 16 A, 19 pF (SLVSH43C p.1, p.6). TI's TPS2121 hot-plug guidance asks for a TVS on
+- **D2 R+O H7VHD3UA**, a TVS at J2's VBUS pads: VRWM 7 V, VBR 7.5–9 V, IEC 61000-4-2 ±30 kV contact,
+  clamp 9.5 V at 10 A and 21 V at 105 A (8/20 µs), 500 pF typical (H7VHD3UA datasheet p.1–2). TI's TPS2121 hot-plug guidance asks for a TVS on
   a hot-plugged input (SLVSEA3F §10.7 p.31–32). When IN2 turns off at U4's current limit, a ≈ 1 µH
   cable into C16 gives an overshoot of I_limit × √(L_cable / C16) on top of VBUS, to be compared
   with U4's 24 V absolute maximum.
-- **C16** at IN2. On attach the host sees C16 plus D2's 19 pF, which must stay under the 10 µF
+- **C16** at IN2. On attach the host sees C16 plus D2's 500 pF, which must stay under the 10 µF
   maximum load at the downstream end of a cable (USB 2.0 §7.2.4.1, p.177); the `+5V` bulk is behind
   U4's soft start.
 - **R24 to GND.** With PoE only and an unpowered host plugged in, U4's IN2 leakage (≤ 5 µA up

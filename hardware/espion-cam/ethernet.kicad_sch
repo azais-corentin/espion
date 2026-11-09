@@ -3304,12 +3304,6 @@
 		(uuid "8a014b55-5b58-444a-886b-a243caf031fa")
 	)
 	(junction
-		(at 33.02 69.85)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "9f2ac990-4b5b-4ebc-8715-04f2e57943ed")
-	)
-	(junction
 		(at 93.98 113.03)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3338,12 +3332,6 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "dea39538-670a-4582-aa4a-7168607ff77c")
-	)
-	(junction
-		(at 33.02 81.28)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "e5d2fba4-b40b-429e-bf9c-8a66814690a4")
 	)
 	(junction
 		(at 167.64 53.34)
@@ -3787,16 +3775,6 @@
 	)
 	(wire
 		(pts
-			(xy 33.02 66.04) (xy 33.02 69.85)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "388cbdd0-339a-4f4e-9ec4-0a6833c3bf3e")
-	)
-	(wire
-		(pts
 			(xy 170.18 66.04) (xy 184.15 66.04)
 		)
 		(stroke
@@ -3814,16 +3792,6 @@
 			(type default)
 		)
 		(uuid "3d65a1c7-549a-4bd2-afae-8f2e5eaf9443")
-	)
-	(wire
-		(pts
-			(xy 33.02 91.44) (xy 33.02 92.71)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "40ded4d4-ad39-48c3-88bf-9187930e3d3f")
 	)
 	(wire
 		(pts
@@ -3967,13 +3935,13 @@
 	)
 	(wire
 		(pts
-			(xy 45.72 69.85) (xy 45.72 71.12)
+			(xy 33.02 66.04) (xy 33.02 67.31)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "68f90d8b-cd35-49a7-8658-270a85ebf1da")
+		(uuid "69cf0a0a-979e-4957-842b-b5ecfa0a2278")
 	)
 	(wire
 		(pts
@@ -4114,16 +4082,6 @@
 			(type default)
 		)
 		(uuid "77268c6d-5ffa-44ba-8b2d-3e7691e033dd")
-	)
-	(wire
-		(pts
-			(xy 33.02 78.74) (xy 33.02 83.82)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "78f8a395-d808-4c09-8a52-2da3ede68d7d")
 	)
 	(wire
 		(pts
@@ -4317,16 +4275,6 @@
 	)
 	(wire
 		(pts
-			(xy 45.72 78.74) (xy 45.72 80.01)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ac36be30-4d6e-439e-a4e7-72563830ba24")
-	)
-	(wire
-		(pts
 			(xy 167.64 53.34) (xy 170.18 53.34)
 		)
 		(stroke
@@ -4457,16 +4405,6 @@
 	)
 	(wire
 		(pts
-			(xy 33.02 69.85) (xy 45.72 69.85)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "c69bf1fa-485d-43a9-8b72-369864479eee")
-	)
-	(wire
-		(pts
 			(xy 127 43.18) (xy 127 41.91)
 		)
 		(stroke
@@ -4547,16 +4485,6 @@
 	)
 	(wire
 		(pts
-			(xy 33.02 81.28) (xy 17.78 81.28)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "dc5c7745-5946-4c0a-aff8-a73b7d68c2c1")
-	)
-	(wire
-		(pts
 			(xy 147.32 59.69) (xy 167.64 59.69)
 		)
 		(stroke
@@ -4624,16 +4552,6 @@
 			(type default)
 		)
 		(uuid "eb1e76b9-6b1a-4347-85e6-223b95fce95b")
-	)
-	(wire
-		(pts
-			(xy 33.02 69.85) (xy 33.02 71.12)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "eb9a9218-d3f9-49c7-92bf-bf3cc5ee6ffe")
 	)
 	(wire
 		(pts
@@ -4744,16 +4662,6 @@
 			(justify left bottom)
 		)
 		(uuid "008168e1-282d-4ef4-bd15-63e0430c2b9c")
-	)
-	(label "ETH_SHIELD"
-		(at 34.29 69.85 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "066ecf89-d5a2-4b0f-b6a1-0cfec4bd2c42")
 	)
 	(label "POE_VA2"
 		(at 72.39 55.88 0)
@@ -5135,16 +5043,6 @@
 		)
 		(uuid "f7451350-c366-4fbc-8a2c-4bdc606628a4")
 	)
-	(label "ETH_SHIELD_R"
-		(at 17.78 81.28 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "ff550107-ee8b-4ae6-9f09-da296ad430d4")
-	)
 	(hierarchical_label "{PHY}"
 		(shape bidirectional)
 		(at 273.05 121.92 0)
@@ -5277,6 +5175,84 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
 					(reference "R10")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 33.02 67.31 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "180a407c-24d1-4da1-b9d3-94f70e6dbedf")
+		(property "Reference" "#PWR201"
+			(at 33.02 73.66 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 33.02 71.12 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 33.02 67.31 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 33.02 67.31 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 33.02 67.31 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "017523aa-eee3-4b01-8bd4-a578f3048b58")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
+					(reference "#PWR201")
 					(unit 1)
 				)
 			)
@@ -5595,121 +5571,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:R")
-		(at 33.02 87.63 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "30c828f8-92a5-4c0d-9588-cf3234d5e4d8")
-		(property "Reference" "R3"
-			(at 35.56 86.36 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "499k"
-			(at 35.56 88.9 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_1206_3216Metric"
-			(at 33.02 87.63 90)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://yageogroup.com/content/datasheet/asset/file/PYU-RV_51_ROHS_L"
-			(at 33.02 87.63 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 33.02 87.63 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "YAGEO"
-			(at 33.02 87.63 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "RV1206FR-07499KL"
-			(at 33.02 87.63 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C309667"
-			(at 33.02 87.63 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "76725370-2365-4934-8ad7-47f803ecae2a")
-		)
-		(pin "2"
-			(uuid "649834b6-6625-47ee-8718-a6c18f0d2bc1")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "R3")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "power:+3V3")
 		(at 215.9 104.14 0)
 		(unit 1)
@@ -6018,121 +5879,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:C")
-		(at 45.72 74.93 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "4a13eb4d-f256-4d6d-ac7a-488bcc9f9972")
-		(property "Reference" "C1"
-			(at 49.53 73.66 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "1nF 2kV"
-			(at 49.53 76.2 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_1206_3216Metric"
-			(at 45.72 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/e23807227dca831bf1c88df22fc8323c.pdf"
-			(at 45.72 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 45.72 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "FH"
-			(at 45.72 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "1206B102K202NT"
-			(at 45.72 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C9196"
-			(at 45.72 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "045a5217-b344-4d86-9ed3-986faa3233b7")
-		)
-		(pin "2"
-			(uuid "981cee7a-37b3-4b73-8d67-ffbf5627a802")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "C1")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:R")
 		(at 184.15 104.14 90)
 		(unit 1)
@@ -6267,7 +6013,7 @@
 				)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 137.16 49.403 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6288,7 +6034,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 137.16 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -6310,7 +6056,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 137.16 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -6321,7 +6067,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 137.16 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -6332,7 +6078,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 137.16 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -6353,121 +6099,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
 					(reference "C7")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
-		(at 33.02 74.93 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "53c50f67-f869-4e45-8d52-853a85ae4168")
-		(property "Reference" "R2"
-			(at 35.56 73.66 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "499k"
-			(at 35.56 76.2 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_1206_3216Metric"
-			(at 33.02 74.93 90)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://yageogroup.com/content/datasheet/asset/file/PYU-RV_51_ROHS_L"
-			(at 33.02 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 33.02 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "YAGEO"
-			(at 33.02 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "RV1206FR-07499KL"
-			(at 33.02 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C309667"
-			(at 33.02 74.93 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "e7fbd013-90f6-4e94-9a95-2dc7388ab645")
-		)
-		(pin "2"
-			(uuid "66b0c3d7-6d7c-4e5f-9b50-d11bca926d88")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "R2")
 					(unit 1)
 				)
 			)
@@ -7110,84 +6741,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
 					(reference "#PWR024")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GND")
-		(at 45.72 80.01 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "6b90abdf-2d6f-496f-9e2c-34a400e0d838")
-		(property "Reference" "#PWR09"
-			(at 45.72 86.36 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "GND"
-			(at 45.72 83.82 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 45.72 80.01 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 45.72 80.01 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 45.72 80.01 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "9dc9179d-1868-4aec-a36c-a3771f9f6ce5")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#PWR09")
 					(unit 1)
 				)
 			)
@@ -8021,7 +7574,7 @@
 				)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 173.99 49.403 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8042,7 +7595,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 173.99 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -8064,7 +7617,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 173.99 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -8075,7 +7628,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 173.99 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -8086,7 +7639,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 173.99 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -8655,84 +8208,6 @@
 		)
 	)
 	(symbol
-		(lib_id "power:GND")
-		(at 33.02 92.71 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "a590dea5-44d4-4513-afc4-32e9b2efea45")
-		(property "Reference" "#PWR08"
-			(at 33.02 99.06 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "GND"
-			(at 33.02 96.52 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 33.02 92.71 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 33.02 92.71 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 33.02 92.71 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "464bf0d8-689f-4a64-9737-8f82cf2d139b")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/1282b9af-5f18-45d9-b85b-5c34b05842fe"
-					(reference "#PWR08")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:C")
 		(at 124.46 124.46 0)
 		(unit 1)
@@ -8755,7 +8230,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 120.65 125.73 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8777,7 +8252,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8799,7 +8274,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8810,7 +8285,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -8821,7 +8296,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 124.46 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9656,7 +9131,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 105.41 44.45 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9678,7 +9153,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9700,7 +9175,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9711,7 +9186,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9722,7 +9197,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 101.6 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -9871,7 +9346,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9893,7 +9368,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9904,7 +9379,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1002TCE"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -9915,7 +9390,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25744"
 			(at 180.34 124.46 0)
 			(hide yes)
 			(show_name no)

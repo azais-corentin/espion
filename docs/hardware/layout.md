@@ -231,8 +231,8 @@ Joints and stubs:
 Hooks and detours (user instruction 2026-11-02, with example images of CC2 looping round J2's shield pad and XVS_CAM
 hooking into TP8): a track runs from its pad or via toward where it goes, never leaving the other way and looping back,
 and a via that only serves one stub sits on its pad's axis (or radial ray) so the stub is one straight segment. The
-loops that stay are forced, each with its reason: U5.5 → C25.1 (round U5.4), R3.2's GND via (ETH_LED_Y under R3 on B.Cu,
-the MDI pair to the west), C16.2's GND via (+5V, VBUS and +5V_POE_F round it), the +5V EN feed into U3.1 (round C18.1),
+loops that stay are forced, each with its reason: U5.5 → C25.1 (round U5.4), C16.2's GND via (+5V, VBUS and +5V_POE_F
+round it), the +5V EN feed into U3.1 (round C18.1),
 +32V from C46.1 (MDC), LED_K_SENSE and VLED_SENSE (round C48.2 / R72.2), PHY_RST_N (round R8.2), RMII_REF_CLK on B.Cu
 (+3V3), and the length-matched diff pairs.
 
@@ -364,7 +364,7 @@ transfer; repeat on USB power alone as the reference.
 ## MCU and USB
 
 Parts: U6 Waveshare ESP32-P4-Core module on the bottom, hand-soldered with the hand-solder footprint variant
-([mcu](mcu.md#module)); J2 HRO TYPE-C-31-M-12 USB-C at the top edge; U5 USBLC6-2 and D2 TSD05 ESD protection at J2; SW1
+([mcu](mcu.md#module)); J2 HRO TYPE-C-31-M-12 USB-C at the top edge; U5 SRV05-4 and D2 H7VHD3UA ESD protection at J2; SW1
 (RESET) and SW2 (BOOT) on the bottom edge, locked like the other edge-bound parts (the enclosure reaches them there).
 Circuit: [mcu](mcu.md).
 
@@ -380,9 +380,9 @@ Circuit: [mcu](mcu.md).
 | R31.2–U6.38, R32.2–U6.37 | HDG §1.3.12 / §1.4.3: USB series resistors at the chip end (D+ / D−) |
 | C48.1–U6.19 | HDG §1.3.10: filter capacitor at an ADC pin (LED_K_SENSE). Smaller than the HDG's 0.1 µF, so the reading settles within an LED pulse ([led](led.md#led_k-sense)) |
 | C49.1–U6.17 | HDG §1.3.10: 0.1 µF at an ADC pin (VLED_SENSE, GPIO21 / ADC1_CH5) |
-| U5–J2.A6 | USBLC6 Rev 5 §2.3 p.5–6: protection as close as possible to the connector, short I/O tracks. The limit was raised when J2 moved out to its overhang: U5 cannot follow it north, D2's courtyard abuts it (user decision 2026-11-04: "Raise the limit") |
-| D2.1–J2.A4, D2.1–J2.A9 | TI SLVA680A p.4 (cited by the TSD05 datasheet §6.1): "place the TVS as near to the connector as design rules allow"; the limit reaches both VBUS pad pairs |
-| D16.1–SW2.1 | D16 (TSD05) at the BOOT button's exposed contact, same source; its anode has a GND via |
+| U5–J2.A6 | TI SLVA680A p.4: protection as near to the connector as design rules allow, short I/O tracks. The limit was raised when J2 moved out to its overhang: U5 cannot follow it north, D2's courtyard abuts it (user decision 2026-11-04: "Raise the limit") |
+| D2.1–J2.A4, D2.1–J2.A9 | TI SLVA680A p.4: "place the TVS as near to the connector as design rules allow"; the limit reaches both VBUS pad pairs |
+| D16.1–SW2.1 | D16 (H7VHD3UA) at the BOOT button's exposed contact, same source; its anode has a GND via |
 | `paths` "BOOT stub": R36.1 → R39.1 and R36.1 → R38.2 | The BOOT strap R39 and pull-up R38 hang on the 50 MHz RMII_TXD1_MCU line; their stubs stay short, negligible against the edge |
 
 C29 sits over U6.74–76; C28 sits on the +3V3 trunk just north of U6.76's pad, beside the +3V3 via pair that feeds pins
@@ -401,11 +401,11 @@ GPIO assignments that moved to make the routing possible are listed in
   The footprint's silk stops short of that edge line (`hardware/lib/README.md`).
 - Connector side (USB_C_D_P/N, J2 → U5 → R31/R32): narrow tracks, mostly uncoupled. Full speed is electrically short here
   (edge ≥ 4 ns), so width, coupling and skew don't matter; impedance is not controlled.
-- Both lines flow through U5 (ST USBLC6-2 DS11265 Rev 5 p.5 and Fig. 18; TI SLVA680A p.4: no stub between the TVS and
-  the protected line). D+: J2.A6 → U5.6 on F.Cu (no via), a link under the package to U5.1, then a via off U5.1. D−: the
-  J2 run comes up at a via just beside U5.4's pad; a F.Cu link runs under the package to U5.3 (pins 3 and 4 also join
-  inside the part, DS11265 Fig. 16), and the run to R32 leaves U5.3 through a via. Each of those vias has a GND return
-  via beside it.
+- Both lines flow through U5 (TI SLVA680A p.4: no stub between the TVS and the protected line). D+: J2.A6 → U5.6 on
+  F.Cu (no via), a link under the package to U5.1 (SRV05-4 pins 1 and 6 are separate channels, R+O datasheet p.1; this
+  link joins them), then a via off U5.1. D−: the J2 run comes up at a via just beside U5.4's pad; a F.Cu link runs under
+  the package to U5.3 (pins 3 and 4 are separate channels too; this link joins them), and the run to R32 leaves U5.3
+  through a via. Each of those vias has a GND return via beside it.
 - Module side (USB_D_P/N, R31/R32 → U6.38/U6.37): short, one via each, sharing a GND return via (HDG §1.4.3: return vias at
   USB via transitions).
 - USB vias near U5 stay the PoE-isolation gap away from the In1 PoE copper.
@@ -660,12 +660,8 @@ hand-soldered; Y1 25 MHz crystal; U2 PoE PD module. Circuit: [ethernet](ethernet
 - The Ethernet +3V3 loads (U1, pull-ups, LED anodes) take the PWR_3V3 width to R38.1 and a narrower track after it; the
   narrowest widths only where nothing wider fits.
 - ETH_LED_G leaves J1.14 on B.Cu north of the crystal, comes down between C2 and Y1 to a via and runs on F.Cu west of the
-  crystal towards R4; ETH_LED_Y runs east on B.Cu with one via. ETH_SHIELD and ETH_SHIELD_R are wider than Default
-  (chassis/ESD path). R2 is turned so its ETH_SHIELD_R pad faces R3: ETH_SHIELD_R is one short F.Cu link R2.2 → R3.1, and
-  ETH_SHIELD reaches R2.1 from the south-west under J1.12. Its closest GND is on F.Cu (the shield track past J1.12) and on
-  In1/In2 (the planes round J1.SH, at the plane clearance): these gaps, not C1's 2 kV rating, set the shield-to-GND
-  withstand. No shield isolation rule: 1 mm would need the shield route off J1.12 (the MDI pairs' "MDI spacing" and J1.11
-  hem it in) and C1's GND vias moved ([Accepted deviations](#other-accepted-deviations)).
+  crystal towards R4; ETH_LED_Y runs east on B.Cu with one via. J1's shield pads (J1.SH) are GND: they join the In1/In2
+  GND planes directly (user decision 2026-11-09: no shield RC network, [ethernet](ethernet.md#j1)).
 
 ### PHY-side decoupling
 
@@ -743,7 +739,7 @@ pull-ups. Circuit: [imu](imu.md).
   SDA crosses the corner of L2's courtyard (it must pass U12.1 to reach U12.2).
 - JLCPCB's 1.0 mm from a QFN/LGA to other parts holds for C50, R37 and R73. It does not hold for R74 (R74.2–U12.2). R74
   keeps its place because a vertical R74 hits the C50 GND via or L2's courtyard. Accepted.
-- U12's courtyard touches L2's (L2 FXL0630, 3.0 mm tall) and is close to C47's (10.8 mm tall): possible reflow
+- U12's courtyard touches L2's (L2 FXL0630, 3.0 mm tall) and is close to C47's (11.0 mm tall): possible reflow
   shadowing; no source gives a number ([imu](imu.md#accepted-risks)).
 
 ## LED driver and ring
@@ -864,9 +860,9 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
 - Order: JLCPCB reflows the top side; then the hand parts are soldered:
   - U6: iron only, pad by pad, no hot air (user decision 2026-11-01), with the hand-solder footprint variant that has no
     paste apertures ([mcu](mcu.md#module)); top-side parts above its pads must not reflow again.
-  - J1: through-hole from the bottom, soldered from the top. Its lands are close to reflowed SMD pads (R46, C3, R8, C1;
-    `kicad_query distance`); JLCPCB gives no through-hole-to-SMD figure. Use a conical tip ≤ 1 mm and Kapton over R46, C3,
-    R8 and C1, then inspect those four for bridges and shifted parts. If that fails, open the gaps to ≥ 1.0 mm in the next
+  - J1: through-hole from the bottom, soldered from the top. Its lands are close to reflowed SMD pads (R46, C3, R8;
+    `kicad_query distance`); JLCPCB gives no through-hole-to-SMD figure. Use a conical tip ≤ 1 mm and Kapton over R46, C3
+    and R8, then inspect those three for bridges and shifted parts. If that fails, open the gaps to ≥ 1.0 mm in the next
     revision.
   - U2: through-hole from the bottom, soldered from the top. Its pads 5 and 6 are close to reflowed SMD pads (C11 and C52
     nearest; then C16.2 and R20.1); pads 1–4 have no SMD pad nearby. Use a conical tip ≤ 1 mm and Kapton over C11 and C52,
@@ -880,7 +876,7 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
   along J2's stretch of the top edge, so the shell clears the panel when it is routed and depanelled.
 - Part spacing: JLCPCB's 1.0 mm from a QFN to any part holds at U1 and U10. Exceptions: C15–U4 and C23.1–U4.1 (TPS2121
   bypass "as close as possible"; C23 cannot move west, C20's courtyard abuts it) and R74.2–U12.2 ([IMU](#imu)).
-- Small parts beside big ones (possible reflow shadowing; no source gives a number): R5 and C8 beside C46 (10.8 mm tall),
+- Small parts beside big ones (possible reflow shadowing; no source gives a number): R5 and C8 beside C46 (11.0 mm tall),
   courtyards touching; R67, C33 and R68 beside Q1 (TO-252); R70 beside Q1, courtyards almost touching
   ([LED driver and ring](#32v-and-the-ring)); U12 beside L2 ([IMU](#imu)). R34, R37, R38 beside C46/C47:
   [mcu](mcu.md#accepted-risks). R24 between C13 and C14 is turned 90° so its two pads sit about as far from the nearest
@@ -893,7 +889,7 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
   "BOOT"/"RST" between the buttons, "USB", "TRIG" and "POE 57V". Each keeps ≥ 0.15 mm (JLCPCB pad to silkscreen) from pads and mask openings (TP3's "GND"
   from TOOL2's mask opening, "PRST" from J1.14 and J1's NPTH opening are the tight ones).
 
-First-board checks: J1 iron trial and inspection of R46, C3, R8, C1; U2 iron soldering and inspection of C11, C52; U6 iron
+First-board checks: J1 iron trial and inspection of R46, C3, R8; U2 iron soldering and inspection of C11, C52; U6 iron
 soldering; visual/AOI of the joints of R5, C8 (beside C46) and R67, C33, R68, R70 (beside Q1); USB-C cables in use (charger,
 flashing cable) latch and enumerate ([mcu](mcu.md#first-board-checks)); voids under U1's and U10's exposed pads and Q1's
 tab, where the thermal vias are open ([Fabrication rules](#fabrication-rules)): X-ray if available, else check the
@@ -1002,6 +998,5 @@ moved; placement is unchanged.
 | Buttons on the bottom edge | User decision 2026-11-01 | [MCU and USB](#buttons-and-boot) |
 | B.Cu under U2's flyback magnetics: VBUS, USB_C_D_P/N, CAM_EN, SCCB_SDA/SCL, STROBE, STATUS_LED and a short XVS hop; XVS's long west run kept west of it | User decision 2026-11-04: "Partial + document"; first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
 | CAM_CLK_P/N split on F.Cu between J4 and their vias: P detours north of N to take up the length, uncoupled for a stretch | User decision 2026-11-04: "Accept + record" (re-coupling needs trapezoid bumps drawn in pcbnew) | [Lengths and skew](#lengths-and-skew) |
-| ETH_SHIELD to GND close on F.Cu (the shield track past J1.12) and on In1/In2 (the planes round J1.SH): these gaps, not C1's 2 kV rating, set the shield-to-GND withstand. A ≥ 1 mm rule needs the shield route off J1.12, which the MDI pairs ("MDI spacing") and J1.11 hem in, and C1's GND vias moved | Board review 2026-11-04 (documented instead of a shield isolation rule) | [Ethernet and PoE isolation](#rmii), [ethernet](ethernet.md#magjack-and-mdi) |
 | C4 (0805 MLCC) pads close to the east edge; order without mouse bites beside it | User decision 2026-11-04: "Note only" | [Assembly](#assembly) |
 | R72.2's GND via hole closer to the pad opening than the mask bridge | Board review 2026-11-04: no site further out | [Fabrication rules](#fabrication-rules) |

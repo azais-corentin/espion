@@ -293,7 +293,7 @@ Options, by module I/O level (R40 and R44 are the only parts that change):
 - **2.8 V.**
   - The top level must stay well under the abs max, and the VOH floor must still clear VIH even at
     the top of the DOVDD tolerance.
-  - The resistor values this needs are already on the board's BOM (R39, R1).
+  - The resistor values this needs are already on the board's BOM: R40 stays as fitted, R44 takes R1's value.
   - The plain alternative, R40 as a 0 Ω link with R44 removed, is not recommended. It puts the full
     +3V3 rail on a 2.8 V I/O, close to its abs max, with nothing to limit the pad current.
 - **3.3 V.**

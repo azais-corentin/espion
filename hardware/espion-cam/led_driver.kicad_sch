@@ -4965,7 +4965,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/9977bb85cd7e349115b7bcb7054cfa0d.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/5e8c2ac6fb5c5769913ace5e57332d6d.pdf"
 			(at 156.21 35.56 0)
 			(hide yes)
 			(show_name no)
@@ -4987,7 +4987,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "MDD"
+		(property "Manufacturer" "R+O"
 			(at 156.21 35.56 0)
 			(hide yes)
 			(show_name no)
@@ -5009,7 +5009,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2481"
+		(property "LCSC" "C18199176"
 			(at 156.21 35.56 0)
 			(hide yes)
 			(show_name no)
@@ -5058,7 +5058,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1uF 100V"
+		(property "Value" "2.2uF 50V"
 			(at 194.31 43.18 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5080,7 +5080,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 190.5 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5102,7 +5102,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 190.5 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5113,7 +5113,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC1206KKX7R0BB105"
+		(property "MPN" "CL31B225KBHNNNE"
 			(at 190.5 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5124,7 +5124,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C70463"
+		(property "LCSC" "C50254"
 			(at 190.5 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5251,7 +5251,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 105.41 43.18 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5273,7 +5273,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5295,7 +5295,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5306,7 +5306,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5317,7 +5317,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 101.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -5785,7 +5785,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1nF C0G"
+		(property "Value" "1nF X7R"
 			(at 240.03 134.62 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5840,7 +5840,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402CG102J500NT"
+		(property "MPN" "0402B102K500NT"
 			(at 236.22 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -5851,7 +5851,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C53547"
+		(property "LCSC" "C1523"
 			(at 236.22 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -6403,7 +6403,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 179.07 105.41 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6425,7 +6425,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 175.26 104.14 0)
 			(hide yes)
 			(show_name no)
@@ -6447,7 +6447,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 175.26 104.14 0)
 			(hide yes)
 			(show_name no)
@@ -6458,7 +6458,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 175.26 104.14 0)
 			(hide yes)
 			(show_name no)
@@ -6469,7 +6469,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 175.26 104.14 0)
 			(hide yes)
 			(show_name no)
@@ -6517,7 +6517,7 @@
 				)
 			)
 		)
-		(property "Value" "220pF C0G"
+		(property "Value" "220pF X7R"
 			(at 165.1 144.907 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6571,7 +6571,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402CG221J500NT"
+		(property "MPN" "0402B221K500NT"
 			(at 165.1 138.43 0)
 			(hide yes)
 			(show_name no)
@@ -6582,7 +6582,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C39122"
+		(property "LCSC" "C1530"
 			(at 165.1 138.43 0)
 			(hide yes)
 			(show_name no)
@@ -7780,7 +7780,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f8871fe6898b34eedf38592b1f4f312e.pdf"
+		(property "Datasheet" "https://www.lcsc.com/datasheet/lcsc_datasheet_2409272202_ACMECON-GVZ1H337M1010CN_C22383763.pdf"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -7802,7 +7802,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Panasonic"
+		(property "Manufacturer" "ACMECON"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -7813,7 +7813,7 @@
 				)
 			)
 		)
-		(property "MPN" "EEEFT1H331AP"
+		(property "MPN" "GVZ1H337M1010CN"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -7824,7 +7824,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C178596"
+		(property "LCSC" "C22383763"
 			(at 208.28 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -7988,7 +7988,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1nF C0G"
+		(property "Value" "1nF X7R"
 			(at 140.97 127 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8043,7 +8043,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402CG102J500NT"
+		(property "MPN" "0402B102K500NT"
 			(at 137.16 125.73 0)
 			(hide yes)
 			(show_name no)
@@ -8054,7 +8054,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C53547"
+		(property "LCSC" "C1523"
 			(at 137.16 125.73 0)
 			(hide yes)
 			(show_name no)
@@ -9194,7 +9194,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10.0k 1%"
+		(property "Value" "20.0k 1%"
 			(at 256.54 66.04 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9216,7 +9216,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 254 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -9238,7 +9238,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 254 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -9249,7 +9249,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF2002TCE"
 			(at 254 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -9260,7 +9260,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25765"
 			(at 254 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -9434,7 +9434,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "255k 1%"
+		(property "Value" "510k 1%"
 			(at 162.56 43.18 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9489,7 +9489,7 @@
 				)
 			)
 		)
-		(property "MPN" "0603WAF2553T5E"
+		(property "MPN" "0603WAF5103T5E"
 			(at 165.1 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -9500,7 +9500,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C23354"
+		(property "LCSC" "C23192"
 			(at 165.1 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -10371,7 +10371,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "220pF C0G"
+		(property "Value" "220pF X7R"
 			(at 128.27 66.04 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10426,7 +10426,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402CG221J500NT"
+		(property "MPN" "0402B221K500NT"
 			(at 124.46 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -10437,7 +10437,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C39122"
+		(property "LCSC" "C1530"
 			(at 124.46 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -10486,7 +10486,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "10.0k 1%"
+		(property "Value" "20.0k 1%"
 			(at 162.56 55.88 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10508,7 +10508,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 165.1 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -10530,7 +10530,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 165.1 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -10541,7 +10541,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF2002TCE"
 			(at 165.1 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -10552,7 +10552,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25765"
 			(at 165.1 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -10679,7 +10679,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 104.14 106.68 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10701,7 +10701,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 100.33 105.41 0)
 			(hide yes)
 			(show_name no)
@@ -10723,7 +10723,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 100.33 105.41 0)
 			(hide yes)
 			(show_name no)
@@ -10734,7 +10734,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 100.33 105.41 0)
 			(hide yes)
 			(show_name no)
@@ -10745,7 +10745,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 100.33 105.41 0)
 			(hide yes)
 			(show_name no)
@@ -10794,7 +10794,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1uF 100V"
+		(property "Value" "2.2uF 50V"
 			(at 176.53 43.18 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10816,7 +10816,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 172.72 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -10838,7 +10838,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 172.72 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -10849,7 +10849,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC1206KKX7R0BB105"
+		(property "MPN" "CL31B225KBHNNNE"
 			(at 172.72 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -10860,7 +10860,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C70463"
+		(property "LCSC" "C50254"
 			(at 172.72 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11086,7 +11086,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11108,7 +11108,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11119,7 +11119,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1002TCE"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11130,7 +11130,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25744"
 			(at 223.52 133.35 0)
 			(hide yes)
 			(show_name no)
@@ -11201,7 +11201,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/f8871fe6898b34eedf38592b1f4f312e.pdf"
+		(property "Datasheet" "https://www.lcsc.com/datasheet/lcsc_datasheet_2409272202_ACMECON-GVZ1H337M1010CN_C22383763.pdf"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11223,7 +11223,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "Panasonic"
+		(property "Manufacturer" "ACMECON"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11234,7 +11234,7 @@
 				)
 			)
 		)
-		(property "MPN" "EEEFT1H331AP"
+		(property "MPN" "GVZ1H337M1010CN"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11245,7 +11245,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C178596"
+		(property "LCSC" "C22383763"
 			(at 228.6 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -11563,7 +11563,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 237.49 66.04 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11585,7 +11585,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 241.3 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -11607,7 +11607,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 241.3 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -11618,7 +11618,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 241.3 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -11629,7 +11629,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 241.3 64.77 0)
 			(hide yes)
 			(show_name no)
@@ -12293,7 +12293,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 53.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -12315,7 +12315,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 53.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -12326,7 +12326,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1002TCE"
 			(at 53.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -12337,7 +12337,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25744"
 			(at 53.34 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -12657,7 +12657,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "255k 1%"
+		(property "Value" "510k 1%"
 			(at 251.46 52.07 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12712,7 +12712,7 @@
 				)
 			)
 		)
-		(property "MPN" "0603WAF2553T5E"
+		(property "MPN" "0603WAF5103T5E"
 			(at 254 50.8 0)
 			(hide yes)
 			(show_name no)
@@ -12723,7 +12723,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C23354"
+		(property "LCSC" "C23192"
 			(at 254 50.8 0)
 			(hide yes)
 			(show_name no)

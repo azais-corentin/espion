@@ -83,7 +83,7 @@ for `+5V_BST` and `+32V`. Current budgets: [power.md](power.md), [led.md](led.md
   |---|---|---|
   | U6 ESP32-P4-Core | bottom | Hand-soldering footprint without paste; iron only, pad by pad, no hot air (user decision 2026-11-01) — [mcu](mcu.md#module) |
   | U2 DP1435-5V | bottom | Through-hole, soldered from the top — [power](power.md#poe-input) |
-  | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over R46, C3, R8, C1 — [layout](layout.md#assembly) |
+  | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over R46, C3, R8 — [layout](layout.md#assembly) |
   | TP2, TP3, TP7 | top | Through-hole GND wire loops (RH-5002) — [mcu](mcu.md#test-points) |
 
   J2 (USB-C) is machine-placed with its shell overhanging the top edge by HRO's recommended
@@ -104,7 +104,7 @@ Power:
 - PoE budget at the `+5V` peak: input power and pair current come from the peak load and the DP1435's 84 % maximum efficiency (p.5); a lower efficiency would reach the 12.95 W 802.3af limit and J1's 350 mA per centre tap (user decision 2026-11-02, "Accept, measure on first boards"; a firmware LED limit on PoE follows if a limit is exceeded) — [power](power.md#poe-input).
 - C15/C23 closer to U4 than JLCPCB's 1.0 mm QFN spacing (`kicad_query distance`) — [power](power.md#accepted-risks).
 - C12 outboard of C10 at the buck input; `+3V3` capacitance outside TI's tested cells — [power](power.md#33-v-buck).
-- Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C14, C22 (not stated), D3 SS16 (250 °C, 10 s), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [layout](layout.md#assembly).
+- Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C14, C22 (not stated), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [layout](layout.md#assembly).
 - VBUS, the connector-side USB pair, CAM_EN, SCCB and a short stretch of XVS run on B.Cu right under U2's flyback magnetics; XVS's long run stays west of them (user decision 2026-11-04, "Partial + document") — [layout](layout.md#bcu-under-u2).
 
 Camera:
@@ -142,8 +142,8 @@ Ethernet:
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
 - REGOUT reaches C6 through a long track, two vias and a short pour, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
-- J1's lands close to reflowed parts R46, C3, R8, C1 — [layout](layout.md#assembly).
-- ETH_SHIELD close to GND copper (F.Cu at J1.12, In1/In2 round J1.SH): that gap, not C1's rating, sets the shield-to-GND withstand — [ethernet](ethernet.md#magjack-and-mdi).
+- J1's lands close to reflowed parts R46, C3, R8 — [layout](layout.md#assembly).
+- J1's shield tied straight to board GND, without the RC network: cable-shield and ESD currents return through board GND, and a cable whose far end grounds its shield closes a ground loop (user decision 2026-11-09, "replace R2, R3 and C1 by a wire") — [ethernet](ethernet.md#j1).
 - C4 (0805 MLCC) close to the east edge: ordered without mouse bites there (user decision 2026-11-04, "Note only") — [layout](layout.md#assembly).
 
 IMU and board:
@@ -181,7 +181,7 @@ MCU ([mcu](mcu.md#first-board-checks)):
 20. U6 soldered with an iron only, pad by pad — [mcu](mcu.md#module).
 
 Ethernet ([ethernet](ethernet.md#first-board-checks)):
-21. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8, C1; inspect them after — [layout](layout.md#assembly).
+21. J1 iron trial with a ≤ 1 mm conical tip and Kapton over R46, C3, R8; inspect them after — [layout](layout.md#assembly).
 22. Link at 10 and 100 Mbit/s with a straight and a crossover cable (auto-MDIX), auto-negotiated at full duplex at both speeds (half duplex means the reversed link pulses weren't recognised); page 16 register 18 bit 8 POLARITY must read 1 on the 10 Mbit/s links and is recorded at 100 Mbit/s (receive pair inverted on purpose); an RMII soak test (P4 timing unpublished) — [ethernet](ethernet.md#first-board-checks), [ethernet](ethernet.md#rmii).
 23. REGOUT ripple at C6 with the link at 100 Mbit/s: inside the IP101G's REGOUT range, 1.07–1.18 V (the REGOUT path to C6 has vias) — [ethernet](ethernet.md#regout-and-iset).
 

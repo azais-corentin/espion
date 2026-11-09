@@ -69,8 +69,8 @@ flashing, console and JTAG. Power path from VBUS onward: [power.md](power.md#usb
 |---|---|---|
 | J2 HRO TYPE-C-31-M-12 | USB-C receptacle, top edge | Machine-placed by JLCPCB, shell overhanging the board edge by HRO's recommended amount (HRO TYPE-C-31-M-12 drawing p.1, PCB EDGE line; user decision 2026-11-04: "HRO recommended", "Keep machine-placed, add an order note"), so a plug overmold seats fully. JLCPCB Economic PCBA keeps parts ≥ 0.3 mm from routed edges, hence an order note ([layout](layout.md#assembly)). SBU pins open, shield and GND pins to GND |
 | R25 (CC1), R23 (CC2) | Rd pull-downs | Make the board a USB-C sink (Rd per the USB Type-C specification), so a Type-C source turns VBUS on. No USB PD |
-| U5 ST USBLC6-2SC6 | ESD clamp on D+/D− at J2 | 2.5–3.5 pF line to GND (ST datasheet p.2), negligible at 12 Mbit/s. Its supply pin 5 is on +3V3 with decoupling C25, not on VBUS as ST draws it: on VBUS, the P4's D+ pull-up would back-power an unplugged VBUS through U5's upper diode. On +3V3 an unplugged VBUS stays at 0 V, and D2 clamps VBUS |
-| D2 TI TSD05 | VBUS TVS at J2's VBUS pads | VRWM 5.5 V ≥ the 5.5 V VBUS maximum the design assumes, IEC 61000-4-2 ±30 kV contact (TI SLVSH43C §5.1, §5.7). Close to both VBUS pad pairs (`near` entries D2.1 → J2.A4 and J2.A9). Same part as D16 (one BOM line) |
+| U5 R+O SRV05-4 | ESD clamp on D+/D− at J2 | 1.0 pF typical per channel to GND, two channels per line (R+O SRV05-4 datasheet p.1–2), negligible at 12 Mbit/s. Its supply pin 5 (VP) is on +3V3 with decoupling C25, not on VBUS: on VBUS, the P4's D+ pull-up would back-power an unplugged VBUS through U5's upper diode. On +3V3 an unplugged VBUS stays at 0 V, and D2 clamps VBUS |
+| D2 R+O H7VHD3UA | VBUS TVS at J2's VBUS pads | VRWM 7 V ≥ the 5.5 V VBUS maximum the design assumes, IEC 61000-4-2 ±30 kV contact (H7VHD3UA datasheet p.1–2). Close to both VBUS pad pairs (`near` entries D2.1 → J2.A4 and J2.A9). Same part as D16 (one BOM line) |
 | R31 (D+), R32 (D−) | Series resistors at U6 pins 38/37 | ESP32-P4 HDG (USB section): "22/33 Ω series resistor … close to the chip end"; `near` entries R31.2 → U6.38 and R32.2 → U6.37 |
 | R27 / R28, C26 | `VBUS_SENSE` divider to GPIO6 | Tells the firmware a USB host is supplying VBUS, so it can turn the D+ pull-up off without one ([firmware-rules.md](firmware-rules.md#rules)). Digital level only |
 
@@ -88,8 +88,8 @@ time constant: (R27 ∥ R28) × C26, a slow edge; the firmware debounces it.
 R24 from VBUS to GND belongs to the VBUS supply path ([power.md](power.md#usb-vbus)).
 
 **Routing.** The connector-side lines (J2 → U5 → R31/R32) are long and mostly uncoupled;
-the module-side lines are short. Both lines flow through U5 with no stub (ST DS11265 Fig. 18;
-TI SLVA680A p.4): in at one pin (U5.6 / U5.4), a link under the package, out at the other
+the module-side lines are short. Both lines flow through U5 with no stub (TI SLVA680A p.4):
+in at one pin (U5.6 / U5.4), a link under the package, out at the other
 (U5.1 / U5.3). At full speed (rise time ≥ 4 ns) the lines are electrically short, so
 impedance and length matching do not matter here; the `USB` net class still carries the 90 Ω
 differential geometry. Details: [layout.md](layout.md#mcu-and-usb).
@@ -125,12 +125,12 @@ recommendation "R = 10 kΩ and C = 1 µF" (ESP32-P4 HDG, chip power-up and reset
   release BOOT. The host can also reset into download mode over USB (CDC RTS/DTR), without
   buttons.
 - R39 sits at the strap, so the long `BOOT_SW` line hangs off the 50 MHz TXD1 net only
-  through R39 (path "BOOT stub" in `.omp/kicad.json`). Its load (D16's 19 pF plus the line)
+  through R39 (path "BOOT stub" in `.omp/kicad.json`). Its load (D16's 500 pF typical plus the line)
   behind R39 gives a time constant of (R39 + R38 ∥ R_pu) × (C_D16 + C_line), nothing like the
   large strap capacitor the HDG warns about.
-- D16 TI TSD05 at SW2 pin 1, GND via at its anode (`near` entry D16.1 → SW2.1): clamps a
-  discharge to the brass button at 7.5 V at 16 A (TLP), and R39 limits the current into
-  GPIO35 to (V_clamp − the pad's maximum input voltage) / R39 (TI SLVSH43C p.4, p.6).
+- D16 R+O H7VHD3UA at SW2 pin 1, GND via at its anode (`near` entry D16.1 → SW2.1): clamps a
+  discharge to the brass button at 9.5 V at 10 A (8/20 µs; no TLP figure), and R39 limits the
+  current into GPIO35 to (V_clamp − the pad's maximum input voltage) / R39 (H7VHD3UA datasheet p.2).
 - SW2 is not a runtime button: while it is held, any reset (watchdog, brown-out, host RTS/DTR)
   enters download mode ([firmware-rules.md](firmware-rules.md#rules)). While the firmware
   drives TXD1 high, SW2 only adds a load of VDD / R39 through R39 (dissipation VDD² / R39,
@@ -218,7 +218,7 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
   via at J2's side has its nearest GND via farther than the ≤ 1 mm return-via limit (no
   legal site; `kicad_query distance`): electrically short at 12 Mbit/s, accepted in design
   review (2026-11-01).
-- **U5 supply on +3V3**, a deviation from ST's application circuit (reason under
+- **U5 supply on +3V3**, not on VBUS (reason under
   [USB-C](#usb-c)).
 - **RC-only reset.** Espressif warns that an RC on CHIP_PU may not reset cleanly with slow
   supply ramps or quick power cycling (for example a fast PoE ↔ USB re-plug before C27 has

@@ -111,8 +111,10 @@ U10 (TPS61170, TI SLVS789D) boosts `+5V_BST` to +32V for the LED string. It has 
 ### Output voltage
 
 R65 and R66 set the output: Vout = VREF × (1 + R65/R66) + IFB × R65 (SLVS789D p.17 Eq. 2; VREF
-1.204 / 1.229 / 1.254 V min/typ/max and IFB 200 nA max, p.5). R66 = 10 kΩ is TI's recommended
-value (p.17). The minimum output takes VREF min, R65 low and R66 high; the maximum takes the
+1.204 / 1.229 / 1.254 V min/typ/max and IFB 200 nA max, p.5). TI puts R66's optimum around 10 kΩ,
+for divider leakage and FB noise (p.17); R66 sits above it to use Basic parts (user decision
+2026-11-09), so the IFB × R65 term in the maximum is larger at the same ratio and the FB node has a
+higher impedance. The minimum output takes VREF min, R65 low and R66 high; the maximum takes the
 opposite corners, both within the resistors' tolerance. These are the values with `BST_EN` steady
 high (PWM duty 1), the highest the output can be; in operation firmware runs it lower
 ([Headroom control](#headroom-control)).
@@ -181,7 +183,7 @@ at the end of the pulse stays in a band, whose edges are set in FW-22:
 | Part | Check (source) |
 |---|---|
 | L3 | Inside TI's 10–22 µH (SLVS789D p.4, p.18). Isat > ILIM max; Irms > the average input at the current limit; DCR from the Changjiang FNR4030S catalogue p.10. Ripple ΔIL / IIN at the nominal input and output inside TI's 30–40 % (SLVS789D p.17 Eq. 3, p.18) |
-| D3 | Schottky; TI asks for a diode rated above the 40 V switch (p.18). Peak current vs IFSM 25 A, loss = VF × average current (SS16 datasheet p.1) |
+| D3 | Schottky; TI asks for a diode rated above the 40 V switch (p.18). Peak current vs IFSM 30 A, loss = VF × average current (R+O SS16 datasheet p.1 IFSM, p.2 VF) |
 | C36, C38 | CI ≥ 1 µF is met (p.4). C36 is above TI's recommended 1–4.7 µF (p.19). That is harmless: more input capacitance only lowers the ripple on `+5V_BST`. Loop stability is set by the output capacitors and the COMP network, not by CI, and U8's slew rate limits C36's inrush. The 0805 X5R part loses capacitance with DC bias at 5 V (estimate) |
 | C43, C45 | High-frequency output capacitors right at D3's cathode |
 
@@ -261,7 +263,7 @@ Firmware waits for `VLED_SENSE` instead of a fixed delay.
 
 ### Output capacitors C46, C47
 
-The bulk is two SMD aluminium electrolytics (FT series). C46 sits at the pulse loop, next
+The bulk is two SMD aluminium electrolytics (ACMECON GVZ series, low impedance). C46 sits at the pulse loop, next
 to Q1's tab. C47 sits at the boost end of the +32V trunk. Requirement: rated above Vout max with
 margin, low ESR.
 
@@ -271,22 +273,22 @@ two ESRs in parallel). That fits the string headroom ([LED ring](#led-ring)).
 
 Why this part:
 
-- **Economic PCBA.** The JLCPCB part page lists it as "Economic and Standard", SMT assembly
-  (the part's JLCPCB page, read 2026-10-31). The smaller part used before is
-  "Standard only", which the Economic PCBA order can't place.
-- **Lowest ESR and highest ripple rating** of the Economic-eligible candidates at this voltage
-  (Panasonic FT datasheet, characteristics list). The bank carries ≈ I_LED max × √duty rms in
-  total, against the per-capacitor rating at 100 kHz × the 120 Hz factor (0.65).
-- **Temperature and voltage.** Rated −55…+105 °C (FT datasheet p.1), and the rated voltage is above
+- **Economic PCBA.** JLCPCB lists it as an SMT part (JLCPCB parts API, read 2026-11-09). The
+  smaller part used before is "Standard only", which the Economic PCBA order can't place.
+- **Cheapest in-stock candidate that meets the ESR step and ripple** (user decision 2026-11-09):
+  its datasheet gives the impedance and ripple rating at 100 kHz (GVZ datasheet p.1);
+  general-purpose parts give only tanδ at 120 Hz, which leaves the set-point margin and the ESR
+  zero unproven. The bank carries ≈ I_LED max × √duty rms in total, against the per-capacitor
+  rating at 100 kHz × the 120 Hz factor (0.65).
+- **Temperature and voltage.** Rated −55…+105 °C (GVZ datasheet p.1), and the rated voltage is above
   Vout max with margin.
-- **Stock and size.** It was in stock on 2026-10-31. The other candidates had less capacitance; this
-  one gives the most capacitance in the same can size.
+- **Stock.** In stock on 2026-11-09.
 
 The can height is the datasheet length plus tolerance plus seat plate. The can must stay outside
 the cone of the `layout.heightZones` entry "lens view cone" in `.omp/kicad.json`, which takes the
 part height h from the datasheet; check with `kicad_query distance`. The footprint is KiCad's
-`CP_Elec_10x10`. Against Panasonic's G-size land pattern the pads and gap differ slightly, and the
-terminals land fully.
+`CP_Elec_10x10`. ACMECON gives no land pattern; its terminals (P, C, W, GVZ datasheet p.1) land
+fully on the pads.
 
 ### Compensation
 
@@ -480,7 +482,7 @@ C48 sit next to U6.19.
 | In a pulse | The loop's band at the pin is the band edges × R76 / (R70 + R76); at duty 1 the pin sees the highest V(`LED_K`), which is Vout max minus the string minimum and the other drops |
 | Between pulses | `LED_K` sits at +32V minus the string's forward voltage at the divider's current, ≈ 12 × VF at µA currents (an inference: the Amicc datasheet gives VF only at 1 A; first-board check 7). The bound is +32V itself: Vout max × R76 / (R70 + R76), with R70 low and R76 high within tolerance, must stay inside ATTEN3's 0–3300 mV (P4 DS Table 5-6 p.90) |
 | Error | ±15 mV at the ADC × (R70 + R76) / R76, plus the two resistor tolerances as a share of the reading. Espressif specifies the ±15 mV with 100 nF at the pin (P4 DS p.90); with C48 and this source impedance the sampling error is unverified, so first-board check 7 measures it |
-| Source impedance, settling | R70 ∥ R76 with C48: τ = R × C48. From the off level to within 1 mV takes τ × ln(V_off / 1 mV), so a sample ≥ 0.1 ms into the pulse has settled. The droop slews `LED_K` at I_LED max / C_bank; the pin lags that by τ × slew |
+| Source impedance, settling | R70 ∥ R76 with C48: τ = R × C48, with C48 at its tolerance and the X7R temperature coefficient (±15 %, FH MLCC datasheet p.5). From the off level to within 1 mV takes τ × ln(V_off / 1 mV), so a sample ≥ 0.1 ms into the pulse has settled. The droop slews `LED_K` at I_LED max / C_bank; the pin lags that by τ × slew |
 | R70 | Working voltage and power of its 0402 package must exceed Vout max across it and Vout max² / (R70 + R76) (UNI-ROYAL chip-resistor datasheet p.4, p.5) |
 | String bias | Between pulses the divider draws Vout max / (R70 + R76) through the ring: a negligible fraction of the pulse current, invisible at 850 nm and negligible against the markers |
 | Unpowered P4 | After a power loss C46/C47 may still hold charge: the pin then sees up to Vout max × R76 / (R70 + R76) through R70 ∥ R76 into the unpowered pad, a current of about Vout max / (R70 + R76 ∥ pad). The P4 datasheet gives no injection limit ([Accepted risks](#accepted-risks)) |
@@ -674,8 +676,8 @@ Parts next to Q1's tab (distances: `kicad_query distance` from the tab):
 | D15 (pad 1) | LED heating |
 | D4 (pad 2) | LED heating |
 | Y1 (25 MHz crystal) | Rated −40…+85 °C; ±20 ppm specified only over that range (Epson TSX-3225 p.1) |
-| C46 | Rated maximum temperature (FT datasheet) |
-| C47 | Rated maximum temperature (FT datasheet) |
+| C46 | Rated maximum temperature (GVZ datasheet p.1) |
+| C47 | Rated maximum temperature (GVZ datasheet p.1) |
 
 With the loop running Q1's rise above the board is P_avg × RθJA on the minimum-pad figure, small.
 The duty-1 tab temperature next to D15, D4, Y1 and C46 remains possible at duty 1 only. No

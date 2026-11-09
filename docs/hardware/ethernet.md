@@ -122,16 +122,12 @@ side at the east edge, soldered by hand ([layout](layout.md#assembly)).
 - **Chip-side centre tap.** J1.3 (ETH_CT) goes only to C3, to GND. The IP101G has internal
   terminations and wants no bias on the centre tap ("Do not connect to any power", p.7), and it asks
   for decoupling there (p.56).
-- **Shield.** J1's shield (ETH_SHIELD) goes to GND through two paths:
-  - C1, sized to match the jack's own internal Bob-Smith capacitor (HanRun p.1: 1000 pF, 2 kV);
-  - a DC bleed of R2 + R3, two high-voltage resistors in series. Two parts in series halve the
-    voltage across each one.
-
-  On the board the shield copper comes close to GND on F.Cu (at J1.12) and on In1/In2 (round J1.SH):
-  those gaps, not C1's voltage rating, set the shield-to-GND withstand
-  ([layout](layout.md#other-accepted-deviations)).
-- **Hand-soldering trial.** J1's lands are close to four reflowed parts: R46 (a CSI link), C3, R8 and
-  C1. J1's hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over those four.
+- **Shield.** J1's shield (J1.SH) is tied straight to GND: its through-hole pads join the In1/In2 GND
+  planes. There is no RC network to GND (user decision 2026-11-09, "replace R2, R3 and C1 by a
+  wire"); the Bob-Smith termination stays inside the jack (HanRun p.1). Cable-shield and ESD
+  currents return through board GND ([Accepted risks](#accepted-risks)).
+- **Hand-soldering trial.** J1's lands are close to three reflowed parts: R46 (a CSI link), C3 and R8.
+  J1's hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over those three.
 
 ### MDI pairs crossed at J1
 
@@ -380,8 +376,10 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   enclose a small loop over In1 GND (user decision 2026-11-03,
   [layout](layout.md#ethernet-and-poe-isolation)).
 - **PHY_RST_N inside the LED ring**, close to the ring pads over part of its length.
-- **J1 lands close to reflowed parts** (R46, C3, R8, C1), to be checked in the
+- **J1 lands close to reflowed parts** (R46, C3, R8), to be checked in the
   hand-soldering trial.
+- **Shield tied straight to GND** (user decision 2026-11-09): cable-shield and ESD currents return
+  through board GND, and a cable whose far end grounds its shield closes a ground loop.
 
 ## First-board checks
 
@@ -408,7 +406,7 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
    TSX-3225 p.1) and REF_CLK stays within ± 50 ppm; if not, lower the LED current or duty, or pull
    the east edge of the Q1 drain copper on B.Cu back from Y1
    ([layout](layout.md#thermal)).
-8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect R46, C3, R8 and C1 for
+8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect R46, C3 and R8 for
    bridges and shifted parts.
 9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source.
 10. **REGOUT.** With the link up at 100 Mbit/s and traffic running, scope REGOUT at C6 (short ground

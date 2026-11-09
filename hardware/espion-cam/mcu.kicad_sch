@@ -3056,9 +3056,9 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "Power_Protection:USBLC6-2SC6"
+		(symbol "Power_Protection:SRV05-4"
 			(pin_names
-				(hide yes)
+				(offset 0)
 			)
 			(exclude_from_sim no)
 			(in_bom yes)
@@ -3066,18 +3066,18 @@
 			(in_pos_files yes)
 			(duplicate_pin_numbers_are_jumpers no)
 			(property "Reference" "U"
-				(at 0.635 5.715 0)
+				(at -5.08 11.43 0)
 				(show_name no)
 				(do_not_autoplace no)
 				(effects
 					(font
 						(size 1.27 1.27)
 					)
-					(justify left)
+					(justify right)
 				)
 			)
-			(property "Value" "USBLC6-2SC6"
-				(at 0.635 3.81 0)
+			(property "Value" "SRV05-4"
+				(at 2.54 11.43 0)
 				(show_name no)
 				(do_not_autoplace no)
 				(effects
@@ -3088,20 +3088,7 @@
 				)
 			)
 			(property "Footprint" "Package_TO_SOT_SMD:SOT-23-6"
-				(at 1.27 -6.35 0)
-				(show_name no)
-				(do_not_autoplace no)
-				(hide yes)
-				(effects
-					(font
-						(size 1.27 1.27)
-						(italic yes)
-					)
-					(justify left)
-				)
-			)
-			(property "Datasheet" "https://www.st.com/resource/en/datasheet/usblc6-2.pdf"
-				(at 1.27 -8.255 0)
+				(at 17.78 -11.43 0)
 				(show_name no)
 				(do_not_autoplace no)
 				(hide yes)
@@ -3109,10 +3096,9 @@
 					(font
 						(size 1.27 1.27)
 					)
-					(justify left)
 				)
 			)
-			(property "Description" "Very low capacitance ESD protection diode, 2 data-line, SOT-23-6"
+			(property "Datasheet" "http://www.onsemi.com/pub/Collateral/SRV05-4-D.PDF"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -3123,7 +3109,18 @@
 					)
 				)
 			)
-			(property "ki_keywords" "usb ethernet video"
+			(property "Description" "ESD Protection Diodes with Low Clamping Voltage, SOT-23-6"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_keywords" "ESD protection diodes"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -3145,237 +3142,59 @@
 					)
 				)
 			)
-			(symbol "USBLC6-2SC6_0_0"
-				(circle
-					(center -1.524 0)
-					(radius 0.0001)
-					(stroke
-						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(circle
-					(center -0.508 2.032)
-					(radius 0.0001)
-					(stroke
-						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(circle
-					(center -0.508 -4.572)
-					(radius 0.0001)
-					(stroke
-						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(circle
-					(center 0.508 2.032)
-					(radius 0.0001)
-					(stroke
-						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(circle
-					(center 0.508 -4.572)
-					(radius 0.0001)
-					(stroke
-						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(circle
-					(center 1.524 -2.54)
-					(radius 0.0001)
-					(stroke
-						(width 0.508)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-			)
-			(symbol "USBLC6-2SC6_0_1"
-				(polyline
-					(pts
-						(xy -2.54 0) (xy 2.54 0)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -2.54 -2.54) (xy 2.54 -2.54)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -2.032 0.508) (xy -1.016 0.508) (xy -1.524 1.524) (xy -2.032 0.508)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -2.032 -3.048) (xy -1.016 -3.048)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -1.016 1.524) (xy -2.032 1.524)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -1.016 -4.064) (xy -2.032 -4.064) (xy -1.524 -3.048) (xy -1.016 -4.064)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy -0.508 -1.143) (xy -0.508 -0.762) (xy 0.508 -0.762)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 0 2.54) (xy -0.508 2.032) (xy 0.508 2.032) (xy 0 1.524) (xy 0 -4.064) (xy -0.508 -4.572) (xy 0.508 -4.572)
-						(xy 0 -5.08)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 0.508 -1.778) (xy -0.508 -1.778) (xy 0 -0.762) (xy 0.508 -1.778)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 1.016 1.524) (xy 2.032 1.524)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 1.016 -3.048) (xy 2.032 -3.048)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 2.032 0.508) (xy 1.016 0.508) (xy 1.524 1.524) (xy 2.032 0.508)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-				(polyline
-					(pts
-						(xy 2.032 -4.064) (xy 1.016 -4.064) (xy 1.524 -3.048) (xy 2.032 -4.064)
-					)
-					(stroke
-						(width 0)
-						(type default)
-					)
-					(fill
-						(type none)
-					)
-				)
-			)
-			(symbol "USBLC6-2SC6_1_1"
+			(symbol "SRV05-4_0_0"
 				(rectangle
-					(start -2.54 2.794)
-					(end 2.54 -5.334)
+					(start -5.715 6.477)
+					(end 5.715 -6.604)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -3.175 -6.604) (xy -3.175 6.477)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.175 6.477) (xy 3.175 -6.604)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "SRV05-4_0_1"
+				(polyline
+					(pts
+						(xy -7.747 2.54) (xy -3.175 2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start -7.62 10.16)
+					(end 7.62 -10.16)
 					(stroke
 						(width 0.254)
 						(type default)
@@ -3386,7 +3205,30 @@
 				)
 				(polyline
 					(pts
-						(xy -0.508 2.032) (xy -1.524 2.032) (xy -1.524 -4.572) (xy -0.508 -4.572)
+						(xy -7.62 -2.54) (xy -5.715 -2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(circle
+					(center -5.715 -2.54)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(polyline
+					(pts
+						(xy -5.08 5.08) (xy -6.35 5.08)
 					)
 					(stroke
 						(width 0)
@@ -3398,7 +3240,7 @@
 				)
 				(polyline
 					(pts
-						(xy 0.508 -4.572) (xy 1.524 -4.572) (xy 1.524 2.032) (xy 0.508 2.032)
+						(xy -5.08 3.81) (xy -6.35 3.81) (xy -5.715 5.08) (xy -5.08 3.81)
 					)
 					(stroke
 						(width 0)
@@ -3408,10 +3250,339 @@
 						(type none)
 					)
 				)
+				(polyline
+					(pts
+						(xy -5.08 -3.81) (xy -6.35 -3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -5.08 -5.08) (xy -6.35 -5.08) (xy -5.715 -3.81) (xy -5.08 -5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(circle
+					(center -3.175 6.477)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(circle
+					(center -3.175 2.54)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(circle
+					(center -3.175 -6.604)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.54 5.08) (xy -3.81 5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.54 3.81) (xy -3.81 3.81) (xy -3.175 5.08) (xy -2.54 3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.54 -3.81) (xy -3.81 -3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.54 -5.08) (xy -3.81 -5.08) (xy -3.175 -3.81) (xy -2.54 -5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0 10.16) (xy 0 -10.16)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(circle
+					(center 0 6.477)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(circle
+					(center 0 -6.604)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0.635 0.889) (xy -0.635 0.889) (xy -0.635 0.635)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0.635 -0.381) (xy -0.635 -0.381) (xy 0 0.889) (xy 0.635 -0.381)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(circle
+					(center 3.175 6.477)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(circle
+					(center 3.175 -2.54)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(circle
+					(center 3.175 -6.604)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 5.08) (xy 2.54 5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 3.81) (xy 2.54 3.81) (xy 3.175 5.08) (xy 3.81 3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 -3.81) (xy 2.54 -3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.81 -5.08) (xy 2.54 -5.08) (xy 3.175 -3.81) (xy 3.81 -5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(circle
+					(center 5.715 2.54)
+					(radius 0.2794)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(polyline
+					(pts
+						(xy 6.35 5.08) (xy 5.08 5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 6.35 3.81) (xy 5.08 3.81) (xy 5.715 5.08) (xy 6.35 3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 6.35 -3.81) (xy 5.08 -3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 6.35 -5.08) (xy 5.08 -5.08) (xy 5.715 -3.81) (xy 6.35 -5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 7.62 2.54) (xy 5.715 2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 7.62 -2.54) (xy 3.175 -2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "SRV05-4_1_1"
 				(pin passive line
-					(at -5.08 0 0)
-					(length 2.54)
-					(name "I/O1"
+					(at -12.7 2.54 0)
+					(length 5.08)
+					(name "IO1"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3427,9 +3598,9 @@
 					)
 				)
 				(pin passive line
-					(at 0 -7.62 90)
+					(at 0 -12.7 90)
 					(length 2.54)
-					(name "GND"
+					(name "VN"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3445,9 +3616,9 @@
 					)
 				)
 				(pin passive line
-					(at -5.08 -2.54 0)
-					(length 2.54)
-					(name "I/O2"
+					(at -12.7 -2.54 0)
+					(length 5.08)
+					(name "IO2"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3463,9 +3634,9 @@
 					)
 				)
 				(pin passive line
-					(at 5.08 -2.54 180)
-					(length 2.54)
-					(name "I/O2"
+					(at 12.7 2.54 180)
+					(length 5.08)
+					(name "IO3"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3481,9 +3652,9 @@
 					)
 				)
 				(pin passive line
-					(at 0 5.08 270)
+					(at 0 12.7 270)
 					(length 2.54)
-					(name "VBUS"
+					(name "VP"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3499,9 +3670,9 @@
 					)
 				)
 				(pin passive line
-					(at 5.08 0 180)
-					(length 2.54)
-					(name "I/O1"
+					(at 12.7 -2.54 180)
+					(length 5.08)
+					(name "IO4"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -4077,7 +4248,7 @@
 			(embedded_fonts no)
 		)
 	)
-	(text "U5 pin 5 (VBUS) is on +3V3:\non J2 VBUS, the P4's D+ pull-up\n(USB_PU) would hold an unplugged\nVBUS at ~2.7 V, not vSafe0V.\nD2 clamps VBUS instead."
+	(text "U5 pin 5 (VP) is on +3V3:\non J2 VBUS, the P4's D+ pull-up\n(USB_PU) would hold an unplugged\nVBUS at ~2.7 V, not vSafe0V.\nD2 clamps VBUS instead."
 		(exclude_from_sim no)
 		(at 53.34 96.52 0)
 		(effects
@@ -4086,7 +4257,7 @@
 			)
 			(justify left bottom)
 		)
-		(uuid "bb521ad0-6fe8-4bdc-8503-2ec8598a3e1b")
+		(uuid "01ce6784-5527-4191-9d40-389edb827370")
 	)
 	(text "R34: PPS loop-back into GPIO33\n(ETM capture of the PPS edge);\nGPIO33 stays an input."
 		(exclude_from_sim no)
@@ -4110,6 +4281,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "13a718a7-0340-4271-9f00-6f01ec0d16d6")
+	)
+	(junction
+		(at 119.38 73.66)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "200339cd-a974-46aa-9db8-3493bf0ad747")
 	)
 	(junction
 		(at 88.9 121.92)
@@ -4709,6 +4886,16 @@
 	)
 	(wire
 		(pts
+			(xy 83.82 71.12) (xy 83.82 73.66)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1d1e2d95-4ea0-411f-9df8-be2edb5fac7f")
+	)
+	(wire
+		(pts
 			(xy 63.5 118.11) (xy 63.5 119.38)
 		)
 		(stroke
@@ -4799,16 +4986,6 @@
 	)
 	(wire
 		(pts
-			(xy 116.84 71.12) (xy 116.84 83.82)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "2ab7899d-8242-4855-860b-65db1802dd24")
-	)
-	(wire
-		(pts
 			(xy 53.34 58.42) (xy 58.42 58.42)
 		)
 		(stroke
@@ -4826,16 +5003,6 @@
 			(type default)
 		)
 		(uuid "2bf531b0-16d5-4fab-b927-a5e00fafdd59")
-	)
-	(wire
-		(pts
-			(xy 119.38 68.58) (xy 119.38 81.28)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "2f9771e8-8a6d-4380-86af-61f7dc6624ab")
 	)
 	(wire
 		(pts
@@ -4859,13 +5026,13 @@
 	)
 	(wire
 		(pts
-			(xy 99.06 76.2) (xy 99.06 77.47)
+			(xy 83.82 68.58) (xy 86.36 68.58)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "35ac3bb9-a25b-4271-9366-38bb76e365cb")
+		(uuid "38d38b94-1c94-4c3c-ba3d-1994c974d758")
 	)
 	(wire
 		(pts
@@ -4876,6 +5043,26 @@
 			(type default)
 		)
 		(uuid "3b5e8342-a426-4974-bb33-55400e63f479")
+	)
+	(wire
+		(pts
+			(xy 55.88 68.58) (xy 83.82 68.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3ba00df2-1627-42f6-afcf-8b6f73168b2c")
+	)
+	(wire
+		(pts
+			(xy 118.11 83.82) (xy 129.54 83.82)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3cd53d00-e7db-451d-a56e-613b7ef618ad")
 	)
 	(wire
 		(pts
@@ -4916,16 +5103,6 @@
 			(type default)
 		)
 		(uuid "4073782c-1b98-46cf-9b4f-2323ae57f8e5")
-	)
-	(wire
-		(pts
-			(xy 116.84 83.82) (xy 129.54 83.82)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "4215be86-9577-4e70-adfa-debed5ee4061")
 	)
 	(wire
 		(pts
@@ -4989,6 +5166,16 @@
 	)
 	(wire
 		(pts
+			(xy 99.06 83.82) (xy 99.06 85.09)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4e568f45-fbd7-4234-b45c-3460be7807b6")
+	)
+	(wire
+		(pts
 			(xy 63.5 109.22) (xy 63.5 107.95)
 		)
 		(stroke
@@ -5026,16 +5213,6 @@
 			(type default)
 		)
 		(uuid "52ddad57-eb87-416a-9bc7-eeaa5c982e4b")
-	)
-	(wire
-		(pts
-			(xy 55.88 68.58) (xy 93.98 68.58)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "531be4c8-d1f6-48b3-9db6-77252a0b50d4")
 	)
 	(bus
 		(pts
@@ -5139,13 +5316,13 @@
 	)
 	(wire
 		(pts
-			(xy 104.14 71.12) (xy 116.84 71.12)
+			(xy 99.06 55.88) (xy 99.06 50.8)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "6323a664-f681-4f86-bd5f-eb700338c637")
+		(uuid "64bd7faf-3d8d-4461-9172-e50a813c23a0")
 	)
 	(wire
 		(pts
@@ -5179,13 +5356,23 @@
 	)
 	(wire
 		(pts
-			(xy 104.14 68.58) (xy 119.38 68.58)
+			(xy 111.76 73.66) (xy 124.46 73.66)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "6988cb0d-2d14-4fa7-8d35-6c7e65d08e22")
+		(uuid "697339eb-a455-44d1-ad6a-319bb7ba709e")
+	)
+	(wire
+		(pts
+			(xy 83.82 73.66) (xy 86.36 73.66)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6acd28ac-8b1c-427d-8610-b83980c5f471")
 	)
 	(wire
 		(pts
@@ -5419,6 +5606,16 @@
 	)
 	(wire
 		(pts
+			(xy 119.38 73.66) (xy 119.38 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9be017a3-072b-40ec-add6-beac729e8356")
+	)
+	(wire
+		(pts
 			(xy 149.86 106.68) (xy 144.78 106.68)
 		)
 		(stroke
@@ -5426,16 +5623,6 @@
 			(type default)
 		)
 		(uuid "9dff561d-a8ea-49ea-acf0-a907ad435275")
-	)
-	(wire
-		(pts
-			(xy 58.42 71.12) (xy 93.98 71.12)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "9e142c8d-0bc9-48d6-96c0-405399d24a48")
 	)
 	(wire
 		(pts
@@ -5599,6 +5786,16 @@
 	)
 	(wire
 		(pts
+			(xy 111.76 68.58) (xy 125.73 68.58)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bd637415-2ca1-4fa8-88ea-ec4075ca94a6")
+	)
+	(wire
+		(pts
 			(xy 105.41 140.97) (xy 111.76 140.97)
 		)
 		(stroke
@@ -5639,6 +5836,16 @@
 	)
 	(wire
 		(pts
+			(xy 58.42 71.12) (xy 83.82 71.12)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c3a4897f-b62d-490b-8f50-c819d28ba499")
+	)
+	(wire
+		(pts
 			(xy 121.92 140.97) (xy 121.92 125.73)
 		)
 		(stroke
@@ -5656,16 +5863,6 @@
 			(type default)
 		)
 		(uuid "c4ea8c42-5957-4439-bf41-aad8f9612669")
-	)
-	(wire
-		(pts
-			(xy 99.06 63.5) (xy 99.06 50.8)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "c619a765-0a05-4077-91e1-47caa52923d5")
 	)
 	(wire
 		(pts
@@ -5826,6 +6023,16 @@
 			(type default)
 		)
 		(uuid "dba9f7ec-aa04-45a8-a64c-8b02096e42df")
+	)
+	(wire
+		(pts
+			(xy 99.06 58.42) (xy 99.06 55.88)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "def32797-0548-4590-8b50-50b37df33c84")
 	)
 	(wire
 		(pts
@@ -6087,6 +6294,16 @@
 		)
 		(uuid "0c9b44c5-a2c2-43d0-bc22-9a449a4c9456")
 	)
+	(label "USB_C_D_N"
+		(at 125.73 68.58 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "0ce3d4d6-f56e-4dd4-9bd7-1075f73f244a")
+	)
 	(label "LED_EN"
 		(at 142.24 116.84 0)
 		(effects
@@ -6116,6 +6333,16 @@
 			(justify left bottom)
 		)
 		(uuid "1e9ca2c3-4c0d-4f85-b998-27d74f838c31")
+	)
+	(label "USB_C_D_P"
+		(at 124.46 73.66 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "22325e2b-b0cb-4b00-8ffc-9702b92d3f74")
 	)
 	(label "STATUS_LED_DIN"
 		(at 90.17 121.92 0)
@@ -6207,16 +6434,6 @@
 		)
 		(uuid "4adb257d-56ea-4b4e-9b99-53face6a2406")
 	)
-	(label "USB_C_D_N"
-		(at 76.2 71.12 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "50f34c4a-6c42-4882-ae7b-8aab4995c866")
-	)
 	(label "IMU_SCL"
 		(at 118.11 99.06 0)
 		(effects
@@ -6306,6 +6523,16 @@
 			(justify right bottom)
 		)
 		(uuid "720840ed-cb21-4605-8d51-b313833bc09e")
+	)
+	(label "USB_C_D_P"
+		(at 71.12 68.58 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "7580f2b9-9e0b-402d-8e1d-1cbf55a9c803")
 	)
 	(label "SCCB_SCL"
 		(at 135.89 111.76 0)
@@ -6477,16 +6704,6 @@
 		)
 		(uuid "c3235ddd-c870-40c9-9fa6-360025451ab3")
 	)
-	(label "USB_C_D_P"
-		(at 105.41 68.58 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "c4ffc665-217b-4bdb-bf01-c9f6e82edc83")
-	)
 	(label "{IMU}"
 		(at 205.74 157.48 0)
 		(effects
@@ -6507,6 +6724,16 @@
 		)
 		(uuid "d1bded5e-69d1-44d9-8049-3999456842f7")
 	)
+	(label "USB_C_D_N"
+		(at 118.11 83.82 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d20fadc7-a679-4ba8-ae30-c7e79c21de07")
+	)
 	(label "STATUS_LED"
 		(at 119.38 121.92 0)
 		(effects
@@ -6516,6 +6743,16 @@
 			(justify left bottom)
 		)
 		(uuid "d35a8781-6ade-453f-b3d0-9dc669f2abcd")
+	)
+	(label "USB_C_D_N"
+		(at 71.12 71.12 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d3a80ac6-a918-4eb3-b76c-2b1031b486c7")
 	)
 	(label "RMII_RXD0"
 		(at 135.89 142.24 0)
@@ -6546,26 +6783,6 @@
 			(justify right bottom)
 		)
 		(uuid "e72c7cdd-b8e1-4f9a-9064-675ff7942ba4")
-	)
-	(label "USB_C_D_N"
-		(at 105.41 71.12 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "ebbdb395-a4cb-42cf-aeb5-16f5c868f932")
-	)
-	(label "USB_C_D_P"
-		(at 76.2 68.58 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "f25c13ed-6e48-4be0-ae55-7147f92b637a")
 	)
 	(hierarchical_label "{IMU}"
 		(shape bidirectional)
@@ -7005,7 +7222,7 @@
 				(justify right)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 59.69 115.57 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7027,7 +7244,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -7049,7 +7266,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -7060,7 +7277,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -7071,7 +7288,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 63.5 114.3 0)
 			(hide yes)
 			(show_name no)
@@ -7300,7 +7517,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7322,7 +7539,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7333,7 +7550,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1002TCE"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7344,7 +7561,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25744"
 			(at 111.76 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -7549,7 +7766,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 111.76 62.23 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7571,7 +7788,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -7593,7 +7810,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -7604,7 +7821,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -7615,7 +7832,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 109.22 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -8183,8 +8400,8 @@
 		)
 	)
 	(symbol
-		(lib_id "Power_Protection:USBLC6-2SC6")
-		(at 99.06 68.58 0)
+		(lib_id "Power_Protection:SRV05-4")
+		(at 99.06 71.12 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -8192,10 +8409,9 @@
 		(on_board yes)
 		(in_pos_files yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "4b80d1b7-09b9-48d1-9eeb-bcb954361383")
 		(property "Reference" "U5"
-			(at 93.98 74.93 0)
+			(at 90.17 78.74 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8205,8 +8421,8 @@
 				(justify right)
 			)
 		)
-		(property "Value" "USBLC6-2SC6"
-			(at 93.98 77.47 0)
+		(property "Value" "SRV05-4"
+			(at 90.17 81.28 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8217,7 +8433,7 @@
 			)
 		)
 		(property "Footprint" "Package_TO_SOT_SMD:SOT-23-6"
-			(at 100.33 74.93 0)
+			(at 99.06 71.12 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8229,8 +8445,8 @@
 				(justify left)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0d3a2ab954b34651a0695e7ccf534db0.pdf"
-			(at 100.33 76.835 0)
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/c94a8eedc13753364c00c764db36d52a.pdf"
+			(at 99.06 71.12 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8241,8 +8457,8 @@
 				(justify left)
 			)
 		)
-		(property "Description" "Very low capacitance ESD protection diode, 2 data-line, SOT-23-6"
-			(at 99.06 68.58 0)
+		(property "Description" "ESD Protection Diodes with Low Clamping Voltage, SOT-23-6"
+			(at 99.06 71.12 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8252,8 +8468,8 @@
 				)
 			)
 		)
-		(property "Manufacturer" "ST"
-			(at 99.06 68.58 0)
+		(property "Manufacturer" "R+O"
+			(at 99.06 71.12 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8263,8 +8479,8 @@
 				)
 			)
 		)
-		(property "MPN" "USBLC6-2SC6"
-			(at 99.06 68.58 0)
+		(property "MPN" "SRV05-4"
+			(at 99.06 71.12 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8274,8 +8490,8 @@
 				)
 			)
 		)
-		(property "LCSC" "C7519"
-			(at 99.06 68.58 0)
+		(property "LCSC" "C7420376"
+			(at 99.06 71.12 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8284,24 +8500,24 @@
 					(size 1.27 1.27)
 				)
 			)
-		)
-		(pin "2"
-			(uuid "362abbc3-09d1-4e97-8eea-934e44115856")
 		)
 		(pin "1"
 			(uuid "e91c12e2-1ce9-4d42-9e48-bebf10e026b7")
 		)
-		(pin "5"
-			(uuid "1ebbbd0c-b2fd-45f0-a729-3e785d2a770c")
-		)
-		(pin "6"
-			(uuid "b257780b-00fb-4e19-b8b2-21f0e6bd6acb")
+		(pin "2"
+			(uuid "362abbc3-09d1-4e97-8eea-934e44115856")
 		)
 		(pin "3"
 			(uuid "ac15d42b-93ad-497b-aa64-a84e81ef6fda")
 		)
 		(pin "4"
 			(uuid "d9522f5b-cf25-4783-9cea-190998a43d2d")
+		)
+		(pin "5"
+			(uuid "1ebbbd0c-b2fd-45f0-a729-3e785d2a770c")
+		)
+		(pin "6"
+			(uuid "b257780b-00fb-4e19-b8b2-21f0e6bd6acb")
 		)
 		(instances
 			(project "espion-cam"
@@ -8413,7 +8629,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "TSD05DYFR"
+		(property "Value" "H7VHD3UA"
 			(at 86.36 41.91 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8435,7 +8651,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://www.ti.com/lit/ds/symlink/tsd05.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/6a909619d64003f76bc6f2824383eb13.pdf"
 			(at 83.82 40.64 0)
 			(hide yes)
 			(show_name no)
@@ -8446,7 +8662,7 @@
 				)
 			)
 		)
-		(property "Description" "Unidirectional TVS diode, VRWM 5.5 V, SOD-323"
+		(property "Description" "Unidirectional TVS diode, VRWM 7 V, SOD-323"
 			(at 83.82 40.64 0)
 			(hide yes)
 			(show_name no)
@@ -8457,7 +8673,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "TI"
+		(property "Manufacturer" "R+O"
 			(at 83.82 40.64 0)
 			(hide yes)
 			(show_name no)
@@ -8468,7 +8684,7 @@
 				)
 			)
 		)
-		(property "MPN" "TSD05DYFR"
+		(property "MPN" "H7VHD3UA"
 			(at 83.82 40.64 0)
 			(hide yes)
 			(show_name no)
@@ -8479,7 +8695,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C22396185"
+		(property "LCSC" "C20615807"
 			(at 83.82 40.64 0)
 			(hide yes)
 			(show_name no)
@@ -8528,7 +8744,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 184.15 27.94 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8550,7 +8766,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8572,7 +8788,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8583,7 +8799,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8594,7 +8810,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 180.34 26.67 0)
 			(hide yes)
 			(show_name no)
@@ -8615,6 +8831,84 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
 					(reference "C28")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 99.06 85.09 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "5dc58501-bd4d-4029-aa7b-721945ee86ac")
+		(property "Reference" "#PWR404"
+			(at 99.06 91.44 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 99.06 88.9 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 99.06 85.09 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 99.06 85.09 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 99.06 85.09 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "f7b4e23e-2d1c-46d0-a4aa-5e781a4b6e65")
+		)
+		(instances
+			(project "espion-cam"
+				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
+					(reference "#PWR404")
 					(unit 1)
 				)
 			)
@@ -9298,7 +9592,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "TSD05DYFR"
+		(property "Value" "H7VHD3UA"
 			(at 269.24 113.03 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9320,7 +9614,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://www.ti.com/lit/ds/symlink/tsd05.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/6a909619d64003f76bc6f2824383eb13.pdf"
 			(at 266.7 111.76 0)
 			(hide yes)
 			(show_name no)
@@ -9331,7 +9625,7 @@
 				)
 			)
 		)
-		(property "Description" "Unidirectional TVS diode, VRWM 5.5 V, SOD-323"
+		(property "Description" "Unidirectional TVS diode, VRWM 7 V, SOD-323"
 			(at 266.7 111.76 0)
 			(hide yes)
 			(show_name no)
@@ -9342,7 +9636,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "TI"
+		(property "Manufacturer" "R+O"
 			(at 266.7 111.76 0)
 			(hide yes)
 			(show_name no)
@@ -9353,7 +9647,7 @@
 				)
 			)
 		)
-		(property "MPN" "TSD05DYFR"
+		(property "MPN" "H7VHD3UA"
 			(at 266.7 111.76 0)
 			(hide yes)
 			(show_name no)
@@ -9364,7 +9658,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C22396185"
+		(property "LCSC" "C20615807"
 			(at 266.7 111.76 0)
 			(hide yes)
 			(show_name no)
@@ -10439,7 +10733,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -10461,7 +10755,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -10472,7 +10766,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1002TCE"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -10483,7 +10777,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25744"
 			(at 88.9 127 0)
 			(hide yes)
 			(show_name no)
@@ -11431,84 +11725,6 @@
 		)
 	)
 	(symbol
-		(lib_id "power:GND")
-		(at 99.06 77.47 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "ac4cbd4c-13e0-4570-a0c6-a29f94229cac")
-		(property "Reference" "#PWR067"
-			(at 99.06 83.82 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "GND"
-			(at 99.06 81.28 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 99.06 77.47 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 99.06 77.47 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 99.06 77.47 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "4225a82a-a391-4b59-a219-8787f1ce928e")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
-					(reference "#PWR067")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:R")
 		(at 220.98 96.52 90)
 		(unit 1)
@@ -12149,7 +12365,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100nF 50V"
+		(property "Value" "100nF 16V"
 			(at 115.57 148.59 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12171,7 +12387,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/23ccee80ee542e7cf156a772bb589942.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -12193,7 +12409,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "YAGEO"
+		(property "Manufacturer" "Samsung"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -12204,7 +12420,7 @@
 				)
 			)
 		)
-		(property "MPN" "CC0402KRX7R9BB104"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -12215,7 +12431,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C131394"
+		(property "LCSC" "C1525"
 			(at 111.76 147.32 0)
 			(hide yes)
 			(show_name no)
@@ -12286,7 +12502,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -12308,7 +12524,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -12319,7 +12535,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1002TCE"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -12330,7 +12546,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25744"
 			(at 139.7 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -12594,7 +12810,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.fojan.cn/Private/Files/20260117/6390425653118283306794915.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 256.54 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -12616,7 +12832,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FOJAN"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 256.54 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -12627,7 +12843,7 @@
 				)
 			)
 		)
-		(property "MPN" "FRC0402F1002TS"
+		(property "MPN" "0402WGF1002TCE"
 			(at 256.54 86.36 0)
 			(hide yes)
 			(show_name no)
@@ -12638,7 +12854,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2906861"
+		(property "LCSC" "C25744"
 			(at 256.54 86.36 0)
 			(hide yes)
 			(show_name no)
