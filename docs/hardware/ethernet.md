@@ -33,7 +33,7 @@ one rail, so neither can back-power the other.
   sets no values here, only "decoupled carefully" (p.18) and "as close as possible" (p.56). The
   `near` entries C9/C7 → U1, C6 → U1.28 and C4 → C6 carry the "close" distance. The exposed pad (pin 33,
   ground) is stitched to GND with vias.
-- **Unused pins.** TXD2/TXD3 (pins 6/7) and TXER (pin 1) go to GND (p.16). RXD2/RXD3 and RXER/INTR_32
+- **Unused pins.** TXD3/TXD2 (pins 6/7) and TXER (pin 1) go to GND (p.16). RXD2/RXD3 and RXER/INTR_32
   are outputs and stay open. TEST_ON (pin 24) stays open on its internal pull-down (p.18).
 
 ### Crystal

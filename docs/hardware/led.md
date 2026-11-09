@@ -145,7 +145,7 @@ p.11, Eq. 1). With R65/R66 unchanged, +32V = D × Vout(duty 1).
 |---|---|---|
 | PWM frequency | 50 kHz | Inside TI's 5–100 kHz (p.11). The low phase (1 − D) / f_PWM stays far below the 260 µs EasyScale detection time and the 2.5 ms shutdown delay (p.5, p.10), so PWM never selects EasyScale or shuts the boost down. The 40 ns on-time error adds ≤ 40 ns × f_PWM of duty (p.11); the loop absorbs it |
 | Reference in PWM mode | V(REF_PWM) 477–507 mV at a 492 mV setting (±3 %) | p.5. Open loop the set point is only that good; the loop measures the result instead |
-| Duty range | D_min … 1. 1 is steady high. D_min is the firmware's duty clamp (≈ 0.62 at nominal values, as FW-8 and FW-22 use it), given by the criterion D_min × Vout(duty 1) nominal × (1 + reference tolerance) < the lowest string (12 × VF min, [LED ring](#led-ring)) plus the headroom the loop needs | The loop reaches every string; an ADC fault that drives D down only dims the LEDs |
+| Duty range | D_min … 1. 1 is steady high. D_min is the firmware's duty clamp (as FW-8 and FW-22 use it), given by the criterion D_min × Vout(duty 1) nominal × (1 + reference tolerance) < the lowest string (12 × VF min, [LED ring](#led-ring)) plus the headroom the loop needs | The loop reaches every string; an ADC fault that drives D down only dims the LEDs |
 | Reference ripple | ΔV_FB ≈ VREF × D(1 − D) × T_PWM / t_REF, first order through the internal filter (t_REF 180 µs, p.5; Fig. 9 p.11). The boost loop (crossover from [Compensation](#compensation)) passes ≈ f_c / f_PWM of it | Estimate of the ripple on +32V; it is small against the band below |
 
 Firmware (FW-22 in [firmware rules](firmware-rules.md#rules)) reads V(`LED_K`) through
@@ -168,7 +168,7 @@ at the end of the pulse stays in a band, whose edges are set in FW-22:
   per step) lit frames, many seconds at 120 fps, so the loop takes one coarse step first: from the
   first averaged reading V at duty 1 it sets D = 1 − (V − V_T) / S_max, clamped to D_min … 1.
   V_T = 1.2 V is the coarse target, a firmware decision: the band's lower edge plus the reading
-  error at the ≈ 13 V reading of duty 1 (±15 mV × divider ratio plus the resistor tolerances,
+  error at the duty-1 reading (±15 mV × divider ratio plus the resistor tolerances,
   [LED_K sense](#led_k-sense)) plus a margin. A target at the band's lower edge itself would land
   below the band on some units. S_max is the steepest +32V(D) on any unit: Vout nominal × (1 +
   reference tolerance + divider tolerance + on-time error), from the reference and error terms
@@ -329,7 +329,7 @@ PWM, the default, or TI's EasyScale. This board uses PWM ([Headroom control](#he
 - **Start:** drive `BST_EN` steady high (duty 1). Never hold it low for ≥ 260 µs within 1 ms of a
   start from shutdown: that selects EasyScale mode, which drops the FB reference to 200 mV, so
   +32V would fall to a few volts and the LEDs would stay dark (p.10–11).
-- **Run:** 50 kHz PWM, duty D_min (≈ 0.62 at nominal values) … 1, set by the headroom loop. Its low phases last (1 − D) / f_PWM.
+- **Run:** 50 kHz PWM, duty D_min ([Headroom control](#headroom-control)) … 1, set by the headroom loop. Its low phases last (1 − D) / f_PWM.
 - **Shutdown:** hold it low for ≥ 2.5 ms (p.5).
 
 The enable order with `LED_PWR_EN` and `LED_EN` is under
@@ -352,6 +352,7 @@ for its working voltage. C49 sits at the pin (Espressif ESP32-P4 HDG §1.3.10).
 | Readings | V(+32V) × R72 / (R71 + R72) over the output range; below the ADC's ATTEN3 range with margin |
 | Source impedance | R71 ∥ R72 with C49: τ = R × C49, longer than an LED pulse, so it reads the DC rail |
 | Error | From the resistor tolerances |
+| Unpowered P4 | As for `LED_K_SENSE` ([LED_K sense](#led_k-sense)): after a power loss C46/C47 may still hold charge, and R71 drives about Vout max / (R71 + R72 ∥ pad) into the unpowered pad. The P4 datasheet gives no injection limit ([Accepted risks](#accepted-risks)) |
 
 Firmware can read it to confirm the boost is up before enabling the LEDs, and to watch the rail.
 
@@ -487,8 +488,8 @@ adds phase margin. An estimate too: [first-board check](#first-board-checks).
 
 R70 from `LED_K`, Q1's drain, and R76 to GND divide V(`LED_K`) down into `LED_K_SENSE` on
 GPIO23 = ADC1_CH7 (U6.19). C48 sits at the pin. They replace the NTC TH1 and its +3V3 pull-up,
-and reuse that route (user decision 2026-11-03: "Replace TH1/R70 on NTC_SENSE (GPIO23)", divider
-"100k / 10.0k (÷11)"). R70 sits where TH1 was, its `LED_K` pad joined to Q1's drain copper; R76 and
+and reuse that route (user decision 2026-11-03: "Replace TH1/R70 on NTC_SENSE (GPIO23)").
+R70 sits where TH1 was, its `LED_K` pad joined to Q1's drain copper; R76 and
 C48 sit next to U6.19.
 
 | Item | Formula / requirement |
@@ -561,9 +562,9 @@ set-point range narrows it. C33 counts with its tolerance and the X7R temperatur
 
 The user's answer was "≤ 0.5 ms at ≤ 120 fps (6 %)" (user decision 2026-10-31). The option they
 chose said the timeout cuts above ≈ 0.6 ms. The circuit can't cut that close: U9's threshold spread
-sets the window. The user accepted the window (user decision 2026-11-02: "Accept 0.525–1.026 ms"),
-then moved C33 to a fee-free X7R part with R55 raised to keep the 0.5 ms pass, which widens the
-window to 0.61–1.79 ms (user decision 2026-11-09, superseding the 2026-11-02 window):
+sets the window. The user accepted the window (user decision 2026-11-02), then moved C33 to a
+fee-free X7R part with R55 raised to keep the 0.5 ms pass, which widens the window (user decision
+2026-11-09, superseding the 2026-11-02 window):
 
 - the RC/U9 timeout stays a backstop;
 - firmware limits pulses to 0.5 ms;
@@ -774,8 +775,9 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
   ([Q1 protection](#q1-protection)).
 - **C48 is small, not the 0.1 µF HDG §1.3.10 suggests at an ADC pin,** because 0.1 µF would not
   settle within the pulse ([LED_K sense](#led_k-sense)).
-- **`LED_K_SENSE` can drive current into an unpowered P4 pin** while C46/C47 hold charge after a
-  power loss (bound in [LED_K sense](#led_k-sense)); the P4 datasheet gives no injection limit.
+- **`LED_K_SENSE` and `VLED_SENSE` can drive current into unpowered P4 pins** while C46/C47 hold
+  charge after a power loss (bounds in [LED_K sense](#led_k-sense) and
+  [Output voltage sense](#output-voltage-sense)); the P4 datasheet gives no injection limit.
 - **LED current set to the DC curve at 30 °C with a thin margin.** R60/R61 (user decision
   2026-10-31, stay on the DC curve; fee-free values, user decision 2026-11-09). The margin is
   I_max(30 °C) − worst-case I_LED, in degrees of LED heating = margin / the curve's slope
@@ -788,8 +790,7 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
 - **The hardware timeout cuts only within its window.** The ≤ 0.5 ms limit is a firmware rule.
   U9's threshold spread and C33's X7R tolerance set the window, so it can't cut closer. A firmware
   fault could run the LEDs up to the window's upper end per frame, a duty of t_max × fps (user
-  decision 2026-11-09: X7R C33, window 0.61–1.79 ms, superseding the 2026-11-02 "Accept
-  0.525–1.026 ms").
+  decision 2026-11-09: X7R C33, widening the window accepted on 2026-11-02).
 - **Boost output capacitance is far outside TI's 1–10 µF recommendation.** The compensation is
   designed for it (estimated crossover and phase margin in [Compensation](#compensation)), but TI
   asks for such values to be tested. Accepted in design review (2026-11-01), tested on the first
@@ -848,8 +849,8 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
    [estimated](#recovery-and-start-up).
 5. **Timeout.** With `LED_EN` high:
    - a 0.5 ms STROBE must give a whole 0.5 ms `LED_ON` pulse;
-   - a STROBE held high (a long exposure) must end `LED_ON` within the accepted window
-     (0.61–1.79 ms, user decision 2026-11-09);
+   - a STROBE held high (a long exposure) must end `LED_ON` within the window of
+     [Timeout](#timeout), worked out from the schematic (user decision 2026-11-09);
    - `LED_ON` must follow the next normal frame unchanged;
    - STROBE's width must match the configured exposure within 50 µs over the exposure range
      (FW-9's pulse-width limit, the exposure cap plus 50 µs, assumes it), and a longer STROBE, e.g. 0.6 ms, must make firmware
