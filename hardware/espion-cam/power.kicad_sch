@@ -4738,7 +4738,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "330uF 16V"
+		(property "Value" "330uF 50V"
 			(at 123.19 63.5 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4749,7 +4749,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD_JIERR:CP_Elec_8x10.5"
+		(property "Footprint" "Capacitor_SMD:CP_Elec_10x10"
 			(at 119.38 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -4760,7 +4760,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/3ad662ff0f7907637937f3fa823d20da.pdf"
+		(property "Datasheet" "https://www.lcsc.com/datasheet/lcsc_datasheet_2409272202_ACMECON-GVZ1H337M1010CN_C22383763.pdf"
 			(at 119.38 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -4782,7 +4782,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "JIERR"
+		(property "Manufacturer" "ACMECON"
 			(at 119.38 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -4793,7 +4793,7 @@
 				)
 			)
 		)
-		(property "MPN" "JVE16V330M8X10"
+		(property "MPN" "GVZ1H337M1010CN"
 			(at 119.38 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -4804,7 +4804,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C48615108"
+		(property "LCSC" "C22383763"
 			(at 119.38 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -7520,7 +7520,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "330uF 16V"
+		(property "Value" "100uF 25V"
 			(at 102.87 63.5 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7531,7 +7531,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD_AISHI:CP_Elec_6.3x9"
+		(property "Footprint" "Capacitor_SMD:CP_Elec_6.3x5.8"
 			(at 99.06 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -7542,7 +7542,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/aabe05a1d48507568d8975f1e7578509.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/3f7d3c65a6b7cb0d54b3964c549a0a12.pdf"
 			(at 99.06 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -7564,7 +7564,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "AISHI"
+		(property "Manufacturer" "JIERR"
 			(at 99.06 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -7575,7 +7575,7 @@
 				)
 			)
 		)
-		(property "MPN" "SVZ1CM331E09E00RAXXX"
+		(property "MPN" "MA25V100M6x6"
 			(at 99.06 62.23 0)
 			(hide yes)
 			(show_name no)
@@ -7586,7 +7586,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C3291468"
+		(property "LCSC" "C46550465"
 			(at 99.06 62.23 0)
 			(hide yes)
 			(show_name no)

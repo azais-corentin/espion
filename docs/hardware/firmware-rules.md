@@ -148,16 +148,17 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
     supply must not carry the boost. The boost then stops on its collapsing input, through its
     undervoltage lockout (p.5); this is accepted, as `LED_EN` is already low and no LED
     current flows.
-  - **Power-up** (on PoE only, FW-6): `LED_PWR_EN` high; wait a fixed 50 ms for `+5V_BST`
+  - **Power-up** (on PoE only, FW-6): `LED_PWR_EN` high; wait a fixed 60 ms for `+5V_BST`
     (below); `BST_EN` steady high (FW-8); wait for +32V by `VLED_SENSE` (FW-8); then `LED_EN`,
     the strobe pulses and the headroom loop (FW-22).
   - `LED_PWR_EN` is an output, default low (R57 holds it low until the firmware drives it).
-  - The `+5V_BST` wait is fixed (the board has no `+5V_BST` sense): **50 ms** until the
-    first-board scope gives a measured value. C35 on the TPS22918's CT pin sets the slew rate
-    SR = 0.55 µs/(V·pF) × C(C35) + 30 µs/V (TI TPS22918 SLVSD76C §8.3.3 Eq. 3 p.14; Table 2
-    lists typical rise times). That is a 10–90 % figure, so the full swing takes
-    ≈ SR × V(+5V_BST) / 0.8 plus the turn-on delay; the fixed wait must exceed it at the top of
-    the `+5V` range. All typical values, none guaranteed.
+  - The `+5V_BST` wait is fixed (the board has no `+5V_BST` sense): **60 ms** (user decision
+    2026-11-09, with the X7R C35) until the first-board scope gives a measured value. C35 on the
+    TPS22918's CT pin sets the slew rate SR = 0.55 µs/(V·pF) × C(C35) + 30 µs/V (TI TPS22918
+    SLVSD76C §8.3.3 Eq. 3 p.14; Table 2 lists typical rise times, measured with an X7R CT), with
+    C35 at its high tolerance and the X7R temperature coefficient (FH MLCC datasheet p.5). That is
+    a 10–90 % figure, so the full swing takes ≈ SR × V(+5V_BST) / 0.8 plus the turn-on delay; the
+    fixed wait must exceed it at the top of the `+5V` range. All typical values, none guaranteed.
 - **FW-8** `BST_EN` (GPIO53, TPS61170 CTRL) is both the boost's enable and its output set point,
   in the TPS61170's PWM mode: V_FB = duty × 1.229 V (TI TPS61170 SLVS789D §8.4.2 p.11;
   [led.md](led.md#headroom-control)).
@@ -183,15 +184,15 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   "≤ 0.5 ms at ≤ 120 fps (6 %)"). The STROBE hardware timeout (a window over all tolerances;
   the spread comes from U9's input threshold, [led.md](led.md#strobe-gating-and-timeout)) is only
   a backstop: it passes any pulse up to the low end of the window whole, and its upper end was
-  accepted as a backstop only (user decision
-  2026-11-02). The firmware keeps the sensor's strobe width within 0.5 ms; this rule, not the
+  accepted as a backstop only (user decision 2026-11-02; window widened by the X7R C33, user
+  decision 2026-11-09). The firmware keeps the sensor's strobe width within 0.5 ms; this rule, not the
   timeout, is the limit. [led.md](led.md#strobe-gating-and-timeout)
   - **Pulse-width fault:** time every STROBE pulse from both edges (FW-16). If a lit pulse is
     longer than the exposure cap plus 50 µs, drive `LED_EN` low before the next frame and report;
     raise it again only once the exposure is back within 0.5 ms. The 50 µs assumes STROBE's width
     matches the set exposure within 50 µs, which [led.md](led.md#first-board-checks) check 5
     measures. At full boost output a run of pulses at the upper end of the timeout window would
-    overheat Q1 beyond its 175 °C junction limit ([led.md](led.md#q1-protection)).
+    overheat Q1 beyond its 150 °C junction limit ([led.md](led.md#q1-protection)).
   - **Pending (first-board measurement):** a firmware LED limit on PoE power. The PoE power
     budget was accepted to be measured on the first boards (user decision 2026-11-02: "Accept,
     measure on first boards"); if the measured PD input exceeds the IEEE 802.3af 12.95 W PD
@@ -221,8 +222,14 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
     the steepest +32V(D) on any unit, both in [led.md](led.md#headroom-control); clamped to D_min … 1), and
     hold D until two averages in a row differ by < 0.1 V (only the pulses pull +32V down); then
     fine steps. The coarse step reaches the band far sooner than fine steps alone
-    ([led.md](led.md#headroom-control)).
-  - **Fall back** to duty 1 and report when there is no valid reading for 1 s or the ADC fails.
+    ([led.md](led.md#headroom-control)). The start-up burst (the first average at full scale plus
+    the bank's bleed-down during the hold after the coarse step) is the only time Q1 sees near
+    full-scale power: take the first average from a few frames (e.g. 8) and step at once
+    ([led.md](led.md#q1-dissipation) bounds the burst).
+  - **Fall back:** `LED_EN` low and report when there is no valid reading for 1 s or the ADC
+    fails. Never hold duty 1 with the LEDs pulsing: the loop is a requirement, because Q1's
+    junction reaches its maximum at full scale (user decision 2026-11-09,
+    [led.md](led.md#q1-dissipation)).
   - **Faults:** an in-pulse reading less than 1.5 V below the same frame's between-pulse reading
     means the sink isn't conducting or the sample missed the pulse. Conducting, the string's
     forward voltage rises from its µA value to its pulse value (12 LEDs × VF at the pulse
@@ -239,9 +246,12 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
     string needs more than full scale, report. Still above 0.9 V at D_min: a shorted LED,
     report.
   - **Q1 power:** keep (V(`LED_K`) at the end + ½ × the worst droop over a pulse) × the maximum
-    pulse current × LED duty ≤ P_limit (0.80 W, a chosen limit,
-    [led.md](led.md#q1-protection), which gives the droop and the current). At duty 1 the rule
-    must not trip on any unit in tolerance, reading error included. Above P_limit, shorten the
+    pulse current × LED duty ≤ P_limit (0.40 W, a chosen limit recalculated on 2026-11-09 for Q1's
+    150 °C junction maximum, [led.md](led.md#q1-protection), which gives the droop and the
+    current). It applies once the fine steps begin, after the post-step hold; not during the
+    start-up burst, where V(`LED_K`) is still bleeding down and the rule would trip on typical
+    units. From there, in the band, it must not trip on any unit in tolerance, reading error
+    included. A loop stuck at full scale trips it on most units, well before Q1 overheats. Above P_limit, shorten the
     exposure until it holds; if it can't, `LED_EN` low and report.
 
 ### Ethernet and PTP

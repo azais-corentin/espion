@@ -218,7 +218,9 @@ p.12), held by the `viaParity` entries "CSI lanes, P4 side" and "CAM lanes, FPC 
   largest pull-up that still meets 300 ns is 300 ns/(0.8473 × C_bus).
 - **Level:** the pull-ups go to +3V3, but the module's SCCB level is unknown (see
   [Accepted risks](#accepted-risks)). If the module turns out to have its own pull-ups, R41/R42 may be
-  left out, as long as the parallel value stays ≥ R_min.
+  left out, as long as the parallel value stays ≥ R_min. With R41/R42 fitted, a module pull-up
+  R_mod in parallel must keep R41 ∥ R_mod at its low tolerance ≥ R_min; the fee-free R41/R42 value
+  (user decision 2026-11-09) leaves little room, so R_mod must be large ([Accepted risks](#accepted-risks)).
 - **Bus recovery:** the firmware can clock SCL nine times on GPIO9. CAM_EN (module PWDN) may serve as
   a camera reset once its polarity is measured; until then the SCCB bus clear is the only recovery
   ([firmware-rules](firmware-rules.md#rules)).
@@ -244,7 +246,7 @@ p.12), held by the `viaParity` entries "CSI lanes, P4 side" and "CAM lanes, FPC 
 
 ### CAM_3V3
 
-- The module's 3.3 V input (pin 15) is CAM_3V3. It comes from +3V3 through R53, a 0 Ω jumper. R53 is
+- The module's 3.3 V input (pin 15) is CAM_3V3. It comes from +3V3 through R53, a 0 Ω 0402 jumper. R53 is
   the one place the camera supply can be opened, to measure the module's current or to power it
   separately.
 - C30 and C32 decouple CAM_3V3 at J4 pin 15. TP10 ("CAM_3V3") is the test pad.
@@ -324,16 +326,19 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
 
 - **Pull-down:** STROBE_CAM is high impedance until the sensor enables the output (OV9281 Table 1-2).
   R48 holds it low. It loads the sensor output lightly.
-- **Buffer:** U7, a TI SN74LV1T34 (SOT-23-5), is a single buffer with a
-  5.5 V-tolerant input and +3V3 supply. It turns the module-level strobe into a 3.3 V signal.
+- **Buffer:** U7, a Tech Public TP74LV1T34 (SOT-23-5, the pinout and input thresholds of TI's
+  SN74LV1T34), is a single buffer with an input tolerant above its +3V3 supply. It turns the
+  module-level strobe into a 3.3 V signal.
   - Without U7, the P4 could not read a 1.8 V strobe: its VIH is 0.75 × VDD (P4 datasheet p.89).
-  - U7's VIH is at most 1.39 V at VCC 3.0–3.3 V and 1.48 V at 3.6 V (TI SCLS743E §6.5), interpolated at
+  - U7's VIH is at most 1.39 V at VCC 3.0–3.3 V and 1.48 V at 3.6 V over −40…125 °C
+    (TP74LV1T34 datasheet p.3), interpolated at
     the top of the +3V3 ±5 % envelope. The sensor's VOH is at least 1.62 V at DOVDD 1.8 V (OV9281
     Table 8-3), scaled to DOVDD −5 %. The scaled VOH must stay above U7's VIH. VOL 0.18 V is under U7's
-    VIL 0.65 V.
+    VIL 0.65 V (p.3).
   - U7 works for any module I/O level from 1.7 V to 3.3 V without a part change, and its input stays
-    within its 5.5 V rating.
-  - C31 decouples U7's supply at pin 5 (SCLS743E §9 asks for 0.1 µF). U7 pin 1 is NC.
+    below its 7 V absolute maximum (p.2).
+  - C31 decouples U7's supply at pin 5 with the 0.1 µF TI asks for this function (SCLS743E §9).
+    U7 pin 1 is NC.
 - **Output:** U7 drives STROBE to GPIO12 (U6.14), which the P4 captures with an ETM event. STROBE also
   feeds the LED driver's hardware timeout through R54
   ([led](led.md#strobe-gating-and-timeout)). U7 drives one way only, camera to board. TP9 ("STB") is
@@ -357,6 +362,11 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
   DOVDD ≥ 2.5 V. The 15-pin port is the Raspberry Pi camera pinout, whose host drives I²C at 3.3 V,
   which suggests the module expects it. A 1.8 V module without a shifter needs a level shifter on the
   next board revision.
+- **Module SCCB pull-ups must be weak.** With R41/R42 fitted, any pull-up on the module adds in
+  parallel, and the pair must stay ≥ R_min ([SCCB](#sccb)): R_mod ≥ R_min × R_low / (R_low − R_min),
+  with R_low the board pull-up at its low tolerance. The fee-free R41/R42 value (user decision
+  2026-11-09) sits close to R_min, so only a weak module pull-up fits; a stronger one means
+  removing R41/R42 (first-board check 2).
 - **FFC pin map and mating from vendor material.**
   - The pin table comes from the vendor drawing.
   - That the module connector is bottom-contact comes from a vendor photo (the stiffener on the lens
@@ -401,8 +411,8 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
 5. **CSI at full rate.** Run 2 lanes at the full lane rate (800 Mbit/s per lane) with a frame-error
    count before the design is released. This covers the impedance spread, the pad capacitance and the
    unknown module-internal lengths. If errors show, try a lower lane rate first.
-6. **Camera current.** Lift R53, or measure across it, with the sensor streaming. Compare with the
-   camera budget in [+3V3 loads](power.md#3v3-loads).
+6. **Camera current.** Lift R53 (0402) and fit a 0.1 Ω 0402 shunt, or measure across it, with the
+   sensor streaming. Compare with the camera budget in [+3V3 loads](power.md#3v3-loads).
 7. **Mechanics.** Measure the module connector's real height (2.1 or 2.5 mm). Check the enclosure
    puts the module's front face 2.1–9.3 mm behind the board, with the lens tip no more than 5.4 mm
    below the top face. Measure J4's insertion depth and the cable's stiffener, and check the FFC loop

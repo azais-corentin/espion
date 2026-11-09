@@ -82,7 +82,7 @@ for `+5V_BST` and `+32V`. Current budgets: [power.md](power.md), [led.md](led.md
   | Part | Side | Notes |
   |---|---|---|
   | U6 ESP32-P4-Core | bottom | Hand-soldering footprint without paste; iron only, pad by pad, no hot air (user decision 2026-11-01) — [mcu](mcu.md#module) |
-  | U2 DP1435-5V | bottom | Through-hole, soldered from the top — [power](power.md#poe-input) |
+  | U2 DP1435-5V | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C11, C52 and C14's sleeve (C14's can against U2.4), inspect them after — [layout](layout.md#assembly) |
   | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over R46, C3, R8 — [layout](layout.md#assembly) |
   | TP2, TP3, TP7 | top | Through-hole GND wire loops (RH-5002) — [mcu](mcu.md#test-points) |
 
@@ -100,15 +100,17 @@ Power:
 - DP1435 output set-point tolerance and maximum capacitive load not specified — [power](power.md#poe-input).
 - Mux reference CP2 taken from `+3V3`, not a precision reference — [power](power.md#power-mux).
 - USB current limited by a firmware rule only (user decision 2026-10-31); the USB-alone estimate sits against the 500 mA port limit — [power](power.md#usb-vbus).
+- VBUS_SENSE pin current while `+3V3` is off is an open point: the P4 datasheet gives no injection limit, and the fee-free R27/R28 values raised it (user decision 2026-11-09) — [power](power.md#usb-vbus), [mcu](mcu.md#usb-c).
 - PoE loss with USB attached loads the host port up to the mux limit until firmware drops LED_EN, BST_EN and LED_PWR_EN — [power](power.md#power-mux).
 - PoE budget at the `+5V` peak: input power and pair current come from the peak load and the DP1435's 84 % maximum efficiency (p.5); a lower efficiency would reach the 12.95 W 802.3af limit and J1's 350 mA per centre tap (user decision 2026-11-02, "Accept, measure on first boards"; a firmware LED limit on PoE follows if a limit is exceeded) — [power](power.md#poe-input).
 - C15/C23 closer to U4 than JLCPCB's 1.0 mm QFN spacing (`kicad_query distance`) — [power](power.md#accepted-risks).
 - C12 outboard of C10 at the buck input; `+3V3` capacitance outside TI's tested cells — [power](power.md#33-v-buck).
-- Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C14, C22 (not stated), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [layout](layout.md#assembly).
-- VBUS, the connector-side USB pair, CAM_EN, SCCB and a short stretch of XVS run on B.Cu right under U2's flyback magnetics; XVS's long run stays west of them (user decision 2026-11-04, "Partial + document") — [layout](layout.md#bcu-under-u2).
+- Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C22 (not stated), C14, C46, C47 (255 °C peak for 5 s, GVZ datasheet p.2), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [power](power.md#accepted-risks), [layout](layout.md#assembly).
+- VBUS, the connector-side USB pair, CAM_EN, SCCB and a short stretch of XVS run on B.Cu right under U2's flyback magnetics; XVS's long run stays west of them (user decision 2026-11-04, "Partial + document"). The +3V3 west-edge loop joined them with C14's larger can (design review 2026-11-09) — [layout](layout.md#bcu-under-u2).
 
 Camera:
 - Camera module I/O level unknown, no sample (user decision 2026-10-31); assembly options kept — [camera](camera.md#xvs-level-options).
+- Module SCCB pull-ups must be weak: with the fee-free R41/R42 (user decision 2026-11-09) a module pull-up in parallel must keep the pair at or above the I²C sink limit's R_min — [camera](camera.md#accepted-risks).
 - FFC pin mapping read from a vendor photo; insertion depth, stiffener and bend radius unknown — [camera](camera.md#ffc-orientation).
 - No impedance control: MIPI pair impedance follows JLCPCB's ±20 % width tolerance (user decision 2026-11-01) — [layout](layout.md#impedance).
 - MIPI clock pairs at 2W without a GND guard (user decision 2026-11-01, "Accept 2W, no guard") — [camera](camera.md#csi-2-link).
@@ -118,14 +120,15 @@ Camera:
 - CAM_CLK_P/N uncoupled between J4 and their vias, where P takes up its length match (user decision 2026-11-04, "Accept + record") — [layout](layout.md#lengths-and-skew).
 
 LED:
-- Q1 close to LEDs D15/D4, the crystal Y1 (rated to 85 °C) and C46; their temperature rise at full boost output (and with the headroom loop) is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal), [layout](layout.md#thermal).
-- LED boost output set by a firmware headroom loop (PWM on `BST_EN`, `LED_K_SENSE` on GPIO23); without it the boost runs at full scale and Q1 dissipates as before (user decision 2026-11-03, design option 1b) — [led](led.md#headroom-control).
+- Q1 close to LEDs D15/D4, the crystal Y1 (rated to 85 °C) and C46; their temperature rise with the headroom loop (and in the full-scale start-up burst) is unknown (user decision 2026-11-01, "Measure first boards") — [led](led.md#thermal), [layout](layout.md#thermal).
+- LED boost output set by a firmware headroom loop (PWM on `BST_EN`, `LED_K_SENSE` on GPIO23), now a requirement: if it fails at full boost output with the LEDs pulsing, Q1's junction reaches or exceeds its 150 °C maximum; FW-22 falls back to LEDs off, and its power rule (from the fine steps on, after the start-up burst) trips a loop stuck at full scale on most units, well before Q1 overheats (user decision 2026-11-03, design option 1b; user decision 2026-11-09) — [led](led.md#headroom-control), [led](led.md#q1-protection).
 - No temperature sensor: the NTC was dropped for `LED_K_SENSE` (user decision 2026-11-03); C48 is smaller than HDG's 0.1 µF at that ADC pin — [led](led.md#led_k-sense).
-- STROBE hardware timeout window set by U9's threshold spread (user decision 2026-11-02, "Accept 0.525–1.026 ms") — [led](led.md#strobe-gating-and-timeout).
-- A firmware failure that leaves +32V at full scale and lets STROBE run to the timeout would take Q1's junction above its 175 °C limit; only firmware prevents it (FW-9 pulse-width fault, FW-22 power rule; design review 2026-11-03) — [led](led.md#q1-protection).
+- STROBE hardware timeout window set by U9's threshold spread and C33's X7R tolerance (user decision 2026-11-09, window 0.61–1.79 ms, superseding the 2026-11-02 "Accept 0.525–1.026 ms") — [led](led.md#strobe-gating-and-timeout).
+- A firmware failure that leaves +32V at full scale and lets STROBE run to the timeout would take Q1's junction above its 150 °C limit; only firmware prevents it (FW-9 pulse-width fault, FW-22 power rule; design review 2026-11-03) — [led](led.md#q1-protection).
+- R69's temperature coefficient takes from the thin LED-current margin, and the V(R69) reading at first-board check 11's run gives the current only through R69's resistance at its temperature (user decision 2026-11-09) — [led](led.md#led-current).
 - Boost output capacitance outside the TPS61170's recommended 1–10 µF output capacitance range — [led](led.md#boost-converter).
 - PHY_RST_N and LED_K_SENSE run inside the LED ring, close to the pulsed ring copper (static line; the LED_K_SENSE divider node is read late in each pulse) — [layout](layout.md#led-driver-and-ring).
-- Small parts beside big ones: R5/C8 beside C46, R67/C33/R68 and R70 beside Q1, U12 beside L2 (courtyards touching or nearly so): possible reflow shadowing, inspected on the first boards — [led](led.md#accepted-risks), [layout](layout.md#assembly).
+- Small parts beside big ones: R5/C8 beside C46, U12 beside L2 (courtyards touching or nearly so): possible reflow shadowing, inspected on the first boards — [led](led.md#accepted-risks), [layout](layout.md#assembly).
 
 MCU:
 - Status LED D1 on `+3V3`: green/blue VF up to 3.2 V at 5 mA (datasheet) against the lowest `+3V3` set point (user decision 2026-11-02, "Accept, check on first boards", taken on the lower minimum of the ± 5 % envelope) — [mcu](mcu.md#status-led).
@@ -139,6 +142,7 @@ Ethernet:
 - MDI pairs swapped at J1: link relies on the PHY's auto-MDIX (design review 2026-11-01) — [ethernet](ethernet.md#magjack-and-mdi).
 - MDI pairs P/N-inverted between U1 and J1 (no swap vias): link relies on the IP101G's polarity handling, at both ends of the cable (user decision 2026-11-04: "This obviously means that polarity reversion is supported.") — [ethernet](ethernet.md#mdi-pairs-crossed-at-j1).
 - MDI spacing below 3× inside U1's escape — [ethernet](ethernet.md#magjack-and-mdi).
+- ISET resistor R6's ±1 % band ends slightly above the IP101G's 6.19 kΩ ±1 % (user decision 2026-11-09, fee-free value) — [ethernet](ethernet.md#regout-and-iset).
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
 - REGOUT reaches C6 through a long track, two vias and a short pour, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
@@ -165,8 +169,8 @@ Power ([power](power.md#first-board-checks)):
 10. XVS and SCCB edges at J4 and USB enumeration and transfer at the PoE peak load, against USB power alone (B.Cu under U2's magnetics) — [layout](layout.md#bcu-under-u2).
 
 LED ([led](led.md#first-board-checks)):
-11. Thermocouples on D15, D4, C46 and Y1's case at 0.5 ms / 120 fps for 30 min, with the headroom loop and at full boost output; if an LED is above the derating curve, lower R61; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the B.Cu zone's east edge back — [led](led.md#thermal), [layout](layout.md#thermal).
-12. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14), at full scale and down to the loop's lowest set point; V(`LED_K`) = `LED_K_SENSE` × (R70 + R76)/R76 against Q1's drain, the drain voltage where the current starts to sag, the in-pulse vs between-pulse `LED_K_SENSE` difference with Q1 conducting and off on a low-VF and a high-VF unit (sets FW-22's sink-off threshold), the start-up coarse step and the ADC conversion time — [led](led.md#boost-converter), [led](led.md#first-board-checks).
+11. Thermocouples on D15, D4, C46, Y1's case and Q1's drain lead at 0.5 ms / 120 fps for 30 min, with the headroom loop running (no long run at full boost output: Q1's junction limit); if an LED is above the derating curve, lower R61; Y1 must stay ≤ 80 °C, else lower the LED current or duty, or pull the B.Cu zone's east edge back; read V(R69) early in the run, as R69's temperature coefficient shifts it — [led](led.md#thermal), [layout](layout.md#thermal).
+12. `+32V` droop and recovery and the LED current at the end of a pulse (TP13, TP14), in the full-scale start-up burst and down to the loop's lowest set point; V(`LED_K`) = `LED_K_SENSE` × (R70 + R76)/R76 against Q1's drain, the drain voltage where the current starts to sag, the in-pulse vs between-pulse `LED_K_SENSE` difference with Q1 conducting and off on a low-VF and a high-VF unit (sets FW-22's sink-off threshold), the start-up coarse step, the ADC conversion time and FW-22's power rule tripping at full scale — [led](led.md#boost-converter), [led](led.md#first-board-checks).
 13. Boost start-up waveform and a 0 → full-current pulse load step (output capacitance outside TI's range) — [led](led.md#boost-converter).
 14. STROBE timeout: a pulse of the exposure cap passes whole, longer ones are cut by the timeout (window in led.md); STROBE's width matches the set exposure within 50 µs, and an over-long STROBE trips FW-9's pulse-width fault — [led](led.md#strobe-gating-and-timeout), [led](led.md#first-board-checks).
 

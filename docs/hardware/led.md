@@ -15,7 +15,7 @@ decisions, the accepted risks and the checks.
 |---|---|---|---|
 | [LED power switch](#led-power-switch) | U8 TPS22918, C34, C35, R57 | `LED_PWR_EN` GPIO20 (U6.16) | – |
 | [Boost converter](#boost-converter) | U10 TPS61170, L3, D3, C36, C38, C39, C41, C43, C45, C46, C47, R59, R62, R65, R66 | `BST_EN` GPIO53 (U6.71), PWM | TP13 `+32V` |
-| [Current sink](#current-sink) | U11 TLV9061, Q1 IRLR024N, R69, NT1, R60, R61, R63, R64, R67, R68, C40, C42, C44 | – | TP12 `LED_ON`, TP14 `ISNS` |
+| [Current sink](#current-sink) | U11 TLV9061, Q1 HL2310A, R69, NT1, R60, R61, R63, R64, R67, R68, C40, C42, C44 | – | TP12 `LED_ON`, TP14 `ISNS` |
 | [STROBE gating and timeout](#strobe-gating-and-timeout) | U9 SN74LVC1G97, C33, R54, R55, R56, R58, C37 | `LED_EN` GPIO11 (U6.13), STROBE GPIO12 (U6.14) | TP11 `LED_EN`, TP9 `STB` |
 | [LED ring](#led-ring) | D4–D15 A-SC880IR3C | – | – |
 | Sense | R71, R72, C49 (`VLED_SENSE`); R70, R76, C48 (`LED_K_SENSE`) | GPIO21 ADC1_CH5 (U6.17), GPIO23 ADC1_CH7 (U6.19) | – |
@@ -45,7 +45,7 @@ has the same DBV pinout (SLVSD76C p.3).
 | Item | Requirement / formula | Reason / source |
 |---|---|---|
 | ON | `LED_PWR_EN`, GPIO20 (U6.16), R57 pull-down | ON must not float (SLVSD76C p.3). The pull-down keeps the switch off from reset until firmware drives the pin, below ON VIL 0.5 V (p.4) |
-| CT | C35 sets the slew rate: SR = 0.55 × C35 (pF) + 30 µs/V (SLVSD76C p.14 Eq. 3, Table 2). `+5V_BST` rise time = SR × VIN. Inrush = C_out × VIN / t_rise (p.19 Eq. 9), with C_out the capacitance behind U8: C36, then C43/C45/C46/C47 through L3 and D3 | The inrush stays well under U8's 2 A rating, so the +5V rail sees no step |
+| CT | C35 sets the slew rate: SR = 0.55 × C35 (pF) + 30 µs/V (SLVSD76C p.14 Eq. 3, Table 2), with C35 at its tolerance and the X7R temperature coefficient (±15 %, FH MLCC datasheet p.5); TI measures Table 2 with an X7R CT (p.14), and CT must be rated ≥ 20 V at VIN 4–5.5 V (Table 3 p.15). `+5V_BST` rise time = SR × VIN. Inrush = C_out × VIN / t_rise (p.19 Eq. 9), with C_out the capacitance behind U8: C36, then C43/C45/C46/C47 through L3 and D3 | The inrush stays well under U8's 2 A rating, so the +5V rail sees no step |
 | QOD | Pin 5 open (no-connect flag) | Quick output discharge disabled, an allowed option (p.3, p.13) |
 | Input | C34 at U8.1, CIN ≥ 1 µF (p.4, p.17) | The +5V bulk (C20, C22) is larger than `+5V_BST`'s C36, as p.17 advises |
 | Load | Boost input current at its current limit: ILIM max (TPS61170, SLVS789D p.5) minus half the inductor ripple, peak = ILIM max | Below U8's 2 A rating at 70 °C (p.4); VIN on PoE stays ≤ U8's 5.5 V maximum |
@@ -73,9 +73,10 @@ a summary of it. `PWR_SRC` comes from the [power mux](power.md#power-mux); low m
 
 **Power-up (on PoE only)**
 1. `LED_PWR_EN` high.
-2. Wait a fixed 50 ms for `+5V_BST`. There is no `+5V_BST` sense; the 10–90 % rise time from the
-   C35 formula above (SLVSD76C Eq. 3 p.14) is much shorter than 50 ms, so 50 ms covers the full
-   swing and the turn-on delay.
+2. Wait a fixed 60 ms for `+5V_BST` (user decision 2026-11-09, with the X7R C35). There is no
+   `+5V_BST` sense; the full swing from the C35 formula above (SLVSD76C Eq. 3 p.14: the 10–90 %
+   rise / 0.8 plus the turn-on delay, C35 at its high tolerance, `+5V` at its top) stays under
+   60 ms with margin, typical figures only.
 3. `BST_EN` high.
 4. Wait for +32V on `VLED_SENSE`.
 5. `LED_EN` pulses.
@@ -125,7 +126,7 @@ Everything on +32V must be rated above the maximum output:
 |---|---|
 | U10 SW | 40 V abs. max (p.3) against Vout max plus D3's drop |
 | D3 | Reverse voltage above Vout max |
-| Q1 IRLR024N | 55 V VDS |
+| Q1 HL2310A | 60 V VDS (HL2310A p.1) |
 | C43, C45, C46, C47 | Rated voltage above Vout max with margin |
 | R65, R71 (0603) | Working voltage above Vout max (UNI-ROYAL chip-resistor datasheet p.5) |
 
@@ -152,8 +153,9 @@ Firmware (FW-22 in [firmware rules](firmware-rules.md#rules)) reads V(`LED_K`) t
 at the end of the pulse stays in a band, whose edges are set in FW-22:
 
 - **Lower edge.** At least Q1's minimum VDS to hold the current at VGS ≤ U11's swing:
-  I_LED max × RDS(on) (0.080 Ω at VGS 5 V × 1.5 hot, IRLR024N p.2), plus the reading error
-  ([LED_K sense](#led_k-sense)) and a margin above that need.
+  I_LED max × RDS(on) (≤ 125 mΩ at VGS 4.5 V, HL2310A p.2, × 1.5 hot, Fig. 4 p.3 at 100 °C), plus
+  the reading error ([LED_K sense](#led_k-sense)) and a margin above that need. U11's swing must
+  reach the 4.5 V of that figure: VGS = `+5V` on PoE minus U11's swing minus V(`ISNS`).
 - **Upper edge.** The band is at least 7 duty steps wide (each step is ≤ 0.13 % of the PWM period
   times Vout(duty 1), FW-8), so the loop settles inside it instead of hunting between two steps.
 - **Set points.** +32V = string + R69 × I_LED + copper + droop + ESR step + V(`LED_K`), from the
@@ -173,10 +175,14 @@ at the end of the pulse stays in a band, whose edges are set in FW-22:
   above. After the step V(`LED_K`) lands never below the band's lower edge and a bounded amount
   above its top, set by S_max and the reading error at that voltage. The bank then takes
   (V_after − V_top) / ΔV pulses to
-  come down, and the fine steps finish. Q1 dissipates the duty-1 figures only for the first
-  frames, then ≤ (V_after + droop / 2) × I_LED max × duty.
-- **Fallback.** Without a valid reading the firmware holds D = 1: the full-scale state the
-  [Thermal](#thermal) bound and the drain copper are sized for.
+  come down, and the fine steps finish. Q1 sees full-scale and near-full-scale figures in the
+  start-up burst: the lit frames that make the first average plus that bleed-down after the coarse
+  step (FW-22), then ≤ (V_after + droop / 2) × I_LED max × duty in the band. The burst is bounded
+  in [Thermal](#q1-dissipation).
+- **Fallback.** Without a valid reading the firmware turns the LEDs off (`LED_EN` low) and
+  reports; it never holds D = 1 with the LEDs pulsing. The loop is a requirement, not an
+  optimisation (user decision 2026-11-09): at full scale Q1's junction reaches its maximum
+  ([Thermal](#thermal)).
 
 ### Power stage
 
@@ -264,7 +270,7 @@ Firmware waits for `VLED_SENSE` instead of a fixed delay.
 ### Output capacitors C46, C47
 
 The bulk is two SMD aluminium electrolytics (ACMECON GVZ series, low impedance). C46 sits at the pulse loop, next
-to Q1's tab. C47 sits at the boost end of the +32V trunk. Requirement: rated above Vout max with
+to Q1's drain copper. C47 sits at the boost end of the +32V trunk. Requirement: rated above Vout max with
 margin, low ESR.
 
 The capacitance comes from the pulse. With both at their capacitance tolerance, a pulse of
@@ -283,6 +289,8 @@ Why this part:
 - **Temperature and voltage.** Rated −55…+105 °C (GVZ datasheet p.1), and the rated voltage is above
   Vout max with margin.
 - **Stock.** In stock on 2026-11-09.
+- **One part with C14.** The PoE input filter's C14 uses the same part, so both share one BOM line
+  (user decision 2026-11-09; [power](power.md#output-and-filter)).
 
 The can height is the datasheet length plus tolerance plus seat plate. The can must stay outside
 the cone of the `layout.heightZones` entry "lens view cone" in `.omp/kicad.json`, which takes the
@@ -293,10 +301,12 @@ fully on the pads.
 ### Compensation
 
 R62 + C41 put a zero at 1 / (2π × R62 × C41), and C39 puts a pole at about 1 / (2π × R62 × C39),
-all on COMP. With TI's small-signal model (SLVS789D Eq. 7–11, p.19: Gea 320 µS, Rsense 0.1 Ω;
-inputs Vin, Vout, and Cout = C43 + C45 + C46 + C47 as built), the loop crosses over at a few
-hundred Hz with a comfortable phase margin. The right-half-plane zero and the ESR zero of
-C46 ∥ C47 (1 / (2π × ESR × C)) both sit above the crossover.
+all on COMP. C41 counts with its tolerance and the X7R temperature coefficient (±15 %, FH MLCC
+datasheet p.5), which spreads the zero by about ±25 %. With TI's small-signal model (SLVS789D
+Eq. 7–11, p.19: Gea 320 µS, Rsense 0.1 Ω; inputs Vin, Vout, and Cout = C43 + C45 + C46 + C47 as
+built), the loop crosses over at a few hundred Hz with a comfortable phase margin over the whole
+zero spread. The right-half-plane zero and the ESR zero of C46 ∥ C47 (1 / (2π × ESR × C)) both
+sit above the crossover.
 
 At the headroom loop's set points the crossover rises with (1 − D_sw) = Vin × η / Vout. TI's model
 (Eq. 7–11) puts it higher at lower Vout, with the phase margin a few degrees higher, because the
@@ -371,7 +381,7 @@ See [layout](layout.md#led-driver-and-ring) for the copper and spacing rules.
 
 ## Current sink
 
-Q1 (IRLR024N, 55 V logic-level N-MOSFET in TO-252) sits in series with the bottom of the string:
+Q1 (HL2310A, R+O, 60 V logic-level N-MOSFET in SOT-23) sits in series with the bottom of the string:
 `LED_K` is the drain and `ISNS` the source. R69 goes from `ISNS` to GND. U11 (TLV9061 on +5V, TI
 SBOS839N) regulates the voltage across R69 to the setpoint `ISET`.
 
@@ -403,9 +413,9 @@ The datasheet's 1200 mA peak rating applies only to ≤ 100 µs pulses at ≤ 1 
 0.5 ms / 6 % pulses here don't qualify for it. The user chose to stay on the DC curve instead of
 a lower current that would keep margin (user decision 2026-10-31).
 
-R61 sets the current. The worst case (lowest to highest I_LED from the formula above) must stay
-at or under I_max(30 °C). The next E96 step up for R61 was rejected: its worst case is over the
-curve at 30 °C.
+R60 and R61 set the current. The worst case (lowest to highest I_LED from the formula above) must
+stay at or under I_max(30 °C). The pair is chosen from fee-free values (user decision 2026-11-09)
+so that its worst case stays under the curve at 30 °C.
 
 Inputs of the worst case:
 
@@ -415,22 +425,23 @@ Inputs of the worst case:
 | +5V | `+5V` on PoE, the only source the LEDs run on | [Boost input range](#boost-input-range). U11 and R63 are on `+5V`, not `+5V_BST` |
 | Resistors | Tolerance corners of every value-setting resistor | All value-setting resistors are one tolerance class |
 | Op-amp offset Vos | ±1.6 mV | SBOS839N p.13 |
+| R69 temperature coefficient | ±800 ppm/°C (UNI-ROYAL low-ohm chip-resistor datasheet p.6, 0.03 Ω < R < 1 Ω). I_LED ∝ 1 / R69 at R69's own temperature | The worst case takes R69 at 25 °C; an R69 that drops by TCR × ΔT when warm raises the current by the same fraction, out of the same margin |
 
 Nominal assumes +3V3 3.3 V and +5V 5.0 V. The LED current depends on the DC level of +3V3, which
 the buck's set point bounds. So it uses the DC set-point range, not the generic ±5 % envelope.
 With the envelope the margin to the curve would be smaller.
 
 The margin to I_max(30 °C), divided by the curve's slope, is the degrees of LED heating above the
-30 °C ambient that the setting allows: a thin allowance. The
-[first-board checks](#first-board-checks) test it.
+30 °C ambient that the setting allows, shared with the current rise from R69's temperature
+coefficient (the TCR row): a thin allowance. The [first-board checks](#first-board-checks) test it.
 
-R69 is a 1206 sense resistor with a low temperature coefficient. Its rating must cover
-I_LED max² × R69 during a pulse and the average over the frame.
+R69 is a 1206 sense resistor. Its rating must cover I_LED max² × R69 during a pulse and the
+average over the frame; its temperature coefficient is in the table above.
 
 The sense is Kelvin-connected:
 
 - **High side:** net tie NT1 sits next to R69.1. `ISNS_K` leaves through it to R64. The pulse
-  reaches R69.1 from Q1.3 through the F.Cu ISNS pour; its lobe round the tap south of
+  reaches R69.1 from Q1.2 through the F.Cu ISNS pour; its lobe round the tap south of
   R69.1 carries no load current, so the pulse path is not in the measurement.
 - **Low side:** R69.2 returns the pulse to GND through the F.Cu GND pour with several vias, plus a
   short link to one more. The series resistance (via and copper, ρCu 1.72e-8 Ω·m, 35 µm copper)
@@ -441,18 +452,20 @@ The sense is Kelvin-connected:
 | Part | Role |
 |---|---|
 | C42 | U11 integrator capacitor (SINK_DRV to IN−), with R64 |
-| R67 | Gate resistor. It isolates U11's output from Q1's input capacitance (480 pF, IRLR024N p.2). Gate-charge peaks are small and µs long |
+| R67 | Gate resistor. It isolates U11's output from Q1's input capacitance (Ciss, HL2310A p.2 and Fig. 5 p.3). Gate-charge peaks are small and µs long |
 | R68 | Gate pull-down: Q1 stays off while U11 is unpowered |
 | C44 | U11 supply bypass |
 
 U11 swings to within 20–60 mV of its rails (SBOS839N p.13), so VGS_max = +5V minus that swing. That
-is well above Q1's ≈ 3.5 V plateau (IRLR024N p.4 Fig. 6), so Q1 has drive left over.
+is well above the gate voltage Q1 needs at the LED current (HL2310A p.3 Fig. 2, transfer curve at
+25 °C and 125 °C; the gate-charge plateau is ≈ 3.3 V even at 3 A, Fig. 6), so Q1 has drive left
+over.
 
-The loop estimate uses gm(I) = gfs × √(I / I_ref), scaled from gfs 8.3 S at 11 A (p.2) to the LED
-current. The source follower then has a gain of gm × R69 / (1 + gm × R69), and the loop crosses
-over at gain / (2π × R64 × C42). That is below the gate pole (R67 with Q1's Ciss) and U11's 10 MHz
-GBW. The datasheet doesn't give gm at the LED current, so the phase margin is an estimate:
-[first-board check](#first-board-checks).
+The loop estimate takes gm at the LED current from the slope of the transfer curve (HL2310A p.3
+Fig. 2); the datasheet gives no gfs. The source follower then has a gain of gm × R69 / (1 + gm ×
+R69), and the loop crosses over at gain / (2π × R64 × C42). That is below the gate pole (R67 with
+Q1's Ciss) and U11's 10 MHz GBW. Read from a typical curve, gm is an estimate, so the phase
+margin is too: [first-board check](#first-board-checks).
 
 In the headroom loop's band Q1 runs near or inside its linear (triode) region at the end of a
 pulse. U11 then drives VGS higher, still under its VGS_max swing, because the band's minimum is a
@@ -461,11 +474,13 @@ adds phase margin. An estimate too: [first-board check](#first-board-checks).
 
 **Q1 ratings.**
 
-- **Safe operating area:** Q1's worst VDS × I_LED max for t_pulse lies far inside the 1 ms line
-  (IRLR024N p.4 Fig. 8).
+- **Safe operating area:** Q1's worst full-scale VDS (Vout max − 12 × VF min − R69 and copper
+  drops) × I_LED max lies inside the 1 ms line for t_pulse, and inside the 10 ms line up to the
+  timeout window's upper end (HL2310A p.4 Fig. 7, single pulse at 25 °C). Repeated pulses are
+  bounded by the junction temperature ([Thermal](#thermal)), not by this figure.
 - **Turn-off:** the overshoot is L_loop × I_LED max / t_off (estimated loop inductance from the
-  layout, t_off ≥ 0.3 µs), so VDS peak = Vout max + that overshoot, below the 55 V rating. The part
-  is also avalanche-rated (EAS 68 mJ).
+  layout, t_off ≥ 0.3 µs), so VDS peak = Vout max + that overshoot, below the 60 V rating. The
+  datasheet gives no avalanche rating, so the overshoot must stay under 60 V on its own.
 - **Body diode:** never conducts, because the source goes to R69 and GND.
 
 ### LED_K sense
@@ -473,7 +488,7 @@ adds phase margin. An estimate too: [first-board check](#first-board-checks).
 R70 from `LED_K`, Q1's drain, and R76 to GND divide V(`LED_K`) down into `LED_K_SENSE` on
 GPIO23 = ADC1_CH7 (U6.19). C48 sits at the pin. They replace the NTC TH1 and its +3V3 pull-up,
 and reuse that route (user decision 2026-11-03: "Replace TH1/R70 on NTC_SENSE (GPIO23)", divider
-"100k / 10.0k (÷11)"). R70 sits where TH1 was, its `LED_K` pad joined to Q1's tab copper; R76 and
+"100k / 10.0k (÷11)"). R70 sits where TH1 was, its `LED_K` pad joined to Q1's drain copper; R76 and
 C48 sit next to U6.19.
 
 | Item | Formula / requirement |
@@ -541,11 +556,14 @@ linearly in VCC.
 | Longest, design bound | Envelope maximum, VT− minimum; C and R high |
 
 The published window is the design bound, from the shortest to the longest of those cases. The DC
-set-point range narrows it.
+set-point range narrows it. C33 counts with its tolerance and the X7R temperature coefficient
+(±15 %, FH MLCC datasheet p.5) in "low" and "high".
 
 The user's answer was "≤ 0.5 ms at ≤ 120 fps (6 %)" (user decision 2026-10-31). The option they
 chose said the timeout cuts above ≈ 0.6 ms. The circuit can't cut that close: U9's threshold spread
-sets the window. The user accepted the window (user decision 2026-11-02: "Accept 0.525–1.026 ms"):
+sets the window. The user accepted the window (user decision 2026-11-02: "Accept 0.525–1.026 ms"),
+then moved C33 to a fee-free X7R part with R55 raised to keep the 0.5 ms pass, which widens the
+window to 0.61–1.79 ms (user decision 2026-11-09, superseding the 2026-11-02 window):
 
 - the RC/U9 timeout stays a backstop;
 - firmware limits pulses to 0.5 ms;
@@ -554,8 +572,8 @@ sets the window. The user accepted the window (user decision 2026-11-02: "Accept
 
 - **Passing 0.5 ms:** even the shortest unit passes a 0.5 ms pulse, with margin at the design bound
   and more on the set-point range.
-- **Why the cut can't be tighter:** U9's own VT− spread sets the ≈ 2:1 width of the window, so no
-  RC value cuts closer above 0.5 ms.
+- **Why the cut can't be tighter:** U9's own VT− spread sets a ≈ 2:1 width, and C33's X7R
+  tolerance and temperature coefficient widen it further, so no RC value cuts closer above 0.5 ms.
 
 Further checks:
 
@@ -608,7 +626,7 @@ therefore drops 12 × VF, up to 12 × (VF max + 0.1 V) with the tolerance.
 |---|---|
 | String, VF max + test tolerance | 12 × (VF max + 0.1 V) |
 | R69 | I_LED max × R69 |
-| Q1 RDS(on) | RDS(on) at VGS 5 V × 1.5 hot (IRLR024N p.2) × I_LED max |
+| Q1 RDS(on) | RDS(on) at VGS 4.5 V × 1.5 hot (HL2310A p.2, Fig. 4 p.3) × I_LED max |
 | +32V copper | Bound over D3 → D4 (the C46 path that supplies the pulse is shorter) |
 | Droop over the pulse | I_LED max × t_pulse / C_bank (capacitor tolerance low) |
 | ESR step | I_LED max × ESR of C46 ∥ C47 |
@@ -628,8 +646,8 @@ headroom loop removes most of that by lowering +32V to the string
 
 Q1 takes up whatever voltage the string doesn't use. With the [headroom loop](#headroom-control)
 running, that is the loop's band at the end of the pulse plus the bank's droop over it. At full
-scale (duty 1: the first frames after start-up, and the fallback when the loop or its reading
-fails, FW-22) it is everything between +32V and the string.
+scale (duty 1: only the start-up burst, the first average and the bleed-down after the coarse step, FW-22) it is
+everything between +32V and the string.
 
 P_pulse = V_DS × I_LED, and the average is P_pulse × duty (duty = t_pulse × fps).
 
@@ -640,37 +658,51 @@ P_pulse = V_DS × I_LED, and the average is P_pulse × duty (duty = t_pulse × f
 | Duty 1, typical | Vout nominal − string at VF typ − R69 − copper | Nominal current |
 | Duty 1, worst | Vout max − 12 × VF min − R69 − copper | I_LED max |
 
-IRLR024N (p.1) gives RθJC 3.3 °C/W, RθJA 110 °C/W on the minimum pad and 50 °C/W on 1 in² of
-copper, and TJ max 175 °C. TJ = T_amb + P_avg × RθJA, at the 30 °C ambient maximum. The drain
-copper is still sized for duty 1, because the loop is firmware.
+HL2310A (p.1) gives RθJA 104 °C/W (the test board is not stated) and TJ max 150 °C; Fig. 9 (p.4)
+gives the normalized transient impedance Zθ(t, D). The junction peaks at
+TJ = T_amb + P_pulse × Zθ(t_pulse, duty) × RθJA, at the 30 °C ambient maximum; the average alone is
+T_amb + P_avg × RθJA.
+
+- **Loop running:** the loop rows give a small rise. The loop is Q1's design basis, a requirement
+  (user decision 2026-11-09).
+- **Full scale, continuous:** the duty-1 worst row at t_pulse and t_pulse × fps reaches about
+  TJ max on the datasheet figure, so it is not an operating state. FW-22 never holds duty 1 with
+  the LEDs pulsing, and its power rule cuts a loop stuck at full scale long before Q1 overheats
+  ([Q1 protection](#q1-protection)); a firmware failure there is an
+  [accepted risk](#accepted-risks).
+- **Start-up burst:** the lit frames from the first pulse until the fine steps begin. Those are the
+  n_avg frames of the first average at full scale, then the bleed-down after the coarse step: the
+  boost can't sink current, so V(`LED_K`) falls only by ΔV = I_LED × t_pulse / C_bank per pulse
+  ([Headroom control](#headroom-control)). The burst is therefore
+  n = n_avg + (V_full,max − V_T) / ΔV_min frames, with V_full,max the highest full-scale end
+  reading, V_T the coarse target and ΔV_min = I_LED min × t_pulse / C_bank,max: a few tens of
+  frames, a fraction of a second at 120 fps. Taking every frame at the full-scale worst row (an
+  upper bound: the bleed-down frames are lower), over the burst
+  TJ ≤ T_amb + P_avg × Zθ_single(n / fps) × RθJA + P_pulse × Zθ_single(t_pulse) × RθJA (the
+  single-pulse curve of Fig. 9), far inside 150 °C.
 
 The board gives Q1 a limited area of drain copper:
 
-- the tab,
-- a little F.Cu beside it,
-- thermal vias in the tab,
+- the drain pad (Q1.3) on the F.Cu pour "LED_K pour 121",
+- thermal vias in that pour beside the drain pad,
 - a B.Cu zone ("Q1 drain B.Cu").
 
-That is less than 1 in² (645 mm²). The datasheet gives nothing between the minimum pad and 1 in²,
-so the bound at duty 1 uses the minimum-pad figure:
-
-- **Junction:** TJ ≤ T_amb + P_avg(duty 1, worst) × 110 °C/W.
-- **Tab:** ≤ TJ − P_avg × RθJC.
-
-Both are well inside 175 °C. The `.omp/kicad.json` layout entry "Q1 drain copper" requires a
-minimum copper area and via count on this net.
+HL2310A doesn't state the board behind its 104 °C/W, so the bound takes the figure as given and
+the first boards measure it ([check 1](#first-board-checks)). The drain lead carries the heat into
+that copper. The `.omp/kicad.json` layout entry "Q1 drain copper" requires a minimum copper area
+and via count on this net.
 
 More copper doesn't fit. The drain copper keeps clear of the crystal, the RMII and CSI B.Cu
-routes, U6's courtyard and the ring. Q1 can't move either: the top side has no free area of
-Q1's courtyard size anywhere.
+routes, U6's courtyard and the ring. Q1 stays in the pulse loop, between the string's return,
+R69 and C46.
 
 ### Neighbours
 
-Parts next to Q1's tab (distances: `kicad_query distance` from the tab):
+Parts next to Q1's drain copper (distances: `kicad_query distance` from Q1 and the `LED_K` pour):
 
 | Part | Concern |
 |---|---|
-| R70 (`LED_K_SENSE` divider) | Its `LED_K` pad joins the tab copper |
+| R70 (`LED_K_SENSE` divider) | Its `LED_K` pad joins the drain copper |
 | C8 | – |
 | C2 (crystal load cap) | – |
 | D15 (pad 1) | LED heating |
@@ -679,10 +711,10 @@ Parts next to Q1's tab (distances: `kicad_query distance` from the tab):
 | C46 | Rated maximum temperature (GVZ datasheet p.1) |
 | C47 | Rated maximum temperature (GVZ datasheet p.1) |
 
-With the loop running Q1's rise above the board is P_avg × RθJA on the minimum-pad figure, small.
-The duty-1 tab temperature next to D15, D4, Y1 and C46 remains possible at duty 1 only. No
-datasheet figure gives their temperature in that case. Even a few degrees from a tab this close
-may use up the LED heating allowance of the [current setpoint](#led-current).
+With the loop running Q1's rise above the board is P_avg × RθJA, small. Full-scale drain-copper
+temperatures next to D15, D4, Y1 and C46 occur only in the start-up burst or with a failed loop.
+No datasheet figure gives their temperature then. Even a few degrees from copper this close may
+use up the LED heating allowance of the [current setpoint](#led-current).
 
 The LEDs also heat themselves. Each dissipates up to I_LED max × VF max × duty (the ring, 12
 times that) through Rs 18 °C/W junction to case. Amicc rates them at a 25 °C solder point and tests
@@ -693,40 +725,48 @@ The user chose to measure this on the first boards rather than lower the current
 
 ### Q1 protection
 
-The board has no temperature sensor: the NTC that sat at Q1's tab gave way to the `LED_K_SENSE`
+The board has no temperature sensor: the NTC that sat beside Q1 gave way to the `LED_K_SENSE`
 divider (user decision 2026-11-03), whose reading bounds Q1's dissipation directly. Firmware keeps
-(V(`LED_K`) at the end + droop_max / 2) × I_LED max × LED duty ≤ P_limit = 0.80 W and reports a
-reading or string fault (FW-22). P_limit is a firmware decision: it holds TJ = T_amb + P_limit × RθJA (minimum pad) well
-under 175 °C, and above the duty-1 worst case so the fallback never trips it. The pulse average is
-the end reading plus half the worst droop, as in the [table](#q1-dissipation). At duty 1 the end
-reading is Vout max minus the string minimum and the other drops, minus the smallest droop
-(I_LED max × t_pulse / the highest C_bank), plus the reading error, so the rule computes below
-P_limit on any unit in tolerance and doesn't trip. In the band it computes far less.
+(V(`LED_K`) at the end + droop_max / 2) × I_LED max × LED duty ≤ P_limit = 0.40 W and reports a
+reading or string fault (FW-22). P_limit is a firmware decision, recalculated for the HL2310A's
+150 °C TJ max (2026-11-09): at every LED duty up to FW-9's cap it holds the peak
+TJ = T_amb + (P_limit / duty) × Zθ(t_pulse, duty) × RθJA (HL2310A Fig. 9 p.4) well under 150 °C.
+The pulse average is the end reading plus half the worst droop, as in the
+[table](#q1-dissipation). It applies only once the fine steps begin, after the post-step hold of
+FW-22: during the start-up burst V(`LED_K`) is still bleeding down from its full-scale value and
+the rule would trip on typical units, while the burst bound of [Q1 dissipation](#q1-dissipation)
+already covers Q1 there. In the band it computes far less. P_limit sits below the typical
+full-scale power, so a loop stuck at full scale (or one that has drifted far above the band)
+trips the rule on most units, well before Q1 overheats; the rule shortens the exposure or drops
+`LED_EN` there.
 
 A pulse longer than the set exposure, up to the hardware timeout's upper end
 ([Timeout](#timeout), duty t_max × fps), averages over the pulse (V_DS at duty 1 − droop' / 2) ×
-I_LED max × that duty at duty 1 (droop' for the longer pulse into the lowest C_bank): a TJ above
-the 175 °C rating on the minimum-pad figure; with the loop still running, far less. The power
-rule above sees it only in its average, so FW-9 adds a pulse-width fault: firmware times every
-STROBE pulse and drops `LED_EN` before the next frame when one exceeds its limit (the 0.5 ms cap
-plus STROBE's width tolerance, [check 5](#first-board-checks), below the shortest hardware
+I_LED max × that duty at duty 1 (droop' for the longer pulse into the lowest C_bank): a TJ far
+above the 150 °C rating; with the loop still running, below it (Fig. 9 at t_max and t_max × fps).
+The power rule above sees it only in its average, so FW-9 adds a pulse-width fault: firmware times
+every STROBE pulse and drops `LED_EN` before the next frame when one exceeds its limit (the 0.5 ms
+cap plus STROBE's width tolerance, [check 5](#first-board-checks), below the shortest hardware
 timeout). That leaves single pulses, which the average doesn't feel; the hardware timeout stays
 the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
 
 ## Accepted risks
 
-- **LED, C46 and Y1 temperature next to Q1 at duty 1 is unknown.** With the headroom loop Q1
-  dissipates only its band's power; at duty 1 (the first frames, the fallback) the worst case
-  of [Q1 dissipation](#q1-dissipation) on a limited area of drain copper, close to D15 and D4
-  (`kicad_query distance` from Q1's tab), against the LED heating allowance. Accepted by measuring
+- **LED, C46 and Y1 temperature next to Q1 at full scale is unknown.** With the headroom loop Q1
+  dissipates only its band's power; at full scale (the start-up burst, a failed loop) the worst
+  case of [Q1 dissipation](#q1-dissipation) on a limited area of drain copper, close to D15 and D4
+  (`kicad_query distance` from Q1), against the LED heating allowance. Accepted by measuring
   the first boards instead of lowering the current or re-floorplanning now (user decision
   2026-11-01).
-- **Headroom control is firmware.** Until the loop runs, and whenever it falls back, +32V sits at
-  full scale and Q1 dissipates the duty-1 worst case ([Q1 dissipation](#q1-dissipation); user
-  decision 2026-11-03, design option 1b).
+- **Headroom control is firmware, and Q1 depends on it.** The loop is a requirement (user
+  decision 2026-11-09; design option 1b, user decision 2026-11-03). If firmware leaves +32V at
+  full scale with the LEDs pulsing, Q1's junction reaches or exceeds its 150 °C maximum at the
+  worst duty ([Q1 dissipation](#q1-dissipation)). FW-22's fallback turns the LEDs off, and its
+  power rule trips a loop stuck at full scale on most units, well before Q1 overheats; no hardware
+  bound does.
 - **A firmware failure at duty 1 can overheat Q1.** If firmware both leaves +32V at full scale and
   lets STROBE run past 0.5 ms, only the hardware timeout ends each pulse, at up to the window's
-  upper end: the power and TJ of [Q1 protection](#q1-protection), above Q1's 175 °C rating. FW-9's
+  upper end: the power and TJ of [Q1 protection](#q1-protection), above Q1's 150 °C rating. FW-9's
   pulse-width fault and FW-22's power rule prevent it; no hardware bound does (design review
   2026-11-03).
 - **No temperature sensor.** TH1 was dropped to reuse its route for `LED_K_SENSE` (user decision
@@ -736,42 +776,46 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
   settle within the pulse ([LED_K sense](#led_k-sense)).
 - **`LED_K_SENSE` can drive current into an unpowered P4 pin** while C46/C47 hold charge after a
   power loss (bound in [LED_K sense](#led_k-sense)); the P4 datasheet gives no injection limit.
-- **LED current set to the DC curve at 30 °C with a thin margin.** R61 (user decision 2026-10-31,
-  stay on the DC curve). The margin is I_max(30 °C) − worst-case I_LED, in degrees of LED heating
-  = margin / the curve's slope ([LED current](#led-current)). Any LED heating above ambient
+- **LED current set to the DC curve at 30 °C with a thin margin.** R60/R61 (user decision
+  2026-10-31, stay on the DC curve; fee-free values, user decision 2026-11-09). The margin is
+  I_max(30 °C) − worst-case I_LED, in degrees of LED heating = margin / the curve's slope
+  ([LED current](#led-current)). R69's temperature coefficient takes from the same margin: an R69
+  ΔT above 25 °C moves the current by up to TCR × ΔT, which alone uses the margin up only far
+  above any expected board temperature (user decision 2026-11-09). Any LED heating above ambient
   beyond that needs a lower R61 ([first-board checks](#first-board-checks)).
 - **No hardware gate on USB power.** The LEDs stay off on USB alone only because firmware keeps
   `LED_PWR_EN` low while `PWR_SRC` is low (user decision 2026-10-31).
 - **The hardware timeout cuts only within its window.** The ≤ 0.5 ms limit is a firmware rule.
-  U9's threshold spread sets the window, so it can't cut closer. A firmware fault could run the
-  LEDs up to the window's upper end per frame, a duty of t_max × fps (user decision 2026-11-02:
-  "Accept 0.525–1.026 ms").
+  U9's threshold spread and C33's X7R tolerance set the window, so it can't cut closer. A firmware
+  fault could run the LEDs up to the window's upper end per frame, a duty of t_max × fps (user
+  decision 2026-11-09: X7R C33, window 0.61–1.79 ms, superseding the 2026-11-02 "Accept
+  0.525–1.026 ms").
 - **Boost output capacitance is far outside TI's 1–10 µF recommendation.** The compensation is
   designed for it (estimated crossover and phase margin in [Compensation](#compensation)), but TI
   asks for such values to be tested. Accepted in design review (2026-11-01), tested on the first
   boards.
-- **Current-loop phase margin is an estimate.** Q1's gm at the LED current is not in the datasheet.
+- **Current-loop phase margin is an estimate.** Q1's gm at the LED current comes from a typical
+  curve (HL2310A Fig. 2); the datasheet gives no gfs.
   Accepted in design review (2026-11-01), tested on the first boards.
 - **No GND guard between the crystal (Y1, C2) and the LED copper.** The +32V track runs close to
   C2.1, and the Q1 drain zone overlaps C2.1 in plan view on B.Cu, with both inner GND planes in
   between (`kicad_query distance`). A guard track doesn't fit, and IP101G §6.1 p.56 asks for guards
   only "if possible". Accepted in design review, 2026-11-01
   ([layout](layout.md#led-driver-and-ring)).
-- **Small parts beside C46 and Q1.** R5 and C8 sit beside C46 (the tall can), with their courtyards
-  touching or nearly; R67, C33 and R68 beside Q1's TO-252, with pads close to Q1.1; R70 beside
-  Q1's tab, courtyards nearly touching, R70.1 close to Q1.2 (no other site keeps R70.1's short
-  link to the tab): possible reflow shadowing; no source gives a limit
+- **Small parts beside C46.** R5 and C8 sit beside C46 (the tall can), with their courtyards
+  touching or nearly: possible reflow shadowing; no source gives a limit
   (`kicad_query distance`; [layout](layout.md#assembly),
   [first-board check 8](#first-board-checks)).
 
 ## First-board checks
 
 1. **Thermal test** (user decision 2026-11-01). Run the LEDs at the worst duty, 0.5 ms pulses at
-   120 fps, for 30 min, on PoE, twice: with the headroom loop running, and with `BST_EN` held at
-   duty 1 (the fallback). Record the ambient temperature.
+   120 fps, for 30 min, on PoE, with the headroom loop running. Record the ambient temperature. No
+   long run at full scale: Q1's junction reaches its maximum there ([Thermal](#thermal); user
+   decision 2026-11-09).
    - **Thermocouples:** on the cases of D15 and D4 (nearest Q1), on C46 and on Y1's case. Add Q1's
-     tab and an LED far from Q1 (D9 or D10) to separate self-heating from Q1 heat.
-   - **Loop:** log the duty and `LED_K_SENSE` during the first run.
+     drain lead (Q1.3) and an LED far from Q1 (D9 or D10) to separate self-heating from Q1 heat.
+   - **Loop:** log the duty and `LED_K_SENSE` during the run.
    - **LED limit:** take the hottest LED case temperature T as the curve's temperature, which is
      conservative. The worst-case current must stay ≤ 1000 mA − (1000 − 200) mA / (85 − 25) °C ×
      (T − 25 °C). If it doesn't, lower R61 (procedure below).
@@ -781,12 +825,15 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
 2. **LED current.** Measure the voltage across R69 at TP14 during a pulse: expect I_LED × R69 at
    nominal rails (+3V3 3.3 V, +5V 5.0 V; the [LED current](#led-current) formula), flat over the pulse. Measure it on
    the unit with the highest +3V3 together with the thermal test, because a ground offset between
-   R69.2 and U11's reference shifts the current by δV / R69.
+   R69.2 and U11's reference shifts the current by δV / R69. U11 holds V(R69) at the setpoint, so
+   the reading gives the current only through R69's resistance at its own temperature (TCR row in
+   [LED current](#led-current)): take it in the first seconds of the run, with R69 at the board
+   temperature, and log R69's case temperature at the end of the run with the reading there.
 3. **Current-loop response.** Scope `ISNS` (TP14) against `LED_ON` (TP12) at both edges. Expect
    < 10 % overshoot, no ringing and a µs-scale rise.
 4. **Boost stability.** Scope +32V (TP13) and `BST_SW` (at L3.2/D3.2) at start-up and during
-   0.5 ms / 120 fps pulses, at duty 1 and at every set point down to the loop's lowest (on a
-   low-VF unit), including the loop's duty steps. Expect:
+   0.5 ms / 120 fps pulses, at duty 1 for the start-up burst only (FW-22) and at every set point
+   down to the loop's lowest (on a low-VF unit), including the loop's duty steps. Expect:
    - no ringing or sub-harmonic switching,
    - +32V within the [Output voltage](#output-voltage) range at duty 1 and within
      D × Vout(duty 1) nominal × (1 ± reference tolerance ± divider tolerance ± on-time error)
@@ -802,7 +849,7 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
 5. **Timeout.** With `LED_EN` high:
    - a 0.5 ms STROBE must give a whole 0.5 ms `LED_ON` pulse;
    - a STROBE held high (a long exposure) must end `LED_ON` within the accepted window
-     ("Accept 0.525–1.026 ms", user decision 2026-11-02);
+     (0.61–1.79 ms, user decision 2026-11-09);
    - `LED_ON` must follow the next normal frame unchanged;
    - STROBE's width must match the configured exposure within 50 µs over the exposure range
      (FW-9's pulse-width limit, the exposure cap plus 50 µs, assumes it), and a longer STROBE, e.g. 0.6 ms, must make firmware
@@ -819,7 +866,7 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
    - step the duty down until the current at the end of the pulse starts to sag, and record
      V(`LED_K`) there: the band's lower edge must stay ≥ 0.3 V above it;
    - repeat check 3 at the band's lower edge, where Q1 runs nearest its linear region;
-   - on a low-VF and a high-VF unit, at the lowest set point and at duty 1, log the in-pulse and
+   - on a low-VF and a high-VF unit, at the lowest set point and in the start-up burst at duty 1, log the in-pulse and
      the between-pulse `LED_K_SENSE` readings of each frame and their difference; then hold Q1
      off (`LED_EN` low with STROBE running, or Q1's gate shorted) and log the same pair. Set
      FW-22's sink-off threshold (a first value) between the two differences, and record
@@ -829,12 +876,18 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
      [Headroom control](#headroom-control), then settle inside the band within the estimated
      time;
    - time the `LED_K_SENSE` one-shot conversion: it must fit the last 0.05 ms of a
-     pulse.
-8. **Joints beside big parts:** AOI or a visual check of R5 and C8 (beside C46) and R67, C33, R68
-   and R70 (beside Q1) for wetting, tombstoning and shifted parts.
+     pulse;
+   - on a low-VF unit, a test build that holds the duty at 1 in place of the fine steps: FW-22's
+     power rule must shorten the exposure or drop `LED_EN` within one average;
+   - from power-up on a low-VF and a high-VF unit, count the lit frames until the fine steps
+     begin (the start-up burst of [Q1 dissipation](#q1-dissipation)) and check that the power rule
+     doesn't trip before them or in the band.
+8. **Joints beside big parts:** AOI or a visual check of R5 and C8 (beside C46) for wetting,
+   tombstoning and shifted parts.
 
 If the thermal test fails, pick R61 so that its worst-case current (the inputs of
-[LED current](#led-current), with 1 % E96 values) stays on the DC curve up to the measured
+[LED current](#led-current), with 1 % values, fee-free ones first, user decision 2026-11-09)
+stays on the DC curve up to the measured
 temperature: the highest temperature at which a value stays on the curve is
 T = 25 °C + (1000 mA − I_worst) / ((1000 − 200) mA / (85 − 25) °C). Radiant output drops roughly
 in proportion to the current.

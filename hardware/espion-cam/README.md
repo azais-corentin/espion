@@ -16,15 +16,16 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
 - **Camera:** off-board OV9281 global-shutter mono module behind a lens cutout, on a 15-pin 1.0 mm
   FFC (MIPI CSI-2, 2 lanes) through a notch in the board edge into J4 (AFA07 family, bottom
   contact). XVS (GPIO7) and STROBE come from the module's pads over a JST-SH 4-pin pigtail into J3:
-  XVS through the R40/R44 divider, an assembly option; STROBE through U7 SN74LV1T34 to the LED
+  XVS through the R40/R44 divider, an assembly option; STROBE through U7 Tech Public TP74LV1T34 to the LED
   gate and GPIO12 (ETM capture). A 0 Ω link on each CSI line at the FFC end (R45–R47, R49–R51).
   [camera](../../docs/hardware/camera.md)
 - **LED:** 850 nm ring D4–D15, 12 × A-SC880IR3C in one string around the lens cutout. U8 TPS22918
   load switch (`LED_PWR_EN`, GPIO20), U10 TPS61170 boost (`BST_EN`, GPIO53; PWM sets the
-  output) into the storage capacitors C46/C47, U11 TLV9061 + Q1 IRLR024N current sink (R69
+  output) into the storage capacitors C46/C47, U11 TLV9061 + Q1 HL2310A (SOT-23) current sink (R69
   sense) gated by `STROBE ∧ LED_EN` in U9 SN74LVC1G97 (`LED_EN`, GPIO11), with a hardware
   timeout per pulse behind the firmware exposure cap. No continuous-on mode. Firmware keeps
-  +32V just above the string from a divider on Q1's drain (R70/R76, `LED_K_SENSE`, GPIO23);
+  +32V just above the string from a divider on Q1's drain (R70/R76, `LED_K_SENSE`, GPIO23), a
+  required headroom loop: Q1 is not rated for full boost output;
   a +32V divider (R71/R72, `VLED_SENSE`, GPIO21) watches the rail.
   [led](../../docs/hardware/led.md)
 - **Ethernet:** U1 IP101G PHY on RMII (Y1 crystal; the PHY supplies the REF_CLK), J1 HR871150C

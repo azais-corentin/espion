@@ -37,7 +37,7 @@
         "hand": {
           "U6": "Waveshare ESP32-P4-Core module: hand-solder footprint, no LCSC part (user decision 2026-10-31); iron only, pad by pad (docs/hardware/layout.md, Assembly; docs/hardware/mcu.md, Module)",
           "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31); lands close to reflowed R46, C3, R8 (`kicad_query distance` gives the gaps): conical tip ≤ 1 mm, Kapton over those three, inspect them after (docs/hardware/layout.md, Assembly)",
-          "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
+          "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31); pads 5 and 6 close to reflowed C11, C52, and pad 4 against C14's can (courtyards touching): conical tip ≤ 1 mm, Kapton over C11, C52 and C14's sleeve, inspect them after (docs/hardware/layout.md, Assembly)",
           "TP2": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
           "TP3": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)",
           "TP7": "through-hole GND wire loop: hand-soldered (user decision 2026-10-31; docs/hardware/layout.md, Assembly)"
@@ -45,13 +45,11 @@
         "corrections": {
           "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal": { "offset": [0, -1.99] },
           "Connector_USB_HRO:USB_C_Receptacle_HRO_TYPE-C-31-M-12": { "offset": [0, -1.155] },
-          "Package_TO_SOT_SMD:TO-252-2": { "rot": 90, "offset": [-0.84, 0] },
           "Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm": { "rot": -90 },
           "Package_DFN_QFN_TI:Texas_RUX0012A_VQFN-HR-12_2x2.5mm_P0.5mm": { "rot": -90 },
           "Package_LGA_MEMSensing:MEMSensing_LGA-12_2x2mm_P0.5mm_LayoutBorder2x4y": { "rot": -90 },
           "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm": { "rot": 180 },
           "C141836": { "rot": 180 },
-          "C100024": { "rot": 180 },
           "C398358": { "rot": -90 },
           "C131941": { "rot": 180 },
           "C128411": { "rot": 180 },
@@ -153,15 +151,13 @@
           {"name": "U4 IN2 vias", "net": "VBUS", "layers": ["F.Cu"], "minVias": 1, "near": "U4", "within": 0.5, "why": "docs/hardware/layout.md, Power: TPS2121 SLVSEA3F §12.1 vias under the input and output pins; land pattern p.39 'VIA TYP' in pads 1, 2, 7, 8"},
           {"name": "U4 OUT vias", "net": "+5V", "layers": ["F.Cu"], "minVias": 2, "near": "U4", "within": 0.5, "why": "docs/hardware/layout.md, Power: TPS2121 SLVSEA3F §12.1 vias under the input and output pins, §12.2 layout example p.33 draws four vias on OUT; land pattern p.39 'VIA TYP' in pads 1 and 8; one via per ampere of the output current"},
           {"name": "U10 exposed pad vias", "net": "GND", "layers": ["F.Cu"], "minVias": 2, "near": "U10", "within": 0, "why": "docs/hardware/layout.md, LED driver and ring: TPS61170 DRV0006A land pattern p.35, two thermal vias 1.1 mm apart in the exposed pad (§11.3); counts vias inside U10's pad box"},
-          {"name": "Q1 drain copper", "net": "/LED driver/LED_K", "layers": ["F.Cu", "B.Cu"], "minArea": 100, "minVias": 12, "near": "Q1", "within": 15, "why": "docs/hardware/layout.md, LED driver and ring: IRLR024N DS p.1 RθJA 110 °C/W minimum pad, 50 °C/W on 1 in² (average dissipation at the 0.5 ms / 120 fps limit with the boost at full scale, the state without the firmware headroom loop). Only about `minArea` fits: the Q1 tab, F.Cu beside it, and a B.Cu zone clear of the crystal Y1/C5, the RMII B.Cu strip, the CSI bus and U6, with `minVias` thermal vias in the tab; never on the ring side. Q1 cannot move: no free 7.5 × 11.5 mm top area on the board (kicad_query board_free_space)"}
+          {"name": "Q1 drain copper", "net": "/LED driver/LED_K", "layers": ["F.Cu", "B.Cu"], "minArea": 100, "minVias": 12, "near": "Q1", "within": 15, "why": "docs/hardware/layout.md, LED driver and ring: HL2310A DS p.1 RθJA 104 °C/W (test board not stated), TJ max 150 °C; the SOT-23 sheds its heat through the drain lead (pin 3), so the drain copper spreads it for the states the firmware headroom loop does not cover (docs/hardware/led.md, Thermal). Only about `minArea` fits: the F.Cu pour round Q1's drain pad (where the former TO-252 tab sat) and a B.Cu zone clear of the crystal Y1/C5, the RMII B.Cu strip, the CSI bus and U6, joined by `minVias` thermal vias beside the drain pad; never on the ring side"}
         ],
         "heightZones": [
           {
             "name": "lens view cone", "center": [129.7, 130.3], "r0": 7.0, "slope": 0.83,
             "heights": {
-              "Capacitor_SMD_JIERR:CP_Elec_8x10.5": 11.0,
               "Capacitor_SMD:CP_Elec_10x10": 11.0,
-              "Capacitor_SMD_AISHI:CP_Elec_6.3x9": 9.5,
               "Capacitor_SMD:CP_Elec_6.3x5.8": 6.5,
               "TestPoint:TestPoint_Loop_D2.50mm_Drill1.0mm": 4.72,
               "Connector_USB_HRO:USB_C_Receptacle_HRO_TYPE-C-31-M-12": 3.36,
@@ -171,12 +167,12 @@
               "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal": 2.6,
               "LED_SMD_Amicc:LED_Amicc_A-SC880IR3C_3.85x3.85mm": 2.55,
               "Diode_SMD:D_SMA": 2.45,
-              "Package_TO_SOT_SMD:TO-252-2": 2.39,
               "Capacitor_SMD:C_1206_3216Metric": 1.9,
               "Button_Switch_SMD_XKB:SW_Push_1P1T_XKB_TS-1187A": 1.55,
               "Capacitor_SMD:C_0805_2012Metric": 1.45,
               "Package_TO_SOT_SMD:SOT-23-5": 1.45,
               "Package_TO_SOT_SMD:SOT-23-6": 1.45,
+              "Package_TO_SOT_SMD:SOT-23": 1.15,
               "Diode_SMD:D_SOD-323_HandSoldering": 1.0,
               "Package_DFN_QFN_TI:Texas_RUX0012A_VQFN-HR-12_2x2.5mm_P0.5mm": 1.0,
               "LED_SMD_Yongyu:LED_Yongyu_YY-0807_2.0x1.7mm": 0.95,

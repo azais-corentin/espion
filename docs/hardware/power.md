@@ -80,16 +80,17 @@ A π filter cleans it before the mux:
 |---|---|
 | C11 | The module's one output decoupling capacitor (DP1435 p.1), at U2.6 |
 | L1 | Series inductor; DCR, Isat and Irms from the Changjiang FXL0630 catalogue p.14 |
-| C13 | Polymer bulk; ESR and rms ripple rating from AISHI VZ p.2 |
-| C14 | Aluminium bulk; ESR at 100 kHz and rms ripple rating from JIERR JVE p.1, p.4 |
+| C13 | Polymer bulk, the same part as C22 (one BOM line, user decision 2026-11-09); ESR and rms ripple rating from the MA series datasheet p.3 |
+| C14 | Aluminium bulk, the same part as C46/C47 (one BOM line, user decision 2026-11-09); impedance at 100 kHz and rms ripple rating from the GVZ datasheet p.1 |
 | C15 | U4 IN1 bypass, at the pin |
 
 - L1's Isat and Irms must exceed the module's 2.6 A maximum.
 - Corner frequency f₀ = 1/(2π√(L1 × (C13 + C14 + C15))), well below the module's 250 kHz;
-  characteristic impedance Z₀ = √(L1 / (C13 + C14 + C15)). L1's DCR and C14's higher ESR damp the
-  resonance. A load step's ringing must leave `+5V_POE_F` well above the mux's PoE → USB threshold.
-- Ripple at 250 kHz: X(L1) = 2π × 250 kHz × L1 against C13's ESR, so the 200 mVpp is divided by
-  roughly X(L1) / ESR(C13) on IN1.
+  characteristic impedance Z₀ = √(L1 / (C13 + C14 + C15)). L1's DCR and C14's impedance (≤ 0.18 Ω
+  at 100 kHz, GVZ datasheet p.1, higher than C13's ESR) damp the resonance. A load step's ringing
+  must leave `+5V_POE_F` well above the mux's PoE → USB threshold.
+- Ripple at 250 kHz: X(L1) = 2π × 250 kHz × L1 against C13's ESR (MA series datasheet p.3), so the
+  200 mVpp is divided by roughly X(L1) / ESR(C13) on IN1.
 - When U4 drops IN1, L1's energy E = ½ × L1 × (2.6 A)² lifts C13–C15 by ΔV from
   E = ½ × C × ((V + ΔV)² − V²).
 - SDAPO gives no maximum capacitive load or soft-start time. The module starts into its own output
@@ -354,6 +355,10 @@ blocks any current back into the host. The connector, the data lines and their p
   VBUS min × R28 / (R27 + R28) ≥ VIH = 0.75 × VDD at `+3V3` max; VBUS max × R28 / (R27 + R28) ≤
   VDD + 0.3 V at `+3V3` min (ESP32-P4 DS p.89). Firmware turns the USB Serial/JTAG D+ pull-up off
   while it is low ([firmware rules](firmware-rules.md#rules)).
+- **VBUS_SENSE pin current (open point).** While `+3V3` is not up yet, VBUS max / R27 flows through
+  R27 into GPIO6's input protection. The P4 datasheet gives no injection limit for that pin, so
+  the bound is open (user decision 2026-11-09 lowered R27/R28 to fee-free values, which raised
+  that current; [mcu](mcu.md#usb-c)).
 - **Routing:** narrow F.Cu stubs from J2.A9/A4 to two vias (the only way out between J2's NPTH
   pegs and the neighbouring pads; rise per stub at 1.0 A and at 0.5 A from the IPC-2152 fit), a
   B.Cu link and a B.Cu trunk to U4's IN2 via.
@@ -402,9 +407,10 @@ leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)):
   moved; TI's layout has one input capacitor, which C10 is.
 - **`+3V3` capacitance outside TI's tested cells** (Table 4: up to 2 × 22 µF), counting the
   module's own capacitors.
-- **Reflow ratings of C13, C14 and C22 are not printed** in their datasheets (JLCPCB reflows at
-  255 ± 5 °C). User decision 2026-10-31: "Ignore reflow times and temperatures. Assume it will all
-  work out."
+- **Reflow ratings of C13, C14 and C22 are not printed or are at JLCPCB's limit** (JLCPCB reflows
+  at 255 ± 5 °C): C13 and C22 state none; C14, like C46/C47, is rated 255 °C peak for 5 s, twice
+  at most (GVZ datasheet p.2). User decision 2026-10-31: "Ignore reflow times and temperatures.
+  Assume it will all work out."
 
 ## First-board checks
 
@@ -427,8 +433,8 @@ leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)):
    on PoE.
 6. **USB-alone current.** Measure the VBUS current on USB alone while streaming 640 × 400 at
    120 fps with Ethernet linked (LEDs off): must be ≤ 0.5 A, and compared with the buck-input
-   estimate from [+5V loads](#5v-loads). Measure the camera's share by replacing R53 with a 0.1 Ω
-   shunt.
+   estimate from [+5V loads](#5v-loads). Measure the camera's share by replacing R53 (0402) with a
+   0.1 Ω 0402 shunt.
 7. **`+3V3` load step.** 0.1 → 0.6 A at 5 V input: settles without ringing, overshoot ≤ 5 %. If
    not, reduce C18 or remove C17.
 8. **Temperatures.** At PoE with the LEDs at 0.5 ms / 120 fps (and once during `+32V` start-up),
@@ -438,5 +444,5 @@ leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)):
 10. **B.Cu under U2.** At the `+5V` peak on PoE (LEDs at 0.5 ms / 120 fps, camera streaming,
     Ethernet up), scope XVS and SCCB_SCL/SDA at J4 for ringing or extra edges, and run USB
     enumeration and a bulk transfer; repeat on USB power alone as the reference. VBUS, the USB pair,
-    CAM_EN, SCCB and a short XVS hop run on B.Cu right under the module's flyback magnetics
+    CAM_EN, SCCB, a short XVS hop and a +3V3 run on B.Cu right under the module's flyback magnetics
     ([layout](layout.md#bcu-under-u2)).

@@ -82,8 +82,10 @@ U5 → R31 → U6.38, D− = J2.A7/B7 → U5 → R32 → U6.37.
 both resistors. Over the VBUS range of the [README](README.md#rails) and the +3V3 set-point
 range the pin must stay between the P4's VIH and VDD + 0.3 V; the derivation is in
 [power.md](power.md#usb-vbus). The Thevenin resistance R27 ∥ R28 limits any current into the
-pad to the highest pin voltage divided by R27 ∥ R28, also while +3V3 is still off. Filter
-time constant: (R27 ∥ R28) × C26, a slow edge; the firmware debounces it.
+pad to the highest pin voltage divided by R27 ∥ R28; while +3V3 is still off, VBUS max / R27
+flows into the pad's protection. That current is an open point: the P4 datasheet gives no limit
+for it, and the fee-free R27/R28 values (user decision 2026-11-09) raised it. Filter time
+constant: (R27 ∥ R28) × C26, a slow edge; the firmware debounces it.
 
 R24 from VBUS to GND belongs to the VBUS supply path ([power.md](power.md#usb-vbus)).
 
@@ -185,7 +187,7 @@ pad the EMAC drives as an output; with the loop-back the capture works either wa
 removing R34 frees GPIO33.
 
 **Other probe points on the top side** (part pads, none under another part; the camera module
-sits behind the board): `ESP_EN` on C27/R33, `BOOT_SW` on R39, `PPS_IN` on R34, VBUS on
+sits behind the board): `ESP_EN` on C27/R33, `BOOT_SW` on R39, `PPS_IN` on R34 (0402), VBUS on
 R24/R27, `VBUS_SENSE` on C26, the accelerometer bus on R73/R74. `MDC` and `IMU_INT1` have no
 part on them, but U6's hand-soldering pads reach past the module (pads 43 and 69), so
 they can be probed from the bottom. Rail test points: [power.md](power.md).
@@ -204,8 +206,8 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
   branch and B.Cu pours); +32V was routed out from under the module (user decision
   2026-11-03, [layout](layout.md#32v-and-the-ring)), so a mask or tenting fault there can't put
   the LED supply on the module.
-- **Tall capacitors beside small parts.** R37 and R38 (0402) sit closer to C47, and R34 closer
-  to C46, than the small-part spacing allows next to a tall electrolytic capacitor: possible
+- **Tall capacitors beside small parts.** R37, R38 and R34 (all 0402) sit closer to C47 (R37,
+  R38) and to C46 (R34) than the small-part spacing allows next to a tall electrolytic capacitor: possible
   reflow shadowing; JLCPCB's spacing table has no electrolytic row (find the pairs with
   `kicad_query distance`).
 - **D1 on +3V3** (user decision 2026-11-02): green and blue may be dim at the low end of the

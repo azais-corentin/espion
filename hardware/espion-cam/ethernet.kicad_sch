@@ -8115,7 +8115,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1.5k 1%"
+		(property "Value" "1.2k 1%"
 			(at 218.44 110.49 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8170,7 +8170,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1501TCE"
+		(property "MPN" "0402WGF1201TCE"
 			(at 215.9 109.22 0)
 			(hide yes)
 			(show_name no)
@@ -8181,7 +8181,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25867"
+		(property "LCSC" "C25862"
 			(at 215.9 109.22 0)
 			(hide yes)
 			(show_name no)
@@ -9016,7 +9016,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "6.19k 1%"
+		(property "Value" "6.2k 1%"
 			(at 73.66 85.09 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9027,7 +9027,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
 			(at 71.12 83.82 90)
 			(hide yes)
 			(show_name no)
@@ -9038,7 +9038,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/dee9240a2b31fe338e6cd2e004fb49a8.pdf"
+		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
 			(at 71.12 83.82 0)
 			(hide yes)
 			(show_name no)
@@ -9060,7 +9060,7 @@
 				)
 			)
 		)
-		(property "Manufacturer" "FH"
+		(property "Manufacturer" "UNI-ROYAL"
 			(at 71.12 83.82 0)
 			(hide yes)
 			(show_name no)
@@ -9071,7 +9071,7 @@
 				)
 			)
 		)
-		(property "MPN" "RC-02K6191FT"
+		(property "MPN" "0603WAF6201T5E"
 			(at 71.12 83.82 0)
 			(hide yes)
 			(show_name no)
@@ -9082,7 +9082,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C324848"
+		(property "LCSC" "C4260"
 			(at 71.12 83.82 0)
 			(hide yes)
 			(show_name no)

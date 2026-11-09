@@ -64,7 +64,7 @@ Placement:
   XTAL_X1 loops round the crystal's north side to Y1.1.
 - There is no GND guard trace round the crystal. The datasheet asks for one "if possible" (§6.1 p.56),
   and here it isn't possible. The crystal relies on distance and the In1/In2 GND planes. The nearest
-  other copper is a +32V track at C2's X1 pad, and the LED switch Q1's tab (`kicad_query distance`;
+  other copper is a +32V track at C2's X1 pad, and the LED switch Q1's drain copper (`kicad_query distance`;
   [layout](layout.md#ethernet-and-poe-isolation)).
 - MDC, MDIO, R14's +3V3 feed and the COL/RMII strap cross under Y1, C5 and the X1/X2 traces on B.Cu,
   with the In1 and In2 GND planes between. MDC crosses the X2 traces, under the Y1.3 and C5.1 pad
@@ -81,7 +81,9 @@ Placement:
   the two MDI pairs, so its track leaves north and reaches C6 over B.Cu through vias, then the C6/C4
   pour; C6 is close to the pin edge to edge (`near` entry C6.1 → U1.28,
   [layout](layout.md#phy-side-decoupling)). A first-board check scopes REGOUT at C6.
-- **ISET** (pin 25) sets the transmit amplitude. R6 to GND is the datasheet's 6.19 kΩ ISET resistor (p.53).
+- **ISET** (pin 25) sets the transmit amplitude. R6 to GND is the ISET resistor; the datasheet asks
+  for 6.19 kΩ ±1 % (p.18, p.53). R6 is the nearest fee-free value at ±1 % (user decision
+  2026-11-09); its band ends slightly above the datasheet's (an [accepted risk](#accepted-risks)).
 - Both pins sit next to the MDI pads at the 0.4 mm pitch, so their tracks leave between the MDI pairs
   (see [MagJack and MDI](#magjack-and-mdi)).
 
@@ -201,7 +203,7 @@ vias to keep P on P. Consequences:
     makes that impossible. ISET (pin 25), REGOUT (pin 28) and AVDD33 (pin 31) sit next to the MDI pads,
     so only the default clearance applies there. This is an accepted deviation; the datasheet grants no
     exception.
-  - Outside it the closest pads (J1.13/J1.14, R46.2, R6) stay just above the rule's limit
+  - Outside it the closest pads (J1.13/J1.14, R46.2) stay just above the rule's limit
     (`kicad_query distance`); pours keep the rule's clearance.
   - The TX and RX pairs keep 3W from each other outside the same U1 exemption (DRC rule "MDI pair to
     pair"). The closest spot is the RD_P–TD_N diagonal pair west of R6, which the DRC passes.
@@ -320,7 +322,9 @@ U1.10, the remedies, in order:
 ### MDC and MDIO
 
 - MDC (GPIO31) and MDIO (GPIO52) reach the P4 through the GPIO matrix. R14, a pull-up to +3V3, pulls up
-  MDIO. MDC is always driven by the MAC and has no pull.
+  MDIO. MDC is always driven by the MAC and has no pull. R14 is the same part as the SCCB pull-ups
+  (one BOM line, user decision 2026-11-09); whichever side drives MDIO low sinks
+  (+3V3 max − VOL) / R14 at R14's low tolerance.
 - MDC must stay at or below 3.33 MHz: period ≥ 300 ns, high and low ≥ 150 ns (Table 20, p.62). That is a
   firmware setting ([firmware-rules](firmware-rules.md#rules)).
 - MDC and MDIO are slow signals, so length doesn't matter. Both cross under the crystal on B.Cu
@@ -367,9 +371,12 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 - **MDI relies on the IP101G's polarity handling.** Both pairs are P/N-inverted between U1 and J1
   (user decision 2026-11-04, [MDI pairs crossed at J1](#mdi-pairs-crossed-at-j1)); the link partner
   also receives our transmit pair inverted.
-- **Crystal without a guard trace**, with a +32V track and Q1's tab as the nearest other copper
-  (`kicad_query distance`). Q1's tab may get hot at the worst LED duty ([led](led.md#thermal)), and
+- **Crystal without a guard trace**, with a +32V track and Q1's drain copper as the nearest other copper
+  (`kicad_query distance`). Q1's drain copper may get hot at full LED scale ([led](led.md#thermal)), and
   Y1's ±20 ppm holds only to 85 °C. U1 is rated to 85 °C ambient (p.57).
+- **ISET resistor beside the datasheet band.** R6's ±1 % band ends slightly above the 6.19 kΩ ±1 %
+  the IP101G asks for (p.53), shifting the transmit amplitude by the same small fraction (user
+  decision 2026-11-09); the first-board link test covers it.
 - **MDC and MDIO under the crystal** on B.Cu, behind both GND planes; MDC crosses X2 and runs along
   X1 only under U1.2's pad and stub ([Crystal](#crystal)).
 - **Unequal crystal traces.** X1 runs round Y1 to its far-corner pin, X2 is short; the traces

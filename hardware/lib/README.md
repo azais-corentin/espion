@@ -14,9 +14,9 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Interface_Ethernet_ICPlus.kicad_sym` | IC Plus Ethernet PHYs |
 | `Regulator_Switching_TI.kicad_sym` | TI switching regulators |
 | `Power_Management_TI.kicad_sym` | TI power management ICs (power muxes) |
-| `Transistor_FET_Infineon.kicad_sym` | Infineon MOSFETs |
+| `Transistor_FET_Infineon.kicad_sym` | Infineon MOSFETs (not used by espion-cam any more) |
 | `Sensor_Motion_MEMSensing.kicad_sym` | MEMSensing motion sensors (accelerometers) |
-| `Capacitor_SMD_AISHI.pretty/`, `Capacitor_SMD_JIERR.pretty/` | Aluminium SMD can capacitors |
+| `Capacitor_SMD_AISHI.pretty/`, `Capacitor_SMD_JIERR.pretty/` | Aluminium SMD can capacitors (not used by espion-cam any more) |
 | `Connector_FFC-FPC_XFCN.pretty/` | XFCN FFC/FPC connectors (not used by espion-cam any more) |
 | `Connector_FFC-FPC_JUSHUO.pretty/` | JUSHUO FFC/FPC connectors |
 | `Connector_RJ_HanRun.pretty/` | HanRun RJ45 jacks |
@@ -271,8 +271,10 @@ espion-cam as U12.
 ### `Transistor_FET_Infineon:IRLR024N`
 
 Infineon IRLR024NTRPBF logic-level N-MOSFET, 55 V / 17 A / 65 mΩ, D-Pak (LCSC C3007), on
-stock `Package_TO_SOT_SMD:TO-252-2` (G 1, D 2 = tab, S 3). Used by espion-cam as Q1.
+stock `Package_TO_SOT_SMD:TO-252-2` (G 1, D 2 = tab, S 3).
 
+- **Not used by espion-cam any more** (2026-11-09): Q1 is the fee-free R+O HL2310A on KiCad's
+  stock `Transistor_FET:Q_NMOS_GSD` and `Package_TO_SOT_SMD:SOT-23`.
 - Source: [IRLR024NPbF datasheet](https://www.infineon.com/dgdl/irlr024npbf.pdf). Graphic
   from KiCad's `Transistor_FET:IPD50R380CE` (CC-BY-SA 4.0 with the KiCad library exception).
 
@@ -336,8 +338,10 @@ Korean Hroparts TYPE-C-31-M-12 USB-C 2.0 receptacle (LCSC C165948), for the stoc
 
 Aluminium SMD can footprints for `Device:C_Polarized` (pad 1 = +): AISHI VZ polymer
 6.3 × 9 mm (SVZ1CM331E09E00RAXXX, LCSC C3291468) and JIERR JVE electrolytic 8 × 10.5 mm
-(JVE16V330M8X10, LCSC C48615108). Used by espion-cam as C13 (AISHI) and C14 (JIERR).
+(JVE16V330M8X10, LCSC C48615108).
 
+- **Not used by espion-cam any more** (2026-11-09): C13 now shares C22's part on stock
+  `Capacitor_SMD:CP_Elec_6.3x5.8`, and C14 shares C46/C47's on stock `Capacitor_SMD:CP_Elec_10x10`.
 - Sources: [AISHI VZ](https://datasheet.lcsc.com/datasheet/pdf/aabe05a1d48507568d8975f1e7578509.pdf),
   [JIERR JVE](https://datasheet.lcsc.com/datasheet/pdf/3ad662ff0f7907637937f3fa823d20da.pdf).
 - Neither vendor publishes a land pattern. The pads are the Nichicon land KiCad uses for the
