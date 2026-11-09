@@ -38,6 +38,9 @@ keep that larger radius, and only r 3.8 mm is required.
 
 The board carries "espion-cam" with its revision and `${ISSUE_DATE}` on the bottom silkscreen. The date text follows the
 title block's date, which `kicad_edit` `set_board_setup {date}` sets to the release date before the fab output is made.
+Below them, a "JLCJLCJLCJLC" text on the bottom silkscreen is where JLCPCB prints its order number (user decision
+2026-11-09: placeholder rather than a paid removal or a spot of JLCPCB's choosing); the order sets "Mark on PCB" to
+"Order number (specify position)".
 
 ### Stack-up
 
