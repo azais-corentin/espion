@@ -1063,13 +1063,16 @@ fn report(
     });
     let frame = shown.map_or("frame: none".to_owned(), |sh| {
         let f = &sh.frame;
-        format!(
-            "frame: {}x{} {:?} {} B",
-            f.width,
-            f.height,
-            f.encoding,
-            f.data.len()
-        )
+        match sh.jpeg_len {
+            Some(n) => format!("frame: {}x{} JPEG {n} B, shown decoded", f.width, f.height),
+            None => format!(
+                "frame: {}x{} {:?} {} B",
+                f.width,
+                f.height,
+                f.encoding,
+                f.data.len()
+            ),
+        }
     });
     let refusal = s.refusal.map_or("refusal: none".to_owned(), |r| {
         format!("refusal: {}", r.error)
