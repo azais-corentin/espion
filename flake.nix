@@ -110,6 +110,61 @@
                 doCheck = false;
               };
 
+          # Runs a GUI command without a desktop: in cage on wlroots' headless backend, with
+          # software rendering (Mesa's lavapipe) and eframe's inspection port open, so an
+          # agent can start an egui app and drive it through the egui MCP server. The
+          # compositor lives in its own runtime directory, away from the user's session.
+          eguiHeadless = pkgs.writeShellApplication {
+            name = "egui-headless";
+            runtimeInputs = [
+              pkgs.cage
+              pkgs.wlr-randr
+              pkgs.coreutils
+              pkgs.util-linux
+            ];
+            text = ''
+              usage() {
+                echo "usage: egui-headless [-s WIDTHxHEIGHT] [-p PORT] COMMAND [ARG...]" >&2
+                echo "  -s  size of the headless output, which the window fills (default 1280x800)" >&2
+                echo "  -p  port of eframe's inspection server on 127.0.0.1 (default 5719)" >&2
+                exit 64
+              }
+              size=1280x800
+              port=5719
+              while getopts s:p: opt; do
+                case $opt in
+                  s) size=$OPTARG ;;
+                  p) port=$OPTARG ;;
+                  *) usage ;;
+                esac
+              done
+              shift $((OPTIND - 1))
+              [ $# -ge 1 ] || usage
+
+              runtime=$(mktemp -d)
+              trap 'rm -rf "$runtime"' EXIT
+              export XDG_RUNTIME_DIR=$runtime
+              unset DISPLAY WAYLAND_DISPLAY
+              export WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
+              export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json
+              export EGUI_INSPECTION=127.0.0.1:$port
+              # Compositor and application in their own session, so that stopping this
+              # script stops both.
+              # shellcheck disable=SC2016
+              setsid cage -- sh -c 'wlr-randr --output HEADLESS-1 --custom-mode "$0" && exec "$@"' "$size" "$@" &
+              group=$!
+              trap 'kill -TERM -- "-$group" 2>/dev/null || true' TERM INT HUP
+              status=0
+              wait "$group" || status=$?
+              # A trapped signal ends the first wait early.
+              if kill -0 "$group" 2>/dev/null; then
+                status=0
+                wait "$group" || status=$?
+              fi
+              exit "$status"
+            '';
+          };
+
           # SolidCraft's modelling skills for omp. The shellHook links them from the locked
           # `solidcraft` input into .omp/skills (gitignored), so they always match the
           # solidcraft-cli above. omp reads skills at startup: restart it after a bump.
@@ -130,6 +185,7 @@
               solidcraft.packages.${pkgs.stdenv.hostPlatform.system}.solidcraft
               pkgs.pkg-config
               eguiMcp
+              eguiHeadless
               # KiCad toolkit (.omp/extensions/kicad): bun runs its tests, Python the KLC
               # scripts and the official symbol/footprint generators.
               pkgs.bun

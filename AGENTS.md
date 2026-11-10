@@ -14,7 +14,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 | `host/*` | Host apps: server, viewer, calib, sync | `cargo build --workspace`, `cargo test --workspace` (root) |
 | `hardware/espion-cam/` | KiCad project; it is the source of every part value and board figure; its design (requirements, decisions, formulas, layout constraints, firmware rules) is in `docs/hardware/`; the BOM is exported from the schematic with the `Order` preset | KiCad toolkit: `kicad_check` (ERC, drawing rules, connectivity, footprints, fields, decoupling, pulls, BOM lines, rules; on the board `drc`, track widths, return paths and vias, decoupling and footprint placement, `layout` constraints); board set-up and layout with the `kicad_edit` board ops (stack-up, board rules, outline, update from schematic, update footprint from library, placement, tracks, diff pairs, vias, zones, rule areas, board text); fab outputs (Gerbers, JLCPCB BOM/CPL, hand-assembly list from `assembly.hand` in `.omp/kicad.json`, assembly drawings, STEP): `kicad_export`; BOM: `kicad_query` `bom` (preset `Order`) |
 | `hardware/lib/` | Project-local symbols, footprints, 3D models; `3d-src/` holds the SolidCraft scripts the models are built from | KiCad toolkit: `kicad_edit` library ops, `kicad_check` `klc`; model rebuild in `hardware/lib/README.md` |
-| `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`, including the board's `layout` constraints) and its `kicad-*` skills (including `kicad-pcb-layout` and `kicad-pcb-review` for the board); the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its `solidcraft-*` skills, which the dev shell links from the flake input (`solidcraftSkills` in `flake.nix`) | `bun test` in `.omp/extensions/kicad` |
+| `.omp/` | Agent config: the KiCad toolkit extension (`extensions/kicad/`, settings in `kicad.json`, including the board's `layout` constraints) and its `kicad-*` skills (including `kicad-pcb-layout` and `kicad-pcb-review` for the board); the SolidCraft MCP server (`mcp.json`, may write only under `hardware/lib`) and its `solidcraft-*` skills, which the dev shell links from the flake input (`solidcraftSkills` in `flake.nix`); the `egui` MCP server (`egui-mcp` from the dev shell), which drives a running egui app | `bun test` in `.omp/extensions/kicad` |
 | `docs/` | Architecture, wire protocol, timing; `hardware/`: the camera board's design (per block, layout, firmware rules) | — |
 
 - Enter the environment with `direnv allow` or `nix develop`. Don't install toolchains
@@ -41,6 +41,23 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
   commit.
 - `cam-p4` and the host apps use `espion-proto` types. Don't define a second copy of a
   wire type.
+
+## Host GUI apps (egui)
+
+- Verify a GUI change by driving the running app, not by reading the code. Build the app
+  with eframe's `inspection` feature and start it without a desktop:
+  `egui-headless [-s WIDTHxHEIGHT] [-p PORT] COMMAND [ARG...]` (dev shell). It runs the
+  command in a headless Wayland compositor with software rendering and eframe's inspection
+  server on `127.0.0.1:PORT` (default 5719), apart from the user's session. Start it as a
+  background job and stop it when done; stopping it stops the app.
+- Then use the `egui` MCP tools: `attach` (with the port), `widget_tree` and `get_widget`
+  to read the UI, `click`, `type_text`, `drag`, `scroll`, `press_key` to act, `wait_for` to
+  let the UI settle, `screenshot` (with `save_path`) to look at it. Controls are found by
+  their label or value, so every control needs a distinct text label.
+- Use one port per app when several run at once. The `egui_mcp` version in `flake.nix`
+  must match the workspace's eframe version.
+- Rendering there is software: frame rates and frame times measured headless say nothing
+  about the real display. Measure those on the desktop session, in short runs.
 
 ## Dependencies
 
