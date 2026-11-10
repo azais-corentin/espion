@@ -148,3 +148,25 @@ fn random_pattern_sets_the_same_seed() {
         [(0x5E01, 0x51), (0x5E00, 0x81), (0x5E00, 0x00)]
     );
 }
+
+#[test]
+fn single_registers_are_read_and_written() {
+    let mut cam = Ov9281::new(MockSensor::new(0x60), Address::Primary);
+    assert_eq!(block_on(cam.read_register(0x300A)), Ok(0x92));
+    assert_eq!(block_on(cam.read_register(0x300B)), Ok(0x81));
+    block_on(cam.write_register(0x4800, 0x60)).unwrap();
+    assert_eq!(cam.mode(), None);
+    assert_eq!(cam.release().writes, [(0x4800, 0x60)]);
+
+    let mut sensor = MockSensor::new(0x60);
+    sensor.fail = true;
+    let mut cam = Ov9281::new(sensor, Address::Primary);
+    assert_eq!(
+        block_on(cam.read_register(0x300A)),
+        Err(DeviceError::Bus(BusError))
+    );
+    assert_eq!(
+        block_on(cam.write_register(0x4800, 0x60)),
+        Err(DeviceError::Bus(BusError))
+    );
+}

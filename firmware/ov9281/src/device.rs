@@ -250,6 +250,29 @@ impl<I2C: I2c> Ov9281<I2C> {
         self.write(MODE_SELECT, 0x00).await
     }
 
+    /// Reads one register: for diagnostics, e.g. to log what the sensor holds after
+    /// [`Ov9281::configure`].
+    pub async fn read_register(&mut self, reg: u16) -> Result<u8, DeviceError<I2C::Error>> {
+        let mut value = [0u8];
+        self.i2c
+            .write_read(self.address, &reg.to_be_bytes(), &mut value)
+            .await
+            .map_err(DeviceError::Bus)?;
+        Ok(value[0])
+    }
+
+    /// Writes one register, unchecked: for experiments and settings the driver does not model
+    /// (e.g. MIPI_CTRL00 0x4800 = 0x60, the gated clock lane, in standby). A write that changes
+    /// the timing, the window or the format makes the figures of [`Ov9281::mode`] wrong; the
+    /// next [`Ov9281::configure`] undoes every such write (it starts with a software reset).
+    pub async fn write_register(
+        &mut self,
+        reg: u16,
+        value: u8,
+    ) -> Result<(), DeviceError<I2C::Error>> {
+        self.write(reg, value).await
+    }
+
     async fn write(&mut self, reg: u16, value: u8) -> Result<(), DeviceError<I2C::Error>> {
         let [hi, lo] = reg.to_be_bytes();
         self.i2c
