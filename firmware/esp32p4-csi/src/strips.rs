@@ -54,6 +54,22 @@
 //! `first_row() == 0` starts a frame; if one arrives before the previous frame's last strip,
 //! that previous frame was truncated ([`StripStats::frames_truncated`]).
 //!
+//! # Known fault: a long stall in RAW10
+//!
+//! Open, measured on the board (`poc-p4-eth` strip soak, 2026-11-10). In RAW10 a DMA halt of
+//! about 30 ms (the DMA reaching a strip that is still held: the ring filled while the
+//! firmware logged, or a deliberate 30 ms busy wait after stream-on) corrupts memory and
+//! crashes, with rings of 3 and of 2 strips: load access faults in the DMA interrupt handler
+//! (the list-item pointer held a value that looks like image data) and in the executor's
+//! waker. RAW8 with rings of 3 and 4 recovers from the same halt, losing a few frames as
+//! described above. Ruled out as fixes: restarting the channel instead of
+//! `BLK_TFR_RESUMEREQ`, and turning the bridge off for the length of the halt. A sentinel area
+//! right after the ring was never written, so how the memory is hit is not known.
+//!
+//! Until this is solved, a RAW10 consumer must never let the DMA reach a held strip: give
+//! every strip back within the time the ring absorbs, and stop the sensor stream and the
+//! receiver before any pause (logging, set-up) longer than that.
+//!
 //! # Interrupt handler
 //!
 //! Unlike the whole-frame path, the DMA does not wait for the handler: it runs on through
