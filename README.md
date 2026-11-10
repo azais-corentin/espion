@@ -32,6 +32,7 @@ changes on `main`).
 | `crates/espion-proto/` | no_std UDP wire format shared by firmware and host |
 | `firmware/cam-p4/` | ESP32-P4: camera, blob detection, XVS trigger, LED gating, Ethernet/UDP, PTP sync |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 receiver driver for the P4 (esp-hal lacks one) |
+| `firmware/ov9281/` | no_std OV9281 sensor driver: computes a mode (format, size, crop/binning, frame rate) and drives the sensor over SCCB |
 | `host/espion-server/` | UDP receive + triangulation (CLI) |
 | `host/espion-viewer/` | egui live view |
 | `host/espion-calib/` | Intrinsics + extrinsics calibration |

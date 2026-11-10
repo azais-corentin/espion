@@ -1,0 +1,23 @@
+[package]
+name         = "ov9281"
+description  = "OV9281 sensor driver: mode solver (RAW8/RAW10, size, crop or binning, frame rate) and async SCCB control (no_std, no heap)"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+# No .cargo/config.toml: the crate has no esp dependency, so `cargo test` runs on the host.
+# Build for the P4 with `--target riscv32imafc-unknown-none-elf`.
+
+[dependencies]
+# I2C and delay traits. The version esp-hal 1.2.2 implements (firmware/poc-p4-eth/Cargo.lock).
+embedded-hal-async = "1.0.0"
+
+[lints.rust]
+missing_docs           = "warn"
+unsafe_code            = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

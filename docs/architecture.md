@@ -93,6 +93,7 @@ no heap on the P4: every buffer is static.
 |---|---|---|
 | `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo (ETM capture), Ethernet and embassy-net (DHCP, UDP), PTP (statime), the LED gate, and the accelerometer (bump detection, gravity) on a second I2C bus |
 | `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, written in esp-hal style. Used by `cam-p4` |
+| `firmware/ov9281` | no_std library, host-testable | OV9281 sensor driver: the mode solver (format, size, crop or binning, frame rate → clock, HTS, VTS and registers, refusing what the measured limits do not allow) and SCCB control over `embedded-hal-async` I2C. For `poc-p4-eth` and `cam-p4` |
 
 `cam-p4` uses `esp-hal` and `esp-rtos` (embassy executor). The XVS edge schedule reuses the
 RMT technique from the private
@@ -135,6 +136,7 @@ Checked on 2026-10-28. The firmware crates commit their `Cargo.lock`.
 | statime | 0.4.0 | `default-features = false`: no_std, no `alloc`. Builds for `riscv32imafc-unknown-none-elf` |
 | serde / postcard | 1.0.229 / 1.1.3 | `default-features = false` on firmware |
 | espflash / probe-rs | 4.6.0 / 0.32.0 | From nixpkgs (flake.lock) |
+| embedded-hal-async | 1.0.0 | I2C and delay traits of `firmware/ov9281`; the version esp-hal 1.2.2 implements |
 
 ## esp-hal support and gaps
 
