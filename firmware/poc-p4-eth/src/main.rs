@@ -77,11 +77,12 @@ enum Soak {
 /// The soak [`CAMERA_PLAN`] runs.
 const SOAK: Soak = Soak::Frames;
 /// The plan the camera section runs: [`CAMERA_PLAN`] (default), [`FAST_CAPTURE_PLAN`],
-/// [`MODE_STILLS_PLAN`] or [`RAW10_PATTERNS_PLAN`].
+/// [`MODE_STILLS_PLAN`], [`RAW10_PATTERNS_PLAN`], [`RAW10_STRIP_SOAK_PLAN`] or
+/// [`STRIP_CHECK_PLAN`].
 const PLAN: &camera::Plan = &CAMERA_PLAN;
 /// Camera section on the 120 fps RAW8 modes (indexes into `ov9281::MODES`: 0 1280x800,
 /// 1 1280x720, 2 640x480, 3 640x400): sensor settings, checks, still dump (decode with
-/// `tools/still.py`) and the soak selected by [`SOAK`]. The soaks run on RAW8 modes only.
+/// `tools/still.py`) and the soak selected by [`SOAK`]. The frame soak runs on RAW8 modes only.
 const CAMERA_PLAN: camera::Plan = camera::Plan {
     modes: &[0, 1, 2, 3],
     test_pattern: false,
@@ -115,6 +116,30 @@ const STRIP_SOAK_PLAN: strip_soak::Plan = strip_soak::Plan {
     live: Duration::from_secs(30),
     synthetic: Duration::from_secs(10),
     blob_targets: &[0, 16, 64],
+    check: None,
+};
+/// Strip soak on the RAW10 modes 9..=11 (1280x800, 1280x720, 640x400 binned at 210 fps):
+/// select with `PLAN`. Strips of 64 lines at 1280 wide and 128 at 640, 3 in the ring.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const RAW10_STRIP_SOAK_PLAN: camera::Plan = camera::Plan {
+    modes: &[9, 10, 11],
+    soak: None,
+    strips: Some(STRIP_SOAK_PLAN),
+    ..CAMERA_PLAN
+};
+/// Strip check on mode 0 (1280x800 RAW8, as in the strip bring-up) and the RAW10 modes 9..=11
+/// (at most 4 modes): whole frames of the sensor's random test pattern (same seed every frame)
+/// as the reference, then 10 s of strips per mode checked row by row against it. Select with
+/// `PLAN`.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const STRIP_CHECK_PLAN: camera::Plan = camera::Plan {
+    modes: &[0, 9, 10, 11],
+    soak: None,
+    strips: Some(strip_soak::Plan {
+        check: Some(Duration::from_secs(10)),
+        ..STRIP_SOAK_PLAN
+    }),
+    ..CAMERA_PLAN
 };
 /// Capture only over the extended modes 4..=11 (4..=8 faster RAW8 up to 454 fps, 9..=11
 /// RAW10): measured against the predicted frame rate, 5 s each. The exposure is clamped per

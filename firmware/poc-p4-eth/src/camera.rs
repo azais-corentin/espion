@@ -63,8 +63,9 @@ pub struct Plan {
     pub still_patterns: &'static [u8],
     /// Run the processing soak per mode after the checks above (`soak`). `None`: capture only.
     pub soak: Option<soak::Plan>,
-    /// Run the strip soak instead (`strip_soak`): the whole-frame receiver is never created,
-    /// and `measure`, `cache_check`, `still_dump` and `soak` are ignored.
+    /// Run the strip path instead (`strip_soak`: the strip soak, or with `check` the strip
+    /// check, whose references alone use a whole-frame receiver), and `measure`,
+    /// `cache_check`, `still_dump` and `soak` are ignored.
     pub strips: Option<strip_soak::Plan>,
 }
 
@@ -82,7 +83,7 @@ pub async fn run<const STRIPS: bool>(
 ) {
     if power_up().await {
         match plan.strips {
-            Some(strips) => strip_modes::<STRIPS>(i2c, vdma, internal, plan, strips).await,
+            Some(strips) => strip_modes::<STRIPS>(i2c, vdma, psram, internal, plan, strips).await,
             None => run_frames(i2c, vdma, psram, plan).await,
         }
     }
@@ -624,14 +625,105 @@ fn byte_sum(buf: &[u8]) -> u32 {
 // ── Strip soak ──────────────────────────────────────────────────────────────────────────
 
 static STRIP_SOAK: StaticCell<strip_soak::StripSoak> = StaticCell::new();
+static STRIP_CHECK: StaticCell<strip_soak::StripCheck> = StaticCell::new();
 
-/// The strip path (does nothing unless `ON`). The whole-frame `Csi` is never created: both
-/// need the DMA channel and the driver allows one receiver at a time. Consecutive modes of
-/// the same width share one `CsiStrips` on the ring split for that width (4 strips at 1280
-/// wide, 8 at 640); at a change of width the receiver is dropped and the ring split again.
+/// PRE_CTRL00 (0x5E00) = 0x81: the sensor's random-data test pattern, for the strip check.
+const RANDOM_PATTERN: (u16, u8) = (0x5E00, 0x81);
+/// PRE_CTRL01 (0x5E01) = 0x51: the reset value 0x41 (window cut on, seed 1) plus bit 4, "same
+/// seed enable" (datasheet: reset the seed to bits 3:0 each frame). Without it the random
+/// pattern differs from frame to frame (measured in RAW10: every row of every frame).
+const RANDOM_SAME_SEED: (u16, u8) = (0x5E01, 0x51);
+
+/// What the strip path runs per mode.
+enum StripJob {
+    Soak(&'static mut strip_soak::StripSoak),
+    Check(&'static mut strip_soak::StripCheck),
+}
+
+impl StripJob {
+    fn log_table(&self) {
+        match self {
+            StripJob::Soak(s) => s.log_table(),
+            StripJob::Check(c) => c.log_table(),
+        }
+    }
+
+    /// Runs per mode on `rx`: the soak's runs on strips, else one.
+    fn runs(&self, rx: &Rx<'_>) -> usize {
+        match (self, rx) {
+            (StripJob::Soak(s), Rx::Strips(_)) => s.runs(),
+            _ => 1,
+        }
+    }
+
+    /// Before run `k` of `mode` (plan slot `slot`) on `rx`, with the receiver stopped.
+    #[inline(never)]
+    fn prepare(&mut self, rx: &Rx<'_>, mode: &Mode, slot: usize, k: usize) {
+        match (self, rx) {
+            (StripJob::Soak(s), Rx::Strips(_)) => {
+                s.prepare(mode, k, strip_soak::lines(&csi_config(mode)));
+            }
+            (StripJob::Check(c), Rx::Frames(_)) => c.begin_reference(slot, mode),
+            _ => {}
+        }
+    }
+
+    /// The result of the run just done on `rx`, with the receiver stopped.
+    #[inline(never)]
+    fn log_run(&self, rx: &Rx<'_>, mode: &Mode, slot: usize) {
+        match (self, rx) {
+            (StripJob::Soak(s), Rx::Strips(_)) => s.log_last(),
+            (StripJob::Check(c), Rx::Frames(_)) => c.log_reference(slot),
+            (StripJob::Check(c), Rx::Strips(_)) => c.log_run(slot, mode),
+            (StripJob::Soak(_), Rx::Frames(_)) => {}
+        }
+    }
+}
+
+/// The receiver of one group of modes on the strip path.
+enum Rx<'d> {
+    /// Whole frames in PSRAM: the strip check's references.
+    Frames(Csi<'d>),
+    Strips(CsiStrips<'d>),
+}
+
+impl Rx<'_> {
+    /// Configures the receiver for `mode` and starts it.
+    fn start(&mut self, mode: &Mode) -> Result<(), StripError> {
+        let config = csi_config(mode);
+        match self {
+            Rx::Frames(csi) => Ok(csi.set_config(config).and_then(|()| csi.start())?),
+            Rx::Strips(cs) => cs
+                .set_config(config, strip_soak::lines(&config))
+                .and_then(|()| cs.start()),
+        }
+    }
+
+    fn phy_status(&self) -> PhyStatus {
+        match self {
+            Rx::Frames(csi) => csi.phy_status(),
+            Rx::Strips(cs) => cs.phy_status(),
+        }
+    }
+
+    fn stop(&mut self) {
+        match self {
+            Rx::Frames(csi) => csi.stop(),
+            Rx::Strips(cs) => cs.stop(),
+        }
+    }
+}
+
+/// The strip path (does nothing unless `ON`): the strip soak, or with `strips.check` the strip
+/// check. The check first captures its whole-frame references with a `Csi` on the PSRAM
+/// frame buffers, for every mode, and drops it; the soak never creates one. Both need the DMA
+/// channel and the driver allows one receiver at a time. Consecutive modes with the same
+/// strip size share one `CsiStrips` on the ring split for it (4 strips at 1280 RAW8, 8 at 640
+/// RAW8, 3 in RAW10); at a change the receiver is dropped and the ring split again.
 async fn strip_modes<const ON: bool>(
     i2c: &mut Bus,
     mut vdma: VDMA_CH0<'static>,
+    psram: &'static mut [u8],
     internal: &'static mut [u8],
     plan: &Plan,
     strips: strip_soak::Plan,
@@ -641,74 +733,125 @@ async fn strip_modes<const ON: bool>(
     if !ON {
         return;
     }
-    let Some(soak) = strip_soak::StripSoak::new(strips, internal) else {
-        fail("internal buffer too small for the synthetic strip", &());
+    let Some((mut job, mut frame_buffers)) = make_strip_job(psram, internal, strips) else {
         return;
     };
-    let soak = STRIP_SOAK.init(soak);
     let mut ring = strip_soak::Ring::take();
     let mut rest = plan.modes;
-    while let Some(&first) = rest.first() {
-        let width = MODES[first].width;
-        let n = rest
-            .iter()
-            .take_while(|&&i| MODES[i].width == width)
-            .count();
-        let (group, next) = rest.split_at(n);
-        rest = next;
-        let config = csi_config(&MODES[first]);
-        // SAFETY (both arms): the receiver of the previous group, which held the ring, was
-        // dropped at the end of its `strip_group`.
-        if strip_soak::ring_strips(&config) == 8 {
-            let ring = unsafe { ring.split::<8>(&config) };
-            strip_group(i2c, vdma.reborrow(), ring, soak, group, plan).await;
+    let mut slot = 0;
+    // One call site for every group (references, then strips): each `strip_group` future
+    // constructed elsewhere would take its own room in this function's stack frame.
+    loop {
+        let (rx, group, first_slot) = if let Some(buffers) = frame_buffers.take() {
+            (
+                make_reference_receiver(vdma.reborrow(), buffers, &MODES[plan.modes[0]]),
+                plan.modes,
+                0,
+            )
         } else {
-            let ring = unsafe { ring.split::<4>(&config) };
-            strip_group(i2c, vdma.reborrow(), ring, soak, group, plan).await;
+            let Some(&first) = rest.first() else {
+                break;
+            };
+            let config = csi_config(&MODES[first]);
+            let bytes = strip_soak::strip_bytes(&config);
+            let n = rest
+                .iter()
+                .take_while(|&&i| strip_soak::strip_bytes(&csi_config(&MODES[i])) == bytes)
+                .count();
+            let (group, next) = rest.split_at(n);
+            rest = next;
+            slot += n;
+            // SAFETY: the receiver of the previous group, which held the ring, was dropped at
+            // the end of its `strip_group`.
+            let rx = unsafe { make_strip_receiver(vdma.reborrow(), &mut ring, &config) };
+            (rx, group, slot - n)
+        };
+        if let Some(rx) = rx {
+            strip_group(i2c, rx, &mut job, group, first_slot, plan).await;
         }
     }
-    soak.log_table();
+    job.log_table();
 }
 
-/// The strip soak over `group` (modes of one width) on one receiver built on `ring`.
-async fn strip_group<const N: usize>(
-    i2c: &mut Bus,
-    vdma: VDMA_CH0<'_>,
-    ring: strip_soak::RingSplit<N>,
-    soak: &mut strip_soak::StripSoak,
-    group: &[usize],
-    plan: &Plan,
-) {
-    let Some(mut cs) = make_strip_receiver(vdma, ring, &MODES[group[0]]) else {
-        return;
-    };
-    for &index in group {
-        let mode = &MODES[index];
-        if mode.data_type != ov9281::DT_RAW8 {
-            note("strip soak skipped: RAW8 modes only");
-            continue;
-        }
-        if start_strip_mode(i2c, &mut cs, mode, plan).await && !soak.run_mode(&mut cs, mode).await {
-            note("no whole frame of strips");
-            log_strip_state(&cs);
-        }
-        if let Err(e) = sccb_write(i2c, ov9281::STREAM_OFF).await {
-            fail("stream off", &e);
-        }
-        // Let the current frame finish so the lanes go back to LP-11.
-        Timer::after_millis(20).await;
-        cs.stop();
-    }
-}
-
-/// Creates the strip receiver on `ring` (internal RAM).
+/// The soak, or the check with its frame buffers (the start of PSRAM) and its reference
+/// words in PSRAM right after them.
 #[inline(never)]
-fn make_strip_receiver<'d, const N: usize>(
+fn make_strip_job(
+    psram: &'static mut [u8],
+    internal: &'static mut [u8],
+    strips: strip_soak::Plan,
+) -> Option<(StripJob, Option<&'static mut [u8]>)> {
+    let Some(window) = strips.check else {
+        let Some(soak) = strip_soak::StripSoak::new(strips, internal) else {
+            fail("internal buffer too small for the synthetic strip", &());
+            return None;
+        };
+        return Some((StripJob::Soak(STRIP_SOAK.init(soak)), None));
+    };
+    let need = BUFFERS * BUFFER_LEN + 4 * strip_soak::CHECK_WORDS;
+    if psram.len() < need {
+        fail("PSRAM too small for the strip check", &need);
+        return None;
+    }
+    let (buffers, rest) = psram.split_at_mut(BUFFERS * BUFFER_LEN);
+    // SAFETY: every bit pattern is a valid `u32`.
+    let (_, words, _) = unsafe { rest.align_to_mut::<u32>() };
+    let Some(check) = strip_soak::StripCheck::new(window, words) else {
+        fail("PSRAM too small for the strip check", &need);
+        return None;
+    };
+    Some((StripJob::Check(STRIP_CHECK.init(check)), Some(buffers)))
+}
+
+/// The whole-frame receiver for the strip check's references, on [`BUFFERS`] buffers.
+#[inline(never)]
+fn make_reference_receiver<'d>(
+    vdma: VDMA_CH0<'d>,
+    buffers: &'static mut [u8],
+    first: &Mode,
+) -> Option<Rx<'d>> {
+    let (b0, rest) = buffers.split_at_mut(BUFFER_LEN);
+    let (b1, b2) = rest.split_at_mut(BUFFER_LEN);
+    match Csi::new(vdma, [b0, b1, b2], csi_config(first)) {
+        Ok(c) => Some(Rx::Frames(c)),
+        Err(e) => {
+            fail("Csi::new (strip check references)", &e);
+            None
+        }
+    }
+}
+
+/// The strip receiver for `config` on the ring, split into as many strips as fit.
+///
+/// # Safety
+///
+/// No receiver built on an earlier split of `ring` may still be alive.
+#[inline(never)]
+unsafe fn make_strip_receiver<'d>(
+    vdma: VDMA_CH0<'d>,
+    ring: &mut strip_soak::Ring,
+    config: &Config,
+) -> Option<Rx<'d>> {
+    // SAFETY (every arm): the caller's guarantee.
+    let cs = match strip_soak::ring_strips(config) {
+        8 => strip_receiver(vdma, unsafe { ring.split::<8>(config) }, config),
+        4 => strip_receiver(vdma, unsafe { ring.split::<4>(config) }, config),
+        3 => strip_receiver(vdma, unsafe { ring.split::<3>(config) }, config),
+        other => {
+            fail("no ring split for this strip size (strips)", &other);
+            None
+        }
+    };
+    cs.map(Rx::Strips)
+}
+
+/// Creates the strip receiver for `config` on `ring` (internal RAM).
+fn strip_receiver<'d, const N: usize>(
     vdma: VDMA_CH0<'d>,
     (strips, links): strip_soak::RingSplit<N>,
-    first: &Mode,
+    config: &Config,
 ) -> Option<CsiStrips<'d>> {
-    match CsiStrips::new(vdma, strips, links, csi_config(first), strip_soak::LINES) {
+    match CsiStrips::new(vdma, strips, links, *config, strip_soak::lines(config)) {
         Ok(c) => {
             log_strip_ready(&c, N);
             Some(c)
@@ -720,28 +863,133 @@ fn make_strip_receiver<'d, const N: usize>(
     }
 }
 
-/// Sensor set-up, strip receiver start and stream-on. `false` if something failed.
-async fn start_strip_mode(i2c: &mut Bus, cs: &mut CsiStrips<'_>, mode: &Mode, plan: &Plan) -> bool {
+/// `group` (from plan slot `slot`) on `rx`, which is dropped at the end. Per mode and run:
+/// the job's preparation, the sensor set-up (with the random test pattern for the check),
+/// stream-on, then the check's reference frames (whole frames), or the soak's run or the
+/// check's strip run (strips); stream-off, receiver stop, and only then the result line. The
+/// receiver is stopped whenever the firmware does something else, so the DMA never halts on a
+/// full ring between runs (see `strip_soak`).
+async fn strip_group(
+    i2c: &mut Bus,
+    mut rx: Rx<'_>,
+    job: &mut StripJob,
+    group: &[usize],
+    slot: usize,
+    plan: &Plan,
+) {
+    let pattern = matches!(job, StripJob::Check(_));
+    for (k, &index) in group.iter().enumerate() {
+        let mode = &MODES[index];
+        let slot = slot + k;
+        for run in 0..job.runs(&rx) {
+            job.prepare(&rx, mode, slot, run);
+            let started = start_stream(i2c, &mut rx, mode, plan, pattern).await;
+            let ok = started
+                && match (&mut rx, &mut *job) {
+                    (Rx::Frames(csi), StripJob::Check(c)) => reference_frames(csi, c, slot).await,
+                    (Rx::Frames(_), StripJob::Soak(_)) => true,
+                    (Rx::Strips(cs), StripJob::Soak(s)) => s.run_mode(cs, mode).await,
+                    (Rx::Strips(cs), StripJob::Check(c)) => c.run_mode(cs, slot).await,
+                };
+            if let Err(e) = sccb_write(i2c, ov9281::STREAM_OFF).await {
+                fail("stream off", &e);
+            }
+            // Let the current frame finish so the lanes go back to LP-11.
+            Timer::after_millis(20).await;
+            rx.stop();
+            if ok {
+                job.log_run(&rx, mode, slot);
+            } else {
+                if started {
+                    log_no_frames(&rx);
+                }
+                break;
+            }
+        }
+    }
+}
+
+/// Drops the first two frames (stream start), then feeds
+/// [`strip_soak::REFERENCE_FRAMES`] whole frames to the check. Each is held while its rows are
+/// summed (about 11 ms at 1280x800 RAW10), so they are not consecutive. `false` if a frame
+/// did not come.
+async fn reference_frames(
+    csi: &mut Csi<'_>,
+    check: &mut strip_soak::StripCheck,
+    slot: usize,
+) -> bool {
+    let mut frame = None;
+    for k in 0..2 + strip_soak::REFERENCE_FRAMES {
+        let Ok(Ok(f)) = with_timeout(FRAME_TIMEOUT, csi.wait_frame(frame.take())).await else {
+            return false;
+        };
+        if k >= 2 {
+            check.reference_frame(slot, &f, f.received_len(), f.seq());
+        }
+        frame = Some(f);
+    }
+    true
+}
+
+/// Sensor set-up (with the random test pattern if `pattern`), receiver start and stream-on.
+/// `false` if something failed.
+async fn start_stream(
+    i2c: &mut Bus,
+    rx: &mut Rx<'_>,
+    mode: &Mode,
+    plan: &Plan,
+    pattern: bool,
+) -> bool {
     log_mode(mode, plan);
     if let Err(e) = sensor_setup(i2c, mode, plan).await {
         fail("SCCB write", &e);
         return false;
     }
+    if pattern {
+        for r in [RANDOM_PATTERN, RANDOM_SAME_SEED] {
+            if let Err(e) = sccb_write(i2c, r).await {
+                fail("SCCB write (test pattern)", &e);
+                return false;
+            }
+        }
+        log_pattern_regs(
+            sccb_read(i2c, RANDOM_PATTERN.0).await,
+            sccb_read(i2c, RANDOM_SAME_SEED.0).await,
+        );
+    }
     log_sensor_regs(i2c).await;
-    let started: Result<(), StripError> = cs
-        .set_config(csi_config(mode), strip_soak::LINES)
-        .and_then(|()| cs.start());
-    if let Err(e) = started {
-        fail("strip receiver start", &e);
+    if let Err(e) = rx.start(mode) {
+        fail("receiver start", &e);
         return false;
     }
     Timer::after_millis(1).await;
-    log_phy_before_stream(&cs.phy_status());
+    log_phy_before_stream(&rx.phy_status());
     if let Err(e) = sccb_write(i2c, ov9281::STREAM_ON).await {
         fail("stream on", &e);
         return false;
     }
     true
+}
+
+/// The test pattern registers as read back.
+#[inline(never)]
+fn log_pattern_regs(pre_ctrl00: Option<u8>, pre_ctrl01: Option<u8>) {
+    info!(
+        "camera: random test pattern: 0x5E00 = {pre_ctrl00:02x?}, 0x5E01 = {pre_ctrl01:02x?} (asked {:#04x}, {:#04x})",
+        RANDOM_PATTERN.1, RANDOM_SAME_SEED.1
+    );
+}
+
+/// No (whole) frame arrived: the receiver's state.
+#[inline(never)]
+fn log_no_frames(rx: &Rx<'_>) {
+    match rx {
+        Rx::Frames(_) => note("no whole frame for the strip check reference"),
+        Rx::Strips(cs) => {
+            note("no whole frame of strips");
+            log_strip_state(cs);
+        }
+    }
 }
 
 #[inline(never)]
@@ -754,7 +1002,7 @@ fn log_strip_ready(cs: &CsiStrips<'_>, strips: usize) {
     );
 }
 
-/// The strip receiver's counters and ring snapshot (bring-up checklist in `poc-csi.md`).
+/// The strip receiver's counters and ring snapshot.
 #[inline(never)]
 fn log_strip_state(cs: &CsiStrips<'_>) {
     info!("camera: strip stats {:?}", cs.stats());
