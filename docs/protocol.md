@@ -111,7 +111,10 @@ the `poc-viewer` host app; not by the tracking path above.
   IPv6 − 8 UDP), so IPv6 never fragments.
 - Requests are idempotent and carry a sequence number the response echoes. The host repeats
   an unanswered request with the same number (`poc-viewer`: every 200 ms) and keeps one in
-  flight; a response whose number is not the one in flight answers an earlier repeat.
+  flight; a response whose number is not the one in flight answers an earlier repeat. The
+  board answers a repeat of the last request it executed (same number, same op, same source)
+  with that execution's result and does not execute it again: repeats of a slow mode change
+  queue up meanwhile, and a refused change must not be applied by its own repeat.
 
 ### `0x20` CamRequest (host → board)
 

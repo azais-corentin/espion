@@ -35,6 +35,7 @@ mod bench;
 mod camera;
 mod cpu;
 mod net;
+mod stream;
 
 /// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print
 /// at 115200). Capture with `espflash monitor --monitor-baud <LOG_BAUD>`. `None` keeps 115200.
@@ -49,10 +50,13 @@ enum Service {
     /// The test service (`bench`): board-to-host throughput from internal RAM, PSRAM or the
     /// camera, and the host-to-board RX check, driven by `tools/netbench.py`.
     Bench,
+    /// The camera stream (`stream`): the `espion_proto::cam` protocol on UDP 5009 for
+    /// `poc-viewer`, test hooks on UDP 5010.
+    Stream,
 }
 
 /// The service this build runs.
-const SERVICE: Service = Service::Bench;
+const SERVICE: Service = Service::Stream;
 
 /// PSRAM bus timing: esp-hal's default 250 MHz (MPLL 500 MHz / 2), as in `poc-p4-eth`.
 const PSRAM_TIMING: PsramTimingParams = PsramTimingParams::MHZ_250;
@@ -104,7 +108,18 @@ async fn main(spawner: Spawner) -> ! {
                 vdma: p.VDMA_CH0,
             },
         ),
-        (Service::Bench, _, _) => error!("bench: needs the network and PSRAM, not started"),
+        (Service::Stream, Some(stack), Some(psram)) => stream::start(
+            spawner,
+            stack,
+            stream::Resources {
+                psram,
+                i2c0: p.I2C0,
+                vdma: p.VDMA_CH0,
+            },
+        ),
+        (Service::Bench | Service::Stream, _, _) => {
+            error!("service: needs the network and PSRAM, not started")
+        }
         (Service::Network, _, _) => {}
     }
     log_ram();
@@ -155,13 +170,17 @@ fn log_ram() {
     let end = &raw const _stack_end_cpu0 as usize;
     let top = &raw const _stack_start_cpu0 as usize;
     info!(
-        "RAM: {} B static ({:#010x}..{end:#010x}), {} B left for the main stack (..{top:#010x}); network DMA {} B, stack resources {} B, bench buffers {} B",
+        "RAM: {} B static ({:#010x}..{end:#010x}), {} B left for the main stack (..{top:#010x}); network DMA {} B, stack resources {} B, service buffers {} B",
         end - RAM_START,
         RAM_START,
         top - end,
         core::mem::size_of::<net::DmaStorage>(),
         core::mem::size_of::<embassy_net::StackResources<{ net::SOCKETS }>>(),
-        bench::RAM_BYTES,
+        match SERVICE {
+            Service::Network => 0,
+            Service::Bench => bench::RAM_BYTES,
+            Service::Stream => stream::RAM_BYTES,
+        },
     );
 }
 

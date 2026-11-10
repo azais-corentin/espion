@@ -8,8 +8,9 @@ license      = "MIT OR Apache-2.0"
 publish      = false
 
 [dependencies]
-esp32p4-csi = { path = "../esp32p4-csi" }
-ov9281      = { path = "../ov9281" }
+esp32p4-csi  = { path = "../esp32p4-csi" }
+espion-proto = { path = "../../crates/espion-proto" }
+ov9281       = { path = "../ov9281" }
 
 esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }
@@ -39,6 +40,13 @@ embassy-net = { version = "0.9.1", features = [
 ] }
 # The driver trait esp-hal 1.2.2 implements (its `embassy-net-driver-02` dependency).
 embassy-net-driver = "0.2.0"
+# `select` of the stream service's tasks; channels and signals between them (the versions
+# esp-hal 1.2.2 and embassy-net 0.9.1 use).
+embassy-futures = "0.1.2"
+embassy-sync    = "0.8.0"
+# The I2C traits the sensor driver takes (the stream service's fault-injecting bus wrapper).
+embedded-hal       = "1.0.0"
+embedded-hal-async = "1.0.0"
 embassy-time       = { version = "0.5.1", features = ["log"] }
 log                = "0.4.34"
 static_cell        = "2.1.1"

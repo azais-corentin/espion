@@ -275,7 +275,8 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
         let needs_camera = matches!(kind, Kind::Frames | Kind::Capture);
         let cam = match camera.as_deref_mut() {
             Some(c) if needs_camera => {
-                if !c.start().await {
+                if let Err(e) = c.start(&camera::MODE, &camera::BENCH_CONTROLS, None).await {
+                    warn!("bench: camera start failed: {e:?}");
                     continue;
                 }
                 c.reset_stats();
@@ -336,8 +337,10 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
         } else {
             None
         };
-        if let (Some(c), true) = (camera.as_deref_mut(), needs_camera) {
-            c.stop().await;
+        if let (Some(c), true) = (camera.as_deref_mut(), needs_camera)
+            && let Err(e) = c.stop().await
+        {
+            warn!("bench: stream off failed: {e:?}");
         }
         let r = sock
             .send_to_with(DATAGRAM, ep, |buf| {

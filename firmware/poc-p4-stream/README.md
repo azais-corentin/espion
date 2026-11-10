@@ -1,9 +1,13 @@
 # poc-p4-stream
 
 A throwaway proof of concept on the Waveshare ESP32-P4-ETH dev board (the board of
-[`poc-p4-eth`](../poc-p4-eth/README.md)): Ethernet and IPv6 with esp-hal's EMAC driver and
-embassy-net, and how fast the board can send. It is the base of the camera streaming firmware
-(the next step builds on its `net` module), not part of the product.
+[`poc-p4-eth`](../poc-p4-eth/README.md)): the OV9281 camera streamed live over Ethernet to
+[`poc-viewer`](../../host/poc-viewer/README.md), with every camera setting taken from it (the
+camera stream of `espion-proto`, `docs/protocol.md`), on Ethernet and IPv6 with esp-hal's EMAC
+driver and embassy-net. Not part of the product.
+
+The `Stream` service (the default) streams raw frames; the `Bench` service (the network test
+it was built on) stays selectable.
 
 - Addressing: IPv6 only, the fixed link-local address `fe80::4553:9281/64`, neighbour discovery
   by smoltcp; no IPv4, no DHCP, no SLAAC. The MAC is the chip's factory MAC from eFuse
@@ -11,10 +15,12 @@ embassy-net, and how fast the board can send. It is the base of the camera strea
   on one switch never collide; the P4 has no radio that uses it too.
 - The host always talks first (its firewall drops unsolicited UDP): the board sends only to the
   address and port a request came from.
-- Status: ping and neighbour discovery work; the board sends and receives at the 100 Mbit/s wire
-  limit with every byte checked, also with the camera capturing 1280x800 at 120 fps (see
-  [Measured results](#measured-results)). esp-hal's Ethernet driver needs three workarounds
-  on the P4 (see [The Ethernet driver](#the-ethernet-driver)).
+- Status: the camera streams at the 100 Mbit/s wire rate in every mode the `ov9281` driver
+  accepts, the viewer's board test passes against it, and a 10-minute soak with mode changes,
+  viewer restarts and malformed datagrams ran without a crash or stall (see
+  [The camera stream](#the-camera-stream)). The network alone sends and receives at the wire
+  limit with every byte checked (see [Measured results](#measured-results)). esp-hal's
+  Ethernet driver needs three workarounds on the P4 (see [The Ethernet driver](#the-ethernet-driver)).
 
 ## Pins
 
@@ -65,10 +71,20 @@ espflash monitor --chip esp32p4 --port "$PORT" --non-interactive --no-addresses 
 ```
 
 `ESPFLASH_PORT=$PORT cargo run --release` does both (the runner in `.cargo/config.toml` has no
-port). The monitor resets the board, and the firmware runs on after the monitor ends. The board
-is ready once the log shows `bench: ready` and `net: link up, 100 Mbit/s full duplex`.
+port). The monitor resets the board, and the firmware runs on after the monitor ends. The
+stream service is ready once the log shows `stream: ready` and
+`net: link up, 100 Mbit/s full duplex`. Then, from the repository root:
 
-Then, on the host, with the board on the interface `eth0` (default; `--iface` otherwise):
+```sh
+cargo run -p poc-viewer --release                     # the window, [fe80::4553:9281%eth0]:5009
+cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 settings
+python3 firmware/poc-p4-stream/tools/streamdiag.py mark     # the board's CPU report: mark,
+python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report
+```
+
+With `SERVICE = Service::Bench` the board runs the network test service instead (ready at
+`bench: ready`); on the host, with the board on the interface `eth0` (default; `--iface`
+otherwise):
 
 ```sh
 ping -6 -c 20 fe80::4553:9281%eth0
@@ -87,8 +103,9 @@ listens.
 
 ### Choosing what runs
 
-`SERVICE` at the top of `src/main.rs`: `Service::Bench` (default) runs the test service below,
-`Service::Network` only the network (ping, neighbour discovery).
+`SERVICE` at the top of `src/main.rs`: `Service::Stream` (default) runs the camera stream,
+`Service::Bench` the network test service below, `Service::Network` only the network (ping,
+neighbour discovery).
 
 ## What the firmware does
 
@@ -98,7 +115,8 @@ listens.
    address, spawns the runner (`net_task`) and the link task, and waits up to 8 s for the
    link. The link task wakes the runner every 500 ms so the PHY's link is read, and logs each
    change (speed and duplex read from the PHY).
-3. `bench::start` spawns the two service tasks; the TX task fills its source buffers and
+3. The service: `stream::start` (below, [The camera stream](#the-camera-stream)) or
+   `bench::start`, which spawns the two test tasks; the TX task fills its source buffers and
    finds the camera first, then logs `bench: ready`.
 
 The test service (`src/bench.rs`, the module docs have the formats):
@@ -131,10 +149,148 @@ and the EMAC's DMA status, missed-frame counter and MAC debug register.
 | `src/net/ip101.rs` | IP101 PHY driver (`Phy` trait): link polled every 500 ms, speed and duplex from ANAR and ANLPAR, the last report for the log |
 | `src/net/device.rs` | `embassy-net-driver` wrapper around esp-hal's driver: per-frame cycle counts, and the checksum capabilities (UDP and ICMPv6 computed by smoltcp) |
 | `src/cpu.rs` | Cycle counter and per-task CPU time from the executor's `trace` hooks |
-| `src/camera.rs` | OV9281 and CSI receiver set-up, start, stop and the newest frame |
+| `src/camera.rs` | OV9281 and CSI receiver: set-up, any mode's start (lanes checked in their stop state before stream-on), controls, stop, the newest frame, the fault switch of the stream's error-path test |
+| `src/stream/mod.rs` | The camera stream service: the shared stream state, the control task (requests, all-or-nothing `SetCamera`, repeats), the hand-off to the capture and send tasks |
+| `src/stream/check.rs` | The `SetCamera` checks in the protocol's order, as the viewer's fake camera makes them |
+| `src/stream/capture.rs` | The capture task: frames, counters, the stream rules, mode changes and recovery |
+| `src/stream/send.rs` | The send task: answers and frame chunks, encoded straight into the socket's ring |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU report, fault injection, stall, log marker |
+| `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
 | `dram_dma.x` | Linker section for the Ethernet DMA storage at 0x4FF40000 or above (see below) |
 | `tools/netbench.py` | Host side of the test service |
+
+## The camera stream
+
+`src/stream/`: the protocol of `espion_proto::cam` (`docs/protocol.md`, "Camera stream",
+version 2) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
+the reference) does, with the real sensor.
+
+- **Requests.** `GetState` and `Poll` answer the full state; `SetStream` checks the encoding
+  against the format; `SetCamera` checks, in the protocol's order, the `ov9281` builder (size,
+  alignment, window, rate), the receiver's geometry (`esp32p4-csi`'s rules), the encoding
+  against the format, exposure (1..=the mode's longest) and gain (16..=248), and applies nothing
+  unless all pass; the answer is the state or the error with its values. Start-up settings are
+  the fake's: 1280x800 RAW8 crop, 120 Hz +- 0.5, exposure 200 lines, gain 2x, stream on, RAW8, no
+  limit. Every valid request makes its source the destination and restarts the 3 s stream
+  timeout; anything else on the port is counted and dropped. A repeat of the last request
+  (same number, op and source, which the host sends while it waits) gets that request's result
+  and is not executed again.
+- **Mode changes.** A request whose mode differs from the running one (`ov9281::Mode`
+  equality): the frame in flight is abandoned, the sensor stream turned off, the frame let out,
+  the receiver stopped, the mode and controls written (`Ov9281::configure`: software reset,
+  registers, standby), the receiver configured and started, the lanes checked in their stop
+  state, stream on, the first frame awaited (two frame periods + 500 ms). The generation is
+  bumped when format, size, readout or origin changed, and on an encoding change. Exposure,
+  gain and test pattern alone are written while streaming. A start that fails (a sensor bus
+  error, the receiver, lanes not in stop state, no first frame) answers `SensorBus` or
+  `Receiver`, and the previous mode is started again, so the next request finds a running
+  camera; if that fails too, the capture task retries every second and on every request.
+- **Frames.** Four whole-frame buffers of 1 286 144 B (1280x800 RAW10) at the start of PSRAM,
+  the newest complete frame taken. Frame numbers count captured frames from boot; each one is
+  counted, and goes out only while a host polls and the stream is on: one in flight (a frame
+  completing meanwhile counts as skipped, as do frames the receiver overwrote before the task
+  took them), `max_fps` honoured (frames held back by it are not counted), the chunks in order
+  on the 1409-byte grid to the last request's source. RAW10 goes out packed, or as RAW8 (the
+  first 4 bytes of every 5, taken as each chunk is copied). Capture errors count short frames,
+  the receiver's DMA, CSI host and bridge error interrupts, frames the receiver dropped for lack
+  of a buffer, and frames that did not come within two periods (the camera is then restarted).
+- **Where it runs.** All on core 0, in the one embassy executor, with the network: control,
+  capture, send, diag, the runner and the link task; the EMAC and CSI interrupts are on core 0
+  too. The send task encodes each chunk straight into the socket's TX ring (`send_to_with`),
+  the one CPU copy of the pixels; smoltcp copies the datagram into the DMA buffer with its
+  checksum pass. Core 1 stays off (below: the two-core attempt hung).
+- **RAM** (boot log): 182 272 B of internal RAM static, of which the service's sockets and
+  buffers are 22 740 B (camera socket: 8 x 1452 B TX ring, 4 KiB RX ring; the hooks' socket);
+  399 296 B left for the main stack. PSRAM: the four frame buffers, 5 144 576 B.
+
+### Measured
+
+All on 2026-11-10, this board, the link to the host's ASIX AX88179 at 100 Mbit/s full duplex,
+`poc-viewer`'s board test (`host/poc-viewer/tests/board.rs`, run `full2`: 0 failed checks;
+output and board log in `/tmp/poc-p4-eth/stream/full2.*`). Host rates are whole frames over the
+window (2.5 to 4 s per mode); every mode below had 0 incomplete frames at the host, frame
+numbers increasing, every frame of the right size, and 0 capture errors on the board.
+
+| Mode (sensor rate) | Host fps | Mbit/s of payload | Limit |
+|---|---|---|---|
+| crop 1280x800 RAW8, 120.049 Hz | 11.00 | 89.9 | link |
+| crop 1280x800 RAW8, 153.984 Hz (96 MHz) | 10.80 | 90.8 | link |
+| crop 1280x720 RAW8, 139.920 Hz | 12.33 | 92.3 | link |
+| crop 1024x768 RAW8, 60.004 Hz | 13.33 | 86.8 | link (every 4th or 5th frame) |
+| crop 640x480 RAW8, 245.850 Hz (96 MHz) | 36.80 | 91.9 | link |
+| crop 320x240 RAW8, 99.957 Hz | 100.00 | 62.3 | sensor |
+| crop 1280x64 RAW8, 999.698 Hz | 141.67 | 94.1 | link |
+| crop 128x2 RAW8 (smallest), 1000.663 Hz | 1000.67 | 2.2 | sensor |
+| binned 640x400 RAW8, 302.189 Hz (96 MHz) | 43.20 | 90.0 | link |
+| binned 320x200 RAW8, 557.874 Hz (96 MHz) | 180.80 | 94.1 | link |
+| binned 128x2 RAW8 (smallest), 200.027 Hz | 200.00 | 0.4 | sensor |
+| crop 1280x800 RAW10 sent as RAW10, 120.049 Hz | 8.67 | 91.8 | link |
+| crop 1280x800 RAW10 sent as RAW8, 120.049 Hz | 9.67 | 78.1 | board CPU |
+| binned 640x400 RAW10 sent as RAW10, 200.027 Hz | 33.33 | 86.9 | link |
+| binned 640x400 RAW10 sent as RAW8, 200.027 Hz | 40.00 | 83.3 | board CPU |
+| crop 1216x704 RAW10 at (32,48) sent as RAW8, 99.957 Hz | 11.00 | 77.2 | board CPU |
+| any window at 2 Hz | 2.00 | | sensor |
+
+The test also passed: 2 Hz and the fastest rate at 80 and 96 MHz for 5 windows (the clock the
+driver chose checked), non-centred origins (crop at (0,0), (640,320), (32,48), binned at
+(96,36)), every refusal with the driver's values (`TooFast { 153984 }`, `TooSlow { 419 }`,
+`Tolerance { 120000 }`, `Size`, `Alignment` RAW8 and RAW10, `Window`, `Exposure { 889 }` above
+and at 0, `Gain`, `Encoding` for RAW10 from a RAW8 sensor) with the state unchanged, exposure
+and gain against the mean (crop 640x480 at 30 Hz: 400 lines at 2x 12.0, 1600 lines 37.3,
+400 lines at 8x 37.2), every test pattern (bars: every even row equal to row 0 and every odd to
+row 1, the same in two frames; rolling bars differ; squares and random repeat), RAW8 from
+RAW10 equal to the high bits of the RAW10 frame byte for byte (bars, 1280x800), `max_fps` 5 and
+30 (5.00 and 30.00 fps), stream off (0 chunks in 1 s) and on, the timeout (one request, the
+last chunk 3003 ms after it, the stream back on the next request).
+
+**Request round trip under load** (the viewer's own polls, 40 in 10 s each, while frames go
+out): crop 1280x800 RAW8 mean 4.85 ms (median 4.77, max 5.72); RAW10 sent as RAW10 4.78 ms
+(max 5.40); RAW10 sent as RAW8 5.45 ms (max 6.08); binned 320x200 at 465 Hz 4.25 ms (max 5.66);
+no retry. A request waits behind the datagrams already queued (the socket's 8 and the 16 DMA
+descriptors, about 2.9 ms of wire time) [INFERENCE: what the 4-5 ms is made of].
+
+**CPU load at the wire rate** (core 0, 400 MHz, 10 s windows from the test hooks; core 1 is
+off):
+
+| Stream | Core 0 busy | net task | send task | capture | control | Cycles per datagram (net + send) |
+|---|---|---|---|---|---|---|
+| crop 1280x800 RAW8 | 93.7 % | 55.9 % | 35.7 % | 0.9 % | 0.1 % | 28 187 + 18 022 |
+| crop 1280x800 RAW10 as RAW10 | 95.4 % | 56.5 % | 36.8 % | 0.7 % | 0.1 % | 28 156 + 18 347 |
+| crop 1280x800 RAW10 as RAW8 | 97.1 % | 50.5 % | 44.3 % | 1.7 % | 0.2 % | 28 666 + 25 126 |
+| binned 320x200 RAW8 at 465 Hz | 91.3 % | 54.8 % | 35.2 % | 0.7 % | 0.1 % | 27 006 + 17 343 |
+
+EMAC missed frames 0, receiver DMA, host and bridge errors 0 in every window. The send task's
+18 000 cycles per datagram are the chunk encoding (postcard header and the copy of 1409 bytes
+from PSRAM) and embassy-net's socket calls; the net task's 28 000 are smoltcp (headers, copy
+into the DMA buffer, UDP checksum: 16 000-21 000) and the driver. RAW10 as RAW8 adds the
+4-of-5 selection to the copy (7 000 cycles more per datagram) and makes the CPU the limit, at
+about 90 % of the link rate.
+
+**Error paths** (the test hooks' fault injection): a mode change whose sensor writes all fail
+(`F1`) was answered `SensorBus` after 85 ms and one whose stream never starts (`F2`)
+`Receiver` after 667 ms; both left the previous mode streaming at its full rate, and the next
+change succeeded. A sensor stall (`S`: stream off behind the receiver's back) was noticed,
+counted as one capture error, and the camera restarted: frames again 610 ms after it. 2000
+malformed datagrams sent back to back (wrong magic, wrong version, truncated, a bad body): the
+socket took 15 of them (the rest overflowed its 4 KiB ring and were dropped by smoltcp), all
+counted as bad, and the stream went on at 92.0 Mbit/s.
+
+### The two-core attempt
+
+Moving the camera to core 1 (the capture task in an esp-rtos thread-mode executor started
+with `esp_rtos::start_second_core`, 16 KiB stack; `Csi::new` and the I2C bus created there so
+their interrupts went to core 1; `src/cpu.rs` given per-core accounts first) hung the board:
+at the link rate (crop 1280x800 RAW8) core 0 stopped answering ping within 2 s, with nothing in
+the log (no panic, no exception, no reset); at low rates (crop 640x480 at 30 Hz, the pattern
+tests) it ran for several seconds (logs `core1a`, `core1b` and the ping trace `core1b.ping`
+in `/tmp/poc-p4-eth/stream/`). Ruled out: the single-executor CPU accounts (per core before the
+run) and the RAW10 path (it hung in RAW8 too). Not ruled out [INFERENCE]: a lock-order
+inversion between esp-hal's global critical section and esp-rtos's scheduler lock (two
+spinlocks): every embassy-sync signal and channel, and the CSI driver's DMA interrupt, wake a
+task on the other core from inside a critical section, and a wake takes the scheduler lock;
+or core 1's stack. Single core meets the requirements (wire rate, requests answered in about
+5 ms, no capture error), so the stream runs on core 0 alone.
 
 ## Measured results
 
@@ -268,27 +424,30 @@ crate; they are defects to take upstream.
 Not verified: 10 Mbit/s or half duplex, link loss and re-negotiation, the PHY reset timing,
 multicast, the EMAC's PTP clock and timestamps.
 
-## For the streaming firmware
+## For the next step (JPEG frames)
 
-- **RAM** (boot log): 188 224 B of internal RAM static (code in RAM, `.data`, `.bss`, the DMA
-  section), 393 344 B left for the main stack, of the 568 KiB. The network takes 51 200 B of
-  DMA storage (16 RX + 16 TX descriptors with 1524-byte buffers, 64-byte aligned), 1 216 B of
-  embassy-net resources, and the sockets: this service's TX socket 11 616 B of ring + 40 slots of
-  40 B, its RX socket 23 232 B + 79 slots. The test buffers (64 KiB internal source, RX pattern)
-  are not needed later. The `poc-p4-eth` strip ring (320 KiB) would fit beside the network
-  (51 200 + 1 216 + a 12 KiB TX socket) with about 50 KiB to spare for stacks and the rest
-  [INFERENCE: computed from these sizes, not built].
-- **Cores and executors**: everything runs on core 0 in esp-rtos's thread-mode embassy
-  executor: the runner (`net_task`), the link task, the service tasks; the EMAC interrupt is
-  bound on core 0 (where `into_async` ran) and so is the CSI's (where `Csi::new` ran). Core 1 is
-  free. At the wire limit core 0 is 89–92 % busy. `src/cpu.rs` assumes one executor (its state
-  is shared); give it per-core state before a second executor runs.
-- **Sending a datagram with the fewest copies**: `UdpSocket::send_to_with(len, endpoint, |buf|
-  { write the header; copy the payload from the frame; (len, ()) })`, as `bench::send_frame`
-  does. That is one copy (frame to socket ring) in the application; smoltcp makes the second
-  (socket ring to DMA buffer, with the checksum pass). The driver's tokens hand smoltcp the DMA
-  buffer itself, so there is no third. Fewer copies would need frames built straight in the DMA
-  buffers, which embassy-net's sockets do not offer. Size the socket's metadata ring as in
-  item 7 above, and send to the endpoint the last valid request came from.
+- **The hook**: `stream::capture`'s `Capture::frame` decides that a frame goes out and hands a
+  `stream::Job` to the send task (`JOB`, one in flight). The send task sends the first `len`
+  bytes of the job's buffer with the job's `encoding`, `width` and `height`, never assuming
+  width x height, chunk by chunk straight into the socket's TX ring: one CPU copy from the
+  buffer to the wire. An encoded frame goes in its own buffer in place of the captured
+  `esp32p4_csi::Frame` (today the job holds the frame itself, which keeps the receiver buffer
+  until the send ends; with 4 buffers the receiver still has two to write).
+- **Encoding a frame**: the capture task would, instead of handing the frame on, keep it
+  (16-byte aligned, straight from the receiver's PSRAM buffer), `encode` it into a PSRAM output
+  buffer (128-byte aligned) and hand that buffer on with its length; two output buffers in
+  turn, so the one being sent is never written. The encoder's interrupts go to the core that
+  creates it: core 0 here, like everything else.
+- **CPU**: at the wire rate core 0 is 91-97 % busy, almost all of it per datagram (about
+  46 000 cycles: smoltcp, the driver, the chunk copy). A 45 kB JPEG at 154 fps is about 4 800
+  datagrams/s [INFERENCE: computed], about 60 % of the wire rate's datagrams, so about 55 % of
+  core 0 [INFERENCE] plus the encoder's own work (hardware, async).
+- **Protocol and viewer** need a new `Encoding` variant (a version bump, `docs/protocol.md`),
+  its `frame_bytes` no longer fixed by the size (`FrameChunk::well_formed` checks
+  `frame_len == encoding.frame_bytes(width, height)` today, so a JPEG chunk would be refused),
+  and a decoder in the viewer's display path.
+- **Two cores**: see [The two-core attempt](#the-two-core-attempt) before moving anything to
+  core 1.
 - Keep `net/device.rs`'s checksum override and `net::tx_threshold_mode` until esp-hal fixes the
-  driver.
+  driver; size TX socket metadata rings as in item 7 of [The Ethernet driver](#the-ethernet-driver)
+  and give TX rings at least twice the largest datagram (smoltcp wants it contiguous).

@@ -6,15 +6,17 @@
 //! to `_embassy_trace_executor_idle`. Interrupts that fire during a poll count towards the
 //! polled task. A task gets its name with [`name_current`] from its own first poll.
 //!
-//! The hooks take a critical section each (two per poll, about 0.1 us); they are on in every
-//! build, so the measurements see the firmware as it runs.
+//! Each core has its own accounts (the stream service runs an executor on each): every hook
+//! updates the accounts of the core it runs on. The hooks take a critical section each (two
+//! per poll, about 0.1 us); they are on in every build, so the measurements see the firmware as
+//! it runs.
 
 use core::cell::RefCell;
 
 use critical_section::Mutex;
 
 /// Most tasks the table tracks; later ones are summed in the last row.
-const SLOTS: usize = 8;
+const SLOTS: usize = 10;
 
 /// One task's (or the executor's) account.
 #[derive(Clone, Copy, Default)]
@@ -66,7 +68,10 @@ struct State {
     high: u64,
 }
 
-static STATE: Mutex<RefCell<State>> = Mutex::new(RefCell::new(State {
+/// Cores of the P4's HP cluster.
+pub const CORES: usize = 2;
+
+const IDLE: State = State {
     tasks: [Account {
         id: 0,
         name: "?",
@@ -79,9 +84,23 @@ static STATE: Mutex<RefCell<State>> = Mutex::new(RefCell::new(State {
     busy: 0,
     last: 0,
     high: 0,
-}));
+};
 
-/// The machine cycle counter (CPU clock, 400 MHz). Wraps after 10.7 s.
+static STATE: Mutex<RefCell<[State; CORES]>> = Mutex::new(RefCell::new([IDLE; CORES]));
+
+/// The core this runs on.
+fn core() -> usize {
+    esp_hal::system::Cpu::current() as usize
+}
+
+/// The accounts of the core this runs on.
+fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    let c = core();
+    critical_section::with(|cs| f(&mut STATE.borrow_ref_mut(cs)[c]))
+}
+
+/// The machine cycle counter of the core this runs on (CPU clock, 400 MHz). Wraps after
+/// 10.7 s.
 #[inline(always)]
 pub fn mcycle() -> u32 {
     let c: u32;
@@ -92,23 +111,34 @@ pub fn mcycle() -> u32 {
 
 /// Names the task being polled. Call it from the task itself, in its first poll.
 pub fn name_current(name: &'static str) {
-    critical_section::with(|cs| {
-        let mut s = STATE.borrow_ref_mut(cs);
+    with_state(|s| {
         if let Some(i) = s.current {
             s.tasks[i].name = name;
         }
     });
 }
 
-/// All accounts now.
+/// All accounts of the core this runs on, now.
 pub fn snapshot() -> Snapshot {
-    critical_section::with(|cs| {
-        let mut s = STATE.borrow_ref_mut(cs);
-        let at = extend(&mut s, mcycle());
+    with_state(|s| {
+        let at = extend(s, mcycle());
         Snapshot {
             tasks: s.tasks,
             busy: s.busy,
             at,
+        }
+    })
+}
+
+/// The accounts of core `c` as its own hooks last left them (its counter is not readable from
+/// here: `at` is its cycle count at its last hook, at most one executor pass old).
+pub fn snapshot_of(c: usize) -> Snapshot {
+    critical_section::with(|cs| {
+        let s = &STATE.borrow_ref(cs)[c];
+        Snapshot {
+            tasks: s.tasks,
+            busy: s.busy,
+            at: s.high | u64::from(s.last),
         }
     })
 }
@@ -137,29 +167,26 @@ fn slot(s: &mut State, id: u32) -> usize {
 #[unsafe(no_mangle)]
 fn _embassy_trace_poll_start(_executor_id: u32) {
     let now = mcycle();
-    critical_section::with(|cs| {
-        let mut s = STATE.borrow_ref_mut(cs);
+    with_state(|s| {
         s.poll_start = now;
-        extend(&mut s, now);
+        extend(s, now);
     });
 }
 
 #[unsafe(no_mangle)]
 fn _embassy_trace_executor_idle(_executor_id: u32) {
     let now = mcycle();
-    critical_section::with(|cs| {
-        let mut s = STATE.borrow_ref_mut(cs);
+    with_state(|s| {
         s.busy += u64::from(now.wrapping_sub(s.poll_start));
-        extend(&mut s, now);
+        extend(s, now);
     });
 }
 
 #[unsafe(no_mangle)]
 fn _embassy_trace_task_exec_begin(_executor_id: u32, task_id: u32) {
     let now = mcycle();
-    critical_section::with(|cs| {
-        let mut s = STATE.borrow_ref_mut(cs);
-        let i = slot(&mut s, task_id);
+    with_state(|s| {
+        let i = slot(s, task_id);
         s.current = Some(i);
         s.exec_start = now;
     });
@@ -168,8 +195,7 @@ fn _embassy_trace_task_exec_begin(_executor_id: u32, task_id: u32) {
 #[unsafe(no_mangle)]
 fn _embassy_trace_task_exec_end(_executor_id: u32, _task_id: u32) {
     let now = mcycle();
-    critical_section::with(|cs| {
-        let mut s = STATE.borrow_ref_mut(cs);
+    with_state(|s| {
         if let Some(i) = s.current.take() {
             let d = now.wrapping_sub(s.exec_start);
             s.tasks[i].cycles += u64::from(d);
