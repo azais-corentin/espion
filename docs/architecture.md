@@ -93,6 +93,7 @@ no heap on the P4: every buffer is static.
 |---|---|---|
 | `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo (ETM capture), Ethernet and embassy-net (DHCP, UDP), PTP (statime), the LED gate, and the accelerometer (bump detection, gravity) on a second I2C bus |
 | `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, written in esp-hal style. Used by `cam-p4` |
+| `firmware/esp32p4-jpeg` | ESP32-P4 (no_std library) | Hardware JPEG encoder driver (greyscale, baseline) and the 2D-DMA registers it needs, on the `esp32p4` PAC, in esp-hal style. Tested and measured in `poc-p4-eth` (`JPEG_PLAN`); for streaming frames to the host |
 | `firmware/ov9281` | no_std library, host-testable | OV9281 sensor driver: the mode solver (format, size, crop or binning, frame rate → clock, HTS, VTS and registers, refusing what the measured limits do not allow) and SCCB control over `embedded-hal-async` I2C. For `poc-p4-eth` and `cam-p4` |
 
 `cam-p4` uses `esp-hal` and `esp-rtos` (embassy executor). The XVS edge schedule reuses the
@@ -160,6 +161,8 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 | PSRAM | ⚒ | Frame buffers (CSI DMA target) and data not used every frame; see [Memory](#memory) |
 | USB Serial/JTAG | ⚒ | Flashing and logs. Firmware also turns the D+ pull-up off while `VBUS_SENSE` is low ([hardware/firmware-rules.md](hardware/firmware-rules.md)); check whether esp-hal exposes the pull-up or it needs a PAC write |
 | Chip revision | v3.0+ only | The ESP32-P4-Core carries an ESP32-P4NRW32X, rev v3.x |
+| JPEG codec (hardware encoder) | ❌ (the PAC has the `JPEG` block, but marks the quantisation-table registers `T0QNR`..`T3QNR` read-only, which the TRM and ESP-IDF write) | Own driver in `firmware/esp32p4-jpeg` on the PAC: greyscale baseline JPEG from a frame in PSRAM or internal RAM, header and IJG quality tables built by the CPU, async wait on the `JPEG` interrupt, cache maintenance and error recovery in the driver. Colour formats, decoding and restart markers are not covered |
+| 2D-DMA | ❌ (no driver; no register block in the `esp32p4` 0.3 PAC; its interrupt sources 104..=108, 133, 134 are missing from the PAC's `Interrupt` enum, so esp-hal cannot bind them) | Register offsets from ESP-IDF `hw_ver3/soc/dma2d_reg.h` (TRM chapter 8) in `esp32p4-jpeg` (`dma2d` module): TX channel 0 (2D, macroblock reordering) and RX channel 1 (1D) connected to the JPEG codec, nothing else. Its own interrupts are not used: the driver polls their raw bits after the codec's interrupt. PPA and memory-to-memory transfers are not covered |
 
 Tooling: esp-generate 1.4.0 has no ESP32-P4 template. `cam-p4` was adapted from the C9 template
 and the esp-hal 1.2.2 examples.

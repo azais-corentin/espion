@@ -1,0 +1,14 @@
+[package]
+name         = "esp32p4-jpeg"
+description  = "Hardware JPEG encoder (greyscale) and 2D-DMA driver for the ESP32-P4 (no_std, esp-hal style, PAC-based)"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+[dependencies]
+esp-hal = { version = "~1.2.2", features = ["esp32p4", "unstable"] }
+# Same major as esp-hal 1.2.2 uses, so peripheral types match.
+esp32p4 = { version = "0.3.0", features = ["critical-section"] }
+critical-section = "1.2.0"
