@@ -1,6 +1,7 @@
 //! The frame period formula against the periods measured on the bench (2026-11-10, Waveshare
-//! ESP32-P4-ETH, first-to-last over 10 s, timed by the ESP32-P4). The sensor's oscillator ran
-//! 28 ppm fast against the P4's, and the fit was within 1.4 SCLK cycles.
+//! ESP32-P4-ETH, timed by the ESP32-P4): the PoC's timing sweeps (first-to-last over 10 s) and
+//! the limits characterisation (least-squares fits over 2 s). The sensor's oscillator ran
+//! 24..34 ppm fast against the P4's.
 
 use ov9281::{Format, Mode, Rate, Readout, Tolerance, frame_cycles};
 
@@ -43,13 +44,52 @@ fn period_formula_matches_the_measured_periods() {
     }
 }
 
+/// `(SCLK MHz, HTS, VTS, measured period in SCLK cycles of the P4's timer)` from the limits
+/// characterisation (`README.md`, "Frame period"): long lines (crop 1280x400) and low rates
+/// (crop 1280x800), over the whole HTS and VTS register range.
+const MEASURED_CYCLES: [(u32, u16, u16, f64); 20] = [
+    (80, 728, 500, 364_992.41),
+    (80, 800, 500, 400_919.48),
+    (80, 1000, 500, 500_716.89),
+    (80, 1456, 500, 728_254.96),
+    (80, 2912, 500, 1_454_780.05),
+    (96, 2912, 500, 1_454_779.48),
+    (80, 4000, 500, 1_997_677.91),
+    (80, 8000, 500, 3_993_625.39),
+    (80, 16000, 500, 7_985_520.00),
+    (80, 32760, 500, 16_348_540.66),
+    (80, 65535, 500, 32_702_832.97),
+    (80, 728, 1831, 1_333_935.26),
+    (80, 728, 3663, 2_667_595.88),
+    (80, 728, 10990, 8_001_489.67),
+    (80, 728, 21979, 16_001_269.45),
+    (80, 728, 54946, 40_000_595.16),
+    (80, 728, 32767, 23_854_717.36),
+    (80, 728, 65535, 47_709_173.63),
+    (80, 1456, 916, 1_333_933.68),
+    (80, 2912, 916, 2_666_137.04),
+];
+
+#[test]
+fn period_formula_holds_over_the_register_range() {
+    for (mhz, hts, vts, cycles) in MEASURED_CYCLES {
+        let predicted = frame_cycles(hts, vts) as f64;
+        // The same clock offset at every setting: the measured period is 23.5..33.9 ppm short.
+        let ppm = (cycles / predicted - 1.0) * 1e6;
+        assert!(
+            (-34.0..=-23.5).contains(&ppm),
+            "HTS {hts} VTS {vts} {mhz} MHz: {ppm:.1} ppm"
+        );
+    }
+}
+
 #[test]
 fn frame_rate_is_nominal_and_within_the_stated_ppm_of_the_bench() {
     // (format, readout, size, measured fps on the bench) for modes the solver reproduces.
     let cases = [
         (Format::Raw8, Readout::Crop, (1280, 800), 143_901, 143.905),
         (Format::Raw8, Readout::Binned, (640, 400), 209_563, 209.569),
-        (Format::Raw8, Readout::Binned, (640, 400), 252_402, 252.409),
+        (Format::Raw8, Readout::Binned, (640, 400), 250_105, 250.112),
         (Format::Raw8, Readout::Binned, (320, 200), 453_386, 453.399),
         (Format::Raw10, Readout::Crop, (1280, 800), 119_918, 119.921),
     ];

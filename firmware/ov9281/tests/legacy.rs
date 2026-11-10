@@ -1,7 +1,15 @@
 //! The 12 board-verified modes of the proof of concept (`firmware/poc-p4-eth/src/ov9281.rs`,
-//! `MODES`, at commit 6963e63): a request for each mode's size, format, readout and rate must
-//! give the same register writes, in the same order, as that mode's table. The tables below are
-//! a frozen copy of the PoC's composed lists (`(0xFFFF, n)` is the PoC's "wait n ms").
+//! `MODES`, at commit 6963e63): a request for each mode's size, format, readout and rate gives
+//! the same register writes, in the same order, as that mode's table, except where a measured
+//! rule now sets the value:
+//! - 0x4601 (VFIFO read start) in every mode: `width / 16` instead of the table's 0x30 or 0x04;
+//! - mode 7 ("640x400 253fps", binned VTS 434 = h + 34): below the minimum VTS with the margin
+//!   (h + 35), so its rate is above the 80 MHz maximum and no longer gives that mode. The
+//!   nearest 80 MHz mode, VTS 435, differs from its table in 0x4601, 0x4F00 (PSV off: 435 is
+//!   below h + 75) and 0x380F (the VTS low byte).
+//!
+//! PSV follows the rule in the other 11 modes and gives their table's value. The tables below
+//! are a frozen copy of the PoC's composed lists (`(0xFFFF, n)` is the PoC's "wait n ms").
 
 use ov9281::{Format, Mode, Rate, Readout, SensorClock, Tolerance, Write};
 
@@ -157,43 +165,66 @@ const LEGACY: [Legacy; 12] = [
     ),
 ];
 
-fn request(l: &Legacy) -> Mode {
+/// Index of mode 7 in [`LEGACY`].
+const SEVEN: usize = 7;
+
+fn request(l: &Legacy, rate_mhz: u32) -> Result<Mode, ov9281::Error> {
     Mode::builder()
         .format(l.format)
         .size(l.width, l.height)
         .readout(l.readout)
-        .frame_rate(Rate::millihertz(l.rate_mhz), Tolerance::millihertz(1))
+        .frame_rate(Rate::millihertz(rate_mhz), Tolerance::millihertz(1))
         .build()
-        .unwrap_or_else(|e| panic!("{}: {e:?}", l.name))
+}
+
+/// The PoC table with the registers in `changes` set to their new values, in the table's order.
+/// Every changed register must exist in the table with a different value.
+fn table_with(l: &Legacy, changes: &[(u16, u8)]) -> Vec<Write> {
+    for &(reg, value) in changes {
+        let old = l.regs.iter().find(|&&(a, _)| a == reg).map(|&(_, v)| v);
+        assert!(
+            old.is_some_and(|old| old != value),
+            "{}: {reg:#06x} {old:02x?} -> {value:#04x}",
+            l.name
+        );
+    }
+    l.regs
+        .iter()
+        .map(|&(a, v)| match changes.iter().find(|&&(c, _)| c == a) {
+            _ if a == 0xFFFF => Write::DelayMs(v),
+            Some(&(_, new)) => Write::Reg(a, new),
+            None => Write::Reg(a, v),
+        })
+        .collect()
+}
+
+fn assert_writes(l: &Legacy, mode: &Mode, expected: &[Write]) {
+    let got: Vec<Write> = mode.registers().collect();
+    assert_eq!(got.len(), expected.len(), "{}", l.name);
+    for (i, (g, e)) in got.iter().zip(expected).enumerate() {
+        assert_eq!(g, e, "{}: write {i}", l.name);
+    }
 }
 
 #[test]
-fn legacy_requests_give_the_legacy_register_lists() {
-    for l in &LEGACY {
-        let mode = request(l);
-        let expected: Vec<Write> = l
-            .regs
-            .iter()
-            .map(|&(a, v)| {
-                if a == 0xFFFF {
-                    Write::DelayMs(v)
-                } else {
-                    Write::Reg(a, v)
-                }
-            })
-            .collect();
-        let got: Vec<Write> = mode.registers().collect();
-        assert_eq!(got.len(), expected.len(), "{}", l.name);
-        for (i, (g, e)) in got.iter().zip(&expected).enumerate() {
-            assert_eq!(g, e, "{}: write {i}", l.name);
+fn legacy_requests_differ_from_the_legacy_lists_only_in_vfifo() {
+    for (i, l) in LEGACY.iter().enumerate() {
+        if i == SEVEN {
+            continue;
         }
+        let mode = request(l, l.rate_mhz).unwrap_or_else(|e| panic!("{}: {e:?}", l.name));
+        let vfifo = (l.width / 16) as u8;
+        assert_writes(l, &mode, &table_with(l, &[(0x4601, vfifo)]));
     }
 }
 
 #[test]
 fn legacy_requests_solve_to_the_legacy_timing() {
-    for l in &LEGACY {
-        let mode = request(l);
+    for (i, l) in LEGACY.iter().enumerate() {
+        if i == SEVEN {
+            continue;
+        }
+        let mode = request(l, l.rate_mhz).unwrap();
         assert_eq!(mode.sensor_clock(), l.clock, "{}", l.name);
         assert_eq!(
             mode.exceeds_datasheet_clock(),
@@ -212,6 +243,39 @@ fn legacy_requests_solve_to_the_legacy_timing() {
         );
         assert_eq!(mode.max_exposure_lines(), l.vts - 25, "{}", l.name);
     }
+}
+
+#[test]
+fn mode_8_keeps_vts_241_with_the_margin() {
+    // 320x200 binned: VTS 241 = h + 41, above the minimum h + 35 and below PSV's h + 75.
+    let l = &LEGACY[8];
+    assert_eq!(ov9281::limits::min_vts(l.readout, l.height), 235);
+    let mode = request(l, l.rate_mhz).unwrap();
+    assert_eq!((mode.vts(), mode.psv()), (241, false));
+}
+
+#[test]
+fn mode_7_is_below_the_minimum_vts_with_the_margin() {
+    let l = &LEGACY[SEVEN];
+    assert_eq!((l.height, l.vts), (400, 434));
+    let vmin = ov9281::limits::min_vts(l.readout, l.height);
+    assert_eq!(vmin, 435);
+    // Its rate is above the 80 MHz maximum (VTS 435: 251.824 Hz), so it selects 96 MHz, where
+    // no setting is within 1 mHz.
+    assert_eq!(
+        request(l, l.rate_mhz),
+        Err(ov9281::Error::Tolerance {
+            nearest: Rate::millihertz(252_404)
+        })
+    );
+    // The 80 MHz maximum gives the mode one line longer.
+    let mode = request(l, 251_824).unwrap();
+    assert_eq!(
+        (mode.sensor_clock(), mode.hts(), mode.vts(), mode.psv()),
+        (Mhz80, 728, 435, false)
+    );
+    let expected = table_with(l, &[(0x4601, 0x28), (0x4F00, 0x00), (0x380F, 0xB3)]);
+    assert_writes(l, &mode, &expected);
 }
 
 /// `MODES[0]`, "1280x800".

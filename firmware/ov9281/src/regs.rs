@@ -13,8 +13,10 @@
 //! - the crop and binned-crop windows at any origin, HTS and VTS, and the 8-bit choices are
 //!   derived from the OV9281 datasheet v1.1.
 //!
-//! The values that depend on the mode are marked `Var` below. The PSV and VFIFO rules are in
-//! [`crate::limits`].
+//! The values that depend on the mode are marked `Var` below. The PSV and VFIFO values follow
+//! the measured rules in [`crate::limits`] ([`limits::psv_on`], [`limits::vfifo_read_start`]),
+//! so they differ from the fixed values of the source tables: 0x4601 is `width / 16` (the
+//! tables had 0x30 or 0x04), and 0x4F00 is 0x0C only from crop `h + 95` / binned `h + 75` up.
 
 use crate::{Format, Mode, Readout, limits};
 
@@ -71,10 +73,10 @@ enum Var {
     Exposure(u8),
     /// ANA_CORE_2 (0x3662): 0x07 RAW8 (Espressif), 0x05 RAW10 (Linux, Raspberry Pi).
     Analog,
-    /// VFIFO read start (0x4601), [`limits::vfifo_read_start`].
+    /// VFIFO read start (0x4601): `max(1, width / 16)`, [`limits::vfifo_read_start`].
     Vfifo,
-    /// PSV_CTRL (0x4F00): 0x0C power saving on (Espressif), 0x00 off (datasheet default),
-    /// [`limits::psv_on`].
+    /// PSV_CTRL (0x4F00): 0x0C power saving on (Espressif's value), 0x00 off (datasheet
+    /// default), by [`limits::psv_on`].
     Psv,
     /// High byte of a field.
     Hi(Field),
@@ -342,7 +344,7 @@ impl Mode {
                 Format::Raw8 => 0x07,
                 Format::Raw10 => 0x05,
             },
-            Var::Vfifo => limits::vfifo_read_start(self.format(), self.bytes_per_line()),
+            Var::Vfifo => limits::vfifo_read_start(self.width()),
             Var::Psv => {
                 if self.psv() {
                     0x0C

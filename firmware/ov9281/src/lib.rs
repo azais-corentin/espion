@@ -14,13 +14,17 @@
 //! # Frame rate
 //!
 //! A frame lasts `(VTS - 1) x HTS + 1730` SCLK cycles ([`frame_cycles`], measured). The solver
-//! takes the sensor clock 80 MHz, or 96 MHz (above the datasheet's 80 MHz, flagged by
-//! [`Mode::exceeds_datasheet_clock`]) only when no valid 80 MHz setting is within the
-//! tolerance. At each clock it tries HTS [`limits::HTS_PREFERRED`] first, then the
-//! [`limits::HTS_MIN`]`..=`[`limits::HTS_MAX`] range, and takes the VTS whose rate is nearest
-//! the request, at or above the window's minimum VTS ([`limits::min_vts`]).
-//! [`Mode::frame_rate`] is that rate at an exact 24 MHz XVCLK; the bench sensor ran 28 ppm fast
-//! against the ESP32-P4's crystal, so measure against the real oscillator, not this figure.
+//! ([`ModeBuilder::build`]) takes 80 MHz and the shortest allowed line ([`limits::hts_min`],
+//! 728) first, lengthens the line only as far as the tolerance needs (up to
+//! [`limits::HTS_MAX`]), and uses 96 MHz (above the datasheet's 80 MHz, flagged by
+//! [`Mode::exceeds_datasheet_clock`]) only when the requested rate is above the fastest 80 MHz
+//! rate of the window and format. VTS is the one nearest the request, at or above the window's
+//! minimum ([`limits::min_vts`]). [`Mode::frame_rate`] is that rate at an exact 24 MHz XVCLK;
+//! the characterised sensor ran 24..34 ppm fast against the ESP32-P4's crystal, so measure
+//! against the real oscillator, not this figure.
+//!
+//! The limits are measured on one sensor (2026-11-10); `README.md` holds the measurements and
+//! the same example as below (compiled as a doc test).
 //!
 //! # Example
 //!
@@ -94,3 +98,9 @@ pub use device::{Address, DeviceError, Exposure, Gain, Ov9281, TestPattern};
 pub use mode::{Error, Format, Mode, ModeBuilder, Readout, SensorClock, Set, Unset, frame_cycles};
 pub use rate::{Rate, Tolerance};
 pub use regs::{CHIP_ID, Registers, Write};
+
+/// Compiles and runs the code blocks of `README.md` as doc tests, so its example stays in step
+/// with the one above.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

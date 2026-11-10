@@ -59,8 +59,9 @@ pub enum SensorClock {
     /// 80 MHz, the datasheet's maximum: 24 MHz / 3 x 80 / 4 / 2 (0x030D = 0x50).
     Mhz80,
     /// 96 MHz, above the datasheet's maximum (0x030D = 0x60, the Linux and Raspberry Pi RAW8
-    /// value). Measured: at gain 15.5x the picture has vertical column stripes and a raised
-    /// black floor; normal at gain 2x.
+    /// value). Measured on one sensor: the same VTS, PSV and VFIFO limits in lines as at
+    /// 80 MHz; at gain 15.5x an earlier run showed vertical column stripes and a raised black
+    /// floor (not re-examined; the characterisation used gain 8x or less at 96 MHz).
     Mhz96,
 }
 
@@ -90,36 +91,44 @@ impl SensorClock {
 /// Why [`ModeBuilder::build`] refused a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Error {
-    /// The size is zero, narrower than [`limits::MIN_WIDTH`], or larger than the readout
-    /// allows (the largest is given).
+    /// The width is outside [`limits::MIN_WIDTH`]`..=max_width` or the height outside
+    /// [`limits::MIN_HEIGHT`]`..=max_height` (the largest of the readout are given).
     Size {
         /// Largest output width of the readout.
         max_width: u16,
         /// Largest output height of the readout.
         max_height: u16,
     },
-    /// The width is not a multiple of `width_multiple` ([`limits::width_multiple`]).
+    /// The width is not a multiple of `width_multiple` ([`limits::width_multiple`]) or the
+    /// height not a multiple of `height_multiple` ([`limits::height_multiple`]); both are the
+    /// format's.
     Alignment {
-        /// Required width multiple for the format.
+        /// Required width multiple for the format: 8 RAW8, 64 RAW10.
         width_multiple: u8,
+        /// Required height multiple for the format: 1 RAW8, 2 RAW10.
+        height_multiple: u8,
     },
-    /// The origin puts the window outside the active area, or is not a multiple of
-    /// [`limits::ORIGIN_MULTIPLE`].
+    /// The window does not lie inside the active area (binned: `2 x width` by `2 x height`
+    /// sensor pixels), or its origin is off the grid the sensor reads exactly: x a multiple
+    /// of [`limits::ORIGIN_X_MULTIPLE`], y of [`limits::origin_y_multiple`].
     Window,
-    /// The request is above the fastest rate any valid setting gives for this window and
-    /// format, even at 96 MHz (`max`; 0 Hz when no setting suits the window at all).
+    /// The request is above the fastest rate of this window and format, 96 MHz at
+    /// [`limits::min_vts`] and [`limits::hts_min`], by more than the tolerance.
     TooFast {
         /// Fastest achievable rate.
         max: Rate,
     },
-    /// The request is below the slowest achievable rate (`min`).
+    /// The request is below the slowest rate, 80 MHz at [`limits::VTS_MAX`] and
+    /// [`limits::HTS_MAX`], by more than the tolerance.
     TooSlow {
         /// Slowest achievable rate.
         min: Rate,
     },
-    /// The nearest achievable rate (`nearest`) is outside the tolerance.
+    /// No setting of the clock the request selects ([`ModeBuilder::build`]) is within the
+    /// tolerance; `nearest` is the rate nearest the request over every HTS and VTS allowed at
+    /// that clock.
     Tolerance {
-        /// Achievable rate nearest the request.
+        /// Achievable rate nearest the request at that clock.
         nearest: Rate,
     },
 }
@@ -131,9 +140,13 @@ impl fmt::Display for Error {
                 max_width,
                 max_height,
             } => write!(f, "size not supported (largest {max_width}x{max_height})"),
-            Self::Alignment { width_multiple } => {
-                write!(f, "width must be a multiple of {width_multiple}")
-            }
+            Self::Alignment {
+                width_multiple,
+                height_multiple,
+            } => write!(
+                f,
+                "width must be a multiple of {width_multiple}, height of {height_multiple}"
+            ),
             Self::Window => f.write_str("window outside the pixel array or off the origin grid"),
             Self::TooFast { max } => write!(f, "frame rate above the maximum {max}"),
             Self::TooSlow { min } => write!(f, "frame rate below the minimum {min}"),
@@ -156,8 +169,7 @@ pub const fn frame_cycles(hts: u16, vts: u16) -> u64 {
 
 /// Frame rate in millihertz at `clock`, rounded to the nearest millihertz.
 const fn rate_mhz(clock: SensorClock, hts: u16, vts: u16) -> u32 {
-    let cycles = frame_cycles(hts, vts);
-    ((clock.hz() as u64 * 2000 + cycles) / (2 * cycles)) as u32
+    rate_of_cycles(clock, frame_cycles(hts, vts))
 }
 
 /// A complete sensor mode: format, window, clock and line/frame timing.
@@ -213,8 +225,8 @@ impl Mode {
         self.clock
     }
 
-    /// `true` when the mode runs at 96 MHz, above the datasheet's 80 MHz: no 80 MHz setting met
-    /// the request within its tolerance.
+    /// `true` when the mode runs at 96 MHz, above the datasheet's 80 MHz: the requested rate
+    /// is above the fastest 80 MHz rate of the window and format.
     pub const fn exceeds_datasheet_clock(&self) -> bool {
         matches!(self.clock, SensorClock::Mhz96)
     }
@@ -352,7 +364,9 @@ impl<F, S, R> ModeBuilder<F, S, R> {
     }
 
     /// Top-left corner of the window in sensor pixels of the active area (1280x800), for both
-    /// readouts. Default: the window centred, rounded down to [`limits::ORIGIN_MULTIPLE`].
+    /// readouts: x a multiple of [`limits::ORIGIN_X_MULTIPLE`], y of
+    /// [`limits::origin_y_multiple`]. Default: the window centred, each coordinate rounded
+    /// down to its multiple.
     pub const fn origin(mut self, x: u16, y: u16) -> Self {
         self.origin = Some((x, y));
         self
@@ -388,46 +402,75 @@ impl<F, S> ModeBuilder<F, S, Unset> {
 impl ModeBuilder<Set, Set, Set> {
     /// Checks the request against [`limits`] and solves for clock, HTS and VTS.
     ///
-    /// Clock: 80 MHz, or 96 MHz when no valid 80 MHz setting is within the tolerance. At each
-    /// clock the solver tries [`limits::HTS_PREFERRED`], then the whole
-    /// [`limits::HTS_MIN`]`..=`[`limits::HTS_MAX`] range; for each HTS that the line fits
-    /// ([`limits::link_fits`]) it takes the VTS in [`limits::min_vts`]`..=`[`limits::VTS_MAX`]
-    /// whose rate is nearest the request (on a tie the longer frame). PSV is then on where
-    /// [`limits::psv_on`] allows it.
+    /// The request is checked in this order: the size ([`Error::Size`]), the width and height
+    /// multiples ([`Error::Alignment`]), then the window ([`Error::Window`]; without
+    /// [`origin`](Self::origin) it is centred, rounded down to the origin grid).
+    ///
+    /// The solver then decides, in this order:
+    /// 1. **Clock**: 80 MHz, unless the requested rate is above the fastest 80 MHz rate of the
+    ///    window and format ([`limits::min_vts`] at [`limits::hts_min`]); then 96 MHz. The
+    ///    tolerance does not move the clock: a request at or below the 80 MHz maximum stays at
+    ///    80 MHz even when a 96 MHz setting would be nearer.
+    /// 2. **HTS**: the clock's [`limits::hts_min`] (728, longer only for wide RAW10 lines at
+    ///    96 MHz) when a VTS there is within the tolerance; otherwise the smallest longer HTS,
+    ///    up to [`limits::HTS_MAX`], that has one.
+    /// 3. **VTS**: in [`limits::min_vts`]`..=`[`limits::VTS_MAX`], the one whose rate is nearest
+    ///    the request at that HTS (on a tie the longer frame).
+    /// 4. **PSV** on from [`limits::psv_min_vts`] up, off below ([`limits::psv_on`]).
+    ///
+    /// Rates are compared rounded to 1 mHz, as [`Mode::frame_rate`] gives them. When no
+    /// setting of the selected clock is within the tolerance: [`Error::TooFast`] if the request
+    /// is above the 96 MHz maximum, [`Error::TooSlow`] if it is below the slowest 80 MHz rate,
+    /// otherwise [`Error::Tolerance`] with the nearest rate over every HTS and VTS of the
+    /// selected clock.
+    ///
+    /// Cost: at most one pass over the HTS range, 2185 steps (728..=2912) in the worst case (a
+    /// request no HTS meets), each one 32-bit division and a few comparisons, plus about ten
+    /// 64-bit divisions in all. No table, no allocation.
     pub const fn build(self) -> Result<Mode, Error> {
         let (format, readout, width, height) = (self.format, self.readout, self.width, self.height);
         let (max_width, max_height) = limits::max_size(readout);
-        if width < limits::MIN_WIDTH || height == 0 || width > max_width || height > max_height {
+        if width < limits::MIN_WIDTH
+            || height < limits::MIN_HEIGHT
+            || width > max_width
+            || height > max_height
+        {
             return Err(Error::Size {
                 max_width,
                 max_height,
             });
         }
         let width_multiple = limits::width_multiple(format);
-        if !width.is_multiple_of(width_multiple as u16) {
-            return Err(Error::Alignment { width_multiple });
+        let height_multiple = limits::height_multiple(format);
+        if !width.is_multiple_of(width_multiple as u16)
+            || !height.is_multiple_of(height_multiple as u16)
+        {
+            return Err(Error::Alignment {
+                width_multiple,
+                height_multiple,
+            });
         }
         let scale = limits::scale(readout);
         let (sensor_w, sensor_h) = (width * scale, height * scale);
+        let y_multiple = limits::origin_y_multiple(readout);
         let (origin_x, origin_y) = match self.origin {
             Some(o) => o,
             None => (
-                centred(limits::ACTIVE_WIDTH, sensor_w),
-                centred(limits::ACTIVE_HEIGHT, sensor_h),
+                centred(limits::ACTIVE_WIDTH, sensor_w, limits::ORIGIN_X_MULTIPLE),
+                centred(limits::ACTIVE_HEIGHT, sensor_h, y_multiple),
             ),
         };
-        if !origin_x.is_multiple_of(limits::ORIGIN_MULTIPLE)
-            || !origin_y.is_multiple_of(limits::ORIGIN_MULTIPLE)
+        if !origin_x.is_multiple_of(limits::ORIGIN_X_MULTIPLE)
+            || !origin_y.is_multiple_of(y_multiple)
             || origin_x as u32 + sensor_w as u32 > limits::ACTIVE_WIDTH as u32
             || origin_y as u32 + sensor_h as u32 > limits::ACTIVE_HEIGHT as u32
         {
             return Err(Error::Window);
         }
 
-        let rows = limits::rows_read(readout, height);
         let s = match solve(
             readout,
-            rows,
+            height,
             format.line_bytes(width),
             self.rate.as_millihertz(),
             self.tolerance.as_millihertz(),
@@ -439,7 +482,7 @@ impl ModeBuilder<Set, Set, Set> {
             format,
             readout,
             clock: s.clock,
-            psv: limits::psv_on(readout, rows, s.clock, s.vts),
+            psv: limits::psv_on(readout, height, s.vts),
             width,
             height,
             origin_x,
@@ -451,69 +494,58 @@ impl ModeBuilder<Set, Set, Set> {
     }
 }
 
-/// Origin that centres `size` in `active`, rounded down to the origin grid.
-const fn centred(active: u16, size: u16) -> u16 {
+/// Origin that centres `size` in `active`, rounded down to a multiple of `multiple`.
+const fn centred(active: u16, size: u16, multiple: u16) -> u16 {
     let o = active.saturating_sub(size) / 2;
-    o - o % limits::ORIGIN_MULTIPLE
+    o - o % multiple
 }
 
-/// One achievable setting.
+/// The setting the solver chose.
 #[derive(Clone, Copy)]
 struct Setting {
     clock: SensorClock,
     hts: u16,
     vts: u16,
-    rate: u32,
 }
 
-/// What the solver has seen so far for one request, over every clock and HTS tried.
-struct Search {
-    req: u32,
-    line_bytes: u32,
-    /// Nearest setting overall.
-    nearest: Option<Setting>,
-    /// Fastest achievable rate.
-    max: u32,
-    /// Slowest achievable rate.
-    min: u32,
+/// Rate in millihertz of a frame of `cycles` SCLK cycles at `clock`, rounded to the nearest.
+const fn rate_of_cycles(clock: SensorClock, cycles: u64) -> u32 {
+    ((clock.hz() as u64 * 2000 + cycles) / (2 * cycles)) as u32
 }
 
-impl Search {
-    /// The nearest setting at `clock` and `hts` with VTS at least `vmin`, recorded in the bounds
-    /// and the overall nearest; `None` when the line does not fit the link at that HTS.
-    const fn consider(&mut self, clock: SensorClock, hts: u16, vmin: u16) -> Option<Setting> {
-        if !limits::link_fits(self.line_bytes, hts, clock) {
-            return None;
-        }
-        let fastest = rate_mhz(clock, hts, vmin);
-        let slowest = rate_mhz(clock, hts, limits::VTS_MAX);
-        if fastest > self.max {
-            self.max = fastest;
-        }
-        if slowest < self.min {
-            self.min = slowest;
-        }
-        let s = nearest_vts(clock, hts, vmin, self.req);
-        self.nearest = closer(self.nearest, s, self.req);
-        Some(s)
-    }
-
-    const fn within(&self, s: &Setting, tol: u32) -> bool {
-        s.rate.abs_diff(self.req) <= tol
-    }
+/// The fastest rate of a window at `clock`: [`limits::min_vts`] (`vmin`) at
+/// [`limits::hts_min`].
+const fn fastest(clock: SensorClock, line_bytes: u32, vmin: u16) -> u32 {
+    rate_mhz(clock, limits::hts_min(line_bytes, clock), vmin)
 }
 
-/// `s` if it is strictly nearer `req` than `best`.
-const fn closer(best: Option<Setting>, s: Setting, req: u32) -> Option<Setting> {
-    match best {
-        Some(b) if b.rate.abs_diff(req) <= s.rate.abs_diff(req) => Some(b),
-        _ => Some(s),
+/// The frame lengths in SCLK cycles, `lo..=hi`, whose rate at `clock` ([`rate_of_cycles`]) is
+/// within `tol` of `req`, saturated to `u32`.
+const fn cycle_window(clock: SensorClock, req: u32, tol: u32) -> (u32, u32) {
+    // rate = floor((K + c) / 2c) with K = 2000 x clock: rate <= r for c > K / (2r + 1), and
+    // rate >= r for c <= K / (2r - 1).
+    let k = clock.hz() as u64 * 2000;
+    let lo = k / (2 * (req as u64 + tol as u64) + 1) + 1;
+    let slowest = req.saturating_sub(tol) as u64;
+    let hi = if slowest == 0 {
+        u64::MAX
+    } else {
+        k / (2 * slowest - 1)
+    };
+    (saturate(lo), saturate(hi))
+}
+
+const fn saturate(v: u64) -> u32 {
+    if v > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        v as u32
     }
 }
 
 /// The VTS in `vmin..=VTS_MAX` whose rate at `clock` and `hts` is nearest `req` (on a tie the
 /// longer frame).
-const fn nearest_vts(clock: SensorClock, hts: u16, vmin: u16, req: u32) -> Setting {
+const fn nearest_vts(clock: SensorClock, hts: u16, vmin: u16, req: u32) -> u16 {
     let (lo, hi) = (vmin as u64, limits::VTS_MAX as u64);
     // Rate falls as VTS grows. `v0` is the largest VTS whose exact rate is at or above `req`
     // (the inner floor keeps it exact: floor((floor(x) - L) / h) = floor((x - L) / h) for
@@ -531,16 +563,10 @@ const fn nearest_vts(clock: SensorClock, hts: u16, vmin: u16, req: u32) -> Setti
     let a = clamp(v0, lo, hi) as u16;
     let b = clamp(v0 + 1, lo, hi) as u16;
     let (ra, rb) = (rate_mhz(clock, hts, a), rate_mhz(clock, hts, b));
-    let (vts, rate) = if ra.abs_diff(req) < rb.abs_diff(req) {
-        (a, ra)
+    if ra.abs_diff(req) < rb.abs_diff(req) {
+        a
     } else {
-        (b, rb)
-    };
-    Setting {
-        clock,
-        hts,
-        vts,
-        rate,
+        b
     }
 }
 
@@ -554,71 +580,92 @@ const fn clamp(v: u64, lo: u64, hi: u64) -> u64 {
     }
 }
 
-/// Clocks in the order the solver tries them.
-const CLOCKS: [SensorClock; 2] = [SensorClock::Mhz80, SensorClock::Mhz96];
-
 /// See [`ModeBuilder::build`].
 const fn solve(
     readout: Readout,
-    rows: u16,
+    height: u16,
     line_bytes: u32,
     req: u32,
     tol: u32,
 ) -> Result<Setting, Error> {
-    let mut search = Search {
-        req,
-        line_bytes,
-        nearest: None,
-        max: 0,
-        min: u32::MAX,
+    let vmin = limits::min_vts(readout, height);
+    let clock = if req > fastest(SensorClock::Mhz80, line_bytes, vmin) {
+        SensorClock::Mhz96
+    } else {
+        SensorClock::Mhz80
     };
-    let mut c = 0;
-    while c < CLOCKS.len() {
-        let clock = CLOCKS[c];
-        c += 1;
-        let Some(vmin) = limits::min_vts(readout, rows, clock, false) else {
-            continue;
+    let (lo, hi) = cycle_window(clock, req, tol);
+    // A frame is `k * hts + FRAME_LONG_LINE` cycles with k = VTS - 1 in kmin..=kmax; every
+    // product fits a u32 (65534 x 2912 + 1730 < 2^28).
+    let long = FRAME_LONG_LINE;
+    let (kmin, kmax) = (vmin as u32 - 1, limits::VTS_MAX as u32 - 1);
+    // The nearest frame lengths outside the window: the longest one shorter than `lo` (a
+    // faster rate) and the shortest one longer than `hi`.
+    let (mut faster, mut slower) = (0u32, u32::MAX);
+    let mut hts = limits::hts_min(line_bytes, clock);
+    loop {
+        let h = hts as u32;
+        // The smallest k whose frame is at least `lo` cycles.
+        let k = if lo <= kmin * h + long {
+            kmin
+        } else {
+            (lo - long).div_ceil(h)
         };
-        if vmin as u32 > limits::VTS_MAX as u32 {
-            continue;
-        }
-        if let Some(s) = search.consider(clock, limits::HTS_PREFERRED, vmin)
-            && search.within(&s, tol)
-        {
-            return Ok(s);
-        }
-        // The preferred HTS cannot meet the request: the nearest over the rest of the range.
-        let mut best: Option<Setting> = None;
-        let mut hts = limits::HTS_MIN;
-        loop {
-            if hts != limits::HTS_PREFERRED
-                && let Some(s) = search.consider(clock, hts, vmin)
-            {
-                best = closer(best, s, req);
+        if k > kmax {
+            let c = kmax * h + long;
+            if c > faster {
+                faster = c;
             }
-            if hts == limits::HTS_MAX {
-                break;
+        } else {
+            let c = k * h + long;
+            if c <= hi {
+                return Ok(Setting {
+                    clock,
+                    hts,
+                    vts: nearest_vts(clock, hts, vmin, req),
+                });
             }
-            hts += 1;
+            if c < slower {
+                slower = c;
+            }
+            if k > kmin && c - h > faster {
+                faster = c - h;
+            }
         }
-        if let Some(b) = best
-            && search.within(&b, tol)
-        {
-            return Ok(b);
+        if hts == limits::HTS_MAX {
+            break;
+        }
+        hts += 1;
+    }
+    if let SensorClock::Mhz96 = clock {
+        let max = fastest(SensorClock::Mhz96, line_bytes, vmin);
+        if req > max {
+            return Err(Error::TooFast {
+                max: Rate::millihertz(max),
+            });
+        }
+    } else {
+        let min = rate_mhz(SensorClock::Mhz80, limits::HTS_MAX, limits::VTS_MAX);
+        if req < min {
+            return Err(Error::TooSlow {
+                min: Rate::millihertz(min),
+            });
         }
     }
-    match search.nearest {
-        None => Err(Error::TooFast {
-            max: Rate::millihertz(0),
-        }),
-        Some(_) if req > search.max => Err(Error::TooFast {
-            max: Rate::millihertz(search.max),
-        }),
-        Some(_) if req < search.min => Err(Error::TooSlow {
-            min: Rate::millihertz(search.min),
-        }),
-        Some(n) => Err(Error::Tolerance {
-            nearest: Rate::millihertz(n.rate),
-        }),
-    }
+    // Between the bounds a faster frame exists (the fastest setting is at or above the
+    // request) and a slower one (the slowest is at or below it); on a tie the slower frame.
+    let slow = rate_of_cycles(clock, slower as u64);
+    let fast = if faster == 0 {
+        u32::MAX
+    } else {
+        rate_of_cycles(clock, faster as u64)
+    };
+    let nearest = if fast.abs_diff(req) < slow.abs_diff(req) {
+        fast
+    } else {
+        slow
+    };
+    Err(Error::Tolerance {
+        nearest: Rate::millihertz(nearest),
+    })
 }
