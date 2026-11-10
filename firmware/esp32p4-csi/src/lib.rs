@@ -60,12 +60,21 @@
 //! masked for longer than the sensor's vertical blanking (for example `esp-println` writing a
 //! log line at 115200 baud inside its critical section) makes the next frame start before the
 //! DMA is re-armed, and that frame arrives short ([`Frame::received_len`]).
+//!
+//! # Line strips
+//!
+//! [`CsiStrips`] is the second mode of the same hardware (only one of the two drivers can
+//! exist at a time): the bridge cuts each frame into DMA blocks of a fixed number of rows, a
+//! circular linked list of [`StripLink`]s fills a small ring of strip buffers in internal RAM,
+//! and [`CsiStrips::wait_strip`] hands out [`Strip`]s in order with their frame number and
+//! first row. See the [`strips`] module docs for the frame-boundary method and an example.
 
 #![no_std]
 
 mod cache;
 mod dphy;
 mod ldo;
+pub mod strips;
 
 use core::{
     cell::RefCell,
@@ -88,6 +97,7 @@ use esp32p4 as pac;
 
 pub use dphy::{MAX_MBPS, MIN_MBPS, PhyStatus, hsfreqrange};
 pub use ldo::{LdoChannel, LdoError, LdoSetting, disable_ldo, enable_ldo};
+pub use strips::{CsiStrips, MAX_STRIPS, Strip, StripDebug, StripError, StripLink, StripStats};
 
 /// Number of active data lanes. Fixed: the P4 has two and this driver uses both.
 pub const LANES: u8 = 2;
@@ -462,6 +472,20 @@ fn dma_isr() {
 /// clears them (RC).
 #[esp_hal::handler(priority = Priority::Priority1)]
 fn host_isr() {
+    let (main, detail) = read_host_errors();
+    critical_section::with(|cs| {
+        let mut s = SHARED.borrow_ref_mut(cs);
+        s.stats.host_errors = s.stats.host_errors.wrapping_add(1);
+        s.stats.host_error_main |= main;
+        for (acc, d) in s.stats.host_error_detail.iter_mut().zip(detail) {
+            *acc |= d;
+        }
+    });
+}
+
+/// Reads (and so clears) `INT_ST_MAIN` and the per-category status registers it flags, indexed
+/// as [`Stats::host_error_detail`].
+fn read_host_errors() -> (u32, [u32; 9]) {
     let h = host();
     let main = h.int_st_main().read().bits();
     let mut detail = [0u32; 9];
@@ -492,14 +516,7 @@ fn host_isr() {
     if main & (1 << 16) != 0 {
         detail[8] = h.int_st_phy().read().bits();
     }
-    critical_section::with(|cs| {
-        let mut s = SHARED.borrow_ref_mut(cs);
-        s.stats.host_errors = s.stats.host_errors.wrapping_add(1);
-        s.stats.host_error_main |= main;
-        for (acc, d) in s.stats.host_error_detail.iter_mut().zip(detail) {
-            *acc |= d;
-        }
-    });
+    (main, detail)
 }
 
 /// Bridge interrupts enabled by the driver: discard (2), buffer overrun (3), async FIFO
@@ -645,7 +662,7 @@ impl<'d> Csi<'d> {
 
         let chip_rev = chip_revision();
         enable_clocks();
-        init_dma_channel(channel);
+        init_dma_channel(channel, 0, DMA_TFR_DONE | DMA_ERR_MASK);
 
         interrupt::bind_handler(Interrupt::DMA, dma_isr);
         interrupt::bind_handler(Interrupt::CSI, host_isr);
@@ -699,108 +716,13 @@ impl<'d> Csi<'d> {
         }
         let cfg = self.config;
         let ch = self.channel;
-        let h = host();
-        let b = bridge();
-        let i = isp();
-
-        // Bridge + ISP back to reset values (also clears stale FIFO content after a stop).
-        // `mipi_csi_brg_claim`: module clock on, reset pulse, CSI_ENABLECLK.
-        critical_section::with(|_| {
-            let c = clkrst();
-            c.hp_rst_en0().modify(|_, w| w.rst_en_csi_brg().set_bit());
-            c.hp_rst_en0().modify(|_, w| w.rst_en_csi_brg().clear_bit());
-            c.hp_rst_en0().modify(|_, w| w.rst_en_isp().set_bit());
-            c.hp_rst_en0().modify(|_, w| w.rst_en_isp().clear_bit());
-        });
-        b.host_ctrl().modify(|_, w| w.csi_enableclk().set_bit());
-
-        // ── D-PHY + host (TRM 42.7.1.2; IDF `mipi_csi_hal_init`) ──
-        // Hold host and PHY in reset/shutdown.
-        h.csi2_resetn().write(|w| unsafe { w.bits(0) });
-        h.phy_shutdownz().write(|w| unsafe { w.bits(0) });
-        h.dphy_rstz().write(|w| unsafe { w.bits(0) });
-        // Test-code logic reset, then hsfreqrange into test code 0x44 (data bits [6:1]).
-        dphy::test_clear(h);
-        dphy::write_test_code(h, dphy::TEST_CODE_HSFREQRANGE, self.hsfreq << 1);
-        let rb = dphy::read_test_code(h, dphy::TEST_CODE_HSFREQRANGE);
-        self.hsfreq_readback = Some((rb >> 1) & 0x3F);
-        // Lanes, no virtual-channel extension (VCX = 1 disables it), no descrambler.
-        h.n_lanes().write(|w| unsafe { w.bits((LANES - 1) as u32) });
-        h.vc_extension().write(|w| unsafe { w.bits(1) });
-        h.scrambling().write(|w| unsafe { w.bits(0) });
-        // Release the PHY.
-        h.phy_shutdownz().write(|w| unsafe { w.bits(1) });
-        h.dphy_rstz().write(|w| unsafe { w.bits(1) });
-        // Error interrupts: clear stale status (RC), unmask everything
-        // (`mipi_csi_host_ll_enable_intr(ERR_ALL)` masks values).
-        clear_host_status();
-        h.int_msk_phy_fatal().write(|w| unsafe { w.bits(0x3) });
-        h.int_msk_pkt_fatal().write(|w| unsafe { w.bits(0x3) });
-        h.int_msk_bndry_frame_fatal()
-            .write(|w| unsafe { w.bits(0xFFFF) });
-        h.int_msk_seq_frame_fatal()
-            .write(|w| unsafe { w.bits(0xFFFF) });
-        h.int_msk_crc_frame_fatal()
-            .write(|w| unsafe { w.bits(0xFFFF) });
-        h.int_msk_pld_crc_fatal()
-            .write(|w| unsafe { w.bits(0xFFFF) });
-        h.int_msk_data_id().write(|w| unsafe { w.bits(0xFFFF) });
-        h.int_msk_ecc_corrected()
-            .write(|w| unsafe { w.bits(0xFFFF) });
-        h.int_msk_phy().write(|w| unsafe { w.bits(0x3_0003) });
-        // Release the host controller.
-        h.csi2_resetn().write(|w| unsafe { w.bits(1) });
-
-        // ── ISP in bypass (IDF `esp_isp_new_processor` with `bypass_isp`) ──
-        // `isp_ll_init`: CNTL = 0 (ISP_EN = 0 is the bypass), clear and mask interrupts.
-        i.cntl().write(|w| unsafe { w.bits(0) });
-        i.int_clr().write(|w| unsafe { w.bits(u32::MAX) });
-        i.int_ena().write(|w| unsafe { w.bits(0) });
-        i.clk_en().modify(|_, w| w.clk_en().set_bit());
-        // Input from the CSI host.
-        i.cntl()
-            .modify(|_, w| unsafe { w.isp_in_src().bits(0).mipi_data_en().set_bit() });
-        // Bypass: HADR counts 32-bit IDI words per line; registers hold value - 1.
-        let words = (cfg.width as u32 * 8).div_ceil(32);
-        i.frame_cfg().modify(|_, w| unsafe {
-            w.hadr_num().bits((words - 1) as u16);
-            w.vadr_num().bits(cfg.height - 1);
-            w.hsync_start_exist().bit(cfg.line_sync);
-            w.hsync_end_exist().bit(cfg.line_sync)
-        });
-        // ISP_SHADOW_MODE_UPDATE_ONLY_NEXT_VSYNC.
-        i.shadow_reg_ctrl()
-            .modify(|_, w| unsafe { w.shadow_update_sel().bits(2) });
-
-        // ── CSI bridge (TRM 38.7.2; IDF `mipi_csi_hal_init` + `esp_cam_new_csi_ctlr`) ──
-        b.frame_cfg().modify(|_, w| unsafe {
-            // IDF writes pixels (`h_res`) here; TRM 38.7.2 says 64-bit units. With
-            // VADR_NUM_CHECK off (reset value) the bridge does not use these for flow control.
-            w.hadr_num().bits(cfg.width);
-            w.vadr_num().bits(cfg.height)
-        });
-        b.buf_flow_ctl()
-            .modify(|_, w| unsafe { w.csi_buf_afull_thrd().bits(BRIDGE_AFULL_THRD as u16) });
-        b.endian_mode()
-            .modify(|_, w| w.byte_endian_order().clear_bit());
-        b.dma_req_cfg()
-            .modify(|_, w| unsafe { w.dma_burst_len().bits(BURST_ITEMS as u16) });
-        // TRM 38.5.7: for one block per frame of n bursts, DMABLK_SIZE > n.
-        b.dmablk_size()
-            .write(|w| unsafe { w.dmablk_size().bits((cfg.bursts() + 1) as u16) });
-        b.data_type_cfg().modify(|_, w| unsafe {
-            w.data_type_min().bits(cfg.data_type);
-            w.data_type_max().bits(cfg.data_type)
-        });
-        if self.chip_rev >= 300 {
-            // Color-mode block present from v3.0: enabled but bypassed (same in/out format).
-            b.host_cm_ctrl().modify(|_, w| {
-                w.csi_host_cm_en().set_bit();
-                w.csi_host_cm_bypass().set_bit()
-            });
-        }
-        b.int_clr().write(|w| unsafe { w.bits(u32::MAX) });
-        b.int_ena().write(|w| unsafe { w.bits(BRIDGE_ERR_MASK) });
+        self.hsfreq_readback = Some(configure_link(
+            &cfg,
+            self.hsfreq,
+            self.chip_rev,
+            // TRM 38.5.7: for one block per frame of n bursts, DMABLK_SIZE > n.
+            (cfg.bursts() + 1) as u16,
+        ));
 
         // ── DMA: arm the first buffer, then enable the bridge (IDF `s_ctlr_csi_start`) ──
         let armed = critical_section::with(|cs| {
@@ -823,7 +745,7 @@ impl<'d> Csi<'d> {
         if armed.is_none() {
             return Err(Error::BufferCount);
         }
-        b.csi_en().modify(|_, w| w.csi_brig_en().set_bit());
+        bridge().csi_en().modify(|_, w| w.csi_brig_en().set_bit());
         self.running = true;
         Ok(())
     }
@@ -835,34 +757,8 @@ impl<'d> Csi<'d> {
         let ch = self.channel;
         bridge().csi_en().modify(|_, w| w.csi_brig_en().clear_bit());
         critical_section::with(|cs| SHARED.borrow_ref_mut(cs).running = false);
-        channel_enable(ch, false);
-        let mut spins = 0u32;
-        while channel_enabled(ch) && spins < 100_000 {
-            spins += 1;
-        }
-        if channel_enabled(ch) {
-            // `dw_gdma_ll_channel_abort`: the abort bit clears itself when done.
-            dma().chen1().write(|w| unsafe { w.bits(0x101 << ch) });
-            let mut spins = 0u32;
-            while dma().chen1().read().bits() & (0x101 << ch) != 0 && spins < 100_000 {
-                spins += 1;
-            }
-        }
-        dma()
-            .ch(ch as usize)
-            .intclear0()
-            .write(|w| unsafe { w.bits(u32::MAX) });
-        isp().cntl().modify(|_, w| w.mipi_data_en().clear_bit());
-        let h = host();
-        h.csi2_resetn().write(|w| unsafe { w.bits(0) });
-        h.phy_shutdownz().write(|w| unsafe { w.bits(0) });
-        h.dphy_rstz().write(|w| unsafe { w.bits(0) });
-        critical_section::with(|_| {
-            let c = clkrst();
-            c.hp_rst_en0().modify(|_, w| w.rst_en_csi_host().set_bit());
-            c.hp_rst_en0()
-                .modify(|_, w| w.rst_en_csi_host().clear_bit());
-        });
+        halt_channel(ch);
+        reset_link();
         self.running = false;
         WAKER.wake();
     }
@@ -921,22 +817,7 @@ impl<'d> Csi<'d> {
 
     /// Register snapshot of the whole path, for debugging. Clears nothing.
     pub fn debug_status(&self) -> DebugStatus {
-        let b = bridge();
-        let c = dma().ch(self.channel as usize);
-        DebugStatus {
-            phy: dphy::status(host()),
-            hsfreqrange_readback: self.hsfreq_readback,
-            isp_int_raw: isp().int_raw().read().bits(),
-            isp_cntl: isp().cntl().read().bits(),
-            bridge_int_raw: b.int_raw().read().bits(),
-            bridge_buf_depth: ((b.buf_flow_ctl().read().bits() >> 16) & 0x3FFF) as u16,
-            bridge_enabled: b.csi_en().read().bits() & 1 != 0,
-            dma_enabled: channel_enabled(self.channel),
-            dma_int_status: c.intstatus0().read().bits(),
-            dma_completed_items: c.status0().read().bits() & 0x3F_FFFF,
-            dma_fifo_left: c.status1().read().bits() & 0x7FFF,
-            dma_dar: c.dar0().read().bits(),
-        }
+        snapshot(self.channel, self.hsfreq_readback)
     }
 
     /// Chip revision ×100 from eFuse (e.g. 302 for v3.2).
@@ -1037,7 +918,7 @@ fn enable_clocks() {
 
 /// One-time DW-GDMA controller and channel setup (`dw_gdma_hal_init`, `dw_gdma_new_channel`
 /// with the IDF CSI allocation config). The controller is reset only if nobody enabled it yet.
-fn init_dma_channel(ch: u8) {
+fn init_dma_channel(ch: u8, multblk_type: u8, signals: u32) {
     let d = dma();
     if d.cfg0().read().dmac_en().bit_is_clear() {
         critical_section::with(|_| {
@@ -1052,10 +933,11 @@ fn init_dma_channel(ch: u8) {
     }
     channel_enable(ch, false);
     let c = d.ch(ch as usize);
-    // Single contiguous block for source and destination.
+    // Multi-block type for source and destination: 0 = contiguous (one block per transfer),
+    // 3 = linked list.
     c.cfg0().write(|w| unsafe {
-        w.ch1_src_multblk_type().bits(0);
-        w.ch1_dst_multblk_type().bits(0)
+        w.ch1_src_multblk_type().bits(multblk_type);
+        w.ch1_dst_multblk_type().bits(multblk_type)
     });
     // TT_FC = 4: peripheral to memory, source peripheral is flow controller (TRM 38.7.3).
     // Hardware handshake both sides (IDF), SRC_PER = 1 (CSI), priority 1, 5 outstanding.
@@ -1070,9 +952,173 @@ fn init_dma_channel(ch: u8) {
     });
     c.sstatar0().write(|w| unsafe { w.bits(CSI_BRG_MEM_BASE) });
     c.dstatar0().write(|w| unsafe { w.bits(0) });
-    // Status for every event, interrupt signal for transfer done and errors.
+    // Status for every event, interrupt signal for `signals`.
     c.intclear0().write(|w| unsafe { w.bits(u32::MAX) });
     c.intstatus_enable0().write(|w| unsafe { w.bits(u32::MAX) });
-    c.intsignal_enable0()
-        .write(|w| unsafe { w.bits(DMA_TFR_DONE | DMA_ERR_MASK) });
+    c.intsignal_enable0().write(|w| unsafe { w.bits(signals) });
+}
+
+/// Brings up the D-PHY, CSI-2 host, ISP bypass and bridge for `cfg` (everything of
+/// [`Csi::start`] except arming the DMA and enabling the bridge), with the bridge ending a DMA
+/// block after `dmablk_bursts` bursts or at frame end. Returns the `hsfreqrange` read back
+/// from the D-PHY.
+fn configure_link(cfg: &Config, hsfreq: u8, chip_rev: u16, dmablk_bursts: u16) -> u8 {
+    let h = host();
+    let b = bridge();
+    let i = isp();
+
+    // Bridge + ISP back to reset values (also clears stale FIFO content after a stop).
+    // `mipi_csi_brg_claim`: module clock on, reset pulse, CSI_ENABLECLK.
+    critical_section::with(|_| {
+        let c = clkrst();
+        c.hp_rst_en0().modify(|_, w| w.rst_en_csi_brg().set_bit());
+        c.hp_rst_en0().modify(|_, w| w.rst_en_csi_brg().clear_bit());
+        c.hp_rst_en0().modify(|_, w| w.rst_en_isp().set_bit());
+        c.hp_rst_en0().modify(|_, w| w.rst_en_isp().clear_bit());
+    });
+    b.host_ctrl().modify(|_, w| w.csi_enableclk().set_bit());
+
+    // ── D-PHY + host (TRM 42.7.1.2; IDF `mipi_csi_hal_init`) ──
+    // Hold host and PHY in reset/shutdown.
+    h.csi2_resetn().write(|w| unsafe { w.bits(0) });
+    h.phy_shutdownz().write(|w| unsafe { w.bits(0) });
+    h.dphy_rstz().write(|w| unsafe { w.bits(0) });
+    // Test-code logic reset, then hsfreqrange into test code 0x44 (data bits [6:1]).
+    dphy::test_clear(h);
+    dphy::write_test_code(h, dphy::TEST_CODE_HSFREQRANGE, hsfreq << 1);
+    let rb = dphy::read_test_code(h, dphy::TEST_CODE_HSFREQRANGE);
+    // Lanes, no virtual-channel extension (VCX = 1 disables it), no descrambler.
+    h.n_lanes().write(|w| unsafe { w.bits((LANES - 1) as u32) });
+    h.vc_extension().write(|w| unsafe { w.bits(1) });
+    h.scrambling().write(|w| unsafe { w.bits(0) });
+    // Release the PHY.
+    h.phy_shutdownz().write(|w| unsafe { w.bits(1) });
+    h.dphy_rstz().write(|w| unsafe { w.bits(1) });
+    // Error interrupts: clear stale status (RC), unmask everything
+    // (`mipi_csi_host_ll_enable_intr(ERR_ALL)` masks values).
+    clear_host_status();
+    h.int_msk_phy_fatal().write(|w| unsafe { w.bits(0x3) });
+    h.int_msk_pkt_fatal().write(|w| unsafe { w.bits(0x3) });
+    h.int_msk_bndry_frame_fatal()
+        .write(|w| unsafe { w.bits(0xFFFF) });
+    h.int_msk_seq_frame_fatal()
+        .write(|w| unsafe { w.bits(0xFFFF) });
+    h.int_msk_crc_frame_fatal()
+        .write(|w| unsafe { w.bits(0xFFFF) });
+    h.int_msk_pld_crc_fatal()
+        .write(|w| unsafe { w.bits(0xFFFF) });
+    h.int_msk_data_id().write(|w| unsafe { w.bits(0xFFFF) });
+    h.int_msk_ecc_corrected()
+        .write(|w| unsafe { w.bits(0xFFFF) });
+    h.int_msk_phy().write(|w| unsafe { w.bits(0x3_0003) });
+    // Release the host controller.
+    h.csi2_resetn().write(|w| unsafe { w.bits(1) });
+
+    // ── ISP in bypass (IDF `esp_isp_new_processor` with `bypass_isp`) ──
+    // `isp_ll_init`: CNTL = 0 (ISP_EN = 0 is the bypass), clear and mask interrupts.
+    i.cntl().write(|w| unsafe { w.bits(0) });
+    i.int_clr().write(|w| unsafe { w.bits(u32::MAX) });
+    i.int_ena().write(|w| unsafe { w.bits(0) });
+    i.clk_en().modify(|_, w| w.clk_en().set_bit());
+    // Input from the CSI host.
+    i.cntl()
+        .modify(|_, w| unsafe { w.isp_in_src().bits(0).mipi_data_en().set_bit() });
+    // Bypass: HADR counts 32-bit IDI words per line; registers hold value - 1.
+    let words = (cfg.width as u32 * 8).div_ceil(32);
+    i.frame_cfg().modify(|_, w| unsafe {
+        w.hadr_num().bits((words - 1) as u16);
+        w.vadr_num().bits(cfg.height - 1);
+        w.hsync_start_exist().bit(cfg.line_sync);
+        w.hsync_end_exist().bit(cfg.line_sync)
+    });
+    // ISP_SHADOW_MODE_UPDATE_ONLY_NEXT_VSYNC.
+    i.shadow_reg_ctrl()
+        .modify(|_, w| unsafe { w.shadow_update_sel().bits(2) });
+
+    // ── CSI bridge (TRM 38.7.2; IDF `mipi_csi_hal_init` + `esp_cam_new_csi_ctlr`) ──
+    b.frame_cfg().modify(|_, w| unsafe {
+        // IDF writes pixels (`h_res`) here; TRM 38.7.2 says 64-bit units. With
+        // VADR_NUM_CHECK off (reset value) the bridge does not use these for flow control.
+        w.hadr_num().bits(cfg.width);
+        w.vadr_num().bits(cfg.height)
+    });
+    b.buf_flow_ctl()
+        .modify(|_, w| unsafe { w.csi_buf_afull_thrd().bits(BRIDGE_AFULL_THRD as u16) });
+    b.endian_mode()
+        .modify(|_, w| w.byte_endian_order().clear_bit());
+    b.dma_req_cfg()
+        .modify(|_, w| unsafe { w.dma_burst_len().bits(BURST_ITEMS as u16) });
+    b.dmablk_size()
+        .write(|w| unsafe { w.dmablk_size().bits(dmablk_bursts) });
+    b.data_type_cfg().modify(|_, w| unsafe {
+        w.data_type_min().bits(cfg.data_type);
+        w.data_type_max().bits(cfg.data_type)
+    });
+    if chip_rev >= 300 {
+        // Color-mode block present from v3.0: enabled but bypassed (same in/out format).
+        b.host_cm_ctrl().modify(|_, w| {
+            w.csi_host_cm_en().set_bit();
+            w.csi_host_cm_bypass().set_bit()
+        });
+    }
+    b.int_clr().write(|w| unsafe { w.bits(u32::MAX) });
+    b.int_ena().write(|w| unsafe { w.bits(BRIDGE_ERR_MASK) });
+    (rb >> 1) & 0x3F
+}
+
+/// Disables DMA channel `ch` (TRM 7.5.7.2), aborting it if it does not stop, and clears its
+/// interrupt status.
+fn halt_channel(ch: u8) {
+    channel_enable(ch, false);
+    let mut spins = 0u32;
+    while channel_enabled(ch) && spins < 100_000 {
+        spins += 1;
+    }
+    if channel_enabled(ch) {
+        // `dw_gdma_ll_channel_abort`: the abort bit clears itself when done.
+        dma().chen1().write(|w| unsafe { w.bits(0x101 << ch) });
+        let mut spins = 0u32;
+        while dma().chen1().read().bits() & (0x101 << ch) != 0 && spins < 100_000 {
+            spins += 1;
+        }
+    }
+    dma()
+        .ch(ch as usize)
+        .intclear0()
+        .write(|w| unsafe { w.bits(u32::MAX) });
+}
+
+/// ISP input off, CSI host and PHY held in reset (TRM 42.7.2).
+fn reset_link() {
+    isp().cntl().modify(|_, w| w.mipi_data_en().clear_bit());
+    let h = host();
+    h.csi2_resetn().write(|w| unsafe { w.bits(0) });
+    h.phy_shutdownz().write(|w| unsafe { w.bits(0) });
+    h.dphy_rstz().write(|w| unsafe { w.bits(0) });
+    critical_section::with(|_| {
+        let c = clkrst();
+        c.hp_rst_en0().modify(|_, w| w.rst_en_csi_host().set_bit());
+        c.hp_rst_en0()
+            .modify(|_, w| w.rst_en_csi_host().clear_bit());
+    });
+}
+
+/// Register snapshot of the whole path for DMA channel `ch`. Clears nothing.
+fn snapshot(ch: u8, hsfreqrange_readback: Option<u8>) -> DebugStatus {
+    let b = bridge();
+    let c = dma().ch(ch as usize);
+    DebugStatus {
+        phy: dphy::status(host()),
+        hsfreqrange_readback,
+        isp_int_raw: isp().int_raw().read().bits(),
+        isp_cntl: isp().cntl().read().bits(),
+        bridge_int_raw: b.int_raw().read().bits(),
+        bridge_buf_depth: ((b.buf_flow_ctl().read().bits() >> 16) & 0x3FFF) as u16,
+        bridge_enabled: b.csi_en().read().bits() & 1 != 0,
+        dma_enabled: channel_enabled(ch),
+        dma_int_status: c.intstatus0().read().bits(),
+        dma_completed_items: c.status0().read().bits() & 0x3F_FFFF,
+        dma_fifo_left: c.status1().read().bits() & 0x7FFF,
+        dma_dar: c.dar0().read().bits(),
+    }
 }
