@@ -405,11 +405,11 @@ struct Measurement {
     wrong_size: u32,
     first_wrong: usize,
     /// First and last delivered frame: arrival time (us since `t0`) and sequence number.
-    first: (u64, u32),
-    last: (u64, u32),
+    first: (u32, u32),
+    last: (u32, u32),
     /// Longest time between two consecutive deliveries (us), and sequence-number steps other
     /// than 1 between them.
-    max_gap_us: u64,
+    max_gap_us: u32,
     seq_gaps: u32,
 }
 
@@ -438,7 +438,7 @@ async fn measure(csi: &mut Csi<'static>, mode: &Mode, window: Duration) {
     while t0.elapsed() < window {
         match with_timeout(FRAME_TIMEOUT, csi.wait_frame(frame.take())).await {
             Ok(Ok(f)) => {
-                let at = (t0.elapsed().as_micros(), f.seq());
+                let at = (t0.elapsed().as_micros() as u32, f.seq());
                 if m.delivered == 0 {
                     m.first = at;
                 } else {
@@ -851,8 +851,7 @@ fn log_readback(vals: &[u8; READBACK.len()]) {
             .map_or(0, |i| vals[i] as u16)
     };
     let pair = |r: u16| reg(r) << 8 | reg(r + 1);
-    info!(
-        "camera: sensor readback: array x {}..{} y {}..{}, output {}x{}, offset {},{}, inc {:#04x}/{:#04x}, format {:#04x}/{:#04x}, HTS {} VTS {}, exposure {} lines, gain {:#04x}",
+    log_window([
         pair(0x3800),
         pair(0x3804),
         pair(0x3802),
@@ -861,6 +860,8 @@ fn log_readback(vals: &[u8; READBACK.len()]) {
         pair(0x380A),
         pair(0x3810),
         pair(0x3812),
+    ]);
+    log_timing([
         reg(0x3814),
         reg(0x3815),
         reg(0x3820),
@@ -868,7 +869,23 @@ fn log_readback(vals: &[u8; READBACK.len()]) {
         pair(0x380C),
         pair(0x380E),
         (reg(0x3500) & 0x0F) << 12 | reg(0x3501) << 4 | reg(0x3502) >> 4,
-        reg(0x3509)
+        reg(0x3509),
+    ]);
+}
+
+#[inline(never)]
+fn log_window(v: [u16; 8]) {
+    info!(
+        "camera: sensor readback: array x {}..{} y {}..{}, output {}x{}, offset {},{}",
+        v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]
+    );
+}
+
+#[inline(never)]
+fn log_timing(v: [u16; 8]) {
+    info!(
+        "camera: sensor readback: inc {:#04x}/{:#04x}, format {:#04x}/{:#04x}, HTS {} VTS {}, exposure {} lines, gain {:#04x}",
+        v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]
     );
 }
 
@@ -907,7 +924,7 @@ fn log_measurement(csi: &Csi<'static>, mode: &Mode, m: &Measurement) {
     let s = csi.stats();
     let counted = Fps(s.frames_done as u64 * 1_000_000_000 / m.window_us);
     // Frame period from first to last arrival: no ±1 frame counting error.
-    let span_us = (m.last.0 - m.first.0).max(1);
+    let span_us = (m.last.0 - m.first.0).max(1) as u64;
     let span_mhz = (m.last.1 - m.first.1) as u64 * 1_000_000_000 / span_us;
     let predicted = mode.frame_rate_mhz() as u64;
     let ppm = (span_mhz as i64 - predicted as i64) * 1_000_000 / predicted as i64;
