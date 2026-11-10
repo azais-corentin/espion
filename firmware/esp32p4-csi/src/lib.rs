@@ -40,7 +40,7 @@
 //! for _ in 0..1000 {
 //!     // Gives the previous frame's buffer back to the driver and waits for the next one.
 //!     let f = csi.wait_frame(frame.take()).await.unwrap();
-//!     let pixels: &[u8] = &f; // width * height bytes, row-major
+//!     let pixels: &[u8] = &f; // config.frame_bytes() bytes, row-major
 //!     let _ = pixels[0];
 //!     frame = Some(f);
 //! }
@@ -103,6 +103,10 @@ pub use strips::{CsiStrips, MAX_STRIPS, Strip, StripDebug, StripError, StripLink
 pub const LANES: u8 = 2;
 /// CSI-2 data type RAW8.
 pub const DATA_TYPE_RAW8: u8 = 0x2A;
+/// CSI-2 data type RAW10. In memory the frame keeps the CSI-2 packed layout: per 4 pixels, 4
+/// bytes with bits 9..2 of pixels 0..3, then 1 byte with their bits 1..0 (pixel 0 in bits
+/// 1..0); a line is `width * 5 / 4` bytes, no padding (see [`Config::line_bytes`]).
+pub const DATA_TYPE_RAW10: u8 = 0x2B;
 /// Most frame buffers the driver rotates.
 pub const MAX_BUFFERS: usize = 4;
 
@@ -119,14 +123,18 @@ const BRIDGE_AFULL_THRD: u32 = 960;
 /// Capture geometry and link rate. Change it with [`Csi::set_config`] while stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// Pixels per line (= bytes per line for RAW8). `width * height` must be a multiple of 8.
+    /// Pixels per line. The line (`width` × bits per pixel) must be a whole number of 32-bit
+    /// words: `width` a multiple of 4 for RAW8. RAW10 needs a multiple of 64 (the ISP word count
+    /// `width * 10 / 32` must be a multiple of 4, TRM `ISP_HVNUM_SETTING_ERR_INT`) and an even
+    /// `height`.
     pub width: u16,
     /// Lines per frame.
     pub height: u16,
     /// Bit rate per data lane in Mbit/s (selects the D-PHY `hsfreqrange`), 90..=1500.
     pub lane_bit_rate_mbps: u16,
     /// CSI-2 data type that passes the bridge filter (`DATA_TYPE_MIN = MAX`); other packets,
-    /// e.g. embedded data (0x12), are dropped. Default [`DATA_TYPE_RAW8`].
+    /// e.g. embedded data (0x12), are dropped. Default [`DATA_TYPE_RAW8`]; [`DATA_TYPE_RAW10`]
+    /// is 10 bits per pixel, every other value is treated as 8 bits per pixel.
     pub data_type: u8,
     /// The sensor sends line-start/line-end short packets (ISP `HSYNC_START/END_EXIST`).
     /// The OV9281 setup used by espion does not. Default `false`.
@@ -145,14 +153,42 @@ impl Config {
         }
     }
 
-    /// Bytes of one frame (8 bits per pixel).
+    /// RAW10 (CSI-2 packed in memory), no line short packets.
+    pub const fn raw10(width: u16, height: u16, lane_bit_rate_mbps: u16) -> Self {
+        Self {
+            data_type: DATA_TYPE_RAW10,
+            ..Self::new(width, height, lane_bit_rate_mbps)
+        }
+    }
+
+    /// Bits per pixel on the link and in memory: 10 for [`DATA_TYPE_RAW10`], else 8.
+    pub const fn bits_per_pixel(&self) -> u32 {
+        if self.data_type == DATA_TYPE_RAW10 {
+            10
+        } else {
+            8
+        }
+    }
+
+    /// Bytes of one line in memory: `width` for RAW8, `width * 5 / 4` for RAW10 (packed).
+    pub const fn line_bytes(&self) -> usize {
+        self.width as usize * self.bits_per_pixel() as usize / 8
+    }
+
+    /// Bytes of one frame: `line_bytes() * height` (`width * height` for RAW8).
     pub const fn frame_bytes(&self) -> usize {
-        self.width as usize * self.height as usize
+        self.line_bytes() * self.height as usize
     }
 
     /// Bridge bursts the frame needs.
     const fn bursts(&self) -> usize {
         self.frame_bytes().div_ceil(BURST_BYTES)
+    }
+
+    /// 32-bit Image Interface words per line: what the ISP header counts in bypass (IDF
+    /// `esp_isp_new_processor`: `ceil(h_res * in_bits_per_pixel / 32)`).
+    const fn line_words(&self) -> u32 {
+        (self.width as u32 * self.bits_per_pixel()).div_ceil(32)
     }
 
     fn validate(&self) -> Result<u8, Error> {
@@ -161,8 +197,17 @@ impl Config {
             return Err(Error::InvalidGeometry);
         }
         // DMA moves 64-bit items (IDF: frame size must be a whole number of them; TRM 38.7.3:
-        // image dimensions aligned to 8 bytes). ISP bypass counts 32-bit words per line.
-        if !self.frame_bytes().is_multiple_of(8) || !self.width.is_multiple_of(4) {
+        // image dimensions aligned to 8 bytes). ISP bypass counts 32-bit words per line, so a
+        // line must be a whole number of them (RAW8: width % 4; RAW10: width % 16).
+        let line_bits = self.width as u32 * self.bits_per_pixel();
+        if !self.frame_bytes().is_multiple_of(8) || !line_bits.is_multiple_of(32) {
+            return Err(Error::InvalidGeometry);
+        }
+        // TRM 38.6 `ISP_HVNUM_SETTING_ERR_INT`: "image dimensions must be even; with the RAW10
+        // input, HNUM must be a multiple of 4". In bypass HNUM is the word count.
+        if self.data_type == DATA_TYPE_RAW10
+            && (!self.line_words().is_multiple_of(4) || !self.height.is_multiple_of(2))
+        {
             return Err(Error::InvalidGeometry);
         }
         hsfreqrange(self.lane_bit_rate_mbps).ok_or(Error::InvalidBitRate)
@@ -208,7 +253,8 @@ pub struct Stats {
     /// Completed frames replaced by a newer one before [`Csi::wait_frame`] took them.
     pub frames_overwritten: u32,
     /// Bytes the DMA wrote for the last completed frame: final `DAR0` minus the buffer start.
-    /// Differs from `width * height` when the sensor geometry does not match the configuration.
+    /// Differs from [`Config::frame_bytes`] when the sensor geometry does not match the
+    /// configuration.
     pub last_frame_bytes: u32,
     /// `CMPLTD_BLK_TFR_SIZE` of the last completed frame as the channel reports it (64-bit
     /// items). Measured on the ESP32-P4 v3.2: one item less than the DMA wrote.
@@ -538,7 +584,8 @@ fn bridge_isr() {
 
 // ── Frame ───────────────────────────────────────────────────────────────────────────────
 
-/// A completed frame. Derefs to the `width * height` pixel bytes, cache-coherent.
+/// A completed frame. Derefs to the [`Config::frame_bytes`] pixel bytes (RAW10 packed, see
+/// [`DATA_TYPE_RAW10`]), cache-coherent.
 ///
 /// Dropping it (or passing it to the next [`Csi::wait_frame`]) gives the buffer back to the
 /// driver. Holding more frames than `buffers - 2` makes the DMA drop frames
@@ -1023,8 +1070,9 @@ fn configure_link(cfg: &Config, hsfreq: u8, chip_rev: u16, dmablk_bursts: u16) -
     // Input from the CSI host.
     i.cntl()
         .modify(|_, w| unsafe { w.isp_in_src().bits(0).mipi_data_en().set_bit() });
-    // Bypass: HADR counts 32-bit IDI words per line; registers hold value - 1.
-    let words = (cfg.width as u32 * 8).div_ceil(32);
+    // Bypass: HADR counts 32-bit IDI words per line (`ceil(width * bpp / 32)`, IDF
+    // `esp_isp_new_processor`); registers hold value - 1.
+    let words = cfg.line_words();
     i.frame_cfg().modify(|_, w| unsafe {
         w.hadr_num().bits((words - 1) as u16);
         w.vadr_num().bits(cfg.height - 1);

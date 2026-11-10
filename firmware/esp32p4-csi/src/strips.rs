@@ -4,7 +4,7 @@
 //!
 //! # How it works
 //!
-//! - The CSI bridge ends a DW-GDMA block after `DMABLK_SIZE` = `width * lines / 4096` bursts
+//! - The CSI bridge ends a DW-GDMA block after `DMABLK_SIZE` = `line_bytes * lines / 4096` bursts
 //!   and at the end of every frame (TRM 38.5.7, 38.7.2 step 4).
 //! - The channel runs a circular linked list (TRM 7.5.4.2 "Linked List", 7.7.3) of one
 //!   [`StripLink`] per strip buffer. Every item asks for an interrupt at block end
@@ -66,7 +66,7 @@
 //!
 //! # Memory
 //!
-//! - **Strip buffers:** `width * lines` bytes each ([`CsiStrips::strip_bytes`]), start and
+//! - **Strip buffers:** `line_bytes * lines` bytes each ([`CsiStrips::strip_bytes`]), start and
 //!   length aligned to the cache line, in internal RAM (any address the DMA reaches works;
 //!   PSRAM defeats the purpose).
 //! - **List items:** a `[StripLink; N]` in internal L2MEM (a `static`). The driver writes and
@@ -206,10 +206,12 @@ pub enum StripError {
     /// A shared condition of the receiver ([`Error::AlreadyInUse`], [`Error::InvalidGeometry`],
     /// [`Error::InvalidBitRate`], [`Error::Running`], [`Error::NotRunning`]).
     Csi(Error),
-    /// `width * lines` is not a whole number of bridge bursts ([`BURST_BYTES`]), `lines` is 0
-    /// or not below `height`, the strip needs more than 8191 bursts, or `height` is a multiple
-    /// of `lines` (the frame-end marker needs a short last strip).
+    /// `lines` is not below `height`, the strip needs more than 8191 bursts, or `height` is a
+    /// multiple of `lines` (the frame-end marker needs a short last strip).
     StripGeometry,
+    /// `lines` is 0 or not a multiple of `step` ([`CsiStrips::line_step`]): a strip must be a
+    /// whole number of bridge bursts ([`BURST_BYTES`]).
+    StripLines { step: u16 },
     /// Fewer than 2 or more than [`MAX_STRIPS`] strip buffers.
     StripCount,
     /// Strip buffer `index` is shorter than [`CsiStrips::strip_bytes`].
@@ -353,7 +355,8 @@ struct State {
     lens: [usize; MAX_STRIPS],
     /// List item addresses as the DMA sees them (cached L2MEM addresses).
     links: [usize; MAX_STRIPS],
-    width: u16,
+    /// Bytes per line in memory ([`Config::line_bytes`]).
+    line_bytes: u32,
     height: u16,
     lines: u16,
     /// Slots whose item is valid (owned by the DMA).
@@ -390,7 +393,7 @@ impl State {
             strips: [0; MAX_STRIPS],
             lens: [0; MAX_STRIPS],
             links: [0; MAX_STRIPS],
-            width: 0,
+            line_bytes: 0,
             height: 0,
             lines: 0,
             armed: 0,
@@ -411,7 +414,7 @@ impl State {
     }
 
     fn strip_items(&self) -> u32 {
-        (self.width as u32 * self.lines as u32) / 8
+        (self.line_bytes * self.lines as u32) / 8
     }
 
     /// Non-cacheable pointer to word `word` of slot `slot`'s item.
@@ -512,7 +515,7 @@ impl State {
         }
         let rows_left = self.height - self.row;
         let expect_last = rows_left < self.lines;
-        let expected_items = (rows_left as u32 * self.width as u32) / 8;
+        let expected_items = (rows_left as u32 * self.line_bytes) / 8;
         if full && !expect_last {
             self.push(
                 slot,
@@ -710,7 +713,7 @@ fn bridge_isr() {
 // ── Strip ───────────────────────────────────────────────────────────────────────────────
 
 /// A finished strip: [`Strip::rows`] full rows of one frame, cache-coherent. Derefs to the
-/// `rows * width` pixel bytes, row-major.
+/// `rows * line_bytes` pixel bytes, row-major (RAW10 packed, see [`crate::DATA_TYPE_RAW10`]).
 ///
 /// Dropping it (or passing it to the next [`CsiStrips::wait_strip`]) gives the buffer back to
 /// the DMA. The DMA halts and the frame is lost when it reaches a strip that is still held.
@@ -784,9 +787,26 @@ pub struct CsiStrips<'d> {
 }
 
 impl<'d> CsiStrips<'d> {
-    /// Bytes of one full strip: `width * lines`.
+    /// Bytes of one full strip: [`Config::line_bytes`] × `lines`.
     pub const fn strip_bytes(config: &Config, lines: u16) -> usize {
-        config.width as usize * lines as usize
+        config.line_bytes() * lines as usize
+    }
+
+    /// Smallest valid strip height: strips must be whole bridge bursts of [`BURST_BYTES`], so
+    /// `lines` must be a multiple of `4096 / gcd(line_bytes, 4096)`. RAW8: 1280 wide → 16,
+    /// 640 → 32, 320 → 64. RAW10 (packed): 1280 wide (1600 B) → 64, 640 (800 B) → 128,
+    /// 320 (400 B) → 256.
+    pub const fn line_step(config: &Config) -> u16 {
+        let line = config.line_bytes();
+        // gcd(line, BURST_BYTES) with BURST_BYTES a power of two: the lowest set bit of line,
+        // capped at BURST_BYTES.
+        let common = if line == 0 {
+            BURST_BYTES
+        } else {
+            let low = 1usize << line.trailing_zeros();
+            if low < BURST_BYTES { low } else { BURST_BYTES }
+        };
+        (BURST_BYTES / common) as u16
     }
 
     /// Strips per frame: `ceil(height / lines)`, the last one short.
@@ -801,9 +821,10 @@ impl<'d> CsiStrips<'d> {
     ///   start and length multiples of the cache line (64 B in internal RAM).
     /// - `links`: one item per strip, in internal L2MEM (a `static`). The driver writes back
     ///   and drops their cache lines once and from then on uses the non-cacheable alias.
-    /// - `lines`: rows per strip. `width * lines` must be a multiple of [`BURST_BYTES`]
-    ///   (4096), and `height` must not be a multiple of `lines` (see the module docs). 64 rows
-    ///   suit 1280x800, 1280x720, 640x480 and 640x400.
+    /// - `lines`: rows per strip, a multiple of [`CsiStrips::line_step`] (whole bridge bursts),
+    ///   below `height`, and `height` must not be a multiple of `lines` (see the module docs).
+    ///   RAW8: 64 rows suit 1280x800, 1280x720, 640x480, 640x400 and 320x200. RAW10: 64 rows
+    ///   for 1280x800 and 1280x720, 128 for 640x400 (strips of 102 400 B).
     pub fn new<const N: usize>(
         vdma_channel: impl VdmaDmaChannel + 'd,
         strips: [&'static mut [u8]; N],
@@ -858,7 +879,7 @@ impl<'d> CsiStrips<'d> {
                 (s.strips[i], s.lens[i]) = entry;
                 s.links[i] = links_addr + i * core::mem::size_of::<StripLink>();
             }
-            s.width = config.width;
+            s.line_bytes = config.line_bytes() as u32;
             s.height = config.height;
             s.lines = lines;
             generation
@@ -912,7 +933,7 @@ impl<'d> CsiStrips<'d> {
                 *t = (s.strips[i], s.lens[i]);
             }
             check_lengths(&table[..n], &config, lines)?;
-            s.width = config.width;
+            s.line_bytes = config.line_bytes() as u32;
             s.height = config.height;
             s.lines = lines;
             Ok::<(), StripError>(())
@@ -1012,7 +1033,7 @@ impl<'d> CsiStrips<'d> {
             })
         })
         .await?;
-        let len = meta.rows as usize * self.config.width as usize;
+        let len = meta.rows as usize * self.config.line_bytes();
         let line = cache::line_size(addr);
         cache::invalidate(addr, len.div_ceil(line) * line);
         Ok(Strip {
@@ -1079,10 +1100,12 @@ impl Drop for CsiStrips<'_> {
 }
 
 fn check_geometry(config: &Config, lines: u16) -> Result<(), StripError> {
+    let step = CsiStrips::line_step(config);
+    if lines == 0 || !lines.is_multiple_of(step) {
+        return Err(StripError::StripLines { step });
+    }
     let bytes = CsiStrips::strip_bytes(config, lines);
-    let ok = lines > 0
-        && lines < config.height
-        && bytes.is_multiple_of(BURST_BYTES)
+    let ok = lines < config.height
         && bytes / BURST_BYTES <= 0x1FFF
         && !config.height.is_multiple_of(lines);
     if ok {
