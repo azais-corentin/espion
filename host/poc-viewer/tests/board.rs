@@ -25,7 +25,8 @@
 //! quality when there is room, and holds it when off; the refusals (JPEG with a RAW10 mode,
 //! with a size not a multiple of 8, a quality outside 1..=100) carry their values; switching
 //! between JPEG and the raw encodings and back; and a JPEG frame agrees with a raw frame of
-//! the same static scene taken right after (PSNR; the bar test pattern within a small error).
+//! the same static scene taken right after (PSNR; the bar test pattern within the codec's own
+//! error: no worse than the same raw frame encoded here at the same quality).
 //! Run only these with `POC_ONLY=jpeg,quality,auto,jpeg_refusals,switching,agreement`.
 //!
 //! `soak` streams 640x400 binned at the link rate and changes the mode every 20 s, restarts the
@@ -1478,15 +1479,17 @@ fn auto_quality(b: &mut Board) {
     b.check(lo.zip(hi).is_some_and(|(l, h)| h - l <= 10), || {
         format!("auto quality does not settle: {tail:?}")
     });
-    // Room: the bars compress to almost nothing; back to the set quality.
+    // Room: the scene at gain 2x is small (the sensor's bars are not: hundreds of edges per
+    // row); back to the set quality.
     let light = CameraSettings {
-        test_pattern: TestPattern::Bars,
+        test_pattern: TestPattern::Off,
+        gain_sixteenths: 32,
         ..off.camera
     };
-    let st = b.set_camera(light).expect("bars");
+    let st = b.set_camera(light).expect("scene at gain 2x");
     let need = f64::from(100 - w_on.encoder.quality.min(100)) * 0.2 + 3.0;
     let trace = quality_trace(b, need);
-    println!("  auto on, bars: quality every 200 ms {trace:?}");
+    println!("  auto on, scene at gain 2x: quality every 200 ms {trace:?}");
     b.check(trace.last() == Some(&100), || {
         format!(
             "auto on with room: quality {:?} after {need:.1} s",
@@ -1494,7 +1497,7 @@ fn auto_quality(b: &mut Board) {
         )
     });
     let w = b.measure(&st, Duration::ZERO, 2.0);
-    b.judge("auto on, bars", &st, &w);
+    b.judge("auto on, scene at gain 2x", &st, &w);
     // Off again: the set quality at once.
     let st = b.set_stream(jstream(60, false)).expect("auto off");
     b.check(st.encoder.quality == 60, || {
@@ -1696,29 +1699,32 @@ fn agreement(b: &mut Board) {
             mean_d(&rf.data)
         );
         if bars {
-            // Away from the bars' edges (8 pixels: one JPEG block) the decoded bars are the raw
-            // bars within 2 levels.
-            let w = rf.width as usize;
-            let row = &rf.data[..w];
-            let near_edge: Vec<bool> = (0..w)
-                .map(|x| {
-                    (x.saturating_sub(8)..(x + 9).min(w)).any(|i| i > 0 && row[i] != row[i - 1])
-                })
-                .collect();
-            let inner = decoded
-                .chunks(w)
-                .zip(rf.data.chunks(w))
-                .flat_map(|(d, r)| d.iter().zip(r).zip(&near_edge))
-                .filter(|(_, edge)| !**edge)
-                .map(|((d, r), _)| d.abs_diff(*r))
+            // Within the codec's own error: the same raw frame encoded here at the same quality
+            // (`jpeg-encoder`, the IJG tables the board uses) and decoded the same way.
+            let mut file = Vec::new();
+            jpeg_encoder::Encoder::new(&mut file, 90)
+                .encode(&rf.data, rf.width, rf.height, jpeg_encoder::ColorType::Luma)
+                .expect("reference encode");
+            let mut reference = Vec::new();
+            jpeg::decode(&file, rf.width, rf.height, &mut reference).expect("reference decode");
+            let p_ref = psnr(&reference, &rf.data);
+            let worst_ref = reference
+                .iter()
+                .zip(&rf.data)
+                .map(|(a, b)| a.abs_diff(*b))
                 .max()
                 .unwrap_or(0);
-            println!("    bars away from the edges: largest error {inner}");
+            println!(
+                "    reference encoder here at quality 90: {} B, PSNR {p_ref:.2} dB, largest error {worst_ref}",
+                file.len()
+            );
             b.check(bars_exact(&rf), || "raw bars not exact".into());
-            b.check(inner <= 2, || {
-                format!("{label}: decoded bars off by {inner} away from the edges")
+            b.check(p >= 40.0 && p >= p_ref - 1.0, || {
+                format!("{label}: PSNR {p:.2} dB, the reference {p_ref:.2} dB")
             });
-            b.check(p >= 40.0, || format!("{label}: PSNR {p:.2} dB"));
+            b.check(worst <= worst_ref + 3, || {
+                format!("{label}: largest error {worst}, the reference {worst_ref}")
+            });
         } else {
             b.check(p >= 30.0, || format!("{label}: PSNR {p:.2} dB"));
         }
