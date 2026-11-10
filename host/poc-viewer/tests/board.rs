@@ -16,6 +16,18 @@
 //! at the link rate, and the board's error paths through its test hooks (UDP 5010). It prints
 //! one line per step and fails at the end with every failed check.
 //!
+//! JPEG (sections `jpeg`, `quality`, `auto`, `jpeg_refusals`, `switching`, `agreement`): every
+//! frame taken is decoded and must be one baseline greyscale JPEG of the mode's size; sizes,
+//! the quality and encode time in use and the rate at the host against the sensor's are
+//! printed for 1280x800 at 120 Hz and at the sensor's maximum and the other windows at theirs;
+//! quality settings are applied and reported and a higher quality gives larger files;
+//! automatic quality lowers the quality when the link is full and raises it back to the set
+//! quality when there is room, and holds it when off; the refusals (JPEG with a RAW10 mode,
+//! with a size not a multiple of 8, a quality outside 1..=100) carry their values; switching
+//! between JPEG and the raw encodings and back; and a JPEG frame agrees with a raw frame of
+//! the same static scene taken right after (PSNR; the bar test pattern within a small error).
+//! Run only these with `POC_ONLY=jpeg,quality,auto,jpeg_refusals,switching,agreement`.
+//!
 //! `soak` streams 640x400 binned at the link rate and changes the mode every 20 s, restarts the
 //! client and sends malformed datagrams in between, for `POC_SOAK_SECS` (default 600).
 
@@ -27,12 +39,13 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CHUNK_MAX, CamError, CameraSettings, Counters, Encoding, Format, FrameChunk, MAX_DATAGRAM,
-    Message, Op, Origin, Readout, Reply, Request, STREAM_TIMEOUT_MS, State, StreamSettings,
-    TestPattern, chunk_count,
+    AUTO_QUALITY_MIN, CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding,
+    Format, FrameChunk, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, Op,
+    Origin, Readout, Reply, Request, STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern,
+    chunk_count,
 };
 use poc_viewer::{
-    addr, camera,
+    addr, camera, jpeg,
     net::{Client, Command, Frame, Stats},
 };
 
@@ -72,6 +85,19 @@ struct Window {
     backwards: u32,
     /// Frames dropped by the client for a missing chunk.
     incomplete: u64,
+    /// JPEG frames taken that are not one baseline greyscale JPEG of the mode's size.
+    bad_jpeg: u32,
+    /// Why the first of them failed.
+    jpeg_error: Option<String>,
+    /// Smallest and largest frame taken, bytes.
+    sizes: (usize, usize),
+    /// Mean length of the frames received whole, bytes.
+    mean_len: f64,
+    /// Time to decode a JPEG frame here (the viewer's decoder), mean, ms.
+    decode_ms: f64,
+    /// The encoder over the window: errors and frames skipped as differences, quality, frame
+    /// length and encode time at its end.
+    encoder: EncoderState,
     /// Host rate from the first to the last whole frame (frames per second).
     fps: f64,
     /// Payload rate at the host, Mbit/s.
@@ -204,12 +230,25 @@ impl Board {
             .stream
             .encoding
             .frame_bytes(state.camera.width, state.camera.height);
+        let mut pixels = Vec::new();
+        let mut decode = Duration::ZERO;
+        w.sizes = (usize::MAX, 0);
         while Instant::now() < end {
             let Some(f) = c.take_frame() else {
                 thread::sleep(Duration::from_micros(500));
                 continue;
             };
             w.taken += 1;
+            w.sizes = (w.sizes.0.min(f.data.len()), w.sizes.1.max(f.data.len()));
+            if f.encoding == Encoding::Jpeg {
+                let t = Instant::now();
+                if let Err(e) = jpeg::decode(&f.data, f.width, f.height, &mut pixels) {
+                    w.bad_jpeg += 1;
+                    w.jpeg_error
+                        .get_or_insert_with(|| format!("frame {}: {e}", f.number));
+                }
+                decode += t.elapsed();
+            }
             if f.generation != state.generation
                 || (f.width, f.height, f.encoding)
                     != (
@@ -232,7 +271,11 @@ impl Board {
         }
         let s1 = c.stats();
         let after = self.state();
+        if w.taken > 0 {
+            w.decode_ms = decode.as_secs_f64() * 1e3 / f64::from(w.taken);
+        }
         w.whole = s1.frames_whole - s0.frames_whole;
+        w.mean_len = (s1.frame_bytes - s0.frame_bytes) as f64 / w.whole.max(1) as f64;
         w.incomplete = s1.frames_incomplete - s0.frames_incomplete;
         w.mbps = (s1.bytes - s0.bytes) as f64 * 8.0 / secs / 1e6;
         // Every whole frame counts for the rate: the taken ones' times are a subset, so the
@@ -246,6 +289,12 @@ impl Board {
             frames_skipped: d(a.frames_skipped, b.frames_skipped),
             capture_errors: d(a.capture_errors, b.capture_errors),
             datagrams_sent: d(a.datagrams_sent, b.datagrams_sent),
+        };
+        let (a, b) = (after.encoder, before.encoder);
+        w.encoder = EncoderState {
+            errors: d(a.errors, b.errors),
+            frames_skipped: d(a.frames_skipped, b.frames_skipped),
+            ..a
         };
         w
     }
@@ -295,7 +344,7 @@ impl Board {
 
     /// Checks a window of an accepted mode and prints its line.
     fn judge(&mut self, label: &str, st: &State, w: &Window) {
-        let (lo, hi) = expected_fps(st);
+        let (lo, hi) = expected_fps(st, w.mean_len);
         println!(
             "  {label}: {:?} {}x{} {:?} at {:?}, {} MHz HTS {} VTS {}, sensor {:.3} Hz; host {:.2} fps \
              (expected {:.2}..{:.2}), {:.1} Mbit/s, {} whole, {} incomplete, {} wrong, {} backwards; \
@@ -322,6 +371,33 @@ impl Board {
             w.board.frames_skipped,
             w.board.capture_errors,
         );
+        if st.stream.encoding == Encoding::Jpeg {
+            println!(
+                "    JPEG: quality set {} in use {} (auto {}), frames {:.0} B mean, {}..{} B taken, \
+                 encode {} us, decode here {:.2} ms, {} bad; encoder skipped {} errors {}",
+                st.stream.jpeg_quality,
+                w.encoder.quality,
+                st.stream.auto_quality,
+                w.mean_len,
+                w.sizes.0,
+                w.sizes.1,
+                w.encoder.encode_us,
+                w.decode_ms,
+                w.bad_jpeg,
+                w.encoder.frames_skipped,
+                w.encoder.errors,
+            );
+            self.check(w.bad_jpeg == 0, || {
+                format!(
+                    "{label}: {} frames are not a baseline greyscale JPEG of the mode: {}",
+                    w.bad_jpeg,
+                    w.jpeg_error.as_deref().unwrap_or("")
+                )
+            });
+            self.check(w.encoder.errors == 0, || {
+                format!("{label}: {} encoder errors", w.encoder.errors)
+            });
+        }
         self.check(w.taken > 0, || format!("{label}: no frame"));
         self.check(w.wrong == 0, || {
             format!("{label}: {} frames of the wrong layout", w.wrong)
@@ -350,18 +426,21 @@ fn frame_ns(st: &State) -> u64 {
     1_000_000_000_000 / u64::from(st.mode.frame_rate_mhz.max(1))
 }
 
-/// The host frame rate to expect, a range (RAW10 sent as RAW8: CPU-bound, see below). Low end: the board sends the frame captured after
-/// the previous one is out, so every n-th frame where n = ceil(wire time x sensor rate) (with 3 %
-/// margin on the wire time). High end: the sensor rate, or the link's frames per second, since
-/// the board's socket and DMA rings let the next frame start before the previous one has left.
-/// Both capped by `max_fps`.
-fn expected_fps(st: &State) -> (f64, f64) {
+/// The host frame rate to expect, a range (RAW10 sent as RAW8: CPU-bound, see below). Raw: low
+/// end: the board sends the frame captured after the previous one is out, so every n-th frame
+/// where n = ceil(wire time x sensor rate) (with 3 % margin on the wire time). High end: the
+/// sensor rate, or the link's frames per second, since the board's socket and DMA rings let the
+/// next frame start before the previous one has left. JPEG (frames of `mean_len` bytes): an
+/// encoded frame waits for the link, so the link never idles: min(sensor rate, link rate),
+/// low end 90 % of it. Both capped by `max_fps`.
+fn expected_fps(st: &State, mean_len: f64) -> (f64, f64) {
     let f = st.mode.frame_rate_mhz as f64 / 1000.0;
+    let jpeg = st.stream.encoding == Encoding::Jpeg;
     let len = st
         .stream
         .encoding
         .frame_bytes(st.camera.width, st.camera.height)
-        .unwrap_or(0) as u32;
+        .unwrap_or(mean_len.round() as u64) as u32;
     let chunks = chunk_count(len);
     // The chunks' real header length: encode one with values of this order.
     let data = [0u8; CHUNK_MAX];
@@ -380,7 +459,11 @@ fn expected_fps(st: &State) -> (f64, f64) {
     .map_or(MAX_DATAGRAM - CHUNK_MAX, |d| d.len() - CHUNK_MAX);
     let wire = len as f64 + chunks as f64 * (header as f64 + WIRE_OVERHEAD);
     let t = wire / LINE_BYTES_PER_S;
-    let mut lo = f / (t * f * 1.03).ceil().max(1.0);
+    let mut lo = if jpeg {
+        0.9 * f.min(1.0 / t)
+    } else {
+        f / (t * f * 1.03).ceil().max(1.0)
+    };
     // RAW10 sent as RAW8: the board reduces each chunk as it copies it, which keeps its one
     // core busy (`rtt` section); it reaches about 90 % of the link rate.
     if st.camera.format == Format::Raw10 && st.stream.encoding == Encoding::Raw8 {
@@ -424,6 +507,15 @@ fn stream(encoding: Encoding, max_fps: u16) -> StreamSettings {
         max_fps,
         jpeg_quality: 90,
         auto_quality: false,
+    }
+}
+
+/// A JPEG stream at quality `q`, automatic quality `auto`.
+fn jstream(q: u8, auto: bool) -> StreamSettings {
+    StreamSettings {
+        jpeg_quality: q,
+        auto_quality: auto,
+        ..stream(Encoding::Jpeg, 0)
     }
 }
 
@@ -518,7 +610,7 @@ fn settings() {
     b.set_stream(stream(Encoding::Raw8, 0))
         .expect("RAW8 stream");
 
-    let sections: [(&str, Section); 11] = [
+    let sections: [(&str, Section); 17] = [
         ("sizes", sizes),
         ("rates", rates),
         ("refusals", refusals),
@@ -526,6 +618,12 @@ fn settings() {
         ("patterns", patterns),
         ("raw10", raw10),
         ("stream", stream_switches),
+        ("jpeg", jpeg_modes),
+        ("quality", quality),
+        ("auto", auto_quality),
+        ("jpeg_refusals", jpeg_refusals),
+        ("switching", switching),
+        ("agreement", agreement),
         ("rtt", rtt),
         ("faults", faults),
         ("garbage", garbage),
@@ -537,7 +635,10 @@ fn settings() {
         }
     }
 
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
     b.set_camera(fake_default()).expect("default mode");
+    b.set_stream(poc_viewer::fake::default_stream())
+        .expect("default stream");
     let mut summary = String::new();
     for f in &b.failures {
         let _ = writeln!(summary, "  {f}");
@@ -979,8 +1080,13 @@ fn rtt(b: &mut Board) {
             binned(Format::Raw8, 320, 200, 464.895),
             Encoding::Raw8,
         ),
+        (
+            "crop 1280x800 JPEG q90 at 153.98 Hz",
+            crop(Format::Raw8, 1280, 800, 153.984),
+            Encoding::Jpeg,
+        ),
     ] {
-        if enc == Encoding::Raw8 {
+        if enc != Encoding::Raw10 {
             b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
         }
         b.set_camera(cam).expect("mode");
@@ -1112,6 +1218,513 @@ fn timeout(b: &mut Board) {
     let st = b.state();
     let w = b.measure(&st, Duration::from_millis(500), 2.0);
     b.judge("resumed after the timeout", &st, &w);
+}
+
+/// JPEG at quality 90, automatic quality off: windows at 120 Hz and at their fastest rate.
+fn jpeg_modes(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    b.set_camera(crop(Format::Raw8, 1280, 800, 120.0))
+        .expect("1280x800");
+    b.set_stream(jstream(90, false)).expect("JPEG stream");
+    let fastest = |f, w, h, r| camera::fastest_rates(f, w, h, r).1 as f64 / 1000.0;
+    let modes = [
+        ("crop 1280x800 120 Hz", crop(Format::Raw8, 1280, 800, 120.0)),
+        (
+            "crop 1280x800 at the sensor's maximum",
+            crop(
+                Format::Raw8,
+                1280,
+                800,
+                fastest(Format::Raw8, 1280, 800, Readout::Crop),
+            ),
+        ),
+        (
+            "crop 1280x720 at its maximum",
+            crop(
+                Format::Raw8,
+                1280,
+                720,
+                fastest(Format::Raw8, 1280, 720, Readout::Crop),
+            ),
+        ),
+        (
+            "crop 640x480 at its maximum",
+            crop(
+                Format::Raw8,
+                640,
+                480,
+                fastest(Format::Raw8, 640, 480, Readout::Crop),
+            ),
+        ),
+        (
+            "binned 640x400 at its maximum",
+            binned(
+                Format::Raw8,
+                640,
+                400,
+                fastest(Format::Raw8, 640, 400, Readout::Binned),
+            ),
+        ),
+        (
+            "binned 320x200 at its maximum",
+            binned(
+                Format::Raw8,
+                320,
+                200,
+                fastest(Format::Raw8, 320, 200, Readout::Binned),
+            ),
+        ),
+        ("crop 128x8 1000 Hz", crop(Format::Raw8, 128, 8, 1000.0)),
+        (
+            "crop 1216x704 at (32,48)",
+            CameraSettings {
+                origin: Some(Origin { x: 32, y: 48 }),
+                ..crop(Format::Raw8, 1216, 704, 100.0)
+            },
+        ),
+    ];
+    for (label, m) in modes {
+        let m = CameraSettings {
+            tolerance_mhz: 0,
+            ..m
+        };
+        if let Some(st) = b.mode(&format!("JPEG {label}"), m, 4.0) {
+            let w = b.measure(&st, Duration::ZERO, 2.0);
+            let sensor = st.mode.frame_rate_mhz as f64 / 1000.0;
+            println!(
+                "    host {:.2} fps against the sensor's {sensor:.3} Hz ({:.1} %), encoder skipped {} of {} captured",
+                w.fps,
+                100.0 * w.fps / sensor,
+                w.encoder.frames_skipped,
+                w.board.frames_captured,
+            );
+            b.check(
+                w.encoder.frames_skipped as f64 <= 0.01 * w.board.frames_captured as f64,
+                || {
+                    format!(
+                        "JPEG {label}: the encoder skipped {} of {} frames",
+                        w.encoder.frames_skipped, w.board.frames_captured
+                    )
+                },
+            );
+        }
+    }
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+}
+
+/// The scene with content: crop 1280x800 RAW8 at 120 Hz, gain 4x.
+fn lit_scene() -> CameraSettings {
+    CameraSettings {
+        gain_sixteenths: 64,
+        exposure_lines: 400,
+        ..crop(Format::Raw8, 1280, 800, 120.0)
+    }
+}
+
+/// Quality settings applied and reported; higher quality, larger files; out of range refused.
+fn quality(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    b.set_camera(lit_scene()).expect("scene");
+    let mut sizes = Vec::new();
+    for q in [20u8, 50, 75, 90, 100] {
+        let st = b.set_stream(jstream(q, false)).expect("quality");
+        b.check(
+            st.stream.jpeg_quality == q && st.encoder.quality == q,
+            || {
+                format!(
+                    "quality {q}: state says set {} in use {}",
+                    st.stream.jpeg_quality, st.encoder.quality
+                )
+            },
+        );
+        let w = b.measure(&st, Duration::from_millis(300), 2.0);
+        b.judge(&format!("quality {q}"), &st, &w);
+        b.check(w.encoder.quality == q && w.encoder.frame_len > 0, || {
+            format!(
+                "quality {q}: encoder reports quality {} last frame {} B",
+                w.encoder.quality, w.encoder.frame_len
+            )
+        });
+        sizes.push((q, w.mean_len));
+    }
+    println!("  mean frame size by quality: {sizes:?}");
+    b.check(sizes.windows(2).all(|p| p[1].1 > p[0].1), || {
+        format!("sizes do not grow with the quality: {sizes:?}")
+    });
+    let before = b.state();
+    for q in [0u8, 101, u8::MAX] {
+        let got = b.set_stream(jstream(q, false));
+        println!("  quality {q}: {got:?}");
+        b.check(
+            got == Err(CamError::Quality {
+                min: JPEG_QUALITY_MIN,
+                max: JPEG_QUALITY_MAX,
+            }),
+            || format!("quality {q}: {got:?}"),
+        );
+    }
+    let after = b.state();
+    b.check(
+        (after.stream, after.generation, after.encoder.quality)
+            == (before.stream, before.generation, before.encoder.quality),
+        || "a refused quality changed the state".into(),
+    );
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+}
+
+/// The quality in use every 200 ms for `secs`, frames taken and dropped meanwhile.
+fn quality_trace(b: &Board, secs: f64) -> Vec<u8> {
+    let mut trace = Vec::new();
+    let end = Instant::now() + Duration::from_secs_f64(secs);
+    while Instant::now() < end {
+        let t = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < t {
+            if let Some(f) = b.c().take_frame() {
+                b.c().recycle(f.data);
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        trace.push(b.state().encoder.quality);
+    }
+    trace
+}
+
+/// Automatic quality: down when the link is full, back up to the set quality when there is
+/// room, nothing when off.
+fn auto_quality(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    let fastest = camera::fastest_rates(Format::Raw8, 1280, 800, Readout::Crop).1;
+    let heavy = [
+        (
+            "the scene at gain 15.5x, longest exposure",
+            CameraSettings {
+                rate_mhz: fastest,
+                tolerance_mhz: 0,
+                gain_sixteenths: 248,
+                exposure_lines: 1,
+                ..crop(Format::Raw8, 1280, 800, 1.0)
+            },
+        ),
+        (
+            "the random test pattern",
+            CameraSettings {
+                rate_mhz: fastest,
+                tolerance_mhz: 0,
+                test_pattern: TestPattern::Random,
+                ..crop(Format::Raw8, 1280, 800, 1.0)
+            },
+        ),
+    ];
+    // A load that fills the link at quality 100 without automatic quality.
+    let mut loaded = None;
+    for (label, mut c) in heavy {
+        if let Ok(m) = camera::build_mode(&c) {
+            c.exposure_lines = c.exposure_lines.max(m.max_exposure_lines());
+        }
+        b.set_camera(c).expect("heavy mode");
+        let st = b.set_stream(jstream(100, false)).expect("JPEG 100");
+        let w = b.measure(&st, Duration::from_millis(500), 3.0);
+        b.judge(&format!("auto off, {label}"), &st, &w);
+        b.check(w.encoder.quality == 100, || {
+            format!("auto off: quality in use {}", w.encoder.quality)
+        });
+        if w.board.frames_skipped > 0 {
+            loaded = Some((label, st, w));
+            break;
+        }
+        println!("  {label}: the link is not full ({:.1} Mbit/s)", w.mbps);
+    }
+    let Some((label, off, w_off)) = loaded else {
+        b.check(false, || "no scene filled the link at quality 100".into());
+        b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+        return;
+    };
+    let st = b.set_stream(jstream(100, true)).expect("auto on");
+    b.check(st.encoder.quality == 100, || {
+        format!("auto on starts at {}", st.encoder.quality)
+    });
+    let trace = quality_trace(b, 6.0);
+    println!("  auto on, {label}: quality every 200 ms {trace:?}");
+    let w_on = b.measure(&st, Duration::ZERO, 3.0);
+    b.judge(&format!("auto on, {label}"), &st, &w_on);
+    let skip_rate =
+        |w: &Window| w.board.frames_skipped as f64 / w.board.frames_captured.max(1) as f64;
+    println!(
+        "  off: {:.2} fps, {:.0} B, {:.0} % skipped; on: {:.2} fps, {:.0} B, {:.0} % skipped, quality {}",
+        w_off.fps,
+        w_off.mean_len,
+        100.0 * skip_rate(&w_off),
+        w_on.fps,
+        w_on.mean_len,
+        100.0 * skip_rate(&w_on),
+        w_on.encoder.quality
+    );
+    b.check(
+        w_on.encoder.quality < 100 && w_on.encoder.quality >= AUTO_QUALITY_MIN,
+        || format!("auto on: quality in use {}", w_on.encoder.quality),
+    );
+    b.check(
+        w_on.fps > w_off.fps && w_on.mean_len < w_off.mean_len,
+        || {
+            format!(
+                "auto on did not help: {:.2} fps {:.0} B against {:.2} fps {:.0} B",
+                w_on.fps, w_on.mean_len, w_off.fps, w_off.mean_len
+            )
+        },
+    );
+    // Settled: the last 2 s of the trace stay within 10 steps.
+    let tail = &trace[trace.len().saturating_sub(10)..];
+    let (lo, hi) = (tail.iter().min(), tail.iter().max());
+    b.check(lo.zip(hi).is_some_and(|(l, h)| h - l <= 10), || {
+        format!("auto quality does not settle: {tail:?}")
+    });
+    // Room: the bars compress to almost nothing; back to the set quality.
+    let light = CameraSettings {
+        test_pattern: TestPattern::Bars,
+        ..off.camera
+    };
+    let st = b.set_camera(light).expect("bars");
+    let need = f64::from(100 - w_on.encoder.quality.min(100)) * 0.2 + 3.0;
+    let trace = quality_trace(b, need);
+    println!("  auto on, bars: quality every 200 ms {trace:?}");
+    b.check(trace.last() == Some(&100), || {
+        format!(
+            "auto on with room: quality {:?} after {need:.1} s",
+            trace.last()
+        )
+    });
+    let w = b.measure(&st, Duration::ZERO, 2.0);
+    b.judge("auto on, bars", &st, &w);
+    // Off again: the set quality at once.
+    let st = b.set_stream(jstream(60, false)).expect("auto off");
+    b.check(st.encoder.quality == 60, || {
+        format!("auto off: quality in use {}", st.encoder.quality)
+    });
+    b.set_camera(CameraSettings {
+        test_pattern: TestPattern::Off,
+        ..off.camera
+    })
+    .expect("scene");
+    let trace = quality_trace(b, 2.0);
+    println!("  auto off, heavy scene, quality 60: {trace:?}");
+    b.check(trace.iter().all(|&q| q == 60), || {
+        format!("auto off: the quality moved {trace:?}")
+    });
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+}
+
+/// Refusals: JPEG with a RAW10 mode or a size not a multiple of 8, from either side.
+fn jpeg_refusals(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    let base = crop(Format::Raw8, 1280, 800, 120.0);
+    b.set_camera(base).expect("base");
+    b.set_stream(jstream(90, false)).expect("JPEG");
+    let before = b.state();
+    let jpeg_err = |reason, c: &CameraSettings| CamError::Jpeg {
+        reason,
+        format: c.format,
+        width: c.width,
+        height: c.height,
+    };
+    let modes = [
+        (
+            "RAW10 mode with JPEG",
+            crop(Format::Raw10, 1280, 800, 120.0),
+            JpegRefusal::Format,
+        ),
+        (
+            "RAW10 binned mode with JPEG",
+            binned(Format::Raw10, 640, 400, 200.0),
+            JpegRefusal::Format,
+        ),
+        (
+            "1280x796 with JPEG",
+            crop(Format::Raw8, 1280, 796, 120.0),
+            JpegRefusal::Size,
+        ),
+        (
+            "640x476 with JPEG",
+            crop(Format::Raw8, 640, 476, 120.0),
+            JpegRefusal::Size,
+        ),
+        (
+            "binned 320x196 with JPEG",
+            binned(Format::Raw8, 320, 196, 200.0),
+            JpegRefusal::Size,
+        ),
+    ];
+    for (label, c, reason) in modes {
+        let expect = jpeg_err(reason, &c);
+        let here = camera::validate(&c, Encoding::Jpeg);
+        let got = b.set_camera(c);
+        println!("  {label}: {got:?}");
+        b.check(got == Err(expect) && here.err() == Some(expect), || {
+            format!("{label}: {got:?}, expected {expect:?}")
+        });
+    }
+    let after = b.state();
+    b.check(
+        (after.camera, after.stream, after.generation)
+            == (before.camera, before.stream, before.generation),
+        || "a JPEG refusal changed the state".into(),
+    );
+    let w = b.measure(&after, Duration::ZERO, 2.0);
+    b.judge("JPEG after the refusals", &after, &w);
+    // From the stream's side: the mode first, then JPEG asked for.
+    for (label, c, reason) in [
+        (
+            "JPEG asked in a RAW10 mode",
+            crop(Format::Raw10, 1280, 800, 120.0),
+            JpegRefusal::Format,
+        ),
+        (
+            "JPEG asked in a 1280x796 mode",
+            crop(Format::Raw8, 1280, 796, 120.0),
+            JpegRefusal::Size,
+        ),
+    ] {
+        b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+        b.set_camera(c).expect("raw mode");
+        let before = b.state();
+        let got = b.set_stream(jstream(90, false));
+        let expect = jpeg_err(reason, &c);
+        println!("  {label}: {got:?}");
+        b.check(got == Err(expect), || {
+            format!("{label}: {got:?}, expected {expect:?}")
+        });
+        let after = b.state();
+        b.check(
+            (after.stream, after.generation) == (before.stream, before.generation),
+            || format!("{label}: the refusal changed the stream"),
+        );
+    }
+    b.set_camera(base).expect("base");
+}
+
+/// JPEG to RAW8 and back, to RAW10 (raw first, then the mode) and back.
+fn switching(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    let m8 = binned(Format::Raw8, 640, 400, 250.0);
+    let m10 = binned(Format::Raw10, 640, 400, 250.0);
+    b.set_camera(m8).expect("RAW8 mode");
+    let mut last = b.state().generation;
+    let steps: [(&str, Option<CameraSettings>, StreamSettings); 6] = [
+        ("RAW8 -> JPEG", None, jstream(90, false)),
+        ("JPEG -> RAW8", None, stream(Encoding::Raw8, 0)),
+        ("RAW8 -> JPEG again", None, jstream(75, true)),
+        ("JPEG -> RAW8 before RAW10", None, stream(Encoding::Raw8, 0)),
+        (
+            "RAW10 mode, RAW10 stream",
+            Some(m10),
+            stream(Encoding::Raw10, 0),
+        ),
+        ("RAW8 mode, then JPEG", Some(m8), jstream(90, false)),
+    ];
+    for (label, mode, s) in steps {
+        if let Some(m) = mode {
+            if m.format == Format::Raw8 {
+                b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8 first");
+            }
+            b.set_camera(m).expect("mode");
+        }
+        let st = b.set_stream(s).expect("encoding");
+        b.check(st.generation != last, || {
+            format!("{label}: generation kept")
+        });
+        last = st.generation;
+        let w = b.measure(&st, settle(&st), 2.0);
+        b.judge(label, &st, &w);
+    }
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+}
+
+/// PSNR of `a` against `b` (8-bit), dB.
+fn psnr(a: &[u8], b: &[u8]) -> f64 {
+    let mse = a
+        .iter()
+        .zip(b)
+        .map(|(&x, &y)| (f64::from(x) - f64::from(y)).powi(2))
+        .sum::<f64>()
+        / a.len().max(1) as f64;
+    if mse == 0.0 {
+        f64::INFINITY
+    } else {
+        10.0 * (255.0f64 * 255.0 / mse).log10()
+    }
+}
+
+/// A JPEG frame decoded against a raw frame of the same static scene taken right after.
+fn agreement(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    for (label, c, bars) in [
+        (
+            "bars",
+            CameraSettings {
+                test_pattern: TestPattern::Bars,
+                ..crop(Format::Raw8, 1280, 800, 120.0)
+            },
+            true,
+        ),
+        ("scene", lit_scene(), false),
+    ] {
+        b.set_camera(c).expect("mode");
+        let st = b.set_stream(jstream(90, false)).expect("JPEG");
+        let jf = frame_after(b, &st, 3);
+        let mut decoded = Vec::new();
+        if let Err(e) = jpeg::decode(&jf.data, jf.width, jf.height, &mut decoded) {
+            b.check(false, || {
+                format!("{label}: frame {} does not decode: {e}", jf.number)
+            });
+            continue;
+        }
+        let st = b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+        let rf = frame_after(b, &st, 1);
+        let p = psnr(&decoded, &rf.data);
+        let worst = decoded
+            .iter()
+            .zip(&rf.data)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        let mean_d = |f: &[u8]| f.iter().map(|&v| f64::from(v)).sum::<f64>() / f.len() as f64;
+        println!(
+            "  {label}: JPEG frame {} ({} B) against RAW8 frame {}: PSNR {p:.2} dB, largest error {worst}, means {:.2} / {:.2}",
+            jf.number,
+            jf.data.len(),
+            rf.number,
+            mean_d(&decoded),
+            mean_d(&rf.data)
+        );
+        if bars {
+            // Away from the bars' edges (8 pixels: one JPEG block) the decoded bars are the raw
+            // bars within 2 levels.
+            let w = rf.width as usize;
+            let row = &rf.data[..w];
+            let near_edge: Vec<bool> = (0..w)
+                .map(|x| {
+                    (x.saturating_sub(8)..(x + 9).min(w)).any(|i| i > 0 && row[i] != row[i - 1])
+                })
+                .collect();
+            let inner = decoded
+                .chunks(w)
+                .zip(rf.data.chunks(w))
+                .flat_map(|(d, r)| d.iter().zip(r).zip(&near_edge))
+                .filter(|(_, edge)| !**edge)
+                .map(|((d, r), _)| d.abs_diff(*r))
+                .max()
+                .unwrap_or(0);
+            println!("    bars away from the edges: largest error {inner}");
+            b.check(bars_exact(&rf), || "raw bars not exact".into());
+            b.check(inner <= 2, || {
+                format!("{label}: decoded bars off by {inner} away from the edges")
+            });
+            b.check(p >= 40.0, || format!("{label}: PSNR {p:.2} dB"));
+        } else {
+            b.check(p >= 30.0, || format!("{label}: PSNR {p:.2} dB"));
+        }
+        b.c().recycle(jf.data);
+        b.c().recycle(rf.data);
+    }
 }
 
 fn fake_default() -> CameraSettings {

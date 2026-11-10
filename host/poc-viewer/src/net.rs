@@ -7,11 +7,14 @@
 //! matter). With nothing to send it polls every [`POLL_INTERVAL`], which keeps the board's
 //! stream alive and fetches its counters.
 //!
-//! Chunks are copied into the frame they belong to. A frame is handed over only when every
-//! chunk arrived; a frame missing a chunk is dropped when a chunk of a newer frame arrives (or
+//! Chunks are copied into the frame they belong to; a frame's length comes from its first
+//! chunk (fixed for the raw encodings, the file's length for JPEG). A frame is handed over
+//! only when every chunk arrived; a frame missing a chunk is dropped when a chunk of a newer frame arrives (or
 //! after [`ASSEMBLY_TIMEOUT`]) and counted, never repaired: as cut by the board when the newer
 //! chunk has another generation (the board abandons the frame in flight at a mode or encoding
-//! change), otherwise as incomplete (a chunk was lost). Only the newest complete frame
+//! change), otherwise as incomplete (a chunk was lost). A chunk whose encoding, size or frame
+//! length disagrees with the frame it belongs to drops that frame too (counted as incomplete
+//! and in [`Stats::mismatched_chunks`]). Only the newest complete frame
 //! waits for the consumer: one it has not taken yet is replaced (and counted). Frame buffers
 //! come back through [`Client::recycle`], so a steady stream allocates nothing.
 
@@ -122,8 +125,14 @@ pub struct Stats {
     pub chunks: u64,
     /// Chunks of a frame older than the one being assembled, or repeated.
     pub stale_chunks: u64,
+    /// Chunks whose encoding, size or frame length disagreed with their frame's first chunk.
+    pub mismatched_chunks: u64,
     /// Frames received whole.
     pub frames_whole: u64,
+    /// Bytes of the frames received whole (their `frame_len`, a JPEG file's length).
+    pub frame_bytes: u64,
+    /// Bytes of the last frame received whole.
+    pub last_frame_len: u32,
     /// Frames dropped because a chunk was missing.
     pub frames_incomplete: u64,
     /// Frames the board stopped sending part-way for a new frame layout (its next chunk has
@@ -325,6 +334,7 @@ struct Assembly {
     width: u16,
     height: u16,
     timestamp_us: u64,
+    frame_len: u32,
     data: Vec<u8>,
     have: Vec<u64>,
     got: u32,
@@ -343,7 +353,8 @@ struct Worker {
     seq: u32,
     last_sent: Option<Instant>,
     assembly: Option<Assembly>,
-    /// Frame number and generation of the last frame handed over.
+    /// Frame number and generation of the last frame handed over (or dropped for a mismatched
+    /// chunk).
     last_done: Option<(u32, u32)>,
     published: Instant,
 }
@@ -500,6 +511,16 @@ impl Worker {
             let cut = a.generation != c.generation;
             self.drop_assembly(cut);
         }
+        if let Some(a) = &self.assembly
+            && (a.encoding, a.width, a.height, a.frame_len)
+                != (c.encoding, c.width, c.height, c.frame_len)
+        {
+            self.stats.mismatched_chunks += 1;
+            self.drop_assembly(false);
+            // The frame's other chunks are stale now.
+            self.last_done = Some(key);
+            return;
+        }
         if self.assembly.is_none() {
             if self
                 .last_done
@@ -518,6 +539,7 @@ impl Worker {
                 width: c.width,
                 height: c.height,
                 timestamp_us: c.timestamp_us,
+                frame_len: c.frame_len,
                 data,
                 have: vec![0; chunks.div_ceil(64) as usize],
                 got: 0,
@@ -539,6 +561,8 @@ impl Worker {
             let a = self.assembly.take().expect("checked above");
             self.last_done = Some(key);
             self.stats.frames_whole += 1;
+            self.stats.frame_bytes += u64::from(a.frame_len);
+            self.stats.last_frame_len = a.frame_len;
             self.publish(Some(Frame {
                 number: a.frame,
                 generation: a.generation,

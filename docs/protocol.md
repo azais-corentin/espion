@@ -252,11 +252,14 @@ Chunks are self-describing: a host shows a frame without having seen any respons
 - **One frame in flight.** The board sends a frame's chunks in order, then the next frame's.
   A frame captured while the previous one is still being sent is skipped and counted
   (`frames_skipped`). Frames held back by `max_fps` are not counted. With `Jpeg` a frame
-  goes capture → encoder → link, one frame in each: a captured frame the encoder cannot take
-  because it is still busy with the previous one is skipped and counted in
-  `encoder.frames_skipped`; an encoded frame that finds the link still busy with the
-  previous one is skipped and counted in `frames_skipped`. A frame the encoder fails on is
-  counted in `encoder.errors` and not sent.
+  goes capture → encoder → link, and each of the two stages has one frame in work and one
+  waiting slot that holds the newest frame for it: a captured frame waits while the encoder
+  is busy, and when a newer one is captured meanwhile the waiting one is dropped and counted
+  in `encoder.frames_skipped` (so are frames the receiver overwrote before they were taken);
+  an encoded file waits while the link sends the previous one, and when a newer file is
+  finished meanwhile the waiting one is dropped and counted in `frames_skipped`. So the link
+  never idles waiting for an encode. A frame the encoder fails on is counted in
+  `encoder.errors` and not sent.
 - **Automatic JPEG quality** (`auto_quality` on, while the stream sends `Jpeg`): at the end
   of every 200 ms (`AUTO_QUALITY_PERIOD_MS`) the board takes one step of
   `cam::auto_quality(in_use, set, skipped, busy_pct)`, which the board and the fake camera

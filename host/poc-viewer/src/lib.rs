@@ -9,9 +9,11 @@
 //!   complete frame, statistics.
 //! - [`fake`]: a fake camera that speaks the protocol (`--fake`, the `poc-fake-cam` binary,
 //!   the tests).
+//! - [`jpeg`]: JPEG frames: the header check and decoding to RAW8.
 //! - [`addr`]: camera addresses with an interface scope, and the local address to bind.
 
 pub mod addr;
 pub mod camera;
 pub mod fake;
+pub mod jpeg;
 pub mod net;

@@ -2903,6 +2903,7 @@ dependencies = [
  "ov9281",
  "png",
  "socket2",
+ "zune-jpeg",
 ]
 
 [[package]]

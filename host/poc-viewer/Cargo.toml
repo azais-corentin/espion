@@ -23,6 +23,7 @@ jpeg-encoder.workspace = true
 ov9281.workspace  = true
 png.workspace     = true
 socket2.workspace = true
+zune-jpeg.workspace = true
 
 [lints]
 workspace = true

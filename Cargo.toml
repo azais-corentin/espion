@@ -41,9 +41,20 @@ socket2            = "0.6.5"
 tokio              = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "time"] }
 tracing            = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zune-jpeg          = { version = "0.5.15", default-features = false, features = ["std", "x86"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# The JPEG codecs run optimised in debug builds too: the tests encode and decode every frame.
+[profile.dev.package.jpeg-encoder]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
