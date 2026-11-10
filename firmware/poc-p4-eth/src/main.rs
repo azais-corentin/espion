@@ -141,7 +141,7 @@ const STRIP_CHECK_PLAN: camera::Plan = camera::Plan {
     }),
     ..CAMERA_PLAN
 };
-/// Capture only over the extended modes 4..=11 (4..=8 faster RAW8 up to 454 fps, 9..=11
+/// Capture only over the extended modes 4..=11 (4..=8 faster RAW8 up to 453 fps, 9..=11
 /// RAW10): measured against the predicted frame rate, 5 s each. The exposure is clamped per
 /// mode to its longest (below 800 lines in modes 6, 7 and 8).
 #[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
@@ -152,14 +152,14 @@ const FAST_CAPTURE_PLAN: camera::Plan = camera::Plan {
     strips: None,
     ..CAMERA_PLAN
 };
-/// [`FAST_CAPTURE_PLAN`] without mode 8, with a scene still and a bar-pattern still per mode,
-/// each RAW10 mode right after the RAW8 mode of the same window (0 before 9, 1 before 10, 6
-/// before 11) so their stills show the same scene. Gain 15.5x (the highest) for a dim scene.
-/// About 4 minutes.
+/// All 12 modes with a scene still and a bar-pattern still per mode, capture only. Each RAW10
+/// mode comes right after the RAW8 mode of the same window (0 before 9, 1 before 10, 6 before
+/// 11), and 8 (the centre of the binned field of view) after 7, so the stills of a boot show
+/// the same scene; 2 and 3 come last. Gain 2x, for the bright bench scene. About 5 minutes.
 #[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
 const MODE_STILLS_PLAN: camera::Plan = camera::Plan {
-    modes: &[0, 9, 1, 10, 6, 11, 4, 5, 7],
-    gain: ov9281::GAIN_MAX,
+    modes: &[0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3],
+    gain: 0x20,
     still_dump: true,
     still_patterns: &[0x80],
     ..FAST_CAPTURE_PLAN

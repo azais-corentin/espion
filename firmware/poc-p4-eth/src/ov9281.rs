@@ -7,11 +7,13 @@
 //! 1280x800 at 120, 1280x720 at 120, 640x400 binned at 210. Indexes 4 and 5 run the system
 //! clock at 96 MHz, above the datasheet's 80 MHz; every other mode stays at 80 MHz.
 //!
-//! The unbinned 1280x720 window needs VTS >= 814 (measured on the board at 80 MHz, also with
-//! the window moved to rows 0..=735): VTS 763 gives a dark image whose bright areas read
-//! lowest, VTS 780..=810 a flat black-level frame, VTS 814..=820 the normal image, while the
-//! frames themselves stay whole and on time [INFERENCE: the unbinned readout needs about the
-//! full 816 array rows]. The binned modes read two rows per line and run at VTS 434.
+//! The unbinned 1280x720 window needs VTS >= 814 at 80 MHz with the common block's
+//! power-saving mode on (0x4F00 = 0x0C), measured on the board, also with the window moved to
+//! rows 0..=735: VTS 763 gives a dark image whose bright areas read lowest, VTS 780..=810 a
+//! flat black-level frame, VTS 814..=820 the normal image, while the frames themselves stay
+//! whole and on time. With power-saving off (0x4F00 = 0x00) VTS 780 and 800 give the normal
+//! image and VTS 763 still the dark one. The binned modes read two rows per line and run at
+//! VTS 434 (640x400) and 241 (320x200).
 //!
 //! Sources and derivations are in the PoC notes (`poc-ov9281.md`). In short: the common block
 //! is Espressif's `esp_cam_sensor` OV9281 table (RAW8, 2 lanes, 24 MHz, 800 Mbit/s), the windows
@@ -183,7 +185,7 @@ impl Mode {
 
     /// [`exposure_regs`] with `lines` clamped to
     /// [`EXPOSURE_MIN_LINES`]..=[`Mode::max_exposure_lines`], so the exposure never stretches
-    /// the frame. The shortest maximum is 217 lines = 1.97 ms, in the 320x200 mode.
+    /// the frame. The shortest maximum is 216 lines = 1.97 ms, in the 320x200 mode (VTS 241).
     pub const fn exposure_regs(&self, lines: u16) -> [(u16, u8); 3] {
         let max = self.max_exposure_lines();
         let l = if lines < EXPOSURE_MIN_LINES {
@@ -199,7 +201,7 @@ impl Mode {
 
 /// Exposure in lines (one line = [`Mode::line_ns`]), not clamped. Valid range
 /// [`EXPOSURE_MIN_LINES`]..=[`Mode::max_exposure_lines`], which depends on the mode: 890 lines at
-/// VTS 915 down to 217 at VTS 242. [`Mode::exposure_regs`] clamps to it.
+/// VTS 915 down to 216 at VTS 241. [`Mode::exposure_regs`] clamps to it.
 /// Writes EXPO {0x3500[3:0], 0x3501, 0x3502}, whose low 4 bits are a fraction of a line and are
 /// left at 0. Takes effect one frame later (0x3503 bits 0 and 1 = 0).
 pub const fn exposure_regs(lines: u16) -> [(u16, u8); 3] {
@@ -308,7 +310,7 @@ const COMMON: &[(u16, u8)] = &[
     (0x4317, 0x00),
     (0x4501, 0x00),
     (0x450A, 0x08),
-    (0x4601, 0x30), // VFIFO read start (Espressif's RAW8 value; 0x04 in the RAW10 tables)
+    (0x4601, 0x30), // VFIFO read start, 8 B units, at most one line (Espressif RAW8; 0x04 in RAW10 and 320x200)
     (0x470F, 0x00),
     (0x4F07, 0x00),
     MIPI_CLOCK_CONTINUOUS,
@@ -318,7 +320,7 @@ const COMMON: &[(u16, u8)] = &[
     TEST_PATTERN_OFF,
     (0x5D00, 0x07),
     (0x5D01, 0x00),
-    (0x4F00, 0x0C),
+    (0x4F00, 0x0C), // PSV_CTRL: power saving on (Espressif); blanks rows of short frames, 320x200 turns it off
     (0x4F10, 0x00),
     (0x4F11, 0x88),
     (0x4F12, 0x0F),
@@ -533,12 +535,12 @@ const VFIFO_RAW10: (u16, u8) = (0x4601, 0x04);
 const VTS_210FPS: u16 = 523;
 /// VTS for 640x400 binned at 253 fps, 80 MHz: 80e6 / (433 x 728 + 1730) = 252.40 fps.
 const VTS_253FPS: u16 = 434;
-/// VTS for 320x200, 80 MHz: 80e6 / (728 x 241) = 455.98 fps by HTS x VTS; measured 453.40 fps
-/// ((VTS - 1) x HTS + 1730 SCLK cycles per frame), the rate closest to Inno-Maker's 453.
-/// Measured limits at the exposure maximum (VTS - 25): 232, 234, 236, 238, 240 and 241 give
-/// whole, correct pictures; 222 and 230 whole frames with a nearly black picture (230 also at
-/// 100 lines); 214, 215, 216, 218 and 220 stop the frames (CSI-2 frame start/end errors;
-/// measured with 0x4F00 still at 0x0C).
+/// VTS for 320x200, 80 MHz: 80e6 / (240 x 728 + 1730) = 453.386 fps; measured 453.399 fps
+/// (+31 ppm, as the other modes), the rate closest to Inno-Maker's 453.
+/// Measured limits with 0x4F00 = 0x00 at the exposure maximum (VTS - 25): 232, 234, 236, 238,
+/// 240 and 241 give whole, correct pictures; 222 and 230 whole frames with a nearly black
+/// picture (230 also at 100 lines). With 0x4F00 still at 0x0C, 214, 215, 216, 218 and 220 stop
+/// the frames (CSI-2 frame start/end errors).
 const VTS_453FPS: u16 = 241;
 
 const fn vts_regs(vts: u16) -> [(u16, u8); 2] {
@@ -581,7 +583,8 @@ const REGS_1280X800_RAW8_144: [(u16, u8); N_1280X800] = build(
     &[SCLK_96MHZ, EXP_96MHZ[0], EXP_96MHZ[1], EXP_96MHZ[2]],
 );
 /// 1280x720 at 144 fps: the 1280x720 window at 96 MHz and VTS 915, as the 1280x800 144 fps
-/// mode (80 MHz needs VTS >= 814, at most 134.8 fps).
+/// mode. At 80 MHz the window needs VTS >= 814 with the common power-saving mode on (at most
+/// 134.8 fps); with it off VTS 780 (140.6 fps) gave a normal picture.
 const REGS_1280X720_RAW8_144: [(u16, u8); N_1280X720] = build(
     MODE_1280X720,
     &[SCLK_96MHZ, EXP_96MHZ[0], EXP_96MHZ[1], EXP_96MHZ[2]],
@@ -697,10 +700,10 @@ pub const MODES: [Mode; 12] = [
         &REGS_640X400_RAW8_253,
     ),
     raw8(
-        "320x200 bin2 crop RAW8 455fps",
+        "320x200 bin2 crop RAW8 453fps",
         320,
         200,
-        455,
+        453,
         VTS_453FPS,
         &REGS_320X200_RAW8_453,
     ),

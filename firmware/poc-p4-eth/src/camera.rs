@@ -457,7 +457,7 @@ struct Measurement {
 async fn measure(csi: &mut Csi<'static>, mode: &Mode, window: Duration) {
     // Drop what completed while the previous log lines went out (esp-println holds a critical
     // section per line, about 0.5 ms at 2 Mbaud, so the swap interrupt can be late and a frame
-    // cut short; at 454 fps a frame lasts 2.2 ms). Nothing logs from here to the end of the
+    // cut short; at 453 fps a frame lasts 2.2 ms). Nothing logs from here to the end of the
     // window.
     Timer::after_millis(20).await;
     let _ = with_timeout(FRAME_TIMEOUT, csi.wait_frame(None)).await;
