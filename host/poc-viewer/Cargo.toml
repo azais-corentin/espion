@@ -1,0 +1,27 @@
+[package]
+name         = "poc-viewer"
+description  = "Live view and control of the OV9281 on the ESP32-P4-ETH proof of concept (camera stream of espion-proto), with a fake camera"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+publish.workspace      = true
+
+[features]
+default = []
+# Lets an agent drive the window (egui-mcp): build with it and start with EGUI_INSPECTION=1,
+# then the app listens on 127.0.0.1:5719. Off unless both are given.
+inspection = ["eframe/inspection"]
+
+[dependencies]
+anyhow.workspace  = true
+clap.workspace    = true
+eframe.workspace  = true
+espion-proto      = { workspace = true, features = ["std"] }
+ov9281.workspace  = true
+png.workspace     = true
+socket2.workspace = true
+
+[lints]
+workspace = true
