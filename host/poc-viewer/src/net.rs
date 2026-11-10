@@ -381,9 +381,14 @@ struct Worker {
     published: Instant,
 }
 
-/// `a` comes before `b` in wrapping frame numbers.
-fn older(a: u32, b: u32) -> bool {
-    (a.wrapping_sub(b) as i32) < 0
+/// Chunks of a frame at most this many frames behind the newest seen are late (stale); a frame
+/// further back means the board restarted its numbering (a reboot), so it starts a new frame.
+pub const LATE_FRAMES: u32 = 1024;
+
+/// `a` is a late frame against `b`: before it in wrapping frame numbers, by at most
+/// [`LATE_FRAMES`].
+fn late(a: u32, b: u32) -> bool {
+    (1..=LATE_FRAMES).contains(&b.wrapping_sub(a))
 }
 
 impl Worker {
@@ -526,7 +531,7 @@ impl Worker {
         if let Some(a) = &self.assembly
             && (a.frame, a.generation) != key
         {
-            if older(c.frame, a.frame) {
+            if late(c.frame, a.frame) {
                 self.stats.stale_chunks += 1;
                 return;
             }
@@ -546,7 +551,7 @@ impl Worker {
         if self.assembly.is_none() {
             if self
                 .last_done
-                .is_some_and(|(f, g)| (f, g) == key || older(c.frame, f))
+                .is_some_and(|(f, g)| (f, g) == key || late(c.frame, f))
             {
                 self.stats.stale_chunks += 1;
                 return;

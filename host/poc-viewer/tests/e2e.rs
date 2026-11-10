@@ -970,3 +970,42 @@ fn a_frame_that_does_not_decode_is_counted_and_dropped() {
     let why = d.last_failure.unwrap();
     assert!(why.starts_with("frame 1: picture 128x32"), "{why}");
 }
+
+#[test]
+fn a_board_that_restarts_its_frame_numbers_is_followed() {
+    // A camera that sends frame 200000, a late chunk of frame 199999, then frame 0 (it
+    // rebooted): the late chunk is stale, frame 0 a new frame.
+    let cam = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+    let client = Client::connect(cam.local_addr().unwrap(), || {}).unwrap();
+    let to = client.local_addr();
+    let data = [9u8; 100];
+    let chunk = |frame: u32| FrameChunk {
+        frame,
+        generation: 1,
+        encoding: Encoding::Jpeg,
+        width: 640,
+        height: 400,
+        timestamp_us: 0,
+        frame_len: 100,
+        offset: 0,
+        data: &data,
+    };
+    let mut buf = [0u8; MAX_DATAGRAM];
+    for (sent, (frame, whole)) in [(200_000u32, 1u64), (199_999, 1), (0, 2), (1, 3)]
+        .into_iter()
+        .enumerate()
+    {
+        cam.send_to(chunk(frame).encode(&mut buf).unwrap(), to)
+            .unwrap();
+        let s = client
+            .wait_until(WAIT, |s| s.chunks > sent as u64)
+            .expect("the chunk arrives");
+        assert_eq!(s.frames_whole, whole, "after frame {frame}");
+    }
+    let s = client.stats();
+    assert_eq!(
+        (s.frames_whole, s.stale_chunks, s.frames_incomplete),
+        (3, 1, 0)
+    );
+    assert_eq!(client.take_frame().map(|f| f.number), Some(1));
+}
