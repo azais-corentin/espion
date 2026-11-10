@@ -20,21 +20,22 @@
 //!
 //! [`StripCheck`] (instead of the soak) checks that the strips carry the bytes of whole
 //! frames: per mode, row checksums of the sensor's random test pattern from a whole-frame
-//! capture, then every row of every strip, and the strip sequence, against them.
+//! capture, then every row of every strip, and the strip sequence, against them. With
+//! [`Plan::stall`] it runs the stall test instead ([`STALL_CASES`]): it holds a strip until
+//! the DMA halts on it, keeps it for the case's time, then checks every strip up to the first
+//! whole frame and a strip check after it, with a guard around the list items and after the
+//! ring that must stay unwritten.
 //!
 //! Nothing is logged while a run measures. The receiver runs only while a run measures: the
 //! caller starts it (and the sensor) for each run and stops both before the results are
 //! logged or the next run is prepared. While the firmware does anything else the DMA would
-//! fill the ring and halt (a stall). In RAW8 that costs about 4 frames; in RAW10 a halt of
-//! about 30 ms (right after stream-on, ring of 2 or 3 strips) corrupted memory and crashed the
-//! board (load access faults in the driver's DMA handler and the executor, the faulting words
-//! image data; how the memory is hit is not known, see the `esp32p4_csi::strips` docs), so a
-//! RAW10 stall must be avoided, not just counted.
+//! fill the ring and halt (a stall), which costs a few frames until the driver has
+//! resynchronised and would count against the run.
 
 use embassy_time::{Duration, Instant, with_timeout};
 use esp32p4_csi::{Config, CsiStrips, Strip, StripLink, StripStats};
 use log::info;
-use static_cell::ConstStaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::ov9281::{self, Mode};
 use crate::soak::{Fps, THRESHOLD, take_detector};
@@ -118,12 +119,29 @@ pub fn budget_us(mode: &Mode) -> u32 {
 }
 
 impl Ring {
-    /// Takes the statics. Call once.
-    pub fn take() -> Self {
-        Self {
-            mem: RING.take().0.as_mut_ptr(),
-            links: LINKS.take().as_mut_ptr(),
-        }
+    /// Takes the statics. Call once. With `links` (internal RAM, 64-byte aligned, room for
+    /// [`MAX_STRIPS`] items) the list items are placed there instead of in their static: the
+    /// stall test puts them in the middle of its guard area.
+    pub fn take(links: Option<&'static mut [u8]>) -> Self {
+        let mem = RING.take().0.as_mut_ptr();
+        let links = match links {
+            Some(area) => {
+                assert!(
+                    area.len() >= MAX_STRIPS * core::mem::size_of::<StripLink>()
+                        && (area.as_ptr() as usize).is_multiple_of(64)
+                );
+                area.as_mut_ptr().cast::<StripLink>()
+            }
+            None => LINKS.take().as_mut_ptr(),
+        };
+        Self { mem, links }
+    }
+
+    /// The ring memory a receiver for `config` leaves unused (after its strips), as an
+    /// address and a length, for the stall test's guard.
+    pub fn tail(&self, config: &Config) -> (usize, usize) {
+        let used = ring_strips(config) * strip_bytes(config);
+        (self.mem as usize + used, RING_BYTES - used)
     }
 
     /// `N` strips sized for `config`, from the start of the ring memory, and `N` list items.
@@ -159,6 +177,9 @@ pub struct Plan {
     /// Instead of the soak: the strip check ([`StripCheck`]), this long per mode, with the
     /// sensor's random test pattern. `live`, `synthetic` and `blob_targets` are then unused.
     pub check: Option<Duration>,
+    /// With `check`: the stall test instead of the strip check ([`StripCheck`], cases
+    /// [`STALL_CASES`]); `check` is then the length of each case's check after recovery.
+    pub stall: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1050,6 +1071,8 @@ pub struct StripCheck {
     refs: &'static mut [Option<Reference>; CHECK_MODES],
     results: &'static mut [Option<CheckResult>; CHECK_MODES],
     acc: &'static mut CheckAcc,
+    /// The stall test, which replaces the strip runs.
+    stall: Option<&'static mut StallTest>,
     mhz: u32,
 }
 
@@ -1061,8 +1084,10 @@ static CHECK_ACC: ConstStaticCell<CheckAcc> = ConstStaticCell::new(CheckAcc::NEW
 
 impl StripCheck {
     /// `rows` (any memory, PSRAM is fine) must hold [`CHECK_WORDS`] words. A strip run lasts
-    /// `window`. Call once.
-    pub fn new(window: Duration, rows: &'static mut [u32]) -> Option<Self> {
+    /// `window`. With `guard` the strip runs are the stall test's cases ([`STALL_CASES`]),
+    /// `window` long after each recovery, and `guard` is the memory checked after each case
+    /// ([`Guard`]). Call once.
+    pub fn new(window: Duration, rows: &'static mut [u32], guard: Option<Guard>) -> Option<Self> {
         if rows.len() < CHECK_WORDS {
             return None;
         }
@@ -1072,8 +1097,32 @@ impl StripCheck {
             refs: CHECK_REFS.take(),
             results: CHECK_RESULTS.take(),
             acc: CHECK_ACC.take(),
+            stall: guard.map(|g| STALL_TEST.init(StallTest::new(g))),
             mhz: esp_hal::clock::cpu_clock().as_mhz(),
         })
+    }
+
+    /// Strip runs per mode: one, or one per stall case.
+    pub fn runs(&self) -> usize {
+        if self.stall.is_some() {
+            STALL_CASES.len()
+        } else {
+            1
+        }
+    }
+
+    /// Before strip run `k`, with the receiver stopped: the stall case `k` and its guard.
+    pub fn begin_run(&mut self, k: usize) {
+        if let Some(t) = self.stall.as_deref_mut() {
+            t.begin_case(k);
+        }
+    }
+
+    /// The ring memory the current strip receiver leaves unused, guarded by the stall test.
+    pub fn guard_ring_tail(&mut self, (addr, len): (usize, usize)) {
+        if let Some(t) = self.stall.as_deref_mut() {
+            t.guard.set_tail(addr, len);
+        }
     }
 
     /// Starts the reference of plan slot `slot` (at most [`CHECK_MODES`]) for `mode`.
@@ -1152,8 +1201,9 @@ impl StripCheck {
     }
 
     /// The strip run for the streaming `mode` of plan slot `slot` (nothing without a
-    /// reference). `false` if no whole frame arrived (the caller prints the receiver state).
-    /// Logs nothing: [`Self::log_run`] prints the result.
+    /// reference): the strip check, or the current stall case. `false` if no whole frame
+    /// arrived (the caller prints the receiver state). Logs nothing: [`Self::log_run`] prints
+    /// the result.
     pub async fn run_mode(&mut self, cs: &mut CsiStrips<'_>, slot: usize) -> bool {
         if !matches!(self.refs.get(slot), Some(Some(r)) if r.frames > 0) {
             return true;
@@ -1162,6 +1212,18 @@ impl StripCheck {
             return false;
         }
         let lines = cs.strip_lines();
+        if self.stall.is_some() {
+            self.stall_case(cs, slot, lines).await;
+            return true;
+        }
+        let timed_out = self.checked_window(cs, slot, lines).await;
+        self.record(slot, lines, cs.stats(), timed_out);
+        true
+    }
+
+    /// `window` of strips, every one checked, on fresh counters (strip and driver). `true` if
+    /// the strips stopped.
+    async fn checked_window(&mut self, cs: &mut CsiStrips<'_>, slot: usize, lines: u16) -> bool {
         cs.reset_stats();
         *self.acc = CheckAcc::NEW;
         let mut timed_out = false;
@@ -1181,8 +1243,7 @@ impl StripCheck {
         }
         gave_back(self.acc);
         drop(strip);
-        self.record(slot, lines, cs.stats(), timed_out);
-        true
+        timed_out
     }
 
     #[inline(never)]
@@ -1193,12 +1254,18 @@ impl StripCheck {
         }
     }
 
-    #[inline(never)]
-    fn record(&mut self, slot: usize, lines: u16, stats: StripStats, timed_out: bool) {
-        let (Some(Some(r)), Some(out)) = (self.refs.get(slot), self.results.get_mut(slot)) else {
-            return;
+    /// The run just checked by [`Self::checked_window`] as a result.
+    fn result(
+        &self,
+        slot: usize,
+        lines: u16,
+        stats: StripStats,
+        timed_out: bool,
+    ) -> Option<CheckResult> {
+        let Some(Some(r)) = self.refs.get(slot) else {
+            return None;
         };
-        let _ = out.insert(CheckResult {
+        Some(CheckResult {
             name: r.name,
             height: r.height,
             frame_sum: r.frame_sum,
@@ -1207,12 +1274,94 @@ impl StripCheck {
             timed_out,
             acc: *self.acc,
             mhz: self.mhz,
-        });
+        })
     }
 
-    /// Prints the strip run of slot `slot` (for `mode`). Call it with the receiver stopped.
     #[inline(never)]
-    pub fn log_run(&self, slot: usize, mode: &Mode) {
+    fn record(&mut self, slot: usize, lines: u16, stats: StripStats, timed_out: bool) {
+        let result = self.result(slot, lines, stats, timed_out);
+        if let Some(out) = self.results.get_mut(slot) {
+            *out = result;
+        }
+    }
+
+    /// The current stall case on the streaming receiver, after [`sync`]: the halts, then the
+    /// strips up to the first whole frame (each checked against the reference), then
+    /// [`Self::checked_window`] on fresh counters.
+    async fn stall_case(&mut self, cs: &mut CsiStrips<'_>, slot: usize, lines: u16) {
+        let Some(Some(r)) = self.refs.get(slot).copied() else {
+            return;
+        };
+        let Some(t) = self.stall.as_deref_mut() else {
+            return;
+        };
+        let case = STALL_CASES[t.case];
+        let want = &self.rows[slot * CHECK_ROWS..][..usize::from(r.height)];
+        cs.reset_stats();
+        t.halts = Halts::NEW;
+        t.resync = Resync::NEW;
+        let mut timed_out = false;
+        let mut strip: Option<Strip> = None;
+        // One `await` for every strip (each site would take its own room in the future): the
+        // halts first, then the strips up to the first whole frame.
+        let (mut halts, mut taken) = (0, 0);
+        let mut released = Instant::now();
+        loop {
+            // Gives the strip held for a halt back: the release.
+            strip = resync_next(cs, strip.take(), &mut t.resync, &r, want, lines).await;
+            if strip.is_none() {
+                timed_out = true;
+                break;
+            }
+            if halts < case.halts {
+                // In a burst, a different number of strips between halts moves each one to
+                // another place in the frame.
+                taken += 1;
+                if taken > halts % 5 {
+                    // This strip stays held: the DMA fills the rest of the ring and halts on
+                    // its item.
+                    hold(cs, case.ms, &mut t.halts);
+                    halts += 1;
+                    taken = 0;
+                    if halts == case.halts {
+                        released = Instant::now();
+                        // Only a frame begun after the last release shows the recovery (in
+                        // a burst the driver may deliver whole frames between halts).
+                        t.resync.after_release();
+                    }
+                }
+            } else if t.resync.recovered || released.elapsed() >= RECOVER_TIMEOUT {
+                break;
+            }
+        }
+        drop(strip);
+        t.name = r.name;
+        t.lines = lines;
+        t.ran = true;
+        t.end_resync(cs, released, timed_out);
+        if !timed_out && t.resync.recovered {
+            let timed_out = self.checked_window(cs, slot, lines).await;
+            self.keep_check(slot, lines, cs, timed_out);
+        }
+    }
+
+    /// The check after the recovery, for the stall case's result.
+    #[inline(never)]
+    fn keep_check(&mut self, slot: usize, lines: u16, cs: &CsiStrips<'_>, timed_out: bool) {
+        let check = self.result(slot, lines, cs.stats(), timed_out);
+        if let Some(t) = self.stall.as_deref_mut() {
+            t.check = check;
+        }
+    }
+
+    /// Prints the strip run of slot `slot` (for `mode`), or the stall case just run with its
+    /// guard check. Call it with the receiver stopped.
+    #[inline(never)]
+    pub fn log_run(&mut self, slot: usize, mode: &Mode) {
+        if let Some(t) = self.stall.as_deref_mut() {
+            t.finish_case(slot, mode);
+            return;
+        }
         match self.results.get(slot) {
             Some(Some(r)) => info!("strip check {}", CheckLine(r)),
             _ => info!(
@@ -1222,10 +1371,13 @@ impl StripCheck {
         }
     }
 
-    /// Prints the references and the strip runs as tables.
+    /// Prints the references and the strip runs (or stall cases) as tables.
     pub fn log_table(&self) {
         self.log_references();
-        self.log_runs();
+        match self.stall.as_deref() {
+            Some(t) => t.log_table(),
+            None => self.log_runs(),
+        }
     }
 
     #[inline(never)]
@@ -1572,4 +1724,636 @@ impl core::fmt::Display for CheckTimes<'_> {
             check_verdict(c)
         )
     }
+}
+
+// ── Stall test ──────────────────────────────────────────────────────────────────────────
+
+/// One stall case: `halts` DMA halts of `ms` each.
+#[derive(Clone, Copy)]
+pub struct Stall {
+    pub halts: u32,
+    pub ms: u32,
+}
+
+/// The stall test's cases per mode: single halts of 1, 5, 30 and 100 ms, then two bursts.
+pub const STALL_CASES: [Stall; 6] = [
+    Stall { halts: 1, ms: 1 },
+    Stall { halts: 1, ms: 5 },
+    Stall { halts: 1, ms: 30 },
+    Stall { halts: 1, ms: 100 },
+    Stall { halts: 20, ms: 2 },
+    Stall { halts: 8, ms: 30 },
+];
+/// Longest wait for the DMA to fill the ring and halt on the held strip.
+const STALL_DETECT: Duration = Duration::from_millis(50);
+/// Longest wait, after the release, for the first whole frame.
+const RECOVER_TIMEOUT: Duration = Duration::from_secs(1);
+/// Result slots: every case of every mode.
+const STALL_RESULTS: usize = CHECK_MODES * STALL_CASES.len();
+
+/// The halts of one case.
+#[derive(Clone, Copy)]
+struct Halts {
+    provoked: u32,
+    /// Holds after which the driver did not count a halt within [`STALL_DETECT`].
+    missed: u32,
+    /// Hold start until the driver counted the halt (the ring filling), longest.
+    fill_max_us: u32,
+    /// Halt counted until the release.
+    halt_min_us: u32,
+    halt_max_us: u32,
+}
+
+impl Halts {
+    const NEW: Self = Self {
+        provoked: 0,
+        missed: 0,
+        fill_max_us: 0,
+        halt_min_us: u32::MAX,
+        halt_max_us: 0,
+    };
+}
+
+/// The strips from the first halt up to the first whole frame after the last one.
+#[derive(Clone, Copy)]
+struct Resync {
+    strips: u32,
+    rows_checked: u32,
+    /// Rows that differ from the reference row their strip claims to carry.
+    bad_rows: u32,
+    first_bad: Option<(u32, u16)>,
+    /// Strips whose row count, length or `is_last` does not fit their first row.
+    size_errors: u32,
+    /// Strips out of place: a gap or overlap inside a frame, a frame not starting at row 0
+    /// (except the case's first strip), or a frame number going back.
+    order_errors: u32,
+    /// The frame of the last strip, the row its next strip must start at, and whether the
+    /// frame was delivered from row 0.
+    open: Option<(u32, u16, bool)>,
+    last_frame: Option<u32>,
+    /// A whole frame arrived (row 0 to its last strip, in order) whose first strip came after
+    /// the last release.
+    recovered: bool,
+}
+
+impl Resync {
+    const NEW: Self = Self {
+        strips: 0,
+        rows_checked: 0,
+        bad_rows: 0,
+        first_bad: None,
+        size_errors: 0,
+        order_errors: 0,
+        open: None,
+        last_frame: None,
+        recovered: false,
+    };
+
+    /// The last halt is released: frames delivered so far, and the rest of the open one, no
+    /// longer count as the recovery.
+    fn after_release(&mut self) {
+        self.recovered = false;
+        if let Some((.., zero)) = &mut self.open {
+            *zero = false;
+        }
+    }
+}
+
+/// Memory the DMA must never write, filled with an address-dependent pattern before each
+/// case and checked after it with the receiver stopped: internal RAM around the list items
+/// and the ring memory after the strips.
+pub struct Guard {
+    /// Address and length of each area (multiples of the 64-byte cache line); the ring
+    /// tail is the last one.
+    areas: [(usize, usize); 3],
+    links: usize,
+}
+
+/// What a guard check found.
+#[derive(Clone, Copy, Default)]
+struct GuardReport {
+    /// Words that lost their pattern, the first and last of them, and the first one's value.
+    written: u32,
+    first: usize,
+    last: usize,
+    value: u32,
+    bytes: usize,
+    links: usize,
+}
+
+impl Guard {
+    /// `before` and `after`: internal RAM right before and after the list items at `links`,
+    /// owned by the test for good.
+    pub fn new(before: &'static mut [u8], links: usize, after: &'static mut [u8]) -> Self {
+        Self {
+            areas: [
+                (before.as_mut_ptr() as usize, before.len()),
+                (after.as_mut_ptr() as usize, after.len()),
+                (0, 0),
+            ],
+            links,
+        }
+    }
+
+    /// The ring memory the current receiver leaves unused.
+    fn set_tail(&mut self, addr: usize, len: usize) {
+        self.areas[2] = (addr, len);
+    }
+
+    /// Pattern word of `addr`.
+    fn word(addr: usize) -> u32 {
+        (addr as u32).wrapping_mul(0x9E37_79B9) ^ 0x5AA5_C33C
+    }
+
+    fn area(addr: usize, len: usize) -> &'static mut [u32] {
+        // SAFETY: the areas belong to the guard (`new`) or are ring memory no strip of the
+        // current receiver covers (`set_tail`); 4-byte aligned.
+        unsafe { core::slice::from_raw_parts_mut(addr as *mut u32, len / 4) }
+    }
+
+    /// Fills every area and writes it back to memory. With the receiver stopped.
+    fn fill(&self) {
+        for &(addr, len) in &self.areas {
+            let words = Self::area(addr, len);
+            for (i, w) in words.iter_mut().enumerate() {
+                *w = Self::word(addr + 4 * i);
+            }
+            // SAFETY: the same memory as bytes.
+            flush_cache(unsafe { core::slice::from_raw_parts(addr as *const u8, len) });
+        }
+    }
+
+    /// Re-reads every area from memory. With the receiver stopped.
+    fn check(&self) -> GuardReport {
+        let mut r = GuardReport {
+            links: self.links,
+            ..GuardReport::default()
+        };
+        for &(addr, len) in &self.areas {
+            // SAFETY: as in `fill`.
+            flush_cache(unsafe { core::slice::from_raw_parts(addr as *const u8, len) });
+            r.bytes += len;
+            for (i, &w) in Self::area(addr, len).iter().enumerate() {
+                let at = addr + 4 * i;
+                if w != Self::word(at) {
+                    if r.written == 0 {
+                        r.first = at;
+                        r.value = w;
+                    }
+                    r.written += 1;
+                    r.last = at;
+                }
+            }
+        }
+        r
+    }
+}
+
+impl core::fmt::Display for GuardReport {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.written == 0 {
+            write!(
+                f,
+                "intact ({} B, list items at {:#010x})",
+                self.bytes, self.links
+            )
+        } else {
+            write!(
+                f,
+                "{} words written in {:#010x}..={:#010x} (first {:#010x}; list items at {:#010x})",
+                self.written, self.first, self.last, self.value, self.links
+            )
+        }
+    }
+}
+
+/// The driver's counters from the first halt to the first whole frame.
+#[derive(Clone, Copy)]
+struct ResyncDriver {
+    stalls: u32,
+    skipped: u32,
+    truncated: u32,
+    discarded: u32,
+    errors: u32,
+    dma_bits: u32,
+    bridge_bits: u32,
+}
+
+/// The strip check after the recovery, in short.
+#[derive(Clone, Copy)]
+struct Checked {
+    frames: u32,
+    matching: u32,
+    rows_bad: u32,
+    gaps: u32,
+    rate_mhz: u64,
+    verdict: &'static str,
+}
+
+/// One case of one mode.
+#[derive(Clone, Copy)]
+struct StallResult {
+    name: &'static str,
+    stall: Stall,
+    lines: u16,
+    halts: Halts,
+    resync: Resync,
+    driver: ResyncDriver,
+    resync_timed_out: bool,
+    /// Release of the last halt until the first whole frame had arrived.
+    recover_us: u32,
+    checked: Option<Checked>,
+    guard: GuardReport,
+}
+
+/// The stall test ([`StripCheck`] with a guard): per mode and case, halts of the DMA on a
+/// strip held by the test, then the strips up to the first whole frame, every one checked
+/// against the reference rows, then a normal strip check on fresh counters, and the guard.
+pub struct StallTest {
+    guard: Guard,
+    case: usize,
+    /// The current case ran on a mode with a reference, as `name`, in strips of `lines` rows.
+    ran: bool,
+    name: &'static str,
+    lines: u16,
+    halts: Halts,
+    resync: Resync,
+    resync_stats: StripStats,
+    resync_timed_out: bool,
+    recover_us: u32,
+    /// The check after the recovery ([`StripCheck::checked_window`]).
+    check: Option<CheckResult>,
+    results: &'static mut [Option<StallResult>; STALL_RESULTS],
+}
+
+static STALL_TEST: StaticCell<StallTest> = StaticCell::new();
+static STALL_RESULT_SLOTS: ConstStaticCell<[Option<StallResult>; STALL_RESULTS]> =
+    ConstStaticCell::new([None; STALL_RESULTS]);
+
+impl StallTest {
+    fn new(guard: Guard) -> Self {
+        Self {
+            guard,
+            case: 0,
+            ran: false,
+            name: "",
+            lines: 0,
+            halts: Halts::NEW,
+            resync: Resync::NEW,
+            resync_stats: StripStats::default(),
+            resync_timed_out: false,
+            recover_us: 0,
+            check: None,
+            results: STALL_RESULT_SLOTS.take(),
+        }
+    }
+
+    /// Case `k` comes next: fills the guard. With the receiver stopped.
+    fn begin_case(&mut self, k: usize) {
+        self.case = k.min(STALL_CASES.len() - 1);
+        self.ran = false;
+        self.check = None;
+        self.guard.fill();
+    }
+
+    /// The end of the resynchronisation: the first whole frame arrived (or not) since
+    /// `released`, the release of the last halt.
+    #[inline(never)]
+    fn end_resync(&mut self, cs: &CsiStrips<'_>, released: Instant, timed_out: bool) {
+        self.recover_us = released.elapsed().as_micros() as u32;
+        self.resync_timed_out = timed_out;
+        self.resync_stats = cs.stats();
+    }
+
+    /// Checks the guard, keeps the case's result and prints it. With the receiver stopped.
+    #[inline(never)]
+    fn finish_case(&mut self, slot: usize, mode: &Mode) {
+        let guard = self.guard.check();
+        if !self.ran {
+            info!(
+                "strip stall {}: no reference frame, guard {guard}",
+                mode.name
+            );
+            return;
+        }
+        let r = self.summary(guard);
+        log_stall(&r, self.check.as_ref());
+        if let Some(out) = self.results.get_mut(slot * STALL_CASES.len() + self.case) {
+            *out = Some(r);
+        }
+    }
+
+    /// The current case's result.
+    #[inline(never)]
+    fn summary(&self, guard: GuardReport) -> StallResult {
+        let s = &self.resync_stats;
+        StallResult {
+            name: self.name,
+            stall: STALL_CASES[self.case],
+            lines: self.lines,
+            halts: self.halts,
+            resync: self.resync,
+            driver: ResyncDriver {
+                stalls: s.dma_stalls,
+                skipped: s.frames_skipped,
+                truncated: s.frames_truncated,
+                discarded: s.strips_discarded,
+                errors: errors(s),
+                dma_bits: s.dma_error_bits,
+                bridge_bits: s.bridge_error_bits,
+            },
+            resync_timed_out: self.resync_timed_out,
+            recover_us: self.recover_us,
+            checked: self.check.as_ref().map(|c| Checked {
+                frames: c.acc.frames,
+                matching: c.acc.matching,
+                rows_bad: c.acc.rows_bad,
+                gaps: c.acc.frame_gaps,
+                rate_mhz: check_rate(&c.acc),
+                verdict: check_verdict(c),
+            }),
+            guard,
+        }
+    }
+
+    #[inline(never)]
+    fn log_table(&self) {
+        info!(
+            "strip stall table (us; per case: halts of the DMA on a held strip, the strips up to the first whole frame checked row by row against the reference, then the strip check on fresh counters; PASS = every halt provoked, no wrong or misplaced strip, a whole frame within 1 s, the check after it PASS, guard intact):"
+        );
+        info!(
+            "| mode | halts x ms | missed | ring full max | halt max | driver stalls | resync strips | bad rows | size/order errors | whole frame after | skipped/truncated | checked frames | matching | bad rows | gaps | fps | guard words | verdict |"
+        );
+        for r in self.results.iter().flatten() {
+            info!("{}", StallRow(r));
+        }
+        info!("strip stall done");
+    }
+}
+
+/// The next strip (giving `prev` back), checked into `t` by [`resync_strip`]. `None` if the
+/// strips stopped.
+async fn resync_next(
+    cs: &mut CsiStrips<'_>,
+    prev: Option<Strip>,
+    t: &mut Resync,
+    r: &Reference,
+    want: &[u32],
+    lines: u16,
+) -> Option<Strip> {
+    let s = with_timeout(STRIP_TIMEOUT, cs.wait_strip(prev))
+        .await
+        .ok()?
+        .ok()?;
+    resync_strip(t, &s, r, want, lines);
+    Some(s)
+}
+
+/// Spins (the task keeps the strip it holds) until the DMA is halted (on this strip's item,
+/// or on a queued one before it), then `ms` more.
+#[inline(never)]
+fn hold(cs: &CsiStrips<'_>, ms: u32, h: &mut Halts) {
+    let t0 = Instant::now();
+    let mut halted = false;
+    while !halted && t0.elapsed() < STALL_DETECT {
+        halted = cs.debug_status().halted;
+    }
+    let t1 = Instant::now();
+    h.provoked += 1;
+    if !halted {
+        h.missed += 1;
+        return;
+    }
+    h.fill_max_us = h.fill_max_us.max((t1 - t0).as_micros() as u32);
+    let length = Duration::from_millis(u64::from(ms));
+    while t1.elapsed() < length {}
+    let halt = t1.elapsed().as_micros() as u32;
+    h.halt_min_us = h.halt_min_us.min(halt);
+    h.halt_max_us = h.halt_max_us.max(halt);
+}
+
+/// Checks one strip delivered around a stall: its size against its first row, every row
+/// against the reference row it claims to be, and its place in the sequence.
+#[inline(never)]
+fn resync_strip(t: &mut Resync, s: &Strip, r: &Reference, want: &[u32], lines: u16) {
+    t.strips += 1;
+    let (first, rows, frame) = (s.first_row(), s.rows(), s.frame());
+    let end = first.saturating_add(rows);
+    let expect = r.height.saturating_sub(first).min(lines);
+    let size_ok = rows == expect
+        && rows > 0
+        && s.len() == usize::from(rows) * r.line_bytes
+        && s.is_last() == (end == r.height);
+    if size_ok {
+        for (i, row) in s.chunks_exact(r.line_bytes).enumerate() {
+            let at = usize::from(first) + i;
+            if want.get(at) != Some(&row_sum(row)) {
+                t.bad_rows += 1;
+                t.first_bad.get_or_insert((frame, at as u16));
+            }
+        }
+        t.rows_checked += u32::from(rows);
+    } else {
+        t.size_errors += 1;
+    }
+    let older = t
+        .last_frame
+        .is_some_and(|f| (frame.wrapping_sub(f) as i32) < 0);
+    let from_zero = match t.open {
+        _ if older => {
+            t.order_errors += 1;
+            false
+        }
+        Some((f, next, zero)) if f == frame && next == first => zero,
+        open if first == 0 && open.is_none_or(|(f, ..)| f != frame) => true,
+        // The case's first strip may be anywhere in its frame.
+        None if t.last_frame.is_none() => false,
+        _ => {
+            t.order_errors += 1;
+            false
+        }
+    };
+    t.last_frame = Some(frame);
+    if s.is_last() {
+        t.recovered |= from_zero && size_ok;
+        t.open = None;
+    } else {
+        t.open = Some((frame, end, from_zero && size_ok));
+    }
+}
+
+#[inline(never)]
+fn log_stall(r: &StallResult, check: Option<&CheckResult>) {
+    info!("strip stall {}", StallLine(r, check));
+}
+
+fn stall_verdict(r: &StallResult) -> &'static str {
+    let t = &r.resync;
+    if r.halts.missed != 0 {
+        "FAIL: halt not provoked"
+    } else if t.bad_rows != 0 {
+        "FAIL: wrong rows after a stall"
+    } else if t.size_errors != 0 || t.order_errors != 0 {
+        "FAIL: strips out of place after a stall"
+    } else if r.resync_timed_out || !t.recovered {
+        "FAIL: no whole frame after the stall"
+    } else if r.guard.written != 0 {
+        "FAIL: memory outside the ring written"
+    } else {
+        r.checked.map_or("FAIL: not checked", |c| c.verdict)
+    }
+}
+
+/// Milliseconds with one decimal, from microseconds.
+struct Ms(u32);
+
+impl core::fmt::Display for Ms {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.0 == u32::MAX {
+            return f.write_str("-");
+        }
+        write!(f, "{}.{}", self.0 / 1000, self.0 % 1000 / 100)
+    }
+}
+
+/// One case as a log line, with the whole check after the recovery (formatted in parts to
+/// keep each `fmt` frame small).
+struct StallLine<'a>(&'a StallResult, Option<&'a CheckResult>);
+
+impl core::fmt::Display for StallLine<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let r = self.0;
+        write!(f, "{}{}", StallLineHalts(r), StallLineResync(r))?;
+        match self.1 {
+            Some(c) => write!(f, "then {}", CheckLine(c))?,
+            None => f.write_str("not checked after it")?,
+        }
+        write!(f, "; guard {}: {}", r.guard, stall_verdict(r))
+    }
+}
+
+struct StallLineHalts<'a>(&'a StallResult);
+
+impl core::fmt::Display for StallLineHalts<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let r = self.0;
+        let h = &r.halts;
+        write!(
+            f,
+            "{} {}x{} ms ({}-row strips): halts {} (missed {}), ring full after at most {} ms, halt {}..{} ms, driver stalls {}; ",
+            r.name,
+            r.stall.halts,
+            r.stall.ms,
+            r.lines,
+            h.provoked,
+            h.missed,
+            Ms(h.fill_max_us),
+            Ms(h.halt_min_us),
+            Ms(h.halt_max_us),
+            r.driver.stalls
+        )
+    }
+}
+
+struct StallLineResync<'a>(&'a StallResult);
+
+impl core::fmt::Display for StallLineResync<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let r = self.0;
+        let (t, d) = (&r.resync, &r.driver);
+        write!(
+            f,
+            "resync: {} strips, rows checked {} bad {} (first {}), size errors {}, order errors {}, whole frame {} ms after the release (timed out {}), driver frames skipped {} truncated {}, strips discarded {}, errors {} (dma {:#x} bridge {:#x}); ",
+            t.strips,
+            t.rows_checked,
+            t.bad_rows,
+            FirstBad(t.first_bad),
+            t.size_errors,
+            t.order_errors,
+            Ms(r.recover_us),
+            r.resync_timed_out,
+            d.skipped,
+            d.truncated,
+            d.discarded,
+            d.errors,
+            d.dma_bits,
+            d.bridge_bits
+        )
+    }
+}
+
+/// One case as a table row (formatted in two parts to keep each `fmt` frame small).
+struct StallRow<'a>(&'a StallResult);
+
+impl core::fmt::Display for StallRow<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}{}", StallRowResync(self.0), StallRowChecked(self.0))
+    }
+}
+
+struct StallRowResync<'a>(&'a StallResult);
+
+impl core::fmt::Display for StallRowResync<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let r = self.0;
+        let (h, t, d) = (&r.halts, &r.resync, &r.driver);
+        write!(
+            f,
+            "| {} | {}x{} | {} | {} | {} | {} | {} | {} | {}/{} | {} | {}/{} ",
+            r.name,
+            r.stall.halts,
+            r.stall.ms,
+            h.missed,
+            h.fill_max_us,
+            h.halt_max_us,
+            d.stalls,
+            t.strips,
+            t.bad_rows,
+            t.size_errors,
+            t.order_errors,
+            r.recover_us,
+            d.skipped,
+            d.truncated
+        )
+    }
+}
+
+struct StallRowChecked<'a>(&'a StallResult);
+
+impl core::fmt::Display for StallRowChecked<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let r = self.0;
+        match &r.checked {
+            Some(c) => write!(
+                f,
+                "| {} | {} | {} | {} | {} ",
+                c.frames,
+                c.matching,
+                c.rows_bad,
+                c.gaps,
+                Fps(c.rate_mhz)
+            )?,
+            None => f.write_str("| - | - | - | - | - ")?,
+        }
+        write!(f, "| {} | {} |", r.guard.written, stall_verdict(r))
+    }
+}
+
+/// Internal RAM before the stall test's list items in its guard.
+const GUARD_BEFORE: usize = 16 * 1024;
+
+/// Splits `internal` (64-byte aligned) for the stall test: room for the list items
+/// [`GUARD_BEFORE`] bytes in, for [`Ring::take`], and the rest around them as the guard.
+/// `None` if `internal` is too small for a guard after the items of at least one strip.
+pub fn guarded_links(internal: &'static mut [u8]) -> Option<(Guard, &'static mut [u8])> {
+    let items = MAX_STRIPS * core::mem::size_of::<StripLink>();
+    if internal.len() < GUARD_BEFORE + items + MAX_STRIP_BYTES
+        || !(internal.as_ptr() as usize).is_multiple_of(64)
+    {
+        return None;
+    }
+    let (before, rest) = internal.split_at_mut(GUARD_BEFORE);
+    let (links, after) = rest.split_at_mut(items);
+    let at = links.as_ptr() as usize;
+    Some((Guard::new(before, at, after), links))
 }

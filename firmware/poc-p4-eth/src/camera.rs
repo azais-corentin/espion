@@ -648,10 +648,11 @@ impl StripJob {
         }
     }
 
-    /// Runs per mode on `rx`: the soak's runs on strips, else one.
+    /// Runs per mode on `rx`: the soak's runs or the stall cases on strips, else one.
     fn runs(&self, rx: &Rx<'_>) -> usize {
         match (self, rx) {
             (StripJob::Soak(s), Rx::Strips(_)) => s.runs(),
+            (StripJob::Check(c), Rx::Strips(_)) => c.runs(),
             _ => 1,
         }
     }
@@ -664,13 +665,14 @@ impl StripJob {
                 s.prepare(mode, k, strip_soak::lines(&csi_config(mode)));
             }
             (StripJob::Check(c), Rx::Frames(_)) => c.begin_reference(slot, mode),
+            (StripJob::Check(c), Rx::Strips(_)) => c.begin_run(k),
             _ => {}
         }
     }
 
     /// The result of the run just done on `rx`, with the receiver stopped.
     #[inline(never)]
-    fn log_run(&self, rx: &Rx<'_>, mode: &Mode, slot: usize) {
+    fn log_run(&mut self, rx: &Rx<'_>, mode: &Mode, slot: usize) {
         match (self, rx) {
             (StripJob::Soak(s), Rx::Strips(_)) => s.log_last(),
             (StripJob::Check(c), Rx::Frames(_)) => c.log_reference(slot),
@@ -733,10 +735,10 @@ async fn strip_modes<const ON: bool>(
     if !ON {
         return;
     }
-    let Some((mut job, mut frame_buffers)) = make_strip_job(psram, internal, strips) else {
+    let Some((mut job, mut frame_buffers, links)) = make_strip_job(psram, internal, strips) else {
         return;
     };
-    let mut ring = strip_soak::Ring::take();
+    let mut ring = strip_soak::Ring::take(links);
     let mut rest = plan.modes;
     let mut slot = 0;
     // One call site for every group (references, then strips): each `strip_group` future
@@ -764,6 +766,9 @@ async fn strip_modes<const ON: bool>(
             // SAFETY: the receiver of the previous group, which held the ring, was dropped at
             // the end of its `strip_group`.
             let rx = unsafe { make_strip_receiver(vdma.reborrow(), &mut ring, &config) };
+            if let StripJob::Check(c) = &mut job {
+                c.guard_ring_tail(ring.tail(&config));
+            }
             (rx, group, slot - n)
         };
         if let Some(rx) = rx {
@@ -773,6 +778,14 @@ async fn strip_modes<const ON: bool>(
     job.log_table();
 }
 
+/// The strip job, the PSRAM frame buffers of the check's references, and the stall test's
+/// area for the list items ([`strip_soak::Ring::take`]).
+type StripParts = (
+    StripJob,
+    Option<&'static mut [u8]>,
+    Option<&'static mut [u8]>,
+);
+
 /// The soak, or the check with its frame buffers (the start of PSRAM) and its reference
 /// words in PSRAM right after them.
 #[inline(never)]
@@ -780,27 +793,50 @@ fn make_strip_job(
     psram: &'static mut [u8],
     internal: &'static mut [u8],
     strips: strip_soak::Plan,
-) -> Option<(StripJob, Option<&'static mut [u8]>)> {
+) -> Option<StripParts> {
     let Some(window) = strips.check else {
         let Some(soak) = strip_soak::StripSoak::new(strips, internal) else {
             fail("internal buffer too small for the synthetic strip", &());
             return None;
         };
-        return Some((StripJob::Soak(STRIP_SOAK.init(soak)), None));
+        return Some((StripJob::Soak(STRIP_SOAK.init(soak)), None, None));
     };
+    make_check_job(psram, internal, window, strips.stall)
+}
+
+/// The check (the stall test if `stall`, with its list items and guard in `internal`).
+#[inline(never)]
+fn make_check_job(
+    psram: &'static mut [u8],
+    internal: &'static mut [u8],
+    window: Duration,
+    stall: bool,
+) -> Option<StripParts> {
     let need = BUFFERS * BUFFER_LEN + 4 * strip_soak::CHECK_WORDS;
     if psram.len() < need {
         fail("PSRAM too small for the strip check", &need);
         return None;
     }
+    let (guard, links) = match stall.then(|| strip_soak::guarded_links(internal)) {
+        Some(Some((guard, links))) => (Some(guard), Some(links)),
+        Some(None) => {
+            fail("internal buffer too small for the stall test's guard", &());
+            return None;
+        }
+        None => (None, None),
+    };
     let (buffers, rest) = psram.split_at_mut(BUFFERS * BUFFER_LEN);
     // SAFETY: every bit pattern is a valid `u32`.
     let (_, words, _) = unsafe { rest.align_to_mut::<u32>() };
-    let Some(check) = strip_soak::StripCheck::new(window, words) else {
+    let Some(check) = strip_soak::StripCheck::new(window, words, guard) else {
         fail("PSRAM too small for the strip check", &need);
         return None;
     };
-    Some((StripJob::Check(STRIP_CHECK.init(check)), Some(buffers)))
+    Some((
+        StripJob::Check(STRIP_CHECK.init(check)),
+        Some(buffers),
+        links,
+    ))
 }
 
 /// The whole-frame receiver for the strip check's references, on [`BUFFERS`] buffers.

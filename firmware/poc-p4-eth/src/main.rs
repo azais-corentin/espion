@@ -117,6 +117,7 @@ const STRIP_SOAK_PLAN: strip_soak::Plan = strip_soak::Plan {
     synthetic: Duration::from_secs(10),
     blob_targets: &[0, 16, 64],
     check: None,
+    stall: false,
 };
 /// Strip soak on the RAW10 modes 9..=11 (1280x800, 1280x720, 640x400 binned at 210 fps):
 /// select with `PLAN`. Strips of 64 lines at 1280 wide and 128 at 640, 3 in the ring.
@@ -140,6 +141,20 @@ const STRIP_CHECK_PLAN: camera::Plan = camera::Plan {
         ..STRIP_SOAK_PLAN
     }),
     ..CAMERA_PLAN
+};
+/// Stall test on the modes of [`STRIP_CHECK_PLAN`]: the same references, then per mode and
+/// case (`strip_soak::STALL_CASES`: single DMA halts of 1, 5, 30 and 100 ms, bursts of 20 x
+/// 2 ms and 8 x 30 ms on a strip the test holds) the strips up to the first whole frame and
+/// 1 s of strips after it, every row checked against the reference, and a memory guard around
+/// the list items and after the ring. Select with `PLAN`.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const STRIP_STALL_PLAN: camera::Plan = camera::Plan {
+    strips: Some(strip_soak::Plan {
+        check: Some(Duration::from_secs(1)),
+        stall: true,
+        ..STRIP_SOAK_PLAN
+    }),
+    ..STRIP_CHECK_PLAN
 };
 /// Capture only over the extended modes 4..=11 (4..=8 faster RAW8 up to 453 fps, 9..=11
 /// RAW10): measured against the predicted frame rate, 5 s each. The exposure is clamped per
