@@ -1,9 +1,11 @@
 //! Throwaway proof of concept on the Waveshare ESP32-P4-ETH dev board.
 //!
-//! On boot it prints the chip info, brings up PSRAM and checks it, measures one core's
-//! sequential read speed from PSRAM (cold) and from internal RAM, scans the camera's I2C bus
-//! and reads the OV9281 chip ID. Then it benchmarks the blob detector on synthetic frames
-//! (`bench`).
+//! On boot it switches the log UART to [`LOG_BAUD`], prints the chip info, brings up PSRAM and
+//! checks it, measures one core's sequential read speed from PSRAM (cold) and from internal
+//! RAM, scans the camera's I2C bus and reads the OV9281 chip ID. Then, as the constants below
+//! select, it benchmarks the blob detector on synthetic frames (`bench`) and runs the camera
+//! section (`camera`): every mode of [`CAMERA_PLAN`] over MIPI CSI-2, frame rate and error
+//! counters, cache checks and an optional still dump.
 //!
 //! Board facts (Waveshare `ESP32-P4-ETH-datasheet.pdf`, the schematic, sheet 1):
 //! - UART0 to the CH343P USB-UART bridge (U4): P4 GPIO37 = U0TXD -> CH343 RXD, CH343 TXD ->
@@ -39,13 +41,35 @@ use static_cell::{ConstStaticCell, StaticCell};
 esp_bootloader_esp_idf::esp_app_desc!();
 
 mod bench;
+mod camera;
 #[allow(
     dead_code,
-    reason = "OV9281 mode tables, used once camera capture is wired in"
+    reason = "complete OV9281 register table; the camera section uses part of it"
 )]
 mod ov9281;
 mod synth;
 mod vision;
+
+/// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print
+/// at 115200). Capture with `espflash monitor --monitor-baud <LOG_BAUD>`. `None` keeps 115200.
+const LOG_BAUD: Option<u32> = Some(2_000_000);
+/// Run the detector benchmark on synthetic frames at boot (about 90 s).
+const RUN_BENCH: bool = false;
+/// Run the camera section after the boot report (and the benchmark, if on).
+const RUN_CAMERA: bool = true;
+/// Camera section: modes (indexes into `ov9281::MODES`: 0 1280x800, 1 1280x720, 2 640x480,
+/// 3 640x400), sensor settings, checks and still dump (decode with `tools/still.py`).
+const CAMERA_PLAN: camera::Plan = camera::Plan {
+    modes: &[0, 1, 2, 3],
+    test_pattern: false,
+    clock_gated: false,
+    // Indoor scene without the IR ring: 800 of 890 possible lines (7.3 ms) at 2x gain.
+    exposure_lines: 800,
+    gain: 0x20,
+    measure: Duration::from_secs(5),
+    cache_check: true,
+    still_dump: false,
+};
 
 /// SCCB data: net ESP_I2C_SDA, U6 pin 7 (GPIO7) to CSI connector J1 pin 2.
 const SCCB_SDA_GPIO: u8 = 7;
@@ -96,18 +120,32 @@ static PSRAM_DRIVER: StaticCell<Psram> = StaticCell::new();
 async fn main(_spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    let baud_divider = LOG_BAUD.map(set_log_baud);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
+    if let Some((old, new)) = baud_divider {
+        info!(
+            "log UART: 115200 -> {} baud (clkdiv x16 {old} -> {new})",
+            LOG_BAUD.unwrap_or(115_200)
+        );
+    }
     log_chip();
     let psram_mem = memory_report(peripherals.PSRAM);
-    sccb_report(peripherals.I2C0).await;
+    let mut i2c = sccb_report(peripherals.I2C0).await;
 
     info!("boot report done");
     match psram_mem {
-        Some(mem) => bench::run(mem),
-        None => error!("detector benchmark needs PSRAM, skipped"),
+        Some(mem) => {
+            if RUN_BENCH {
+                bench::run(mem);
+            }
+            if RUN_CAMERA {
+                camera::run(&mut i2c, peripherals.VDMA_CH0, mem, &CAMERA_PLAN).await;
+            }
+        }
+        None => error!("detector benchmark and camera need PSRAM, skipped"),
     }
     loop {
         Timer::after(Duration::from_secs(1)).await;
@@ -158,14 +196,14 @@ fn memory_report(psram: esp_hal::peripherals::PSRAM<'static>) -> Option<&'static
     psram_mem
 }
 
-/// Scans the camera's I2C bus and reads the OV9281 chip ID.
-async fn sccb_report(i2c0: esp_hal::peripherals::I2C0<'static>) {
+/// Scans the camera's I2C bus and reads the OV9281 chip ID. Returns the bus for the camera.
+async fn sccb_report(i2c0: esp_hal::peripherals::I2C0<'static>) -> I2c<'static, esp_hal::Async> {
     let mut i2c = I2c::new(
         i2c0,
         I2cConfig::default().with_frequency(Rate::from_khz(SCCB_FREQ_KHZ)),
     )
     .expect("I2C0 config")
-    // SAFETY: GPIO7/GPIO8 are used only here.
+    // SAFETY: GPIO7/GPIO8 are used only by this bus.
     .with_sda(unsafe { AnyPin::steal(SCCB_SDA_GPIO) })
     .with_scl(unsafe { AnyPin::steal(SCCB_SCL_GPIO) })
     .into_async();
@@ -178,6 +216,7 @@ async fn sccb_report(i2c0: esp_hal::peripherals::I2C0<'static>) {
     );
     i2c_scan(&mut i2c).await;
     read_ov9281_id(&mut i2c).await;
+    i2c
 }
 
 /// Prints the L1 data cache and L2 cache size and line size the bootloader configured.
@@ -391,4 +430,27 @@ async fn read_ov9281_id(i2c: &mut I2c<'_, esp_hal::Async>) {
         }
     }
     error!("OV9281: not found");
+}
+
+/// Switches UART0 (the log console) from the bootloader's 115200 baud to `baud`, keeping the
+/// UART's clock source: the new divider is the current one scaled by 115200 / `baud`.
+/// Returns the old and new divider in 1/16 steps (`CLKDIV * 16 + CLKDIV_FRAG`).
+fn set_log_baud(baud: u32) -> (u32, u32) {
+    // SAFETY: esp-println writes UART0's FIFO; only the divider changes here, after the FIFO and
+    // the transmitter are idle, inside a critical section so no log line starts meanwhile.
+    let uart = unsafe { &*esp32p4::UART0::ptr() };
+    critical_section::with(|_| {
+        while uart.status().read().txfifo_cnt().bits() != 0 {}
+        while uart.fsm_status().read().st_utx_out().bits() != 0 {}
+        let r = uart.clkdiv().read();
+        let old = r.clkdiv().bits() as u32 * 16 + r.clkdiv_frag().bits() as u32;
+        let new = (old as u64 * 115_200 / baud as u64) as u32;
+        uart.clkdiv().write(|w| unsafe {
+            w.clkdiv().bits((new / 16) as u16);
+            w.clkdiv_frag().bits((new % 16) as u8)
+        });
+        uart.reg_update().write(|w| w.reg_update().set_bit());
+        while uart.reg_update().read().reg_update().bit_is_set() {}
+        (old, new)
+    })
 }

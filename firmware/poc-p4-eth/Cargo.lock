@@ -931,6 +931,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32p4-csi"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "esp-hal",
+ "esp32p4",
+]
+
+[[package]]
 name = "esp32s2"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1292,6 +1301,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 name = "poc-p4-eth"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "embassy-executor",
  "embassy-time",
  "esp-backtrace",
@@ -1300,6 +1310,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp32p4",
+ "esp32p4-csi",
  "log",
  "static_cell",
 ]

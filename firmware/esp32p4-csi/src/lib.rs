@@ -55,6 +55,11 @@
 //!
 //! `wait_frame` never blocks; wrap it in `embassy_time::with_timeout` to detect a dead link, then
 //! print [`Csi::debug_status`] and [`Csi::stats`].
+//!
+//! The buffer swap runs in the DMA interrupt between two frames. Anything that keeps interrupts
+//! masked for longer than the sensor's vertical blanking (for example `esp-println` writing a
+//! log line at 115200 baud inside its critical section) makes the next frame start before the
+//! DMA is re-armed, and that frame arrives short ([`Frame::received_len`]).
 
 #![no_std]
 
@@ -192,9 +197,12 @@ pub struct Stats {
     pub frames_dropped: u32,
     /// Completed frames replaced by a newer one before [`Csi::wait_frame`] took them.
     pub frames_overwritten: u32,
-    /// Bytes the DMA wrote for the last completed frame (`CMPLTD_BLK_TFR_SIZE` × 8). Differs
-    /// from `width * height` when the sensor geometry does not match the configuration.
+    /// Bytes the DMA wrote for the last completed frame: final `DAR0` minus the buffer start.
+    /// Differs from `width * height` when the sensor geometry does not match the configuration.
     pub last_frame_bytes: u32,
+    /// `CMPLTD_BLK_TFR_SIZE` of the last completed frame as the channel reports it (64-bit
+    /// items). Measured on the ESP32-P4 v3.2: one item less than the DMA wrote.
+    pub last_block_items: u32,
     /// DW-GDMA channel error interrupts.
     pub dma_errors: u32,
     /// OR of all DW-GDMA channel `INTSTATUS` bits seen with an error.
@@ -238,7 +246,8 @@ pub struct DebugStatus {
     pub dma_enabled: bool,
     /// DW-GDMA channel raw `INTSTATUS0`.
     pub dma_int_status: u32,
-    /// DW-GDMA `CMPLTD_BLK_TFR_SIZE` of the channel (64-bit items).
+    /// DW-GDMA `CMPLTD_BLK_TFR_SIZE` of the channel (64-bit items; after a frame, one less
+    /// than the DMA wrote).
     pub dma_completed_items: u32,
     /// DW-GDMA `DATA_LEFT_IN_FIFO` of the channel.
     pub dma_fifo_left: u32,
@@ -289,6 +298,7 @@ impl Shared {
                 frames_dropped: 0,
                 frames_overwritten: 0,
                 last_frame_bytes: 0,
+                last_block_items: 0,
                 dma_errors: 0,
                 dma_error_bits: 0,
                 host_errors: 0,
@@ -403,10 +413,15 @@ fn dma_isr() {
         }
         let items = s.frame_items;
         if st & DMA_TFR_DONE != 0 {
-            let bytes = (c.status0().read().bits() & 0x3F_FFFF) * 8;
+            let Some(done) = s.dma else { return };
+            let bytes = c
+                .dar0()
+                .read()
+                .bits()
+                .wrapping_sub(s.bufs[done as usize].0 as u32);
             s.stats.frames_done = s.stats.frames_done.wrapping_add(1);
             s.stats.last_frame_bytes = bytes;
-            let Some(done) = s.dma else { return };
+            s.stats.last_block_items = c.status0().read().bits() & 0x3F_FFFF;
             // Next buffer: a free one, else the older unclaimed frame (keep the newest).
             let next = match s.take_free() {
                 Some(slot) => Some(slot),

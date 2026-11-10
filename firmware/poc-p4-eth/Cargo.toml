@@ -8,6 +8,8 @@ license      = "MIT OR Apache-2.0"
 publish      = false
 
 [dependencies]
+esp32p4-csi = { path = "../esp32p4-csi" }
+
 esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32p4", "log-04"] }
@@ -24,6 +26,7 @@ esp-println = { version = "0.18.0", default-features = false, features = [
 # Cache configuration registers. Same major as esp-hal 1.2.2 uses.
 esp32p4 = { version = "0.3.0", features = ["critical-section"] }
 
+critical-section = "1.2.0"
 embassy-executor = { version = "0.10.0", features = ["log"] }
 embassy-time     = { version = "0.5.1", features = ["log"] }
 log              = "0.4.34"
