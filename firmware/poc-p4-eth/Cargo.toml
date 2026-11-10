@@ -1,0 +1,40 @@
+[package]
+name         = "poc-p4-eth"
+description  = "Throwaway proof of concept on the Waveshare ESP32-P4-ETH: PSRAM, memory read speed, OV9281 SCCB, MIPI CSI capture, vision timing"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+[dependencies]
+esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32p4", "log-04"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32p4", "panic-handler", "println"] }
+# Logs go to UART0 (GPIO37 TX, GPIO38 RX), wired to the board's CH343 USB-UART bridge. The
+# P4's USB Serial/JTAG is not on the USB-C port of this board, so `auto` is not needed.
+esp-println = { version = "0.18.0", default-features = false, features = [
+  "colors",
+  "critical-section",
+  "esp32p4",
+  "log-04",
+  "uart",
+] }
+# Cache configuration registers. Same major as esp-hal 1.2.2 uses.
+esp32p4 = { version = "0.3.0", features = ["critical-section"] }
+
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-time     = { version = "0.5.1", features = ["log"] }
+log              = "0.4.34"
+static_cell      = "2.1.1"
+
+[profile.dev]
+# The default debug profile is too slow and too big for the vision loop.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug         = 2
+lto           = "fat"
+opt-level     = 3

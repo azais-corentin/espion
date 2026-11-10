@@ -21,6 +21,8 @@ scopes = [
   "cam-p4",
   # firmware/esp32p4-csi.
   "esp32p4-csi",
+  # firmware/poc-p4-eth: throwaway proof of concept on the Waveshare ESP32-P4-ETH.
+  "poc-p4-eth",
   # host/espion-server, espion-viewer, espion-calib, espion-sync.
   "server",
   "viewer",
