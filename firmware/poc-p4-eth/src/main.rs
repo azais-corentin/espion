@@ -2,10 +2,10 @@
 //!
 //! On boot it switches the log UART to [`LOG_BAUD`], prints the chip info, brings up PSRAM and
 //! checks it, measures one core's sequential read speed from PSRAM (cold) and from internal
-//! RAM, scans the camera's I2C bus and reads the OV9281 chip ID. Then, as the constants below
-//! select, it benchmarks the blob detector on synthetic frames (`bench`) and runs the camera
-//! section (`camera`): every mode of [`CAMERA_PLAN`] over MIPI CSI-2, frame rate and error
-//! counters, cache checks and an optional still dump.
+//! RAM, scans the camera's I2C bus and identifies the OV9281 (`ov9281` crate). Then, as the
+//! constants below select, it benchmarks the blob detector on synthetic frames (`bench`) and
+//! runs the camera section (`camera`): every mode of [`CAMERA_PLAN`] over MIPI CSI-2, frame
+//! rate and error counters, cache checks and an optional still dump.
 //!
 //! Board facts (Waveshare `ESP32-P4-ETH-datasheet.pdf`, the schematic, sheet 1):
 //! - UART0 to the CH343P USB-UART bridge (U4): P4 GPIO37 = U0TXD -> CH343 RXD, CH343 TXD ->
@@ -36,17 +36,15 @@ use esp_hal::psram::{Psram, PsramConfig, PsramTimingParams};
 use esp_hal::time::{Instant, Rate};
 use esp_hal::timer::timg::TimerGroup;
 use log::{error, info, warn};
+use ov9281::{Address, CHIP_ID, Gain, Ov9281, TestPattern};
 use static_cell::{ConstStaticCell, StaticCell};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 mod bench;
 mod camera;
-#[allow(
-    dead_code,
-    reason = "complete OV9281 register table; the camera section uses part of it"
-)]
-mod ov9281;
+mod modes;
+mod requests;
 mod soak;
 mod strip_soak;
 mod synth;
@@ -77,19 +75,23 @@ enum Soak {
 /// The soak [`CAMERA_PLAN`] runs.
 const SOAK: Soak = Soak::Frames;
 /// The plan the camera section runs: [`CAMERA_PLAN`] (default), [`FAST_CAPTURE_PLAN`],
-/// [`MODE_STILLS_PLAN`], [`RAW10_PATTERNS_PLAN`], [`RAW10_STRIP_SOAK_PLAN`] or
-/// [`STRIP_CHECK_PLAN`].
+/// [`MODE_STILLS_PLAN`], [`RAW10_PATTERNS_PLAN`], [`REQUESTS_PLAN`], [`RAW10_STRIP_SOAK_PLAN`],
+/// [`STRIP_CHECK_PLAN`] or [`STRIP_STALL_PLAN`].
 const PLAN: &camera::Plan = &CAMERA_PLAN;
-/// Camera section on the 120 fps RAW8 modes (indexes into `ov9281::MODES`: 0 1280x800,
+/// Camera section on the 120 fps RAW8 modes (indexes into `modes::MODES`: 0 1280x800,
 /// 1 1280x720, 2 640x480, 3 640x400): sensor settings, checks, still dump (decode with
 /// `tools/still.py`) and the soak selected by [`SOAK`]. The frame soak runs on RAW8 modes only.
 const CAMERA_PLAN: camera::Plan = camera::Plan {
     modes: &[0, 1, 2, 3],
-    test_pattern: false,
-    clock_gated: false,
-    // Indoor scene without the IR ring: 800 of 890 possible lines (7.3 ms) at 2x gain.
-    exposure_lines: 800,
-    gain: 0x20,
+    requests: &[],
+    sensor: camera::Sensor {
+        pattern: TestPattern::Off,
+        clock_gated: false,
+        // Indoor scene without the IR ring: 800 of 889 possible lines (7.3 ms) at 2x gain.
+        exposure_lines: 800,
+        gain: Gain::from_sixteenths(0x20),
+        psv_off: false,
+    },
     measure: Duration::from_secs(5),
     cache_check: false,
     still_dump: false,
@@ -174,9 +176,8 @@ const FAST_CAPTURE_PLAN: camera::Plan = camera::Plan {
 #[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
 const MODE_STILLS_PLAN: camera::Plan = camera::Plan {
     modes: &[0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3],
-    gain: 0x20,
     still_dump: true,
-    still_patterns: &[0x80],
+    still_patterns: &[TestPattern::Bars],
     ..FAST_CAPTURE_PLAN
 };
 /// The RAW10 byte layout against RAW8 on 640x400 at 210 fps (modes 6 and 11): a scene still,
@@ -184,8 +185,27 @@ const MODE_STILLS_PLAN: camera::Plan = camera::Plan {
 #[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
 const RAW10_PATTERNS_PLAN: camera::Plan = camera::Plan {
     modes: &[6, 11],
-    still_patterns: &[0x81, 0x82, 0xC0],
+    still_patterns: &[
+        TestPattern::Random,
+        TestPattern::GreySquares,
+        TestPattern::RollingBars,
+    ],
     ..MODE_STILLS_PLAN
+};
+/// Request verification (`requests`): every request of `requests::REQUESTS` built on the
+/// P4 (timed); each accepted one captured for 3 s after a reference of the same window at a
+/// long VTS, with a scene and a bar-pattern still. Gain 8x, as the characterisation's sweeps
+/// (the dim bench scene at exposures clamped to a fast mode's frame).
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const REQUESTS_PLAN: camera::Plan = camera::Plan {
+    modes: &[],
+    requests: requests::REQUESTS,
+    sensor: camera::Sensor {
+        gain: Gain::from_sixteenths(0x80),
+        ..CAMERA_PLAN.sensor
+    },
+    measure: Duration::from_secs(3),
+    ..FAST_CAPTURE_PLAN
 };
 // The benchmark's 300 KiB frame buffer and the strip ring do not both fit in internal RAM.
 const _: () = assert!(!(RUN_BENCH && PLAN.strips.is_some()));
@@ -199,12 +219,9 @@ const SCCB_FREQ_KHZ: u32 = 100;
 /// Camera enable (J1 pin 6, CSI_IO0, the module's PWDN pin on the 15-pin side): not wired to
 /// a GPIO on this board. R42 (10 k) holds it at 3.3 V.
 const CAM_EN_GPIO: Option<u8> = None;
-/// OV9281 7-bit SCCB addresses: datasheet write addresses 0xC0 and 0x20. The module on the
-/// bench answers at 0x60 (and also at 0x70 with the same chip ID).
-const OV9281_ADDRS: [u8; 2] = [0x60, 0x10];
-/// OV9281 chip ID registers (0x300A high byte, 0x300B low byte) and the expected value.
-const OV9281_CHIP_ID_REG: u16 = 0x300A;
-const OV9281_CHIP_ID: u16 = 0x9281;
+/// OV9281 SCCB addresses tried, in order: datasheet write addresses 0xC0 and 0x20 (7-bit 0x60
+/// and 0x10). The module on the bench answers at 0x60 (and also at 0x70 with the same chip ID).
+const OV9281_ADDRESSES: [Address; 2] = [Address::Primary, Address::Alternate];
 
 /// PSRAM bus timing: esp-hal's default 250 MHz (MPLL 500 MHz / 2). `MHZ_200` fails at init
 /// with esp-hal 1.2.2 (500 MHz is not a multiple of 200; PSRAM stays unmapped).
@@ -237,9 +254,11 @@ static SRAM_BENCH: ConstStaticCell<SramBench> =
     ConstStaticCell::new(SramBench([0; SRAM_BENCH_LEN]));
 /// Keeps the PSRAM driver (and its peripheral) alive for the whole run.
 static PSRAM_DRIVER: StaticCell<Psram> = StaticCell::new();
+/// The sensor and its bus, for the camera section.
+static CAMERA: StaticCell<camera::Cam> = StaticCell::new();
 
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     let baud_divider = LOG_BAUD.map(set_log_baud);
@@ -255,23 +274,39 @@ async fn main(_spawner: Spawner) -> ! {
     }
     log_chip();
     let (psram_mem, internal) = memory_report(peripherals.PSRAM);
-    let mut i2c = sccb_report(peripherals.I2C0).await;
-
-    info!("boot report done");
-    match psram_mem {
-        Some(mem) => {
-            if RUN_BENCH {
-                bench::run(mem);
-            }
-            if RUN_CAMERA {
-                const STRIPS: bool = PLAN.strips.is_some();
-                camera::run::<STRIPS>(&mut i2c, peripherals.VDMA_CH0, mem, internal, PLAN).await;
-            }
-        }
-        None => error!("detector benchmark and camera need PSRAM, skipped"),
-    }
+    spawner.spawn(app(peripherals.I2C0, peripherals.VDMA_CH0, psram_mem, internal).unwrap());
     loop {
         Timer::after(Duration::from_secs(1)).await;
+    }
+}
+
+/// The rest of the boot: the SCCB report, then the benchmark and the camera section. A task
+/// of its own: inside `main` the SCCB futures make `main`'s future, which its macro moves on
+/// the stack, exceed the stack-frame limit (`clippy::large_stack_frames`).
+#[embassy_executor::task]
+async fn app(
+    i2c0: esp_hal::peripherals::I2C0<'static>,
+    vdma: esp_hal::peripherals::VDMA_CH0<'static>,
+    psram_mem: Option<&'static mut [u8]>,
+    internal: &'static mut [u8],
+) {
+    let (i2c, address) = sccb_report(i2c0).await;
+    info!("boot report done");
+    let Some(mem) = psram_mem else {
+        error!("detector benchmark and camera need PSRAM, skipped");
+        return;
+    };
+    if RUN_BENCH {
+        bench::run(mem);
+    }
+    match address {
+        Some(a) if RUN_CAMERA => {
+            const STRIPS: bool = PLAN.strips.is_some();
+            let cam = CAMERA.init(Ov9281::new(i2c, a));
+            camera::run::<STRIPS>(cam, vdma, mem, internal, PLAN).await;
+        }
+        None if RUN_CAMERA => error!("camera section skipped: no OV9281"),
+        _ => {}
     }
 }
 
@@ -323,8 +358,11 @@ fn memory_report(
     (psram_mem, internal)
 }
 
-/// Scans the camera's I2C bus and reads the OV9281 chip ID. Returns the bus for the camera.
-async fn sccb_report(i2c0: esp_hal::peripherals::I2C0<'static>) -> I2c<'static, esp_hal::Async> {
+/// Scans the camera's I2C bus and identifies the OV9281. Returns the bus and the sensor's
+/// address, `None` if no address answered with its chip ID.
+async fn sccb_report(
+    i2c0: esp_hal::peripherals::I2C0<'static>,
+) -> (I2c<'static, esp_hal::Async>, Option<Address>) {
     let mut i2c = I2c::new(
         i2c0,
         I2cConfig::default().with_frequency(Rate::from_khz(SCCB_FREQ_KHZ)),
@@ -342,8 +380,8 @@ async fn sccb_report(i2c0: esp_hal::peripherals::I2C0<'static>) -> I2c<'static, 
         }
     );
     i2c_scan(&mut i2c).await;
-    read_ov9281_id(&mut i2c).await;
-    i2c
+    let address = find_ov9281(&mut i2c).await;
+    (i2c, address)
 }
 
 /// Prints the L1 data cache and L2 cache size and line size the bootloader configured.
@@ -537,26 +575,29 @@ async fn i2c_scan(i2c: &mut I2c<'_, esp_hal::Async>) {
     info!("SCCB scan: {} device(s) at {:02x?}", n, &found[..n]);
 }
 
-async fn read_ov9281_id(i2c: &mut I2c<'_, esp_hal::Async>) {
-    for addr in OV9281_ADDRS {
-        let mut id = [0u8; 2];
-        match i2c
-            .write_read_async(addr, &OV9281_CHIP_ID_REG.to_be_bytes(), &mut id)
-            .await
-        {
+/// The first of [`OV9281_ADDRESSES`] whose chip ID is the OV9281's.
+async fn find_ov9281(i2c: &mut I2c<'static, esp_hal::Async>) -> Option<Address> {
+    for address in OV9281_ADDRESSES {
+        match Ov9281::new(&mut *i2c, address).identify().await {
             Ok(()) => {
-                let id = u16::from_be_bytes(id);
-                if id == OV9281_CHIP_ID {
-                    info!("OV9281: chip ID {id:#06x} at {addr:#04x}");
-                } else {
-                    warn!("OV9281: {addr:#04x} answered with chip ID {id:#06x}");
-                }
-                return;
+                log_found(address);
+                return Some(address);
             }
-            Err(e) => warn!("OV9281: no answer at {addr:#04x}: {e:?}"),
+            Err(e) => log_not_at(address, &e),
         }
     }
     error!("OV9281: not found");
+    None
+}
+
+#[inline(never)]
+fn log_found(address: Address) {
+    info!("OV9281: chip ID {CHIP_ID:#06x} at {:#04x}", address.bits());
+}
+
+#[inline(never)]
+fn log_not_at(address: Address, e: &camera::SensorError) {
+    warn!("OV9281: not at {:#04x}: {e}", address.bits());
 }
 
 /// Switches UART0 (the log console) from the bootloader's 115200 baud to `baud`, keeping the

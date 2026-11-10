@@ -37,7 +37,7 @@ use esp32p4_csi::{Config, CsiStrips, Strip, StripLink, StripStats};
 use log::info;
 use static_cell::{ConstStaticCell, StaticCell};
 
-use crate::ov9281::{self, Mode};
+use crate::modes::CamMode;
 use crate::soak::{Fps, THRESHOLD, take_detector};
 use crate::{flush_cache, mcycle, synth, vision};
 
@@ -113,8 +113,8 @@ pub const fn ring_strips(config: &Config) -> usize {
 
 /// The frame period of `mode` in us, 1 s / fps (8333 at 120 fps, 4762 at 210): the
 /// processing budget per frame.
-pub fn budget_us(mode: &Mode) -> u32 {
-    let fps = u32::from(mode.fps.max(1));
+pub fn budget_us(mode: &CamMode) -> u32 {
+    let fps = u32::from(mode.nominal_fps().max(1));
     (1_000_000 + fps / 2) / fps
 }
 
@@ -353,7 +353,7 @@ impl StripSoak {
     /// Sets up run `k` of `mode` (0 live, then the blob targets in order) for strips of
     /// `lines` rows, building the synthetic strip. Call it with the receiver stopped (see the
     /// module docs).
-    pub fn prepare(&mut self, mode: &Mode, k: usize, lines: u16) {
+    pub fn prepare(&mut self, mode: &CamMode, k: usize, lines: u16) {
         self.work = match k.checked_sub(1).map(|i| self.plan.blob_targets.get(i)) {
             Some(Some(&target)) => self.prepare_synthetic(mode, target, lines),
             _ => Workload::Live,
@@ -362,7 +362,7 @@ impl StripSoak {
 
     /// The prepared run on the streaming `mode`. `false` if no whole frame arrived (the
     /// caller prints the receiver state). Logs nothing: [`Self::log_last`] prints the result.
-    pub async fn run_mode(&mut self, cs: &mut CsiStrips<'_>, mode: &Mode) -> bool {
+    pub async fn run_mode(&mut self, cs: &mut CsiStrips<'_>, mode: &CamMode) -> bool {
         let work = self.work;
         let window = match work {
             Workload::Live => self.plan.live,
@@ -409,7 +409,7 @@ impl StripSoak {
 
     /// Feeds one handed-out strip to the detector (or the synthetic strip in its place).
     #[inline(never)]
-    fn strip(&mut self, s: &Strip, mode: &Mode, work: Workload) {
+    fn strip(&mut self, s: &Strip, mode: &CamMode, work: Workload) {
         let got = mcycle();
         let acc = &mut *self.acc;
         acc.held_since = Some((got, s.first_row()));
@@ -419,10 +419,11 @@ impl StripSoak {
                 acc.abandoned += 1;
             }
             let t0 = mcycle();
-            if mode.data_type == ov9281::DT_RAW10 {
-                self.det.begin_frame_raw10(mode.width, THRESHOLD_RAW10);
+            if mode.raw10() {
+                self.det
+                    .begin_frame_raw10(mode.mode.width(), THRESHOLD_RAW10);
             } else {
-                self.det.begin_frame(mode.width, THRESHOLD);
+                self.det.begin_frame(mode.mode.width(), THRESHOLD);
             }
             acc.open = Some((s.frame(), got, mcycle().wrapping_sub(t0)));
         }
@@ -468,11 +469,11 @@ impl StripSoak {
 
     /// Builds the synthetic strip of `lines` rows for `target` blobs per frame of `mode`.
     #[inline(never)]
-    fn prepare_synthetic(&mut self, mode: &Mode, target: u16, lines: u16) -> Workload {
-        let w = usize::from(mode.width);
-        let raw10 = mode.data_type == ov9281::DT_RAW10;
-        let (bands, per_frame) = band_counts(target, mode.height, lines);
-        let band_len = mode.line_bytes() as usize * BAND_ROWS;
+    fn prepare_synthetic(&mut self, mode: &CamMode, target: u16, lines: u16) -> Workload {
+        let w = usize::from(mode.mode.width());
+        let raw10 = mode.raw10();
+        let (bands, per_frame) = band_counts(target, mode.mode.height(), lines);
+        let band_len = mode.mode.bytes_per_line() as usize * BAND_ROWS;
         for j in 0..usize::from(lines) / BAND_ROWS {
             let (discs, seed) = (bands[j % BANDS], SEED.wrapping_add((j % BANDS) as u32));
             let band = &mut self.scratch[j * band_len..(j + 1) * band_len];
@@ -493,7 +494,7 @@ impl StripSoak {
     }
 
     #[inline(never)]
-    fn record(&mut self, stats: StripStats, mode: &Mode, work: Workload, timed_out: bool) {
+    fn record(&mut self, stats: StripStats, mode: &CamMode, work: Workload, timed_out: bool) {
         let Some(slot) = self.results.get_mut(self.n) else {
             return;
         };
@@ -607,7 +608,7 @@ fn frame_done(acc: &mut Acc, cycles: u32, latency: u32, done_us: u64, blobs: u32
 fn finish(
     acc: &Acc,
     stats: StripStats,
-    mode: &Mode,
+    mode: &CamMode,
     workload: Workload,
     timed_out: bool,
     mhz: u32,
@@ -726,7 +727,7 @@ impl core::fmt::Display for Fed {
 }
 
 #[inline(never)]
-fn log_workload(mode: &Mode, work: &Workload, lines: u16) {
+fn log_workload(mode: &CamMode, work: &Workload, lines: u16) {
     if let Workload::Synthetic {
         target,
         bands,
@@ -736,8 +737,8 @@ fn log_workload(mode: &Mode, work: &Workload, lines: u16) {
         info!(
             "strip soak {} synth {target}: discs per 16-row band {bands:?} (repeated over a {lines}-row strip), {per_frame} blobs per frame ({} full strips + {} rows)",
             mode.name,
-            mode.height / lines,
-            mode.height % lines
+            mode.mode.height() / lines,
+            mode.mode.height() % lines
         );
     }
 }
@@ -1126,13 +1127,13 @@ impl StripCheck {
     }
 
     /// Starts the reference of plan slot `slot` (at most [`CHECK_MODES`]) for `mode`.
-    pub fn begin_reference(&mut self, slot: usize, mode: &Mode) {
+    pub fn begin_reference(&mut self, slot: usize, mode: &CamMode) {
         if let Some(r) = self.refs.get_mut(slot) {
             *r = Some(Reference {
                 name: mode.name,
-                height: mode.height,
-                line_bytes: mode.line_bytes() as usize,
-                frame_bytes: mode.frame_bytes() as usize,
+                height: mode.mode.height(),
+                line_bytes: mode.mode.bytes_per_line() as usize,
+                frame_bytes: mode.mode.frame_bytes() as usize,
                 frames: 0,
                 identical: 0,
                 wrong_size: 0,
@@ -1357,7 +1358,7 @@ impl StripCheck {
     /// Prints the strip run of slot `slot` (for `mode`), or the stall case just run with its
     /// guard check. Call it with the receiver stopped.
     #[inline(never)]
-    pub fn log_run(&mut self, slot: usize, mode: &Mode) {
+    pub fn log_run(&mut self, slot: usize, mode: &CamMode) {
         if let Some(t) = self.stall.as_deref_mut() {
             t.finish_case(slot, mode);
             return;
@@ -2027,7 +2028,7 @@ impl StallTest {
 
     /// Checks the guard, keeps the case's result and prints it. With the receiver stopped.
     #[inline(never)]
-    fn finish_case(&mut self, slot: usize, mode: &Mode) {
+    fn finish_case(&mut self, slot: usize, mode: &CamMode) {
         let guard = self.guard.check();
         if !self.ran {
             info!(

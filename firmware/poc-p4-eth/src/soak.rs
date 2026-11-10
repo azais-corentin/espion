@@ -16,7 +16,7 @@ use esp32p4_csi::{Csi, Frame, Stats};
 use log::info;
 use static_cell::ConstStaticCell;
 
-use crate::ov9281::Mode;
+use crate::modes::CamMode;
 use crate::{flush_cache, mcycle, synth, vision};
 
 /// Foreground threshold.
@@ -192,7 +192,7 @@ impl Soak {
     }
 
     /// Live run, then one synthetic run per blob count, for the streaming `mode`.
-    pub async fn run_mode(&mut self, csi: &mut Csi<'static>, mode: &Mode) {
+    pub async fn run_mode(&mut self, csi: &mut Csi<'static>, mode: &CamMode) {
         self.run(csi, mode, Workload::Live, self.plan.live).await;
         for &blobs in self.plan.blob_counts {
             self.run(csi, mode, Workload::Synthetic(blobs), self.plan.synthetic)
@@ -200,8 +200,15 @@ impl Soak {
         }
     }
 
-    async fn run(&mut self, csi: &mut Csi<'static>, mode: &Mode, work: Workload, window: Duration) {
-        let len = usize::from(mode.width) * usize::from(mode.height);
+    async fn run(
+        &mut self,
+        csi: &mut Csi<'static>,
+        mode: &CamMode,
+        work: Workload,
+        window: Duration,
+    ) {
+        let (width, height) = (mode.mode.width(), mode.mode.height());
+        let len = usize::from(width) * usize::from(height);
         if let Workload::Synthetic(blobs) = work {
             self.prepare_synthetic(mode, blobs);
         }
@@ -221,7 +228,7 @@ impl Soak {
                     break;
                 }
             };
-            self.frame(&f, len, mode.width, work);
+            self.frame(&f, len, width, work);
             frame = Some(f);
         }
         drop(frame);
@@ -254,7 +261,7 @@ impl Soak {
 
     /// Stores the run's result and logs it.
     #[inline(never)]
-    fn record(&mut self, stats: Stats, mode: &Mode, work: Workload, timed_out: bool) {
+    fn record(&mut self, stats: Stats, mode: &CamMode, work: Workload, timed_out: bool) {
         let Some(slot) = self.results.get_mut(self.n) else {
             return;
         };
@@ -266,10 +273,13 @@ impl Soak {
     }
 
     #[inline(never)]
-    fn prepare_synthetic(&mut self, mode: &Mode, blobs: u16) {
-        let frame = &mut self.scratch[..usize::from(mode.width) * usize::from(mode.height)];
-        self.synth
-            .fill(frame, mode.width.into(), mode.height.into(), blobs, SEED);
+    fn prepare_synthetic(&mut self, mode: &CamMode, blobs: u16) {
+        let (w, h) = (
+            usize::from(mode.mode.width()),
+            usize::from(mode.mode.height()),
+        );
+        let frame = &mut self.scratch[..w * h];
+        self.synth.fill(frame, w, h, blobs, SEED);
         flush_cache(frame);
     }
 
@@ -340,7 +350,7 @@ fn account(acc: &mut Acc, s: &Sample, mhz: u32) {
 fn finish(
     acc: &Acc,
     stats: Stats,
-    mode: &Mode,
+    mode: &CamMode,
     workload: Workload,
     timed_out: bool,
     mhz: u32,
