@@ -2,6 +2,7 @@
 
 use std::{
     net::{Ipv6Addr, UdpSocket},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -13,6 +14,7 @@ use espion_proto::cam::{
 };
 use poc_viewer::{
     camera,
+    decode::Decoder,
     fake::{self, FakeCamera, FakeConfig},
     jpeg,
     net::{Client, Command, Frame, Stats},
@@ -868,4 +870,102 @@ fn chunks_that_disagree_with_their_frame_drop_it() {
     assert_eq!(s.stale_chunks, 2);
     let f = client.take_frame().unwrap();
     assert_eq!((f.number, f.data.len()), (6, 2000));
+}
+
+#[test]
+fn the_decoder_decodes_only_the_frames_taken() {
+    // 640x400 binned at 302 Hz in JPEG, a window that takes a picture every 100 ms.
+    let fake = FakeCamera::spawn(FakeConfig {
+        camera: CameraSettings {
+            rate_mhz: 302_189,
+            tolerance_mhz: 0,
+            ..binned_640(Format::Raw8, 300)
+        },
+        stream: stream_in(Encoding::Jpeg),
+        ..FakeConfig::default()
+    })
+    .unwrap();
+    let client = Arc::new(Client::connect(fake.addr(), || {}).unwrap());
+    let state = apply(&client, Command::GetState, |_| true);
+    let decoder = Decoder::spawn(client.clone(), || {}).unwrap();
+    let base = client.stats();
+    let mut taken = 0u64;
+    for _ in 0..15 {
+        thread::sleep(Duration::from_millis(100));
+        let Some(p) = decoder.take() else { continue };
+        taken += 1;
+        let f = &p.frame;
+        assert_eq!(f.encoding, Encoding::Raw8);
+        assert!(p.jpeg_len.is_some());
+        let mut raw = Vec::new();
+        fake::render(&state.camera, Encoding::Raw8, f.number, &mut raw);
+        let q = psnr(&f.data, &raw);
+        assert!(q >= 38.0, "frame {}: PSNR {q:.2} dB", f.number);
+        decoder.recycle(p);
+    }
+    let s = client.stats();
+    let d = decoder.stats();
+    let whole = s.frames_whole - base.frames_whole;
+    // One picture decoded ahead of the window at most, every other frame replaced undecoded.
+    assert!(taken >= 13, "{taken} taken");
+    assert!(
+        d.decoded <= taken + 1,
+        "{} decoded, {taken} taken",
+        d.decoded
+    );
+    assert!(whole > 300, "{whole} whole");
+    assert!(s.frames_replaced - base.frames_replaced > whole - 30);
+    assert_eq!(d.failures, 0);
+}
+
+#[test]
+fn a_frame_that_does_not_decode_is_counted_and_dropped() {
+    let cam = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+    let client = Arc::new(Client::connect(cam.local_addr().unwrap(), || {}).unwrap());
+    let decoder = Decoder::spawn(client.clone(), || {}).unwrap();
+    let to = client.local_addr();
+    let mut raw = Vec::new();
+    let c = CameraSettings {
+        width: 128,
+        height: 64,
+        ..fake::default_camera()
+    };
+    fake::render(&c, Encoding::Raw8, 3, &mut raw);
+    let mut good = Vec::new();
+    fake::encode_jpeg(&c, &raw, 90, &mut good).unwrap();
+    // A whole, valid JPEG file of another size than its frame says.
+    let half = CameraSettings { height: 32, ..c };
+    let mut bad = Vec::new();
+    fake::encode_jpeg(&half, &raw[..128 * 32], 90, &mut bad).unwrap();
+    let mut buf = [0u8; MAX_DATAGRAM];
+    for (frame, file) in [(1u32, &bad), (2, &good)] {
+        for (i, data) in file.chunks(CHUNK_MAX).enumerate() {
+            let chunk = FrameChunk {
+                frame,
+                generation: 1,
+                encoding: Encoding::Jpeg,
+                width: c.width,
+                height: c.height,
+                timestamp_us: 0,
+                frame_len: file.len() as u32,
+                offset: (i * CHUNK_MAX) as u32,
+                data,
+            };
+            cam.send_to(chunk.encode(&mut buf).unwrap(), to).unwrap();
+        }
+        // One at a time: the decoder takes each before the next arrives.
+        let want = frame;
+        let end = Instant::now() + WAIT;
+        while decoder.stats().decoded + decoder.stats().failures < u64::from(want) {
+            assert!(Instant::now() < end, "frame {frame} not decoded");
+            if let Some(p) = decoder.take() {
+                decoder.recycle(p);
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    let d = decoder.stats();
+    assert_eq!((d.decoded, d.failures), (1, 1), "{d:?}");
+    let why = d.last_failure.unwrap();
+    assert!(why.starts_with("frame 1: picture 128x32"), "{why}");
 }
