@@ -407,6 +407,10 @@ struct Measurement {
     /// First and last delivered frame: arrival time (us since `t0`) and sequence number.
     first: (u64, u32),
     last: (u64, u32),
+    /// Longest time between two consecutive deliveries (us), and sequence-number steps other
+    /// than 1 between them.
+    max_gap_us: u64,
+    seq_gaps: u32,
 }
 
 /// Counts frames for `window` and checks every frame's size.
@@ -427,6 +431,8 @@ async fn measure(csi: &mut Csi<'static>, mode: &Mode, window: Duration) {
         first_wrong: 0,
         first: (0, 0),
         last: (0, 0),
+        max_gap_us: 0,
+        seq_gaps: 0,
     };
     let mut frame: Option<Frame> = None;
     while t0.elapsed() < window {
@@ -435,6 +441,11 @@ async fn measure(csi: &mut Csi<'static>, mode: &Mode, window: Duration) {
                 let at = (t0.elapsed().as_micros(), f.seq());
                 if m.delivered == 0 {
                     m.first = at;
+                } else {
+                    m.max_gap_us = m.max_gap_us.max(at.0 - m.last.0);
+                    if at.1 != m.last.1.wrapping_add(1) {
+                        m.seq_gaps += 1;
+                    }
                 }
                 m.last = at;
                 m.delivered += 1;
@@ -750,10 +761,12 @@ async fn sccb_read(i2c: &mut Bus, reg: u16) -> Option<u8> {
         .map(|_| v[0])
 }
 
-/// Registers that decide the link and the frame timing, read back after the mode set-up.
-const READBACK: [u16; 14] = [
-    0x0100, 0x030D, 0x3662, 0x4800, 0x5E00, 0x3808, 0x3809, 0x380A, 0x380B, 0x380C, 0x380D, 0x380E,
-    0x380F, 0x3509,
+/// Registers that decide the link, the window, the frame timing and the exposure, read back
+/// after the mode set-up.
+const READBACK: [u16; 34] = [
+    0x0100, 0x030D, 0x3662, 0x4601, 0x4800, 0x5E00, 0x3500, 0x3501, 0x3502, 0x3509, 0x3800, 0x3801,
+    0x3802, 0x3803, 0x3804, 0x3805, 0x3806, 0x3807, 0x3808, 0x3809, 0x380A, 0x380B, 0x380C, 0x380D,
+    0x380E, 0x380F, 0x3810, 0x3811, 0x3812, 0x3813, 0x3814, 0x3815, 0x3820, 0x3821,
 ];
 
 async fn log_sensor_regs(i2c: &mut Bus) {
@@ -831,6 +844,32 @@ fn applied_exposure(mode: &Mode, lines: u16) -> u16 {
 #[inline(never)]
 fn log_readback(vals: &[u8; READBACK.len()]) {
     info!("camera: sensor regs {READBACK:04x?} = {vals:02x?}");
+    let reg = |r: u16| {
+        READBACK
+            .iter()
+            .position(|&x| x == r)
+            .map_or(0, |i| vals[i] as u16)
+    };
+    let pair = |r: u16| reg(r) << 8 | reg(r + 1);
+    info!(
+        "camera: sensor readback: array x {}..{} y {}..{}, output {}x{}, offset {},{}, inc {:#04x}/{:#04x}, format {:#04x}/{:#04x}, HTS {} VTS {}, exposure {} lines, gain {:#04x}",
+        pair(0x3800),
+        pair(0x3804),
+        pair(0x3802),
+        pair(0x3806),
+        pair(0x3808),
+        pair(0x380A),
+        pair(0x3810),
+        pair(0x3812),
+        reg(0x3814),
+        reg(0x3815),
+        reg(0x3820),
+        reg(0x3821),
+        pair(0x380C),
+        pair(0x380E),
+        (reg(0x3500) & 0x0F) << 12 | reg(0x3501) << 4 | reg(0x3502) >> 4,
+        reg(0x3509)
+    );
 }
 
 #[inline(never)]
@@ -873,7 +912,7 @@ fn log_measurement(csi: &Csi<'static>, mode: &Mode, m: &Measurement) {
     let predicted = mode.frame_rate_mhz() as u64;
     let ppm = (span_mhz as i64 - predicted as i64) * 1_000_000 / predicted as i64;
     info!(
-        "camera: {}: {} frames in {} ms = {counted} fps, first-to-last {} fps, predicted {} fps ({ppm:+} ppm), delivered {}, bytes/frame {} (expected {}, block items reported {}), wrong size {} (first {}), dropped {}, overwritten {}",
+        "camera: {}: {} frames in {} ms = {counted} fps, first-to-last {} fps, predicted {} fps ({ppm:+} ppm), delivered {}, bytes/frame {} (expected {}, block items reported {}), wrong size {} (first {}), dropped {}, overwritten {}, worst interval {} us, seq gaps {}",
         mode.name,
         s.frames_done,
         m.window_us / 1000,
@@ -886,7 +925,9 @@ fn log_measurement(csi: &Csi<'static>, mode: &Mode, m: &Measurement) {
         m.wrong_size,
         m.first_wrong,
         s.frames_dropped,
-        s.frames_overwritten
+        s.frames_overwritten,
+        m.max_gap_us,
+        m.seq_gaps
     );
 }
 
