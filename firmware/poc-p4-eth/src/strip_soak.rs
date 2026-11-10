@@ -18,7 +18,7 @@
 //! Nothing is logged while a run measures.
 
 use embassy_time::{Duration, Instant, with_timeout};
-use esp32p4_csi::{CsiStrips, Strip, StripLink, StripStats};
+use esp32p4_csi::{Config, CsiStrips, Strip, StripLink, StripStats};
 use log::info;
 use static_cell::ConstStaticCell;
 
@@ -29,10 +29,12 @@ use crate::{flush_cache, mcycle, synth, vision};
 /// Rows per strip. Not a divisor of any of the four mode heights (the driver needs a short
 /// last strip), and `width * LINES` is a whole number of 4096-byte bursts at 640 and 1280.
 pub const LINES: u16 = 64;
-/// Strip buffers in the ring.
-pub const STRIPS: usize = 4;
-/// Bytes of one ring buffer: a full 1280-wide strip (640-wide modes use the first half).
+/// Bytes of one 1280-wide strip, the widest.
 const STRIP_BYTES: usize = 1280 * LINES as usize;
+/// The ring's memory: 4 strips at 1280 wide, or 8 at 640 (320 KiB).
+const RING_BYTES: usize = 4 * STRIP_BYTES;
+/// Most strips in the ring (list items).
+const MAX_STRIPS: usize = 8;
 /// Rows per synthetic band.
 const BAND_ROWS: usize = 16;
 /// Bands per synthetic strip.
@@ -41,6 +43,8 @@ const BANDS: usize = LINES as usize / BAND_ROWS;
 const MAX_PER_BAND: u16 = 9;
 /// A wait ends the run if no strip arrives for this long.
 const STRIP_TIMEOUT: Duration = Duration::from_millis(500);
+/// A strip queued longer ago than this (us) is backlog, not the current frame.
+const FRESH_US: u32 = 200;
 /// How long to wait for the first whole frame before a run.
 const SYNC_TIMEOUT: Duration = Duration::from_secs(2);
 /// Synthetic band seed (band `j` uses `SEED + j`).
@@ -48,25 +52,65 @@ const SEED: u32 = 0x1234_5678;
 /// Result slots: 4 modes x (live + 3 synthetic).
 const MAX_RUNS: usize = 16;
 
-/// One ring buffer, cache-line aligned.
+/// The ring's memory, cache-line aligned.
 #[repr(C, align(64))]
-struct StripMem([u8; STRIP_BYTES]);
+struct RingMem([u8; RING_BYTES]);
 
-static RING: ConstStaticCell<[StripMem; STRIPS]> =
-    ConstStaticCell::new([const { StripMem([0; STRIP_BYTES]) }; STRIPS]);
-static LINKS: ConstStaticCell<[StripLink; STRIPS]> = ConstStaticCell::new([StripLink::NEW; STRIPS]);
+static RING: ConstStaticCell<RingMem> = ConstStaticCell::new(RingMem([0; RING_BYTES]));
+static LINKS: ConstStaticCell<[StripLink; MAX_STRIPS]> =
+    ConstStaticCell::new([StripLink::NEW; MAX_STRIPS]);
 static RESULTS: ConstStaticCell<[Option<RunResult>; MAX_RUNS]> =
     ConstStaticCell::new([None; MAX_RUNS]);
 static ACC: ConstStaticCell<Acc> = ConstStaticCell::new(Acc::NEW);
 
-/// The ring buffers and their list items for `CsiStrips::new` (internal RAM, statics). Call
-/// once.
-pub fn ring() -> (
-    [&'static mut [u8]; STRIPS],
-    &'static mut [StripLink; STRIPS],
-) {
-    let strips = RING.take().each_mut().map(|m| &mut m.0[..]);
-    (strips, LINKS.take())
+/// `N` strip buffers and their list items, as `CsiStrips::new` takes them.
+pub type RingSplit<const N: usize> = ([&'static mut [u8]; N], &'static mut [StripLink; N]);
+
+/// The ring memory and list items (internal RAM, statics), split per receiver: the driver
+/// keeps what it is given for `'static`, so the same memory is handed out again once that
+/// receiver is dropped.
+pub struct Ring {
+    mem: *mut u8,
+    links: *mut StripLink,
+}
+
+/// Strips in the ring for `config`: 8 if 8 fit (640 wide and less), else 4.
+pub const fn ring_strips(config: &Config) -> usize {
+    if MAX_STRIPS * CsiStrips::strip_bytes(config, LINES) <= RING_BYTES {
+        MAX_STRIPS
+    } else {
+        RING_BYTES / STRIP_BYTES
+    }
+}
+
+impl Ring {
+    /// Takes the statics. Call once.
+    pub fn take() -> Self {
+        Self {
+            mem: RING.take().0.as_mut_ptr(),
+            links: LINKS.take().as_mut_ptr(),
+        }
+    }
+
+    /// `N` strips sized for `config`, from the start of the ring memory, and `N` list items.
+    ///
+    /// # Safety
+    ///
+    /// No receiver built from an earlier split may still be alive (it would share the
+    /// memory with the DMA running).
+    pub unsafe fn split<const N: usize>(&mut self, config: &Config) -> RingSplit<N> {
+        let bytes = CsiStrips::strip_bytes(config, LINES);
+        assert!(N <= MAX_STRIPS && N * bytes <= RING_BYTES);
+        let mem = self.mem;
+        // SAFETY: `N` disjoint ranges inside the ring memory (checked above), which `self`
+        // owns; the caller guarantees that nothing else uses it any more.
+        let strips = core::array::from_fn(|i| unsafe {
+            core::slice::from_raw_parts_mut(mem.add(i * bytes), bytes)
+        });
+        // SAFETY: the first `N` of the `MAX_STRIPS` items, owned by `self` as above.
+        let links = unsafe { &mut *self.links.cast::<[StripLink; N]>() };
+        (strips, links)
+    }
 }
 
 /// What the strip soak runs per mode.
@@ -113,11 +157,23 @@ struct RunResult {
     latency_mean_us: u32,
     latency_max_us: u32,
     hold_max_us: u32,
+    /// First row of the strip held longest.
+    hold_max_row: u16,
+    /// Strip queued by the DMA handler until the detector has consumed it (`push_rows`, and
+    /// `finish` for the last strip), over every strip fed to the detector.
+    consumed_mean_us: u32,
+    consumed_max_us: u32,
+    /// Last strip of the frame queued until `finish` returns: centroids ready after the end
+    /// of the frame.
+    ready_min_us: u32,
+    ready_mean_us: u32,
+    ready_max_us: u32,
     blobs_min: u32,
     blobs_max: u32,
     overflow: u32,
     /// Finished frames per second, in millihertz.
     rate_mhz: u64,
+    mhz: u32,
 }
 
 /// Per-run accumulation in CPU cycles.
@@ -136,11 +192,19 @@ struct Acc {
     latency_min: u32,
     latency_max: u32,
     latency_total: u64,
-    /// When the strip now held was handed out.
-    held_since: Option<u32>,
+    /// When the strip now held was handed out, and its first row.
+    held_since: Option<(u32, u16)>,
     hold_max: u32,
-    first_finish: Option<u32>,
-    last_finish: u32,
+    hold_max_row: u16,
+    consumed_max: u32,
+    consumed_total: u64,
+    consumed_n: u32,
+    ready_min: u32,
+    ready_max: u32,
+    ready_total: u64,
+    /// First and last `finish`, in us of the 64-bit time base (`mcycle` wraps after 10.7 s).
+    first_finish: Option<u64>,
+    last_finish: u64,
     blobs_min: u32,
     blobs_max: u32,
     overflow: u32,
@@ -162,6 +226,13 @@ impl Acc {
         latency_total: 0,
         held_since: None,
         hold_max: 0,
+        hold_max_row: 0,
+        consumed_max: 0,
+        consumed_total: 0,
+        consumed_n: 0,
+        ready_min: u32::MAX,
+        ready_max: 0,
+        ready_total: 0,
         first_finish: None,
         last_finish: 0,
         blobs_min: u32::MAX,
@@ -206,7 +277,7 @@ impl StripSoak {
 
     /// Live run, then one synthetic run per blob target, for the streaming `mode`. `false` if
     /// no whole frame arrived (the caller prints the receiver state).
-    pub async fn run_mode(&mut self, cs: &mut CsiStrips<'static>, mode: &Mode) -> bool {
+    pub async fn run_mode(&mut self, cs: &mut CsiStrips<'_>, mode: &Mode) -> bool {
         if !self.run(cs, mode, Workload::Live, self.plan.live).await {
             return false;
         }
@@ -222,12 +293,12 @@ impl StripSoak {
     /// One run. `false` if no whole frame arrived before it.
     async fn run(
         &mut self,
-        cs: &mut CsiStrips<'static>,
+        cs: &mut CsiStrips<'_>,
         mode: &Mode,
         work: Workload,
         window: Duration,
     ) -> bool {
-        if !sync(cs).await {
+        if !sync(cs, self.mhz).await {
             return false;
         }
         cs.reset_stats();
@@ -255,8 +326,12 @@ impl StripSoak {
 
     /// The held strip is about to go back: its hold time ends now.
     fn giving_back(&mut self) {
-        if let Some(since) = self.acc.held_since.take() {
-            self.acc.hold_max = self.acc.hold_max.max(mcycle().wrapping_sub(since));
+        if let Some((since, row)) = self.acc.held_since.take() {
+            let held = mcycle().wrapping_sub(since);
+            if held > self.acc.hold_max {
+                self.acc.hold_max = held;
+                self.acc.hold_max_row = row;
+            }
         }
     }
 
@@ -265,7 +340,7 @@ impl StripSoak {
     fn strip(&mut self, s: &Strip, width: u16, work: Workload) {
         let got = mcycle();
         let acc = &mut *self.acc;
-        acc.held_since = Some(got);
+        acc.held_since = Some((got, s.first_row()));
         acc.strips += 1;
         if s.first_row() == 0 {
             if acc.open.is_some() {
@@ -293,8 +368,10 @@ impl StripSoak {
         };
         let t0 = mcycle();
         self.det.push_rows(src, s.first_row());
-        cycles = cycles.wrapping_add(mcycle().wrapping_sub(t0));
+        let pushed = mcycle();
+        cycles = cycles.wrapping_add(pushed.wrapping_sub(t0));
         if !s.is_last() {
+            consumed(acc, pushed.wrapping_sub(s.queued_at_cycles()));
             acc.open = Some((frame, start, cycles));
             return;
         }
@@ -302,8 +379,14 @@ impl StripSoak {
         let blobs = self.det.finish(self.out) as u32;
         let done = mcycle();
         cycles = cycles.wrapping_add(done.wrapping_sub(t0));
+        let ready = done.wrapping_sub(s.queued_at_cycles());
+        consumed(acc, ready);
+        acc.ready_min = acc.ready_min.min(ready);
+        acc.ready_max = acc.ready_max.max(ready);
+        acc.ready_total += u64::from(ready);
         acc.open = None;
-        frame_done(acc, cycles, done.wrapping_sub(start), done, blobs, self.mhz);
+        let at = Instant::now().as_micros();
+        frame_done(acc, cycles, done.wrapping_sub(start), at, blobs, self.mhz);
         acc.overflow = acc.overflow.wrapping_add(self.det.stats().overflow);
     }
 
@@ -336,7 +419,7 @@ impl StripSoak {
         *slot = Some(finish(self.acc, stats, mode, work, timed_out, self.mhz));
         self.n += 1;
         if let Some(r) = slot {
-            info!("{}", Line(r));
+            log_line(r);
         }
     }
 
@@ -347,7 +430,7 @@ impl StripSoak {
             "strip soak table (us; budget {BUDGET_US} us; PASS = no stall, overrun, truncated or skipped frame, no errors, max processing < budget):"
         );
         info!(
-            "| mode | run | blobs/frame fed | frames complete | truncated | skipped | strips delivered | discarded | stalls | overruns | errors | proc min | mean | max | > budget | latency min | mean | max | hold max | fps | blobs | overflow | verdict |"
+            "| mode | run | blobs/frame fed | frames complete | truncated | skipped | strips delivered | discarded | stalls | overruns | errors | proc min | mean | max | > budget | latency min | mean | max | hold max (row) | queued->consumed mean/max | frame end->centroids min/mean/max | ISR mean/max | invalidate mean/max | fps | blobs | overflow | verdict |"
         );
         for r in self.results.iter().flatten() {
             info!("{}", Row(r));
@@ -357,13 +440,20 @@ impl StripSoak {
 }
 
 /// Waits for the end of a whole frame, so a run starts at row 0 of the next one (and the
-/// driver's start-up sync frame and any frame damaged between runs stay outside the run).
-async fn sync(cs: &mut CsiStrips<'static>) -> bool {
+/// driver's start-up frames and any frame damaged between runs stay outside the run). The
+/// last strip must have been queued less than [`FRESH_US`] ago: strips queued while the
+/// previous run's results were logged (a ring of 8 holds a whole 640-wide frame) are drained
+/// first, so the run does not start on a backlog.
+async fn sync(cs: &mut CsiStrips<'_>, mhz: u32) -> bool {
     let end = Instant::now() + SYNC_TIMEOUT;
     let mut strip = None;
     while Instant::now() < end {
         match with_timeout(STRIP_TIMEOUT, cs.wait_strip(strip.take())).await {
-            Ok(Ok(s)) if s.is_last() => return true,
+            Ok(Ok(s))
+                if s.is_last() && mcycle().wrapping_sub(s.queued_at_cycles()) < FRESH_US * mhz =>
+            {
+                return true;
+            }
             Ok(Ok(s)) => strip = Some(s),
             _ => return false,
         }
@@ -398,7 +488,13 @@ fn band_counts(target: u16, height: u16) -> ([u16; BANDS], u32) {
     (best.0, best.1)
 }
 
-fn frame_done(acc: &mut Acc, cycles: u32, latency: u32, done: u32, blobs: u32, mhz: u32) {
+fn consumed(acc: &mut Acc, cycles: u32) {
+    acc.consumed_max = acc.consumed_max.max(cycles);
+    acc.consumed_total += u64::from(cycles);
+    acc.consumed_n += 1;
+}
+
+fn frame_done(acc: &mut Acc, cycles: u32, latency: u32, done_us: u64, blobs: u32, mhz: u32) {
     acc.frames += 1;
     acc.proc_min = acc.proc_min.min(cycles);
     acc.proc_max = acc.proc_max.max(cycles);
@@ -410,9 +506,9 @@ fn frame_done(acc: &mut Acc, cycles: u32, latency: u32, done: u32, blobs: u32, m
     acc.latency_max = acc.latency_max.max(latency);
     acc.latency_total += u64::from(latency);
     if acc.first_finish.is_none() {
-        acc.first_finish = Some(done);
+        acc.first_finish = Some(done_us);
     }
-    acc.last_finish = done;
+    acc.last_finish = done_us;
     acc.blobs_min = acc.blobs_min.min(blobs);
     acc.blobs_max = acc.blobs_max.max(blobs);
 }
@@ -428,9 +524,7 @@ fn finish(
 ) -> RunResult {
     let frames = u64::from(acc.frames.max(1));
     let to_us = |c: u32| if c == u32::MAX { 0 } else { c / mhz };
-    let span = acc
-        .first_finish
-        .map_or(0, |first| acc.last_finish.wrapping_sub(first));
+    let span = acc.first_finish.map_or(0, |first| acc.last_finish - first);
     RunResult {
         mode: mode.name,
         workload,
@@ -448,11 +542,43 @@ fn finish(
         latency_mean_us: (acc.latency_total / frames) as u32 / mhz,
         latency_max_us: acc.latency_max / mhz,
         hold_max_us: acc.hold_max / mhz,
+        hold_max_row: acc.hold_max_row,
+        consumed_mean_us: (acc.consumed_total / u64::from(acc.consumed_n.max(1))) as u32 / mhz,
+        consumed_max_us: acc.consumed_max / mhz,
+        ready_min_us: to_us(acc.ready_min),
+        ready_mean_us: (acc.ready_total / frames) as u32 / mhz,
+        ready_max_us: acc.ready_max / mhz,
         blobs_min: if acc.frames == 0 { 0 } else { acc.blobs_min },
         blobs_max: acc.blobs_max,
         overflow: acc.overflow,
-        rate_mhz: u64::from(acc.frames.saturating_sub(1)) * u64::from(mhz) * 1_000_000_000
-            / u64::from(span).max(1),
+        rate_mhz: u64::from(acc.frames.saturating_sub(1)) * 1_000_000_000 / span.max(1),
+        mhz,
+    }
+}
+
+/// The driver's DMA handler and invalidation times: mean and max in us (one decimal).
+struct DriverTimes<'a>(&'a RunResult);
+
+impl core::fmt::Display for DriverTimes<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let s = &self.0.stats;
+        let tenths = |c: u64| c * 10 / u64::from(self.0.mhz);
+        let isr = tenths(s.isr_cycles_total / u64::from(s.isr_runs.max(1)));
+        let isr_max = tenths(u64::from(s.isr_cycles_max));
+        let inv = tenths(s.invalidate_cycles_total / u64::from(s.strips_delivered.max(1)));
+        let inv_max = tenths(u64::from(s.invalidate_cycles_max));
+        write!(
+            f,
+            "{}.{}/{}.{} | {}.{}/{}.{}",
+            isr / 10,
+            isr % 10,
+            isr_max / 10,
+            isr_max % 10,
+            inv / 10,
+            inv % 10,
+            inv_max / 10,
+            inv_max % 10
+        )
     }
 }
 
@@ -524,10 +650,23 @@ fn log_workload(mode: &Mode, work: &Workload) {
     }
 }
 
-/// One run as a table row.
+#[inline(never)]
+fn log_line(r: &RunResult) {
+    info!("{}", Line(r));
+}
+
+/// One run as a table row (formatted in two parts to keep each `fmt` frame small).
 struct Row<'a>(&'a RunResult);
 
 impl core::fmt::Display for Row<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}{}", RowCounts(self.0), RowTimes(self.0))
+    }
+}
+
+struct RowCounts<'a>(&'a RunResult);
+
+impl core::fmt::Display for RowCounts<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let r = self.0;
         let s = &r.stats;
@@ -553,16 +692,30 @@ impl core::fmt::Display for Row<'_> {
             r.proc_mean_us,
             r.proc_max_us,
             r.over_budget
-        )?;
+        )
+    }
+}
+
+struct RowTimes<'a>(&'a RunResult);
+
+impl core::fmt::Display for RowTimes<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let r = self.0;
         write!(
             f,
-            "| {} | {} | {} | {} | {} ",
+            "| {} | {} | {} | {} ({}) | {}/{} | {}/{}/{} ",
             r.latency_min_us,
             r.latency_mean_us,
             r.latency_max_us,
             r.hold_max_us,
-            Fps(r.rate_mhz)
+            r.hold_max_row,
+            r.consumed_mean_us,
+            r.consumed_max_us,
+            r.ready_min_us,
+            r.ready_mean_us,
+            r.ready_max_us
         )?;
+        write!(f, "| {} | {} ", DriverTimes(r), Fps(r.rate_mhz))?;
         write!(
             f,
             "| {}..{} | {} | {} |",
@@ -650,8 +803,20 @@ impl core::fmt::Display for Times<'_> {
         )?;
         write!(
             f,
-            "hold max {} us, {} fps, blobs {}..{} (fed {}), overflow {}, last block items {}: {}",
+            "hold max {} us (row {}), queued->consumed mean/max {}/{} us, frame end->centroids min/mean/max {}/{}/{} us, ",
             r.hold_max_us,
+            r.hold_max_row,
+            r.consumed_mean_us,
+            r.consumed_max_us,
+            r.ready_min_us,
+            r.ready_mean_us,
+            r.ready_max_us
+        )?;
+        write!(
+            f,
+            "ISR runs {} mean/max | invalidate mean/max (us) {}, {} fps, blobs {}..{} (fed {}), overflow {}, last block items {}: {}",
+            r.stats.isr_runs,
+            DriverTimes(r),
             Fps(r.rate_mhz),
             r.blobs_min,
             r.blobs_max,

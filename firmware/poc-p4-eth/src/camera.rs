@@ -573,15 +573,15 @@ fn byte_sum(buf: &[u8]) -> u32 {
 
 // ── Strip soak ──────────────────────────────────────────────────────────────────────────
 
-static STRIP_RX: StaticCell<CsiStrips<'static>> = StaticCell::new();
 static STRIP_SOAK: StaticCell<strip_soak::StripSoak> = StaticCell::new();
 
-/// The strip path (does nothing unless `ON`): one `CsiStrips` for every mode of the plan
-/// (the whole-frame `Csi` is never created, both need the DMA channel and the driver allows
-/// one receiver at a time).
+/// The strip path (does nothing unless `ON`). The whole-frame `Csi` is never created: both
+/// need the DMA channel and the driver allows one receiver at a time. Consecutive modes of
+/// the same width share one `CsiStrips` on the ring split for that width (4 strips at 1280
+/// wide, 8 at 640); at a change of width the receiver is dropped and the ring split again.
 async fn strip_modes<const ON: bool>(
     i2c: &mut Bus,
-    vdma: VDMA_CH0<'static>,
+    mut vdma: VDMA_CH0<'static>,
     internal: &'static mut [u8],
     plan: &Plan,
     strips: strip_soak::Plan,
@@ -596,18 +596,51 @@ async fn strip_modes<const ON: bool>(
         return;
     };
     let soak = STRIP_SOAK.init(soak);
-    let Some(cs) = make_strip_receiver(vdma, &MODES[plan.modes[0]]) else {
+    let mut ring = strip_soak::Ring::take();
+    let mut rest = plan.modes;
+    while let Some(&first) = rest.first() {
+        let width = MODES[first].width;
+        let n = rest
+            .iter()
+            .take_while(|&&i| MODES[i].width == width)
+            .count();
+        let (group, next) = rest.split_at(n);
+        rest = next;
+        let config = csi_config(&MODES[first]);
+        // SAFETY (both arms): the receiver of the previous group, which held the ring, was
+        // dropped at the end of its `strip_group`.
+        if strip_soak::ring_strips(&config) == 8 {
+            let ring = unsafe { ring.split::<8>(&config) };
+            strip_group(i2c, vdma.reborrow(), ring, soak, group, plan).await;
+        } else {
+            let ring = unsafe { ring.split::<4>(&config) };
+            strip_group(i2c, vdma.reborrow(), ring, soak, group, plan).await;
+        }
+    }
+    soak.log_table();
+}
+
+/// The strip soak over `group` (modes of one width) on one receiver built on `ring`.
+async fn strip_group<const N: usize>(
+    i2c: &mut Bus,
+    vdma: VDMA_CH0<'_>,
+    ring: strip_soak::RingSplit<N>,
+    soak: &mut strip_soak::StripSoak,
+    group: &[usize],
+    plan: &Plan,
+) {
+    let Some(mut cs) = make_strip_receiver(vdma, ring, &MODES[group[0]]) else {
         return;
     };
-    for &index in plan.modes {
+    for &index in group {
         let mode = &MODES[index];
         if mode.data_type != ov9281::DT_RAW8 {
             note("strip soak skipped: RAW8 modes only");
             continue;
         }
-        if start_strip_mode(i2c, cs, mode, plan).await && !soak.run_mode(cs, mode).await {
+        if start_strip_mode(i2c, &mut cs, mode, plan).await && !soak.run_mode(&mut cs, mode).await {
             note("no whole frame of strips");
-            log_strip_state(cs);
+            log_strip_state(&cs);
         }
         if let Err(e) = sccb_write(i2c, ov9281::STREAM_OFF).await {
             fail("stream off", &e);
@@ -616,20 +649,19 @@ async fn strip_modes<const ON: bool>(
         Timer::after_millis(20).await;
         cs.stop();
     }
-    soak.log_table();
 }
 
-/// Creates the strip receiver on the ring of `strip_soak` (internal RAM).
+/// Creates the strip receiver on `ring` (internal RAM).
 #[inline(never)]
-fn make_strip_receiver(
-    vdma: VDMA_CH0<'static>,
+fn make_strip_receiver<'d, const N: usize>(
+    vdma: VDMA_CH0<'d>,
+    (strips, links): strip_soak::RingSplit<N>,
     first: &Mode,
-) -> Option<&'static mut CsiStrips<'static>> {
-    let (strips, links) = strip_soak::ring();
+) -> Option<CsiStrips<'d>> {
     match CsiStrips::new(vdma, strips, links, csi_config(first), strip_soak::LINES) {
         Ok(c) => {
-            log_strip_ready(&c);
-            Some(STRIP_RX.init(c))
+            log_strip_ready(&c, N);
+            Some(c)
         }
         Err(e) => {
             fail("CsiStrips::new", &e);
@@ -639,12 +671,7 @@ fn make_strip_receiver(
 }
 
 /// Sensor set-up, strip receiver start and stream-on. `false` if something failed.
-async fn start_strip_mode(
-    i2c: &mut Bus,
-    cs: &mut CsiStrips<'static>,
-    mode: &Mode,
-    plan: &Plan,
-) -> bool {
+async fn start_strip_mode(i2c: &mut Bus, cs: &mut CsiStrips<'_>, mode: &Mode, plan: &Plan) -> bool {
     log_mode(mode, plan);
     if let Err(e) = sensor_setup(i2c, mode, plan).await {
         fail("SCCB write", &e);
@@ -668,18 +695,18 @@ async fn start_strip_mode(
 }
 
 #[inline(never)]
-fn log_strip_ready(cs: &CsiStrips<'static>) {
+fn log_strip_ready(cs: &CsiStrips<'_>, strips: usize) {
     info!(
-        "camera: strip receiver ready: {} strips of {} lines in internal RAM, chip rev {}",
-        strip_soak::STRIPS,
+        "camera: strip receiver ready: {strips} strips of {} lines ({} B each) in internal RAM, chip rev {}",
         cs.strip_lines(),
+        CsiStrips::strip_bytes(cs.config(), cs.strip_lines()),
         cs.chip_revision()
     );
 }
 
 /// The strip receiver's counters and ring snapshot (bring-up checklist in `poc-csi.md`).
 #[inline(never)]
-fn log_strip_state(cs: &CsiStrips<'static>) {
+fn log_strip_state(cs: &CsiStrips<'_>) {
     info!("camera: strip stats {:?}", cs.stats());
     info!("camera: strip debug {:?}", cs.debug_status());
 }
