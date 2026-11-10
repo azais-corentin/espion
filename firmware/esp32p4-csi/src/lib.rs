@@ -1012,7 +1012,6 @@ fn init_dma_channel(ch: u8, multblk_type: u8, signals: u32) {
 fn configure_link(cfg: &Config, hsfreq: u8, chip_rev: u16, dmablk_bursts: u16) -> u8 {
     let h = host();
     let b = bridge();
-    let i = isp();
 
     // Bridge + ISP back to reset values (also clears stale FIFO content after a stop).
     // `mipi_csi_brg_claim`: module clock on, reset pulse, CSI_ENABLECLK.
@@ -1061,7 +1060,15 @@ fn configure_link(cfg: &Config, hsfreq: u8, chip_rev: u16, dmablk_bursts: u16) -
     // Release the host controller.
     h.csi2_resetn().write(|w| unsafe { w.bits(1) });
 
-    // ── ISP in bypass (IDF `esp_isp_new_processor` with `bypass_isp`) ──
+    configure_isp(cfg);
+    configure_bridge(cfg, chip_rev, dmablk_bursts);
+    (rb >> 1) & 0x3F
+}
+
+/// The ISP part of [`configure_link`]: ISP in bypass (IDF `esp_isp_new_processor` with
+/// `bypass_isp`), input from the CSI host.
+fn configure_isp(cfg: &Config) {
+    let i = isp();
     // `isp_ll_init`: CNTL = 0 (ISP_EN = 0 is the bypass), clear and mask interrupts.
     i.cntl().write(|w| unsafe { w.bits(0) });
     i.int_clr().write(|w| unsafe { w.bits(u32::MAX) });
@@ -1082,8 +1089,13 @@ fn configure_link(cfg: &Config, hsfreq: u8, chip_rev: u16, dmablk_bursts: u16) -
     // ISP_SHADOW_MODE_UPDATE_ONLY_NEXT_VSYNC.
     i.shadow_reg_ctrl()
         .modify(|_, w| unsafe { w.shadow_update_sel().bits(2) });
+}
 
-    // ── CSI bridge (TRM 38.7.2; IDF `mipi_csi_hal_init` + `esp_cam_new_csi_ctlr`) ──
+/// The CSI bridge part of [`configure_link`] (TRM 38.7.2; IDF `mipi_csi_hal_init` +
+/// `esp_cam_new_csi_ctlr`): geometry, buffer threshold, byte order, DMA burst and block size,
+/// data type filter, colour mode, error interrupts. Leaves the bridge disabled.
+fn configure_bridge(cfg: &Config, chip_rev: u16, dmablk_bursts: u16) {
+    let b = bridge();
     b.frame_cfg().modify(|_, w| unsafe {
         // IDF writes pixels (`h_res`) here; TRM 38.7.2 says 64-bit units. With
         // VADR_NUM_CHECK off (reset value) the bridge does not use these for flow control.
@@ -1111,7 +1123,26 @@ fn configure_link(cfg: &Config, hsfreq: u8, chip_rev: u16, dmablk_bursts: u16) -
     }
     b.int_clr().write(|w| unsafe { w.bits(u32::MAX) });
     b.int_ena().write(|w| unsafe { w.bits(BRIDGE_ERR_MASK) });
-    (rb >> 1) & 0x3F
+}
+
+/// Resets the ISP and the CSI bridge (the reset pulses of [`configure_link`]), programs both
+/// again for `cfg` and enables the bridge, with the CSI host and the D-PHY left running: the
+/// stall recovery of [`strips`] (see "Stalls" there). Measured: the bridge then cuts blocks
+/// as after `start`, beginning with the next frame. Call it only while the DMA channel waits
+/// between blocks (halted on an item, or stopped): the bridge is the DMA's flow controller.
+/// Call it inside a critical section: `HP_RST_EN0` holds other modules' resets too.
+fn restart_isp_bridge(cfg: &Config, chip_rev: u16, dmablk_bursts: u16) {
+    let c = clkrst();
+    c.hp_rst_en0().modify(|_, w| w.rst_en_csi_brg().set_bit());
+    c.hp_rst_en0().modify(|_, w| w.rst_en_csi_brg().clear_bit());
+    c.hp_rst_en0().modify(|_, w| w.rst_en_isp().set_bit());
+    c.hp_rst_en0().modify(|_, w| w.rst_en_isp().clear_bit());
+    bridge()
+        .host_ctrl()
+        .modify(|_, w| w.csi_enableclk().set_bit());
+    configure_isp(cfg);
+    configure_bridge(cfg, chip_rev, dmablk_bursts);
+    bridge().csi_en().modify(|_, w| w.csi_brig_en().set_bit());
 }
 
 /// Disables DMA channel `ch` (TRM 7.5.7.2), aborting it if it does not stop, and clears its

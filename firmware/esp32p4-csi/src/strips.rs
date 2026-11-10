@@ -14,10 +14,9 @@
 //!   Handing a strip to the application leaves the item invalid. Returning the strip (drop it
 //!   or pass it to the next [`CsiStrips::wait_strip`]) sets `VALID` again. If the DMA reaches
 //!   an item that is still invalid, it halts with `SHADOWREG_OR_LLI_INVALID_ERR` until the
-//!   driver writes `BLK_TFR_RESUMEREQ` (TRM 7.5.4.2). Measured on the P4: during the halt the
-//!   bridge discards the rest of the frame (`CSI_BRIG_DISCARD`), flushes what it buffered as one
-//!   short block at resume, and the next frame's blocks come out shifted by a few hundred
-//!   items. The driver counts a stall and resynchronises as below.
+//!   driver writes `BLK_TFR_RESUMEREQ` (TRM 7.5.4.2). Before that write the driver resets and
+//!   reprograms the ISP and the bridge (see "Stalls"), counts a stall and resynchronises as
+//!   below.
 //!
 //! # Frame boundaries
 //!
@@ -39,10 +38,10 @@
 //! After damage the driver **discards every block until the next short one**, then keeps
 //! discarding for one **probation frame**: a whole frame whose every block has the size its
 //! position predicts and whose short last block arrives exactly where it should. Delivery
-//! starts with the block after that. One short block alone is not enough: after a stall the
-//! bridge emits a short block mid-frame and the following frame's blocks are shifted against
-//! its rows (measured), and only a frame that checks out from end to end proves the alignment.
-//! A failed check restarts the search.
+//! starts with the block after that. One short block alone is not enough: a frame end found
+//! after damage says nothing about whether the next frame's blocks line up with its rows, and
+//! only a frame that checks out from end to end proves the alignment. A failed check restarts
+//! the search.
 //!
 //! So a strip handed out always carries rows that belong to its frame number. Cost: a damaged
 //! frame loses its remaining strips plus one to three more frames.
@@ -54,21 +53,34 @@
 //! `first_row() == 0` starts a frame; if one arrives before the previous frame's last strip,
 //! that previous frame was truncated ([`StripStats::frames_truncated`]).
 //!
-//! # Known fault: a long stall in RAW10
+//! # Stalls
 //!
-//! Open, measured on the board (`poc-p4-eth` strip soak, 2026-11-10). In RAW10 a DMA halt of
-//! about 30 ms (the DMA reaching a strip that is still held: the ring filled while the
-//! firmware logged, or a deliberate 30 ms busy wait after stream-on) corrupts memory and
-//! crashes, with rings of 3 and of 2 strips: load access faults in the DMA interrupt handler
-//! (the list-item pointer held a value that looks like image data) and in the executor's
-//! waker. RAW8 with rings of 3 and 4 recovers from the same halt, losing a few frames as
-//! described above. Ruled out as fixes: restarting the channel instead of
-//! `BLK_TFR_RESUMEREQ`, and turning the bridge off for the length of the halt. A sentinel area
-//! right after the ring was never written, so how the memory is hit is not known.
+//! The bridge, not the DMA, is the flow controller (`TT_FC` = 4, `CSI_DMA_FLOW_CONTROLLER`;
+//! TRM 38.7.2, 7.5.5): it alone decides where a block ends, and the item's `BLOCK_TS` does not
+//! bound it (TRM 7.5.1: "the flow controller controls the block length"). While the DMA halts
+//! on an invalid item the bridge fills up and discards the rest of the frame
+//! (`CSI_BRIG_DISCARD`). Measured on the board with the DMA simply resumed afterwards (as the
+//! driver did before 2026-11-10): the bridge flushed what it had buffered (961 items) as one
+//! block, and its block cuts were then off for the following blocks. In RAW8 the next block
+//! was 448 items short and the frame end 449 items late, which the probation frame absorbs.
+//! In RAW10 (1280x800, 2 lanes, a strip returned while the bridge was empty) the bridge never
+//! ended the next block at all: the DMA wrote on from the strip's start through the rest of
+//! the ring, the statics and the stack up to the end of L2MEM (365248 bytes, `DST_DEC_ERR` at
+//! `0x4FFC_0100`) and the firmware froze or faulted. No list item can stop that: the DMA
+//! fetches the next one only when the bridge ends the block.
 //!
-//! Until this is solved, a RAW10 consumer must never let the DMA reach a held strip: give
-//! every strip back within the time the ring absorbs, and stop the sensor stream and the
-//! receiver before any pause (logging, set-up) longer than that.
+//! So the driver never resumes a halted channel on the old bridge state. Every resume (and
+//! every restart after a DMA error) first pulses the ISP and bridge resets, programs both as
+//! [`CsiStrips::start`] did and enables the bridge again; the CSI host and the D-PHY keep
+//! running. This happens only while the channel waits between blocks, so no bridge transfer
+//! is in flight. Measured: after the restart the first block is a full strip at the start of
+//! the next frame and every block has its normal size; halts of 1 to 100 ms, and 8 or 20 halts
+//! in a row, recover in RAW8 and RAW10 with every strip's rows correct, at most one frame
+//! skipped and one truncated per halt, the next whole frame 25 to 33 ms (120 fps modes) or 14
+//! to 19 ms (640x400 at 210 fps) after the strip is returned, and guard areas after the ring
+//! and around the list items unchanged (`poc-p4-eth` strip stall test, 2026-11-10). A bridge
+//! discard while the DMA runs (the DMA starved, not halted) does not pass through this path;
+//! it was not seen in any soak.
 //!
 //! # Interrupt handler
 //!
@@ -81,7 +93,8 @@
 //! - 4 register accesses (interrupt status read and clear, bridge raw status);
 //! - per finished item (at most the ring size, [`MAX_STRIPS`] = 16): 2 non-cacheable reads,
 //!   and for a discarded block 3 non-cacheable writes;
-//! - at most 3 register writes to resume a halted channel;
+//! - to resume a halted channel: about 40 register accesses for the ISP and bridge restart,
+//!   then at most 3 DMA register writes (only after a stall);
 //! - if a `BLOCK_TFR_DONE` interrupt finds no written-back item, up to 64 more reads of one
 //!   status word (`WRITEBACK_SPINS`) before giving up.
 //!
@@ -179,7 +192,7 @@ use crate::{
     BRIDGE_ERR_MASK, BURST_BYTES, CSI_BRG_MEM_BASE, CTL0, CTL1, Config, DMA_ERR_MASK, DMA_TFR_DONE,
     DebugStatus, Error, PhyStatus, TAKEN, bridge, cache, channel_enable, channel_enabled,
     chip_revision, configure_link, dma, dphy, enable_clocks, halt_channel, host, init_dma_channel,
-    read_host_errors, reset_link, snapshot,
+    read_host_errors, reset_link, restart_isp_bridge, snapshot,
 };
 
 /// Most strip buffers in the ring.
@@ -444,6 +457,11 @@ struct State {
     partial: bool,
     halted: bool,
     stats: StripStats,
+    /// What [`restart_isp_bridge`] needs to program the ISP and the bridge again (set by
+    /// `start`): geometry and data type, chip revision, bridge bursts per block.
+    config: Config,
+    chip_rev: u16,
+    bursts: u16,
 }
 
 impl State {
@@ -473,6 +491,9 @@ impl State {
             partial: false,
             halted: false,
             stats: StripStats::ZERO,
+            config: Config::new(0, 0, 0),
+            chip_rev: 0,
+            bursts: 0,
         }
     }
 
@@ -673,8 +694,10 @@ impl State {
         Some(slot)
     }
 
-    /// Restarts a halted channel once the item it waits for is valid: `BLK_TFR_RESUMEREQ`
-    /// after a stall (TRM 7.5.4.2), or `LLP0` + enable after the channel stopped on an error.
+    /// Restarts a halted channel once the item it waits for is valid: the ISP and the bridge
+    /// reset and programmed again ([`restart_isp_bridge`], see "Stalls" in the module docs),
+    /// then `BLK_TFR_RESUMEREQ` after a stall (TRM 7.5.4.2), or `LLP0` + enable after the
+    /// channel stopped on an error.
     fn kick(&mut self) {
         let slot = self.dma_next;
         if !self.halted || !self.running || self.armed & (1 << slot) == 0 {
@@ -682,6 +705,8 @@ impl State {
         }
         let ch = self.channel;
         let c = dma().ch(ch as usize);
+        // The channel waits between blocks, so no bridge transfer is in flight.
+        restart_isp_bridge(&self.config, self.chip_rev, self.bursts);
         if channel_enabled(ch) {
             c.blk_tfr_resumereq0().write(|w| unsafe { w.bits(1) });
         } else {
@@ -1068,6 +1093,9 @@ impl<'d> CsiStrips<'d> {
             s.damaged = false;
             s.halted = false;
             s.running = true;
+            s.config = cfg;
+            s.chip_rev = self.chip_rev;
+            s.bursts = bursts;
             let c = dma().ch(ch as usize);
             c.intclear0().write(|w| unsafe { w.bits(u32::MAX) });
             c.llp0()
