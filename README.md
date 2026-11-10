@@ -29,14 +29,17 @@ changes on `main`).
 
 | Path | Content |
 |---|---|
-| `crates/espion-proto/` | no_std UDP wire format shared by firmware and host |
+| `crates/espion-proto/` | no_std UDP wire format shared by firmware and host; the camera stream (raw and JPEG frames, remote settings) is implemented |
 | `firmware/cam-p4/` | ESP32-P4: camera, blob detection, XVS trigger, LED gating, Ethernet/UDP, PTP sync |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 receiver driver for the P4 (esp-hal lacks one) |
+| `firmware/esp32p4-jpeg/` | no_std hardware JPEG encoder driver for the P4, greyscale (esp-hal lacks one) |
+| `firmware/poc-p4-stream/` | Proof of concept on the Waveshare ESP32-P4-ETH: streams the OV9281 to the host over Ethernet (raw or JPEG) and takes its settings from there |
 | `firmware/ov9281/` | no_std OV9281 sensor driver: computes a mode (format, size, crop/binning, frame rate) and drives the sensor over SCCB |
 | `host/espion-server/` | UDP receive + triangulation (CLI) |
 | `host/espion-viewer/` | egui live view |
 | `host/espion-calib/` | Intrinsics + extrinsics calibration |
 | `host/espion-sync/` | Time-sync coordinator |
+| `host/poc-viewer/` | Live view and control of the `poc-p4-stream` camera, with a fake camera for working without the board |
 | `hardware/` | KiCad project (`espion-cam/`) and local libraries with their 3D models (`lib/`) |
 | `docs/` | [architecture](docs/architecture.md), [protocol](docs/protocol.md), [timing](docs/timing.md), [board design](docs/hardware/README.md) |
 
@@ -67,6 +70,8 @@ cargo run -p espion-server   # TODO: stub, does nothing yet
 cargo run -p espion-viewer   # TODO: stub
 cargo run -p espion-calib    # TODO: stub
 cargo run -p espion-sync     # TODO: stub
+cargo run -p poc-viewer --release             # the ESP32-P4-ETH camera on eth0
+cargo run -p poc-viewer --release -- --fake   # the same against a fake camera, no board
 ```
 
 Firmware (own target, runner and lockfile; run from its directory):

@@ -93,7 +93,8 @@ no heap on the P4: every buffer is static.
 |---|---|---|
 | `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo (ETM capture), Ethernet and embassy-net (DHCP, UDP), PTP (statime), the LED gate, and the accelerometer (bump detection, gravity) on a second I2C bus |
 | `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, written in esp-hal style. Used by `cam-p4` |
-| `firmware/esp32p4-jpeg` | ESP32-P4 (no_std library) | Hardware JPEG encoder driver (greyscale, baseline) and the 2D-DMA registers it needs, on the `esp32p4` PAC, in esp-hal style. Tested and measured in `poc-p4-eth` (`JPEG_PLAN`); for streaming frames to the host |
+| `firmware/esp32p4-jpeg` | ESP32-P4 (no_std library) | Hardware JPEG encoder driver (greyscale, baseline) and the 2D-DMA registers it needs, on the `esp32p4` PAC, in esp-hal style. Tested and measured in `poc-p4-eth` (`JPEG_PLAN`); streams the camera's frames in `poc-p4-stream` |
+| `firmware/poc-p4-stream` | ESP32-P4 on the Waveshare ESP32-P4-ETH, `riscv32imafc-unknown-none-elf` | Throwaway proof of concept, not part of the product: Ethernet (esp-hal EMAC, IP101GRI) with IPv6 link-local only, and the `espion-proto` camera stream service on UDP 5009: the OV9281 through `ov9281` and `esp32p4-csi`, frames sent raw or encoded by `esp32p4-jpeg`, every setting taken from the host. Viewed with `host/poc-viewer` |
 | `firmware/ov9281` | no_std library, host-testable | OV9281 sensor driver: the mode solver (format, size, crop or binning, frame rate → clock, HTS, VTS and registers, refusing what the measured limits do not allow) and SCCB control over `embedded-hal-async` I2C. For `poc-p4-eth` and `cam-p4` |
 
 `cam-p4` uses `esp-hal` and `esp-rtos` (embassy executor). The XVS edge schedule reuses the
@@ -116,6 +117,7 @@ RMT technique from the private
 | `espion-server` | CLI. Receives UDP packets, groups centroids by frame number, triangulates with the current calibration |
 | `espion-viewer` | egui live view: blobs per camera, 3D markers, sync health |
 | `espion-calib` | Lens model per camera (intrinsics) and rig extrinsics |
+| `poc-viewer` | egui live view and control of the `poc-p4-stream` camera stream: every sensor and stream setting, JPEG frames decoded off the UI thread (`zune-jpeg`) and shown through wgpu, statistics; a fake camera that speaks the protocol (`jpeg-encoder`); the board test. Proof of concept, not part of the product |
 | `espion-sync` | Watches and coordinates time sync. The network clock is PTP, and the boards elect the grandmaster among themselves. espion-sync sets the frame epoch `T0`, maps network time to host time, and reports the grandmaster and each board's sync health. It never becomes grandmaster |
 
 `crates/espion-proto` is the single source of truth for the UDP wire format
@@ -133,11 +135,16 @@ Checked on 2026-10-28. The firmware crates commit their `Cargo.lock`.
 | esp-bootloader-esp-idf | 0.6.0 | App descriptor for the ESP-IDF second-stage bootloader |
 | esp-println / esp-backtrace | 0.18.0 / 0.20.0 | |
 | esp32p4 (PAC) | 0.3.x | Same major as esp-hal 1.2.2; used by the CSI driver, ETM and the EMAC PTP clock |
-| embassy-executor / embassy-time / embassy-net | 0.10.0 / 0.5.1 / 0.9.1 | embassy-net with `dhcpv4`, `udp`, `multicast`, `medium-ethernet` |
+| embassy-executor / embassy-time / embassy-net | 0.10.0 / 0.5.1 / 0.9.1 | embassy-net with `dhcpv4`, `udp`, `multicast`, `medium-ethernet` (`cam-p4`); `poc-p4-stream`: `proto-ipv6`, `udp`, `medium-ethernet`, `auto-icmp-echo-reply` |
+| embassy-sync / embassy-futures / embassy-net-driver | 0.8.0 / 0.1.2 / 0.2.0 | `poc-p4-stream`; the versions esp-hal 1.2.2 and embassy-net 0.9.1 use |
+| static_cell | 2.1.1 | Static task and buffer storage (`poc-p4-stream`) |
 | statime | 0.4.0 | `default-features = false`: no_std, no `alloc`. Builds for `riscv32imafc-unknown-none-elf` |
 | serde / postcard | 1.0.229 / 1.1.3 | `default-features = false` on firmware |
 | espflash / probe-rs | 4.6.0 / 0.32.0 | From nixpkgs (flake.lock) |
 | embedded-hal-async | 1.0.0 | I2C and delay traits of `firmware/ov9281`; the version esp-hal 1.2.2 implements |
+| eframe (egui, wgpu) | 0.37.0 | Host GUI (`poc-viewer`); the `egui_mcp` version in `flake.nix` must match |
+| zune-jpeg | 0.5.15 | Host JPEG decoder (`poc-viewer`): pure Rust, SIMD on x86; chosen against libjpeg-turbo by measurement (`host/poc-viewer/README.md`) |
+| jpeg-encoder | 0.7.1 | Host JPEG encoder of the fake camera (`poc-viewer`); licence `(MIT OR Apache-2.0) AND IJG` |
 
 ## esp-hal support and gaps
 
