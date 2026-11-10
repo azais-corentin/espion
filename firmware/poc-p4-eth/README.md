@@ -24,8 +24,8 @@ Status, measured on the board (details below):
   With whole frames read from PSRAM only 640x480 and 640x400 do; the 1280-wide modes fall to
   85–106 fps processed.
 
-Built but not run on the board yet: the extended sensor modes 4..=11 (faster RAW8 and RAW10)
-and the RAW10 detector check.
+Modes 4..=11 (faster RAW8 and RAW10) have had one first capture-only run; see "Fast modes
+and RAW10: first capture run".
 
 ## Hardware set-up
 
@@ -144,7 +144,7 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each |
 | `src/vision.rs` | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
 | `src/synth.rs` | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
-| `src/ov9281.rs` | OV9281 register tables for 12 modes, from the datasheet and the ESP-IDF, Linux, Raspberry Pi and Inno-Maker drivers. 0..=3: the four 120 fps RAW8 modes (HTS 728, VTS 915, 120.098 fps, 800 Mbit/s per lane), run on the board. 4..=8: faster RAW8 modes (up to 454 fps); 9..=11: RAW10. 4..=11 have not run on the board |
+| `src/ov9281.rs` | OV9281 register tables for 12 modes, from the datasheet and the ESP-IDF, Linux, Raspberry Pi and Inno-Maker drivers. 0..=3: the four 120 fps RAW8 modes (HTS 728, VTS 915, 120.098 fps, 800 Mbit/s per lane), run on the board. 4..=8: faster RAW8 modes (up to 454 fps); 9..=11: RAW10. 4..=11: one first capture run (see "Fast modes and RAW10: first capture run") |
 | `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files |
 
 ## Measured results
@@ -579,6 +579,34 @@ Caveats:
   driver's bring-up measured that at 4 us after the ISP's frame-tail bit (23 us at 640x400).
 - The ring takes 320 KiB of internal RAM; with the 128 KiB buffer of the boot read bench this
   build leaves 62.7 KiB for the stack.
+
+### Fast modes and RAW10: first capture run
+
+One 5 s capture-only run per mode, with frames returned at once. Log:
+`/tmp/poc-p4-eth/fast-capture.log`.
+
+|Mode|Measured fps|Predicted fps|Bytes per frame|Result|
+|---|---|---|---|---|
+|4: 1280x800 RAW8, 96 MHz|143.907|144.118|1 024 000|no drops, no errors|
+|5: 1280x720 RAW8|143.769|144.023|921 600|no drops, no errors|
+|6: 640x400 RAW8|209.570|210.114|256 000|no drops, no errors|
+|7: 640x400 RAW8|252.410|253.203|256 000|no drops, no errors|
+|8: 320x200 RAW8|no frames|454.09|-|fails: 225 host errors (frame start/end pairing), not investigated|
+|9: 1280x800 RAW10|119.921|120.098|1 280 000|no drops, no errors|
+|10: 1280x720 RAW10|119.922|120.098|1 152 000|no drops, no errors|
+|11: 640x400 RAW10|209.570|210.114|320 000|no drops, no errors|
+
+Not done:
+
+- Mode 8 not investigated.
+- RAW10 byte layout not confirmed with the test pattern. The detector assumes CSI-2 packed
+  RAW10; its 16 synthetic discs were found on the board in all three RAW10 modes.
+- No stills of modes 4..=11 dumped or looked at.
+- RAW10 through the strip path not run.
+- The 640x400 modes run 0.26–0.31 % under prediction, against 0.15 % for the others; not
+  investigated.
+- Whole-frame detection from PSRAM takes longer than a frame in modes 4, 5, 9 and 10 (11.1,
+  9.8, 14.1, 12.6 ms).
 
 ### PSRAM tuning attempts
 
