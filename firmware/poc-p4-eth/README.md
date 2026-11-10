@@ -12,15 +12,17 @@ the camera PCBs are ordered:
    1280x800 and 1280x720 at 120 fps and 640x400 at 210 fps?
 
 The modes for question 2 are 1280x800, 1280x720 (crop), 640x480 (crop) and 640x400 (2x2
-binned), all at 120 fps (`ov9281::MODES` 0..=3); the Inno-Maker list is `MODES` 4..=11. The
-sensor free-runs (no XVS trigger). The PoC is minimal by intent: no Ethernet, no PTP, no LEDs,
-no protocol.
+binned), all at 120 fps (`modes::MODES` 0..=3); the Inno-Maker list is `MODES` 4..=11. Each
+mode is a request to the mode builder of the `firmware/ov9281` crate (format, size, readout,
+rate and tolerance), solved at compile time; the crate picks clock, line length (HTS), frame
+length (VTS) and the power-saving mode, and writes the sensor. The sensor free-runs (no XVS
+trigger). The PoC is minimal by intent: no Ethernet, no PTP, no LEDs, no protocol.
 
 Status, measured on the board (details below):
 
 - Question 1: yes. The camera delivers whole frames over CSI-2 in all four modes at
-  119.92 fps, with no dropped or short frame and no error. It also delivers 64-line strips
-  into internal RAM, byte-identical to whole frames.
+  120.05 fps (119.92 with the hand-built tables), with no dropped or short frame and no
+  error. It also delivers 64-line strips into internal RAM, byte-identical to whole frames.
 - Question 2: all four modes sustain 120 fps with every pixel processed when the CSI DMA
   writes 64-line strips into internal RAM: every run of the strip soak passed, with at most
   5.2 ms of processing per frame at 1280x800 and the centroids ready 0.1–0.4 ms after the
@@ -29,13 +31,13 @@ Status, measured on the board (details below):
   85–106 fps processed.
 - Question 3: yes, all eight, with capture-only verification (no soak at the new rates): 5 s
   of capture per mode with no dropped, short or overwritten frame and no error, at the rate
-  the frame-period formula predicts (+25 to +41 ppm): 143.907, 209.569, 252.409, 453.399 and
-  119.921 fps; a correct bar-pattern still and a correct scene still in every mode; the RAW10
-  byte layout confirmed as CSI-2 packed. Two modes needed changes: 1280x720 at 144 fps runs
-  the 96 MHz clock (as 1280x800 at 144 does), and 320x200 resets two common registers. The
-  three RAW10 modes also passed through the strip path (strips byte-identical to whole frames,
-  strip soak passed; 1280-wide RAW10 costs about 1.3x RAW8 and fits 120 fps). See "All 12
-  modes".
+  the frame-period formula predicts (+27 to +47 ppm): 144.065, 209.969, 252.930, 453.398 and
+  120.052 fps; a correct bar-pattern still and a correct scene still in every mode; the RAW10
+  byte layout confirmed as CSI-2 packed. With the hand-built tables two modes needed changes:
+  1280x720 at 144 fps runs the 96 MHz clock (as 1280x800 at 144 does), and 320x200 resets two
+  common registers; with the crate the 253 fps mode runs at 96 MHz too. The three RAW10 modes
+  also passed through the strip path (strips byte-identical to whole frames, strip soak
+  passed; 1280-wide RAW10 costs about 1.3x RAW8 and fits 120 fps). See "All 12 modes".
 - Strip stalls: the DMA stall that crashed the board in RAW10 is root-caused and fixed in
   `esp32p4-csi` (`9d21695`). The CSI bridge, which ends the DMA blocks, overran the ring after
   a plain resume; the driver now restarts the ISP and the bridge before it resumes. The stall
@@ -45,6 +47,12 @@ Status, measured on the board (details below):
   the dark picture at short VTS (a minimum VTS per window height; cause unknown) and the PSV
   flat rows (bands of VTS), and show that the 253 fps mode (VTS 434) worked only in a narrow
   window. See "Sensor driver crate".
+- Sensor driver: the PoC's 12 modes are requests to the crate's mode builder since `e18819d`
+  (the hand-built register tables are gone). All 12 run clean at the solver's settings, and
+  on the P4 the builder accepted all 40 requests of the request verification with the
+  setting the crate's tests expect, each a right picture at the predicted rate, and refused
+  all 14 it must, with the expected error; `build()` takes 2.5–5.7 us for a mode at the
+  standard line length, at most 379 us. See "Request verification on the P4".
 
 ## Hardware set-up
 
@@ -100,9 +108,10 @@ python3 tools/still.py /tmp/poc-p4-eth/soak.log   # only with still_dump: true
 - How long to let `monitor` run: the boot report is out within about 1 s; the default plan
   (frame soak, four modes) needs about 330 s; the RAW8 strip soak finishes in under 300 s;
   capture only takes about 70 s for four modes with the cache check (about 100 s with the
-  still dumps too); `MODE_STILLS_PLAN` about 180 s, `STRIP_CHECK_PLAN` about 45 s,
-  `RAW10_STRIP_SOAK_PLAN` about 190 s; the detector benchmark (`RUN_BENCH = true`) about 90 s.
-  Every camera plan ends with the line `camera: done`.
+  still dumps too); `MODE_STILLS_PLAN` about 180 s, `REQUESTS_PLAN` about 25 min,
+  `STRIP_CHECK_PLAN` about 45 s, `RAW10_STRIP_SOAK_PLAN` about 190 s, `STRIP_STALL_PLAN` about
+  90 s; the detector benchmark (`RUN_BENCH = true`) about 90 s. Every camera plan ends with
+  the line `camera: done`.
 - `--no-addresses` stops espflash from printing symbol lines for hex numbers in the log.
 - `cargo run --release` uses the runner in `.cargo/config.toml`,
   `espflash flash --monitor ... --port /dev/ttyACM0`: interactive, and with the first
@@ -122,23 +131,28 @@ All in constants at the top of `src/main.rs`; one plan per boot. The default sel
 | `RUN_CAMERA` | `true` (default) | The camera section |
 | `PLAN` | `&CAMERA_PLAN` (default) | Modes 0..=3 (the 120 fps RAW8 modes), then the soak chosen by `SOAK` |
 | `PLAN` | `&FAST_CAPTURE_PLAN` | Capture only over modes 4..=11, 5 s each, then the detector check per mode |
-| `PLAN` | `&MODE_STILLS_PLAN` | All 12 modes (order 0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3, so RAW10 follows its RAW8 window and 8 follows the binned modes), gain 2x: capture only, the detector check, a scene still and a 0x80 bar-pattern still per mode |
-| `PLAN` | `&RAW10_PATTERNS_PLAN` | Modes 6 and 11 (640x400 RAW8 and RAW10 at 210 fps): scene still, then stills of the random-data (0x81), grey-squares (0x82) and rolling-bar (0xC0) test patterns |
+| `PLAN` | `&MODE_STILLS_PLAN` | All 12 modes (order 0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3, so RAW10 follows its RAW8 window and 8 follows the binned modes), gain 2x: capture only, the detector check, a scene still and a bar-pattern still per mode |
+| `PLAN` | `&RAW10_PATTERNS_PLAN` | Modes 6 and 11 (640x400 RAW8 and RAW10 at 210 fps): scene still, then stills of the random-data, grey-squares and rolling-bar test patterns |
+| `PLAN` | `&REQUESTS_PLAN` | Request verification (`requests::REQUESTS`): every request built at run time on the P4 and timed, the refused ones with their error; each accepted one captured after a long-VTS reference of the same window, with a scene and a bar-pattern still; gain 8x. See "Request verification" |
 | `PLAN` | `&STRIP_CHECK_PLAN` | Strip check on modes 0, 9, 10, 11: whole frames of the random test pattern as the reference, then 10 s of strips per mode checked row by row against it |
 | `PLAN` | `&RAW10_STRIP_SOAK_PLAN` | Strip soak on the RAW10 modes 9, 10, 11 |
+| `PLAN` | `&STRIP_STALL_PLAN` | Stall test on the modes of `STRIP_CHECK_PLAN`: provoked DMA halts (1, 5, 30 and 100 ms, bursts of 20 x 2 ms and 8 x 30 ms), every strip checked against the reference, a memory guard around the list items and after the ring |
 | `SOAK` | `Soak::Frames` (default) | With `CAMERA_PLAN`: frame soak, whole frames in PSRAM (`SOAK_PLAN`), RAW8 modes only |
 | `SOAK` | `Soak::Strips` | With `CAMERA_PLAN`: strip soak, strips in internal RAM (`STRIP_SOAK_PLAN`) |
 | `SOAK` | `Soak::None` | With `CAMERA_PLAN`: capture only, then the detector check per mode |
 
 Every plan that uses the strip path needs `RUN_BENCH = false` (checked at compile time).
-`camera::Plan` holds the modes (indexes into `ov9281::MODES`), the sensor settings (exposure
-800 lines, gain 0x20, continuous clock, scene or test pattern), the measurement window (5 s),
-the `cache_check` and `still_dump` switches, `still_patterns` (one extra still per listed
-0x5E00 test-pattern value, written while the sensor streams; three frames are dropped before
-each, and the plan's own setting is restored afterwards), and the soak: `soak` (frames) or
-`strips` (`strip_soak::Plan`: the soak, or with `check: Some(window)` the strip check). Stills
-are named `<w>x<h>-<fps>fps-raw<bits>-scene` or `...-pattern<hex>`, for example
-`320x200-453fps-raw8-pattern80`.
+`camera::Plan` holds the modes (indexes into `modes::MODES`) or the requests, the sensor
+settings (`camera::Sensor`: exposure 800 lines, clamped per mode to its longest, gain 2x,
+continuous clock, scene or a test pattern), the measurement window (5 s), the `cache_check`
+and `still_dump` switches, `still_patterns` (one extra still per listed `ov9281::TestPattern`,
+selected while the sensor streams; three frames are dropped before each, and the plan's own
+setting is restored afterwards), and the soak: `soak` (frames) or `strips`
+(`strip_soak::Plan`: the soak, or with `check: Some(window)` the strip check). Stills are
+named `<w>x<h>-<fps>fps-raw<bits>-<pattern>`, `<fps>` being the requested rate rounded and
+`<pattern>` one of `scene`, `bars`, `random`, `greysquares`, `bwsquares`, `rollingbars`, for
+example `320x200-453fps-raw8-bars`; the request verification prefixes `<request>-` and, for
+its reference, `<request>-ref-`.
 
 ## What the firmware does
 
@@ -150,14 +164,19 @@ At boot, in order:
    pattern test over the last 4 MiB plus an aliasing check.
 3. Measures one core's sequential read speed over 1 MiB of cold PSRAM and 128 KiB of internal
    RAM.
-4. Starts I2C0 at 100 kHz, scans the bus and reads the OV9281 chip ID.
+4. Starts I2C0 at 100 kHz, scans the bus and identifies the OV9281 (`Ov9281::identify`, chip
+   ID at 0x60, then 0x10). This step and the next two run in a task of their own (`app`):
+   inside `main`, the sensor futures would push `main`'s future over the stack-frame limit.
 5. If `RUN_BENCH`: runs the detector benchmark on synthetic frames (`bench::run`).
 6. If `RUN_CAMERA`: the camera section (`camera::run`). It turns on LDO VO3 at 2.5 V (the
    D-PHY supply), then for each mode of the plan:
-   1. writes the mode's registers, the exposure (clamped to the mode's maximum and printed as
-      applied), gain, and optionally the test pattern or the gated clock; reads them back;
-   2. configures and starts the receiver, checks the lanes are in stop state, writes
-      `STREAM_ON`, waits for the first frame (500 ms timeout, then the driver's checklist);
+   1. writes the mode (`Ov9281::configure`: the crate's register list from a software reset
+      to standby), the exposure (clamped to the mode's maximum and printed as applied), gain,
+      and optionally a test pattern, the gated clock (`write_register(0x4800, 0x60)`) or PSV
+      forced off; logs the solver's choice and reads the main registers back;
+   2. configures the receiver from the mode (format, width, height) and starts it, checks the
+      lanes are in stop state, starts the stream, waits for the first frame (500 ms plus two
+      frame periods, then the driver's checklist);
    3. measures 5 s of capture: frames, sizes against the configured frame length, error
       counters, and the measured frame rate next to the sensor's predicted one. Nothing is
       logged inside the window;
@@ -180,14 +199,16 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 
 | File | What |
 |---|---|
-| `src/main.rs` | Boot report: log baud switch, chip and cache info, PSRAM init and test, read-speed kernels, SCCB scan and chip ID. Pin and address choices, and the plans (see "Choosing what runs"), are constants at the top |
-| `src/camera.rs` | Camera section: LDO VO3, sensor set-up over SCCB, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement with the frame-rate prediction, cache check, still dumps, detector check, and the strip path (receiver, mode groups, the test pattern for the strip check) |
+| `src/main.rs` | Boot report: log baud switch, chip and cache info, PSRAM init and test, read-speed kernels, SCCB scan and sensor identification. Pin and address choices, and the plans (see "Choosing what runs"), are constants at the top |
+| `src/modes.rs` | The 12 modes as named `ov9281` mode requests (`CamMode`: name and solved `ov9281::Mode`), built in `const` context so a request the builder refuses fails the build |
+| `src/requests.rs` | Request verification (`REQUESTS_PLAN`): the request list, `build()` timed with the cycle counter on the P4, the long-VTS reference and the capture of each accepted request |
+| `src/camera.rs` | Camera section: LDO VO3, sensor set-up through `ov9281::Ov9281`, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement against the crate's frame-period prediction, cache check, still dumps, detector check, and the strip path (receiver, mode groups, the random test pattern for the strip check) |
 | `src/soak.rs` | Frame soak: per mode, 30 s on live frames, then 10 s each on synthetic frames with 0, 16 and 64 discs, while capture keeps running; result table |
 | `src/strip_soak.rs` | Strip soak: the same runs on strips in a 320 KiB ring in internal RAM (RAW8: 4 strips of 80 KiB at 1280 wide, 8 of 40 KiB at 640, 64 lines; RAW10: 3 strips of 102 400 B, 64 lines at 1280 and 128 at 640), with per-frame processing and latency, per-strip hold times, and the driver's interrupt and invalidation times. `StripCheck`: row checksums of the reference frames and the strip check against them |
 | `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each |
 | `src/vision.rs` | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
 | `src/synth.rs` | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
-| `src/ov9281.rs` | OV9281 register tables for 12 modes, from the datasheet and the ESP-IDF, Linux, Raspberry Pi and Inno-Maker drivers, and the frame-period formula (`Mode::frame_cycles`). All at HTS 728 and 800 Mbit/s per lane. 0..=3: 1280x800, 1280x720, 640x480, 640x400 binned, RAW8, 80 MHz, VTS 915, 119.918 fps. 4, 5: 1280x800 and 1280x720 RAW8 at 96 MHz, VTS 915, 143.901 fps. 6, 7: 640x400 binned RAW8, 80 MHz, VTS 523 (209.563 fps) and 434 (252.402). 8: 320x200 binned centre crop RAW8, 80 MHz, VTS 241, 453.386 fps. 9..=11: RAW10 1280x800, 1280x720 (VTS 915, 119.918 fps) and 640x400 binned (VTS 523, 209.563). Rates by the formula; measured in "All 12 modes" |
+| `../ov9281` (crate) | The sensor driver: mode builder and solver, the measured limits, the register list, SCCB control (`firmware/ov9281/README.md`) |
 | `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files |
 
 ## Measured results
@@ -644,51 +665,77 @@ Caveats:
 
 ### All 12 modes: the Inno-Maker mode list and RAW10
 
-Modes 4..=11 are the Inno-Maker CAM-MIPIOV9281 V2 mode list (`ov9281.rs`). They were brought
-up in three tasks on 2026-11-10 (logs in `/tmp/poc-p4-eth/raw10/`, `/tmp/poc-p4-eth/mode8/`
-and `/tmp/poc-p4-eth/strips10/`) and verified at the end on the merged code (commit
-`6963e63`; per run only `PLAN`, and for the repeat run the mode list of `MODE_STILLS_PLAN`,
-changed; logs in `/tmp/poc-p4-eth/final/`). The new modes have capture-only verification: 5 s
-of capture, stills, and the RAW10 strip runs below; no frame soak at the new rates.
+Modes 4..=11 are the Inno-Maker CAM-MIPIOV9281 V2 mode list. They were brought up in three
+tasks on 2026-11-10 with hand-built register tables (logs in `/tmp/poc-p4-eth/raw10/`,
+`/tmp/poc-p4-eth/mode8/` and `/tmp/poc-p4-eth/strips10/`), verified on the merged code
+(commit `6963e63`, logs in `/tmp/poc-p4-eth/final/`), and then moved to the `ov9281` crate:
+each mode is now a request (`src/modes.rs`: format, size, readout, the nominal rate with
+±0.5 Hz) and the crate's solver chooses the setting under the measured limits. The tables
+below are from the builder's register lists (commit `e18819d` on the crate's limits of
+`3ddd024`), log `/tmp/poc-p4-eth/migrate/stills.log`; the sections after them are from the
+hand-built tables, whose settings differ as the first table says. The new modes have
+capture-only verification: 5 s of capture, stills, and the RAW10 strip runs below; no frame
+soak at the new rates.
 
 #### Capture, all 12 modes
 
-`MODE_STILLS_PLAN`, log `/tmp/poc-p4-eth/final/stills.log`: one boot, modes in the order 0, 9,
-1, 10, 6, 11, 4, 5, 7, 8, 2, 3; exposure 800 lines (clamped to VTS − 25 in modes 6, 7, 8),
-gain 2x; 5 s first-to-last per mode. Every mode: 0 wrong size, 0 dropped, 0 overwritten, 0
-sequence gaps, DMA, host and bridge errors all 0; the worst interval between frames is the
-frame period plus at most 3.3 us.
+`MODE_STILLS_PLAN`, one boot, modes in the order 0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3;
+exposure 800 lines (clamped to VTS − 25 in modes 6, 7, 8), gain 2x; 5 s first-to-last per
+mode. Every mode: 0 wrong size, 0 dropped, 0 overwritten, 0 sequence gaps, DMA, host and
+bridge errors all 0; the worst interval between frames is the frame period plus at most 8 us.
 
-| Mode | Format | SCLK | VTS | Predicted fps | Measured fps | ppm | Frames in 5 s | Bytes/frame | Verdict |
-|---|---|---|---|---|---|---|---|---|---|
-| 0: 1280x800 | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 1 024 000 | clean |
-| 1: 1280x720 crop | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 921 600 | clean |
-| 2: 640x480 crop | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 307 200 | clean |
-| 3: 640x400 binned | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 256 000 | clean |
-| 4: 1280x800 | RAW8 | 96 MHz | 915 | 143.901 | 143.907 | +41 | 721 | 1 024 000 | clean |
-| 5: 1280x720 crop | RAW8 | 96 MHz | 915 | 143.901 | 143.907 | +41 | 721 | 921 600 | clean |
-| 6: 640x400 binned | RAW8 | 80 MHz | 523 | 209.563 | 209.569 | +28 | 1049 | 256 000 | clean |
-| 7: 640x400 binned | RAW8 | 80 MHz | 434 | 252.402 | 252.409 | +27 | 1263 | 256 000 | clean |
-| 8: 320x200 binned crop | RAW8 | 80 MHz | 241 | 453.386 | 453.399 | +28 | 2268 | 64 000 | clean |
-| 9: 1280x800 | RAW10 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 1 280 000 | clean |
-| 10: 1280x720 crop | RAW10 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 1 152 000 | clean |
-| 11: 640x400 binned | RAW10 | 80 MHz | 523 | 209.563 | 209.569 | +28 | 1049 | 320 000 | clean |
+| Mode (request) | Format | Solver: SCLK, HTS, VTS, PSV, VFIFO | Before (hand-built table) | Predicted fps | Measured fps | ppm | Frames in 5 s | Bytes/frame |
+|---|---|---|---|---|---|---|---|---|
+| 0: 1280x800, 120 Hz | RAW8 | 80 MHz, 728, 914, on, 0x50 | VTS 915, VFIFO 0x30 | 120.049 | 120.052 | +30 | 601 | 1 024 000 |
+| 1: 1280x720 crop, 120 Hz | RAW8 | 80 MHz, 728, 914, on, 0x50 | VTS 915, 0x30 | 120.049 | 120.052 | +29 | 601 | 921 600 |
+| 2: 640x480 crop, 120 Hz | RAW8 | 80 MHz, 728, 914, on, 0x28 | VTS 915, 0x30 | 120.049 | 120.052 | +27 | 601 | 307 200 |
+| 3: 640x400 binned, 120 Hz | RAW8 | 80 MHz, 728, 914, on, 0x28 | VTS 915, 0x30 | 120.049 | 120.052 | +28 | 601 | 256 000 |
+| 4: 1280x800, 144 Hz | RAW8 | 96 MHz, 728, 914, on, 0x50 | VTS 915, 0x30 | 144.059 | 144.065 | +47 | 722 | 1 024 000 |
+| 5: 1280x720 crop, 144 Hz | RAW8 | 96 MHz, 728, 914, on, 0x50 | VTS 915, 0x30 | 144.059 | 144.065 | +45 | 722 | 921 600 |
+| 6: 640x400 binned, 210 Hz | RAW8 | 80 MHz, 728, 522, on, 0x28 | VTS 523, 0x30 | 209.964 | 209.969 | +28 | 1051 | 256 000 |
+| 7: 640x400 binned, 253 Hz | RAW8 | **96 MHz**, 728, 520, on, 0x28 | 80 MHz, VTS 434, 0x30 | 252.923 | 252.930 | +28 | 1265 | 256 000 |
+| 8: 320x200 binned, 453 Hz | RAW8 | 80 MHz, 728, 241, off, 0x14 | VFIFO 0x04 | 453.386 | 453.398 | +27 | 2268 | 64 000 |
+| 9: 1280x800, 120 Hz | RAW10 | 80 MHz, 728, 914, on, 0x50 | VTS 915, 0x04 | 120.049 | 120.052 | +29 | 601 | 1 280 000 |
+| 10: 1280x720 crop, 120 Hz | RAW10 | 80 MHz, 728, 914, on, 0x50 | VTS 915, 0x04 | 120.049 | 120.052 | +29 | 601 | 1 152 000 |
+| 11: 640x400 binned, 210 Hz | RAW10 | 80 MHz, 728, 522, on, 0x28 | VTS 523, 0x04 | 209.964 | 209.970 | +30 | 1051 | 320 000 |
 
-All modes run at HTS 728 and 800 Mbit/s per lane. The sensor readback in the same log shows
-every mode's window, output size, binning, HTS, VTS, exposure and gain as written. It cannot
-show the 96 MHz clock itself; the register 0x030D reads 0x60 in modes 4 and 5.
+- **What changed against the hand-built tables:** VFIFO read start (0x4601) in every mode
+  (now width / 16); VTS in every mode but 8, by one line (915 → 914, 523 → 522), because the
+  solver takes the VTS nearest the requested 120 or 210 Hz (119.918 → 120.049 Hz, 209.563 →
+  209.964 Hz); and mode 7 entirely. Its old VTS 434 (h + 34) is below the measured minimum
+  plus margin (h + 35), so the crate's 80 MHz maximum for the window is 251.824 Hz and a
+  253 Hz request resolves at 96 MHz, VTS 520, PSV on (h + 120). The old table ran 80 MHz, VTS
+  434 with PSV on, in the narrow good window below the PSV bands ("Sensor driver crate").
+  The 80 MHz alternative, 250 Hz, is request `rq07` in the request verification below.
+- The readback in the log shows every mode's window, output size, binning, HTS, VTS,
+  exposure, gain, VFIFO and PSV as written; 0x030D (the clock) reads 0x60 in modes 4, 5, 7.
+- Stills, checked against the 1280x800 RAW8 still of the same boot (`ana.py` in
+  `/tmp/poc-p4-eth/migrate/`, numpy): the bar pattern (`bars`) in every mode has every even row
+  equal to row 0 and every odd row equal to row 1, values 0 and 255 (RAW10 0 and 1023), CRCs as
+  in the earlier boots (1280x800 4e25f7bb, 1280x720 891881ed, 640x400 d2a5c43f, RAW10
+  22ce4315, 58da8cf8, e716caa2); no scene still has a flat row; every crop is at its place
+  (1280x720 at (0, 40), 640x480 at (320, 160), 320x200 at (320, 200), binned against a 2x2
+  mean, within 2 px of drift, correlation 0.969–0.989); 320x200 sits at (160, 100) in the
+  640x400 binned still (0.982); RAW10 / 4 against its RAW8 partner: correlation 0.977, 0.978
+  and 0.989, mean +0.27 to +0.40 of an 8-bit step.
 
 The detector check on one captured frame per mode (dark scene: 0 blobs at threshold 128 for
-RAW8 and 512 for RAW10) gives, against the frame period: mode 4 10 886 us (6949), 5 9700
-(6949), 6 3097 (4771), 7 3092 (3961), 8 1100 (2205), 9 13 829 (8339), 10 12 338 (8339), 11 3866
-(4771). Whole-frame processing from PSRAM is slower than a frame in modes 4, 5, 9 and 10. The
-synthetic RAW10 frames with 16 discs gave 16 blobs in modes 9, 10 and 11.
+RAW8 and 512 for RAW10) gives, against the frame period: mode 0 10 778 us (8329), 1 9709
+(8329), 2 3561 (8329), 3 3028 (8329), 4 10 925 (6941), 5 9759 (6941), 6 3099 (4762), 7 3093
+(3953), 8 1115 (2205), 9 13 843 (8329), 10 12 369 (8329), 11 3888 (4762). Whole-frame
+processing from PSRAM is slower than a frame in modes 0, 1, 4, 5, 9 and 10. The synthetic
+RAW10 frames with 16 discs gave 16 blobs in modes 9, 10 and 11.
+
+The hand-built tables' run on the same plan (`/tmp/poc-p4-eth/final/stills.log`, commit
+`6963e63`) measured 119.921 fps (+25 ppm) at VTS 915, 143.907 (+41) for modes 4 and 5,
+209.569 (+28) at VTS 523, 252.409 (+27) for mode 7 at VTS 434 and 453.399 (+28) for mode 8,
+with the same clean link counters.
 
 #### Frame period
 
-A frame lasts **`(VTS − 1) × HTS + 1730` SCLK cycles**, not `VTS × HTS` (`FRAME_LONG_LINE`
-and `Mode::frame_cycles()` in `ov9281.rs`; the capture log prints both the measured cycles
-and this prediction).
+A frame lasts **`(VTS − 1) × HTS + 1730` SCLK cycles**, not `VTS × HTS` (`Mode::frame_cycles()`
+in the `ov9281` crate; the capture log prints both the measured cycles and this prediction,
+and the ppm against it).
 
 - Evidence: 21 runs of 10 s (`/tmp/poc-p4-eth/raw10/TMP_TIMING_PLAN.log`, `TMP_HTS_PLAN.log`)
   over HTS 728..=2912, VTS 434..=1830, SCLK 80 and 96 MHz, RAW8 and RAW10, crop and binned,
@@ -697,14 +744,16 @@ and this prediction).
   Exposure has no effect. At HTS 1820 and above the frame is shorter than `HTS × VTS`. The
   mode 8 task fitted its own runs at VTS 222..=915 to 9.09976 us × VTS + 12.51 us, the same
   model.
-- The 12 modes above measure +25 to +41 ppm against it. The old `VTS × HTS` prediction was
+- The 12 modes above measure +27 to +47 ppm against it (hand-built tables: +25 to +41); the
+  two 144 fps modes are the high end in both runs. The old `VTS × HTS` prediction was
   120.098 fps at VTS 915 and 80 MHz (measured −1474 ppm from it), 144.118 at 96 MHz (−1464),
   210.114 at VTS 523 (−2594), 253.203 at VTS 434 (−3136) and 455.976 at VTS 241 (−5652): the
   shorter the frame, the larger the error. That is why the first capture run saw the 640x400
   modes 0.26–0.31 % under prediction and the others 0.15 %.
 - That one line per frame lasts 1730 cycles instead of HTS is [INFERENCE]: only whole frame
   periods were measured. Which of the sensor's 24 MHz oscillator and the P4's 40 MHz crystal
-  is off by the 25–41 ppm is not known.
+  is off by the 25–47 ppm is not known. The 144 fps offset is not a 96 MHz property: mode 7
+  at 96 MHz measures +28 ppm.
 - The first-to-last rate (periods / time from the first to the last frame) is the
   measurement. An earlier "frames over the window" figure counted one frame more than the
   periods spanned (601 in 5007 ms = 120.03) and is no longer printed.
@@ -1099,9 +1148,10 @@ here. What they settle or correct in this README:
   640), 671..677 for narrower windows. The 2-lane link adds a minimum of
   `ceil(line_bytes x MHz / 200) + 75` cycles, which binds only for RAW10 at 96 MHz from width
   1088: 1280-wide RAW10 at 96 MHz needs HTS 840 (no frames at 787 and below), and the crate
-  uses 851 there, so its fastest 1280x800 RAW10 rate at 96 MHz is 131.781 Hz [computed by the
-  crate, not run]. Long lines brighten the picture (1.04x at HTS 2912); the crate stops at
-  2912. Every mode of this PoC runs at HTS 728, inside the range.
+  uses 851 there, so its fastest 1280x800 RAW10 rate at 96 MHz is 131.781 Hz (run in the
+  request verification below: 131.784 fps, a right picture). Long lines brighten the picture
+  (1.04x at HTS 2912); the crate stops at 2912. Every mode of this PoC runs at HTS 728, inside
+  the range.
 - **Frame period.** `(VTS − 1) × HTS + 1730` holds over HTS 659..65535 and VTS 21..65535
   (1493 probes, both clocks and formats, crop and binned), every period 23.5..33.9 ppm below
   the formula.
@@ -1118,6 +1168,131 @@ Requested through the builder at each mode's rate within 1 mHz, 11 of this PoC's
 resolve to the PoC's own clock, HTS, VTS and PSV, with every register write and the order
 equal to the PoC tables except 0x4601 (`tests/legacy.rs` in the crate); mode 7 does not
 resolve (above).
+
+The PoC itself requests its modes at the nominal rate ±0.5 Hz (`src/modes.rs`), so the solver
+takes the nearest VTS instead; the settings it chose and their measurement are in "All 12
+modes".
+
+#### Request verification on the P4 (`REQUESTS_PLAN`)
+
+After the move to the crate (`e18819d`, crate limits `3ddd024`), one boot ran the builder on
+the P4 and the board through every request the characterisation verified and every one it
+must refuse, plus low rates, the narrowest window and the fastest rate per window at each
+clock. Log `/tmp/poc-p4-eth/migrate/requests.log` (2026-11-10), stills and the comparison
+script (`ana.py`, numpy) in the same directory.
+
+Method: each request is built 5 times at run time (`black_box` inputs, cycle counter); the
+log gives the fastest call and the first. A refused request must give the expected error. An
+accepted one is captured twice, both with the same exposure time (7.28 ms, clamped to the
+mode's longest) and gain 8x: first a reference of the same window at 30 Hz (VTS 3662, PSV
+forced off, 1 s), then the request (max(3 s, 6 periods)) with a scene still and a bar-pattern
+still. Pass, as in the characterisation: right sizes, 0 dropped, overwritten, sequence gaps
+and DMA, host or bridge errors; the rate the crate predicts (P4 timer); no flat row; 16x10
+block-mean correlation with the reference ≥ 0.95 and brightness `(mean − 4) / (ref − 4)` in
+0.8..1.25; the bar still with every even row equal to row 0 and every odd to row 1; the scene
+still found at the solved origin (normalised correlation, ±4 px) in the nearest 1280x800 RAW8
+scene still of the boot, binned against a 2x2 mean.
+
+Accepted (rates in Hz; the tolerances are those of the crate's `tests/requests.rs`, the
+solver's error on the edge of most; every choice is the one those tests expect):
+
+| Request | Window | Rate ± tolerance | Solver: SCLK, HTS, VTS, PSV | Predicted | Measured (ppm) | Frames | Block corr / brightness | Found at |
+|---|---|---|---|---|---|---|---|---|
+| rq01 | RAW8 1280x800 crop | 120 ± 0.1 | 80, 728, 914, on | 120.049 | 120.052 (+31) | 361 | 0.9997 / 1.028 | (0, 0) |
+| rq04 | RAW8 1280x720 crop | 140 ± 0.080 | 80, 728, 784, off | 139.920 | 139.924 (+30) | 421 | 1.0000 / 1.011 | (0, 40) |
+| rq05 | RAW10 1280x720 crop | 120 ± 0.082 | 80, 728, 914, on | 120.049 | 120.052 (+30) | 361 | 1.0000 / 1.009 | (0, 39) |
+| rq06 | RAW8 640x480 crop at (0, 0) | 200 ± 0.027 | 80, 728, 548, off | 200.027 | 200.032 (+29) | 601 | 0.9999 / 1.024 | (0, 0) |
+| rq16b | RAW8 640x240 crop at (200, 160) | 300 ± 0.062 | 80, 728, 365, on | 299.938 | 299.946 (+29) | 901 | 0.9999 / 1.005 | (200, 160) |
+| rq02 | RAW8 1280x800 crop | 128 ± 0.021 | 80, 728, 857, off | 128.021 | 128.024 (+29) | 385 | 0.9999 / 1.023 | (0, 0) |
+| rq07 | RAW8 640x400 binned | 250 ± 0.105 | 80, 728, 438, off | 250.105 | 250.112 (+29) | 751 | 1.0000 / 1.010 | (0, 0) |
+| rq08 | RAW10 640x400 binned | 210 ± 0.1 | 80, 728, 522, on | 209.964 | 209.970 (+29) | 631 | 0.9999 / 1.027 | (0, 0) |
+| rq20 | RAW8 640x400 binned | 300 ± 2 | 96, 728, 438, off | 300.126 | 300.134 (+29) | 901 | 0.9999 / 1.008 | (0, 0) |
+| rq09 | RAW8 320x200 binned | 470 ± 0.871 | 96, 728, 279, on | 470.325 | 470.337 (+25) | 1412 | 0.9999 / 0.996 | (320, 200) |
+| rq10 | RAW8 320x200 binned at (96, 36) | 400 ± 0.509 | 80, 728, 273, off | 400.509 | 400.519 (+25) | 1202 | 0.9996 / 1.059 | (96, 36) |
+| rq15 | RAW10 320x200 binned | 400 ± 0.509 | 80, 728, 273, off | 400.509 | 400.519 (+27) | 1202 | 0.9996 / 1.062 | (320, 200) |
+| rq17 | RAW10 320x200 binned at (400, 160) | 560 ± 2.126 | 96, 728, 235, off | 557.874 | 557.888 (+27) | 1675 | 0.9999 / 1.004 | (400, 160) |
+| rq03 | RAW8 1280x800 crop | 150 ± 0.044 | 96, 728, 878, off | 149.956 | 149.960 (+29) | 450 | 0.9999 / 0.991 | (0, 0) |
+| rq12 | RAW10 1280x800 crop | 125 ± 0.036 | 80, 728, 878, off | 124.964 | 124.967 (+29) | 376 | 1.0000 / 1.012 | (0, 0) |
+| rq21 | RAW8 1280x800 crop | 120 ± 0.001 | 80, **738**, 902, on | 120.000 | 120.003 (+29) | 361 | 1.0000 / 1.007 | (0, 0) |
+| rq11 | RAW8 1280x64 crop | 1000 ± 5 | 96, 728, 130, off | 1003.743 | 1003.770 (+26) | 3013 | 0.9995 / 1.008 | (0, 368) |
+| rq14b | RAW10 640x480 crop | 240 ± 0.032 | 96, 728, 548, off | 240.032 | 240.042 (+41) | 722 | 0.9999 / 1.017 | (320, 160) |
+| rq18 | RAW8 1280x400 crop at (0, 200) | 15 ± 0.001 | 80, 728, 7325, on | 14.999 | 14.999 (+29) | 45 | 0.9997 / 0.972 | (0, 201) |
+| rq19 | RAW10 1216x704 crop at (32, 48) | 130 ± 0.2 | 80, 728, 844, on | 129.990 | 129.993 (+29) | 391 | 1.0000 / 1.012 | (32, 48) |
+| rq16 | RAW8 320x240 crop at (32, 501) | 364.6 ± 0.027 | 80, 728, 300, off | 364.627 | 364.637 (+27) | 1095 | 0.9987 / 1.082 | (32, 501) |
+| rq13 | RAW8 1280x800 crop | 30 ± 0.011 | 80, 728, 3662, on | 29.997 | 29.997 (+29) | 90 | 0.9999 / 0.998 | (0, 0) |
+| lo2 | RAW8 1280x800 crop | 2 ± 0.01 | 80, 728, 54944, on | 2.000 | 2.000 (+30) | 7 in 3.5 s | 0.9999 / 1.006 | (0, 0) |
+| lo042 | RAW8 1280x800 crop | 0.42 ± 0.001 | 80, **2897**, 65535, on | 0.421 | 0.421 (+27) | 7 in 16.6 s | 0.9998 / 1.035 | (0, 0) |
+| narrow | RAW8 128x16 crop | 1000 ± 5 | 80, 728, 109, off | 995.594 | 995.621 (+27) | 2988 | 0.9535 / 1.005 | (576, 393) |
+| f800-80 | RAW8 1280x800 crop | 128.320 exactly | 80, 728, 855, off | 128.320 | 128.323 (+30) | 386 | 0.9999 / 0.999 | (0, 0) |
+| f800-96 | RAW8 1280x800 crop | 153.984 exactly | 96, 728, 855, off | 153.984 | 153.988 (+29) | 463 | 0.9984 / 0.926 | (0, 0) |
+| f720-80 | RAW8 1280x720 crop | 141.542 exactly | 80, 728, 775, off | 141.542 | 141.546 (+29) | 426 | 0.9999 / 0.981 | (0, 40) |
+| f720-96 | RAW8 1280x720 crop | 169.851 exactly | 96, 728, 775, off | 169.851 | 169.855 (+29) | 511 | 0.9999 / 1.030 | (0, 40) |
+| f480-80 | RAW8 640x480 crop | 204.875 exactly | 80, 728, 535, off | 204.875 | 204.881 (+29) | 615 | 1.0000 / 0.992 | (320, 160) |
+| f480-96 | RAW8 640x480 crop | 245.850 exactly | 96, 728, 535, off | 245.850 | 245.857 (+29) | 738 | 1.0000 / 1.008 | (320, 160) |
+| f400-80 | RAW8 640x400 binned | 251.824 exactly | 80, 728, 435, off | 251.824 | 251.831 (+29) | 756 | 1.0000 / 1.008 | (0, 0) |
+| f400-96 | RAW8 640x400 binned | 302.189 exactly | 96, 728, 435, off | 302.189 | 302.197 (+29) | 907 | 1.0000 / 1.016 | (0, 0) |
+| f200-80 | RAW8 320x200 binned | 464.895 exactly | 80, 728, 235, off | 464.895 | 464.906 (+25) | 1396 | 0.9999 / 1.003 | (320, 200) |
+| f200-96 | RAW8 320x200 binned | 557.874 exactly | 96, 728, 235, off | 557.874 | 557.888 (+25) | 1675 | 0.9999 / 1.010 | (320, 201) |
+| f800r10-80 | RAW10 1280x800 crop | 128.320 exactly | 80, 728, 855, off | 128.320 | 128.323 (+29) | 386 | 0.9999 / 1.005 | (0, 0) |
+| f800r10-96 | RAW10 1280x800 crop | 131.781 exactly | 96, **851**, 855, off | 131.781 | 131.784 (+29) | 397 | 0.9999 / 1.016 | (0, 0) |
+| f400r10-80 | RAW10 640x400 binned | 251.824 exactly | 80, 728, 435, off | 251.824 | 251.831 (+29) | 756 | 1.0000 / 1.012 | (0, 0) |
+| f400r10-96 | RAW10 640x400 binned | 302.189 exactly | 96, 728, 435, off | 302.189 | 302.197 (+29) | 907 | 1.0000 / 1.008 | (0, 0) |
+| rq01b | RAW8 1280x800 crop | 120 ± 0.1 | 80, 728, 914, on | 120.049 | 120.052 (+29) | 361 | 0.9999 / 1.003 | (0, 0) |
+
+- All 40 pass: every capture (and every reference) with 0 wrong size, dropped, overwritten or
+  sequence gaps and DMA, host and bridge errors all 0; no flat row in any scene or reference
+  still; every bar still exact (0/255, RAW10 0/1023); every scene found at its origin, within
+  1 px of drift. The worst block correlation is the 128x16 window (0.9535, one 16x10 block is
+  8x1.6 pixels); the pixel correlations of the small, dim windows are low for the same reason
+  (narrow 0.66, rq16 0.78, rq11 0.83, rq16b 0.94; location 0.78, 0.82, 0.90, 0.96), as in the
+  characterisation (rq11 location 0.89, rq16 0.67). The others are ≥ 0.966.
+- Measured against predicted: +25 to +41 ppm, the same offset as the 12 modes. The requests
+  without a tolerance (`fNNN`) deliver the maximum the crate computes to the millihertz.
+- The fastest rates per window, all now run on the board (80 / 96 MHz): 1280x800 128.320 /
+  153.984, 1280x720 141.542 / 169.851, 640x480 204.875 / 245.850, 640x400 binned 251.824 /
+  302.189, 320x200 binned 464.895 / 557.874; RAW10 1280x800 128.320 / 131.781 (HTS 851),
+  640x400 binned 251.824 / 302.189. All at the crate's minimum VTS (h + 55, binned h + 35).
+- `x11` (1280x800 at 120 Hz ± 0.0001, a tolerance that rounds to 0 mHz) builds as `rq21`
+  (HTS 738, VTS 902, exactly 120.000 Hz) and was not captured again.
+
+Refused, each with the expected error and bound (as the `Error`'s `Display` prints it):
+
+| Request | Asked | Error |
+|---|---|---|
+| x1 | RAW8 1280x800 crop, 160 Hz ± 0.1 | `TooFast { max: 153.984 Hz }` |
+| x2 | RAW10 1280x800 crop, 140 Hz ± 0.1 | `TooFast { max: 131.781 Hz }` |
+| x3 | RAW10 640x480 crop, 250 Hz ± 0.1 | `TooFast { max: 245.850 Hz }` |
+| x4 | RAW8 1276x800 crop, 120 Hz | `Alignment { width_multiple: 8, height_multiple: 1 }` |
+| x5 | RAW10 1248x720 crop, 120 Hz | `Alignment { width_multiple: 64, height_multiple: 2 }` |
+| x6 | RAW10 640x401 crop, 120 Hz | `Alignment { width_multiple: 64, height_multiple: 2 }` |
+| x7 | RAW8 1296x800 crop | `Size { max_width: 1280, max_height: 800 }` |
+| x8 | RAW8 0x0 crop | `Size { max_width: 1280, max_height: 800 }` |
+| x9a | RAW8 640x480 crop at (700, 0) | `Window` |
+| x9b | RAW8 640x480 crop at (0, 400) | `Window` |
+| x10 | RAW8 48x200 crop | `Size { max_width: 1280, max_height: 800 }` |
+| x11b | RAW8 1280x800 crop, 120.001 Hz exactly | `Tolerance { nearest: 120.000 Hz }` |
+| x12 | RAW8 1280x800 crop, 0.1 Hz ± 0.01 | `TooSlow { min: 0.419 Hz }` |
+| x13 | RAW8 640x480 crop at (101, 37) | `Window` |
+
+The seven `fNNN-96` probes (1 MHz requested) gave `TooFast` with the maximum each then
+captured.
+
+`build()` on the P4 (400 MHz, code in flash through the cache; fastest of 5 calls, first call
+in brackets):
+
+| Case | Cycles | Time |
+|---|---|---|
+| Refused on shape (`Size`, `Alignment`, `Window`) | 157–205 (157–3092) | under 1 us |
+| Accepted at the standard line length (HTS 728; 851 for `f800r10-96`) | 1011–2295 (1272–81 206) | 2.5–5.7 us (up to 203 us) |
+| Accepted after a longer-line search (`rq21`, `x11`: HTS 738) | 1453–1475 (24 897–75 755) | 3.6–3.7 us (up to 189 us) |
+| Accepted at HTS 2897 (`lo042`, the longest accepted search) | 72 993 (151 729) | 182 us (379 us) |
+| `TooFast` (probes and x1..x3) | 41 938–45 342 (42 101–107 105) | 105–113 us (up to 268 us) |
+| `Tolerance` after the worst-case search (`x11b`, 2185 iterations in the crate's count) | 45 417 (51 290) | 114 us (128 us) |
+| `TooSlow` (`x12`) | 75 192 (78 177) | 188 us (195 us) |
+
+A `const` mode costs nothing at run time; a mode built at run time cost at most 379 us here.
+The first call is up to 63 times the fastest [INFERENCE: cache misses on code and constants
+in flash; the repeats run from the cache].
 
 ### PSRAM tuning attempts
 
@@ -1172,7 +1347,7 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
   640x400 setting (VTS 434) worked only at the edge, and 144 fps at 1280x720 still needs the
   96 MHz clock (the crate's 80 MHz maximum there is 141.542 Hz).
 - **RAW10 at 1280 wide is link-limited at 96 MHz:** it needs HTS 840 or more (the crate uses
-  851), so 1280x800 RAW10 at 96 MHz tops out at 131.781 Hz [computed by the crate, not run].
+  851), so 1280x800 RAW10 at 96 MHz tops out at 131.781 Hz (run on this board: a right picture).
   Elsewhere HTS 728 is enough (the link term binds only for RAW10 at 96 MHz from width 1088).
 - **Window constraints:** RAW8 widths a multiple of 8; RAW10 widths a multiple of 64 and even
   heights (the P4 receiver); the sensor truncates the x origin to a multiple of 8 and floors a
@@ -1222,19 +1397,29 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
   [INFERENCE]).
 - **Stall test scope:** the guard covers the list-item area and the ring tail only; the RAW8
   strip soak was rerun on mode 0 only; one core, no Ethernet traffic.
-- **Whole-frame detection from PSRAM is slower than a frame** in modes 4, 5, 9 and 10: one
-  captured frame each, dark scene, 10.9, 9.7, 13.8 and 12.3 ms against 6.9, 6.9, 8.3 and 8.3
-  ms (`/tmp/poc-p4-eth/final/stills.log`; 11.1, 9.8, 14.1 and 12.6 ms in the first run).
-  Those modes need the strip path; only modes 9 and 10 were soaked on it.
+- **Whole-frame detection from PSRAM is slower than a frame** in modes 0, 1, 4, 5, 9 and 10:
+  one captured frame each, dark scene, 10.8, 9.7, 10.9, 9.8, 13.8 and 12.4 ms against 8.3,
+  8.3, 6.9, 6.9, 8.3 and 8.3 ms (`/tmp/poc-p4-eth/migrate/stills.log`; modes 4..=11 within
+  0.06 ms of the hand-built tables' runs). Those modes need the strip path; only modes 0..=3,
+  9 and 10 were soaked on it.
 - **No soak at the new rates:** modes 4..=8 have had capture-only verification (by
-  decision); the RAW10 modes 9..=11 only the strip soak (the frame soak is RAW8 only).
+  decision); the RAW10 modes 9..=11 only the strip soak (the frame soak is RAW8 only). The
+  40 requests of the request verification had 3 s of capture each (lo2 3.5 s and lo042
+  16.6 s, 7 frames each), at gain 8x.
+- **Mode 7 now runs 96 MHz** (253 Hz ± 0.5 resolves there, see "All 12 modes"): above the
+  datasheet's 80 MHz, checked at gain 2x only. The 80 MHz alternative at 250 Hz (`rq07`, VTS
+  438) and the 80 MHz maximum of 251.824 Hz (`f400-80`) were verified as well.
+- **Rate offset of some 96 MHz settings:** the two 144 fps modes measure +45 / +47 ppm and
+  `rq14b` (RAW10 640x480 at 240 Hz) +41, against +25..+31 for every other mode and request,
+  96 MHz ones included (mode 7 +28, `rq03` +29). Unexplained; 10–20 us per second.
 - **Sensor limits not measured** (kept conservative by the `ov9281` crate; list "Not
   measured, kept conservative" in its README): the minimum VTS of height 1; widths 113..119
   (crop) and 104..112 (binned); HTS below 728 and above 2912; the PSV bands at HTS other than
   728 and 1456; the dark-VTS limit at HTS 1000..1100 (crop) and 850..900 (binned); exposures
-  between VTS − 13 and VTS; windows outside the array; 96 MHz at gain above 8x; the fastest
-  96 MHz RAW10 1280 rate and the HTS 2912 rates (formula only); the causes of the dark-picture
-  limit, the PSV bands and the long-line brightening; one sensor at room temperature.
+  between VTS − 13 and VTS; windows outside the array; 96 MHz at gain above 8x; the HTS 2912
+  rates (formula only; HTS 2897 at 0.421 Hz was run in the request verification, as was the
+  fastest 96 MHz RAW10 1280 rate, 131.781 Hz); the causes of the dark-picture limit, the PSV
+  bands and the long-line brightening; one sensor at room temperature.
 - **96 MHz artefacts:** the column stripes and the raised floor were seen at gain 15.5x only.
   The characterisation ran 96 MHz at gain 8x or less with its scene checks (correlation and
   brightness, not column noise); gain above 8x at 96 MHz is not measured. Cause unknown.

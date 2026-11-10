@@ -65,7 +65,7 @@ pub struct Plan {
     /// Dump one frame per mode over the log UART.
     pub still_dump: bool,
     /// With `still_dump`: one more still per test pattern, selected while streaming. The
-    /// plan's own setting (`pattern`) is restored afterwards.
+    /// plan's own setting (`sensor.pattern`) is restored afterwards.
     pub still_patterns: &'static [TestPattern],
     /// Run the processing soak per mode after the checks above (`soak`). `None`: capture only.
     pub soak: Option<soak::Plan>,
