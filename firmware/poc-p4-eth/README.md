@@ -34,8 +34,17 @@ Status, measured on the board (details below):
   byte layout confirmed as CSI-2 packed. Two modes needed changes: 1280x720 at 144 fps runs
   the 96 MHz clock (as 1280x800 at 144 does), and 320x200 resets two common registers. The
   three RAW10 modes also passed through the strip path (strips byte-identical to whole frames,
-  strip soak passed; 1280-wide RAW10 costs about 1.3x RAW8 and fits 120 fps), but a DMA stall
-  of about 30 ms in RAW10 crashes the board (open driver fault). See "All 12 modes".
+  strip soak passed; 1280-wide RAW10 costs about 1.3x RAW8 and fits 120 fps). See "All 12
+  modes".
+- Strip stalls: the DMA stall that crashed the board in RAW10 is root-caused and fixed in
+  `esp32p4-csi` (`9d21695`). The CSI bridge, which ends the DMA blocks, overran the ring after
+  a plain resume; the driver now restarts the ISP and the bridge before it resumes. The stall
+  test (`3325d0c`) passes 24/24: halts of 1 to 100 ms and bursts, in RAW8 and RAW10, every
+  strip's rows correct. See "The stall fault (fixed)".
+- Sensor limits: measured on this board for the `firmware/ov9281` driver crate. They bound
+  the dark picture at short VTS (a minimum VTS per window height; cause unknown) and the PSV
+  flat rows (bands of VTS), and show that the 253 fps mode (VTS 434) worked only in a narrow
+  window. See "Sensor driver crate".
 
 ## Hardware set-up
 
@@ -474,13 +483,17 @@ Correctness:
 Resynchronisation rule: when the consumer holds strips too long, the DMA reaches a strip that
 is still held and halts (a stall: `dma_stalls`, DMA error bits 0x2009, bridge discard 0x4 if
 the halt lasts). After any damage the driver drops strips until a frame end, then checks one
-whole frame's block sizes (the probation frame) before it delivers again. A stall therefore
-costs about 4 frames (the damaged one, the shifted next one, the probation frame). The first
-two frames after `start` are never delivered. Before this rule, stalls produced strips
-labelled with rows of the shifted next frame.
+whole frame's block sizes (the probation frame) before it delivers again. The first two frames
+after `start` are never delivered. Before this rule, stalls produced strips labelled with rows
+of the shifted next frame. In this bring-up the driver simply resumed the DMA after a stall,
+and a stall cost about 4 frames (the damaged one, the shifted next one, the probation frame).
+Since the stall fix the driver restarts the ISP and the bridge before it resumes, the bridge
+starts cleanly at the next frame, and a halt costs at most one skipped and one truncated
+frame, with the next whole frame 25–33 ms after the strip is returned (14–19 ms at 640x400,
+210 fps; see "The stall fault (fixed)").
 
 How long the consumer may hold strips (10 s runs, no processing, every strip held for a fixed
-time):
+time; driver before the stall fix):
 
 | Mode | Ring | Every strip held (sustained) | Only the first strip of a frame held (single) |
 |---|---|---|---|
@@ -805,15 +818,17 @@ both back to the datasheet defaults, which are also what Linux `ov9282.c` leaves
   limit is exactly 0x28 x 8 B = 320 B, the line of this mode. The common block's 0x30 (384 B)
   is Espressif's RAW8 value; every other mode's line is 640 B or more. [INFERENCE: with a
   read start past the line end the last line waits in the VFIFO and arrives after the frame
-  end.]
+  end.] The sensor characterisation later found the unit is 8 pixels (the same as 8 bytes in
+  RAW8) and a lower limit as well; see "Sensor driver crate".
 - **PSV mode (0x4F00 = 0x0C, power saving)** blanks rows when the frame is short. Espressif's
   table sets it, Linux never writes it; the datasheet does not describe it. [INFERENCE: the
   flat, noise-free rows point to the analog chain being off.]
 - Lowest VTS with 0x4F00 = 0x00 at the exposure maximum (`e12.log`): 232, 234, 236, 238, 240
   and 241 give a correct picture; 222 and 230 whole frames with a nearly black picture (mean
   0.7–1.5, also at 100 lines); with 0x4F00 still at 0x0C, VTS 214..=220 stop the frames. VTS
-  241 leaves 9 lines of margin; VTS 232 would give 470.9 fps [INFERENCE: formula only]. VTS
-  231, 233, 235, 237 and 239, and 0x4F00 = 0x00 below 222, were not tried.
+  241 leaves 9 lines of margin. VTS 231, 233, 235, 237 and 239, and 0x4F00 = 0x00 below 222,
+  were not tried here. The sensor characterisation settled it: last good VTS 231 (h + 31) with
+  PSV off, and VTS 232 measured 470.884 fps (see "Sensor driver crate").
 
 #### Mode 5 (1280x720 at 144 fps): VTS limit, PSV, 96 MHz
 
@@ -836,7 +851,8 @@ time (143.768–143.771 fps; `/tmp/poc-p4-eth/raw10/TMP_MODE5_PLAN.log`, `TMP_MO
 
 - So the flat frames at VTS 780..=810 are PSV, as in mode 8, and the dark, inverted-looking
   picture at the shortest VTS (763 here, 222..=230 in mode 8) is a second limit that PSV off
-  does not fix. Unexplained. The steps between 763 and 780 were not tried.
+  does not fix. Its cause is unknown; the sensor characterisation later bisected it to a last
+  good VTS of 771 (h + 51) for this window, the same at 96 MHz (see "Sensor driver crate").
 - **Decision:** PSV stays on in the common block (only mode 8 turns it off), and mode 5 runs
   the 1280x720 window at 96 MHz with VTS 915, as mode 4: 143.907 fps, normal picture. The
   80 MHz alternative, PSV off at VTS 780 (140.6 fps), is a finding only.
@@ -892,7 +908,9 @@ not a whole number of the bridge's 4096-byte bursts; `strip_soak::lines`), thres
 10-bit units, and the budget the mode's frame period (1 s / nominal fps: 8333 us, 4762 us at
 210 fps). The synthetic strip is filled with `Synth::fill_raw10`, its four 16-row bands
 repeated in a 128-row strip. The receiver and the sensor stream are started for every run
-and stopped before its results are logged (see the stall fault below).
+and stopped before its results are logged: while the firmware logs or prepares the next run
+the DMA would fill the ring and halt, and the frames such a stall costs until the driver has
+resynchronised would count against the run.
 
 | Mode | Run | Blobs/frame fed | Frames complete | Truncated | Skipped | Stalls | Overruns | Errors | Proc min | Mean | Max | > budget | Hold max (row) | Frame end->centroids min/mean/max | fps | Verdict |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -926,26 +944,180 @@ us on average, 2.4 us at most.)
   1354/1355/1617/2296 us at 640x400 (live, synthetic 0, 16, 64); the means moved by at most
   about 3 % against the one-stream-per-mode runs above.
 
-#### The RAW10 stall fault (open)
+#### The stall fault (fixed)
 
 Found by the strips task (`/tmp/poc-p4-eth/strips10/`, `soak1.log`, `diag1.log` ..
-`diag10.log`), not fixed:
+`diag10.log`), root-caused and fixed by the stall task (logs in `/tmp/poc-p4-eth/stall/`). The
+fix is `9d21695` in `esp32p4-csi` (`kick()` in `strips.rs`, new `restart_isp_bridge` in
+`lib.rs`; section "Stalls" of the `strips.rs` module docs), the stall test `3325d0c` in this
+crate (`STRIP_STALL_PLAN`).
 
-- The first RAW10 soak hung at its second run, after the pause between runs (results log and
-  synthetic preparation), during which the 3-strip ring filled and the DMA halted.
-- A deliberate 30 ms busy wait right after stream-on crashed or hung the board in RAW10 with
-  rings of 3 and of 2 strips (`diag5`, `diag9`): load access faults in the driver's DMA
-  handler (`State::collect`, the list-item pointer holding 0xA4070706, which looks like image
-  data; `diag2`) and in the executor's waker, called from the timer tick (`diag6`). RAW8 with
-  rings of 3 and 4 recovered from the same halt with a few lost frames (`diag4`, `diag8`).
-- Ruled out as fixes: restarting the DMA channel instead of `BLK_TFR_RESUMEREQ` (`diag7`), and
-  turning the bridge off for the length of the halt (`diag10`). A sentinel area right after
-  the ring (up to 237 KB) was never written, so how the memory is hit is not known.
-- RAW10 strips never failed while nothing stalled (the check and the soaks above). The strip
-  soak therefore starts the receiver and the stream for every run and stops both before it
-  logs or prepares the next run. Until the fault is solved, a RAW10 consumer must never let
-  the DMA reach a held strip. In-run RAW10 stalls were never provoked; one would probably
-  crash the board instead of giving a FAIL [INFERENCE].
+What was seen: the first RAW10 soak hung at its second run, after the pause between runs
+during which the 3-strip ring filled and the DMA halted. A deliberate 30 ms busy wait right
+after stream-on crashed or hung the board in RAW10 with rings of 3 and of 2 strips: load
+access faults in the driver's DMA handler (`State::collect`, the list-item pointer holding
+0xA4070706, which looks like image data) and in the executor's waker. RAW8 recovered from the
+same halt with a few lost frames. Restarting the DMA channel instead of `BLK_TFR_RESUMEREQ`
+(`diag7`) and turning the bridge off for the length of the halt (`diag10`) did not help.
+
+Cause:
+
+- The CSI bridge is the DMA's flow controller (`TT_FC` = 4, `CSI_DMA_FLOW_CONTROLLER`; TRM
+  38.7.2, reg 38.147, 7.5.5), so it alone ends DMA blocks; the list item's `BLOCK_TS` (12799)
+  does not bound them (TRM 7.5.1: "the flow controller controls the block length").
+- While the DMA halted on a held strip, the bridge filled up and discarded the rest of the
+  frame (`CSI_BRIG_DISCARD`). When simply resumed, it flushed its 961 buffered items as one
+  block, and its block cuts were off from then on.
+- In RAW10 (1280x800, ring of 3, a strip returned while the bridge was empty and discarding)
+  it never ended the next block at all. A trace kept in LP RAM across a watchdog reset
+  (`s4.log`) shows the DMA writing 365 248 B from the start of strip 1, over the rest of the
+  ring, the statics and the whole stack, until about 8 ms later a destination decode error
+  (`DST_DEC_ERR`, status 0x48) at 0x4FFC_0100, past the end of L2MEM (0x4FFC_0000). That
+  explains the faults on pointers holding image data. The earlier sentinel evidence (the area
+  after the ring never written) was invalid: the sentinel was only checked in runs that
+  survived.
+- Why RAW8 survived (`s5.log`): the same sequence gave a block of 9792 items instead of 10240
+  (448 short) and a frame-end block of 5569 instead of 5120 (449 late). Wrong but bounded, and
+  the driver's probation frame caught them. Why RAW10 never ends the block is [INFERENCE]:
+  probably RAW10 frames end on a half burst (a last strip of 12.5 bursts) and RAW8 frames on
+  whole bursts; the inside of the bridge is not visible.
+
+Fix: before every resume after a halt (`BLK_TFR_RESUMEREQ`), and before every restart after a
+DMA error, the driver resets and reprograms the ISP and the bridge, then enables the bridge.
+The CSI host and the D-PHY keep running. It happens only while the DMA channel waits between
+blocks, so no bridge transfer is in flight, inside the driver's existing critical section
+(`HP_RST_EN0` is shared with other modules). Resetting the bridge alone gave no data after
+the release (`s6.log`); the ISP reset is needed too (`s7.log`). The `s7` trace after the fix:
+the first block is a full strip (0x31ff) at the next frame start, and every block after it has
+its normal size (frame end 0x18ff). The probation rule is unchanged, and so is the
+steady-state interrupt path: `kick` returns early unless the channel is halted.
+
+Stall test (`STRIP_STALL_PLAN`, log `/tmp/poc-p4-eth/stall/f2-stall.log`): modes 0, 9, 10 and
+11, six cases each (`STALL_CASES`: single halts of 1, 5, 30 and 100 ms, bursts of 20 x 2 ms
+and 8 x 30 ms). Each case holds a strip until the driver reports the DMA halted, keeps it for
+the case's time, then checks every strip row by row up to the first whole frame begun after
+the last release, then runs a 1 s strip check on fresh counters. An address-pattern guard
+covers 16 KiB before the list items, the space after them and the ring tail; it is filled
+before each case and checked after.
+
+| Modes | Bad rows, size/order errors, guard words written | Lost per halt | Next whole frame after the release | 1 s strip check after recovery | Verdict |
+|---|---|---|---|---|---|
+| 0 (1280x800 RAW8), 9 (1280x800 RAW10), 10 (1280x720 RAW10), 120 fps | 0 in every case | at most one frame skipped and one truncated | 25.4–32.6 ms | 119/119 frames matching, 0 gaps | all cases PASS |
+| 11 (640x400 RAW10, 210 fps) | 0 in every case | at most one frame skipped and one truncated | 14.0–18.4 ms | 209/209 frames matching, 0 gaps | all cases PASS |
+
+24/24 PASS. The driver counted 1 stall per single halt, 8 for 8 x 30 ms and 20 for
+20 x 2 ms. A first run (`f1-stall.log`) gave 22/24: the two 640x400 burst cases failed
+"sequence" from a test bug (frames delivered between the halts of a burst counted as
+recovery), fixed before `f2`.
+
+Without the fix (`u1-stall.log`, the same test with the fix removed): RAW8 mode 0 recovered
+in all 6 cases (with the driver counting 2 stalls per single halt), then the board froze in
+the first RAW10 case (1 x 1 ms): no output for the rest of the 90 s.
+
+Regression runs on the fixed driver (same folder):
+
+| Run | Log | Result |
+|---|---|---|
+| `STRIP_CHECK_PLAN` | `f-check.log` | 4/4 PASS: 15588 / 15588 / 14389 / 8382 strips checked, 0 bad rows, 0 stalls |
+| `RAW10_STRIP_SOAK_PLAN` | `f-raw10soak.log` | 12/12 PASS, every frame complete, 0 stalls |
+| `STRIP_SOAK_PLAN`, mode 0 only (temporary plan, removed afterwards) | `f-raw8soak.log` | 4/4 PASS: 3597 / 1199 / 1199 / 1199 frames complete, 0 stalls |
+
+Interrupt handler times, mean/max in us:
+
+| Soak | Before the fix | After the fix |
+|---|---|---|
+| RAW10 | strips task (`strips10/soak2.log`): 1280x800 live 3.0/3.1, synthetic up to 3.3/3.5, one 10.5 max; this README: 2.0–3.2 mean | 2.2–3.4 mean, 3.4–3.6 max |
+| RAW8 mode 0 (live, synthetic 0, 16, 64) | strips task (`strips10/raw8soak2.log`): 3.0/3.2, 3.0/10.0, 3.1/3.3, 3.1/3.4; this README: 3.0–3.2 mean | 3.2/3.4, 3.2/3.4, 3.3/3.5, 3.3/3.6 |
+
+The means are 0.1–0.3 us higher. The cause is not found; code layout is [INFERENCE], since
+the restart code does not run without a stall.
+
+Not covered or inferred:
+
+- A bridge discard while the DMA is running but starved, rather than halted, does not go
+  through the restart; it was never provoked and never seen in a soak. If it happens, the
+  same overrun is possible [INFERENCE].
+- A DMA write fence (TRM chapter 20, DMA APM, base 0x500A_6000) would contain any overrun; it
+  is not implemented.
+- The whole-frame path (`Csi`) may have the same exposure after dropped frames [INFERENCE]; it
+  was not checked.
+- That the ISP waits for the next frame start after its reset is seen in the `s7` trace only,
+  not in the TRM.
+- The guard covers the list-item area and the ring tail, not all of memory. Only the RAW8
+  strip soak of mode 0 was rerun, not modes 1–3. One core, no Ethernet traffic.
+
+### Sensor driver crate (`firmware/ov9281`)
+
+The sensor side now has a configurable driver, `firmware/ov9281` (`no_std`, no heap):
+
+- a mode builder: format (RAW8 or RAW10), output size, readout (crop or 2x2 binned), window
+  origin, and frame rate with a tolerance in hertz. It chooses the clock (80 MHz, 96 MHz only
+  above the fastest 80 MHz rate), HTS, VTS, PSV and the VFIFO read start, or refuses the
+  request with the reason (`TooFast`, `TooSlow`, `Tolerance` with the nearest rate, `Size`,
+  `Alignment`, `Window`). Every builder method is a `const fn`, so a mode can be a `const`;
+- a device layer (`Ov9281`) over any `embedded-hal-async` I2C bus: chip ID, mode
+  configuration, exposure, gain, test pattern, stream on and off, single register read and
+  write.
+
+Its limits (`src/limits.rs`) are the measured limits of this board's sensor (2026-11-10, 16
+boots of a measurement harness in this crate, removed afterwards). The pass criterion was a
+lit scene against a reference of the same window, because a wrong VTS, PSV, VFIFO or HTS
+setting delivers whole, on-time frames with no receiver error, and the bar test pattern passes
+where the scene is broken. The tables, the method and the evidence are in
+[firmware/ov9281/README.md](../ov9281/README.md) ("Measured limits"); they are not repeated
+here. What they settle or correct in this README:
+
+- **Minimum VTS.** The dark, inverted picture at the shortest VTS is the sensor's minimum VTS
+  with PSV off: crop h + 51, binned h + 31 lines, the same at 80 and 96 MHz, in RAW8 and RAW10
+  and at every window and exposure measured. Below it the frames stay whole and on time with
+  no error; further down no frames arrive. For this README's windows: 1280x720 crop last good
+  771 (the 763 of the first mode 5 is below it), 320x200 binned last good 231 (222..=230 below
+  it). That settles the VTS values left untested here (764..=779 at 1280x720, the odd values
+  231..=239 and below 222 at 320x200). Its cause is still unknown. The crate adds 4 lines of
+  margin: crop h + 55, binned h + 35.
+- **PSV (0x4F00 = 0x0C).** Not monotonic in VTS − h: a right picture at crop h + 51..54
+  (binned h + 31..34), no frames at h + 55..57 (h + 35..37), right at h + 58 (h + 38), rows
+  flat at the black level from h + 59 to h + 89 or 90 (h + 39..70), right from h + 90 or 91
+  (h + 71). The flat rows seen here at VTS 780..=810 (1280x720) and at VTS 241 (320x200,
+  h + 41) are these bands. Where PSV is safe it changes nothing measurable (picture, black
+  level, noise, frame period); its power saving was not measured. The crate turns PSV on only
+  from crop h + 95 / binned h + 75 and off below, per mode, instead of this PoC's "on in the
+  common block, off in mode 8".
+- **Mode 7 (640x400 binned, VTS 434, 252.402 fps).** VTS 434 is binned h + 34: with PSV on, as
+  mode 7 runs, it sits in the narrow good window h + 31..34, one line before the no-frame band
+  h + 35..37. It passed here at that edge. The crate no longer allows it: the fastest 80 MHz
+  640x400 binned mode is VTS 435 (251.824 Hz, PSV off), and 252.402 Hz requested within
+  1 mHz moves to 96 MHz and fails with `Tolerance` (nearest 252.404 Hz).
+- **VFIFO read start (0x4601).** It counts 8 pixels (8 bytes in RAW8, which this README's
+  mode 8 notes assumed). The good range is from a lower limit to w / 8 (one line); above it no
+  frames, below it shifted or smeared lines. The lower limit is 1 at 96 MHz and in RAW10, but
+  in RAW8 at 80 MHz it scales with the width: `ceil(w / 40) - 4`, 28 at 1280, 12 at 640, 4 at
+  320. So mode 8's 0x04 at 320 wide is the lowest good value (3 fails), at the edge of its
+  range, and the common block's 0x30 gives no frames below 384 pixels. No fixed value serves
+  every width; the crate uses `max(1, w / 16)` (0x14 at 320).
+- **HTS.** The sensor's shortest line is HTS 723 with 1296 array columns (crop 1280, binned
+  640), 671..677 for narrower windows. The 2-lane link adds a minimum of
+  `ceil(line_bytes x MHz / 200) + 75` cycles, which binds only for RAW10 at 96 MHz from width
+  1088: 1280-wide RAW10 at 96 MHz needs HTS 840 (no frames at 787 and below), and the crate
+  uses 851 there, so its fastest 1280x800 RAW10 rate at 96 MHz is 131.781 Hz [computed by the
+  crate, not run]. Long lines brighten the picture (1.04x at HTS 2912); the crate stops at
+  2912. Every mode of this PoC runs at HTS 728, inside the range.
+- **Frame period.** `(VTS − 1) × HTS + 1730` holds over HTS 659..65535 and VTS 21..65535
+  (1493 probes, both clocks and formats, crop and binned), every period 23.5..33.9 ppm below
+  the formula.
+- **Width, height, origin.** RAW8 widths must be multiples of 8 (a right picture from 120 up;
+  most widths of 4 mod 8 give no frames); the ESP32-P4 receiver needs RAW10 widths that are
+  multiples of 64 and even RAW10 heights. Heights stream from 1 to 800 (binned 400). The
+  sensor truncates the x origin to a multiple of 8 and floors a binned y origin to even; a
+  crop y origin is exact. A window past the array still streams (with flat rows). The crate
+  refuses what the sensor would change or not deliver: RAW8 widths a multiple of 8, RAW10 of
+  64, 128..=1280 crop and 128..=640 binned; heights 2..=800 (binned 2..=400), even in RAW10;
+  x origin a multiple of 8, binned y even, the window inside the array.
+
+Requested through the builder at each mode's rate within 1 mHz, 11 of this PoC's 12 modes
+resolve to the PoC's own clock, HTS, VTS and PSV, with every register write and the order
+equal to the PoC tables except 0x4601 (`tests/legacy.rs` in the crate); mode 7 does not
+resolve (above).
 
 ### PSRAM tuning attempts
 
@@ -978,26 +1150,45 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
   not tried.
 - **Frame period, for XVS and exposure timing:** a frame lasts `(VTS − 1) × HTS + 1730`
   SCLK cycles, not `VTS × HTS` (0.15 % longer at VTS 915, 0.57 % at VTS 241; measured within
-  1.4 cycles over HTS 728..=2912 and VTS 434..=1830). Any trigger period, exposure window or
-  timestamp model on the product must use it; the sensor clock ran 25–41 ppm fast against
-  the P4's timer on this board.
-- **VFIFO read start (0x4601) must not exceed one line** (in 8-byte units): the common
-  block's 0x30 (384 B) loses every frame of a 320-pixel RAW8 line. Any mode narrower than
-  384 B per line needs a smaller value (0x04 is the datasheet default).
-- **PSV mode (0x4F00 = 0x0C) blanks short frames:** at VTS 241 (320x200) and 780..=810
-  (1280x720 at 80 MHz) rows come out flat at the black level. It stays on in the common
-  block by decision; mode 8 turns it off. A product mode with a short VTS must turn it off.
-- **The unbinned 1280x720 window has a minimum VTS** at 80 MHz: 814 with PSV on, at most 780
-  with it off; VTS 763 gives a dark, wrong picture either way (unexplained, like VTS 222..=230
-  in the 320x200 mode). 144 fps at 1280x720 needs the 96 MHz clock.
+  1.4 cycles over HTS 728..=2912 and VTS 434..=1830 here, and over HTS 659..65535 and VTS
+  21..65535 in the sensor characterisation, 1493 probes). Any trigger period, exposure window
+  or timestamp model on the product must use it; the sensor clock ran 25–41 ppm fast against
+  the P4's timer on this board (23.5–33.9 ppm in the characterisation).
+- **VFIFO read start (0x4601) has a range that depends on the width** (unit: 8 pixels): at
+  most w / 8 (one line; above it no frames), at least 1, except RAW8 at 80 MHz, where the
+  lower limit grows with the width (`ceil(w / 40) - 4`: 28 at 1280, 4 at 320; below it lines
+  shift or smear). No fixed value serves every width: the common block's 0x30 loses every
+  frame below 384 pixels, and 0x04 breaks RAW8 at 80 MHz above about 320. `w / 16` lies inside
+  every range (the `ov9281` crate's rule). See "Sensor driver crate".
+- **PSV mode (0x4F00 = 0x0C) is safe only from crop h + 91 / binned h + 71 lines of VTS:**
+  below that, bands of no frames and of rows flat at the black level alternate with narrow
+  good windows (the flat rows at VTS 780..=810 in 1280x720 and VTS 241 in 320x200 are such
+  bands). Where it is safe it changes nothing measurable; its power saving was not measured.
+  The `ov9281` crate sets it per mode, on only from h + 95 / h + 75.
+- **Every window has a minimum VTS (PSV off): crop h + 51, binned h + 31 lines**, the same at
+  80 and 96 MHz and in RAW8 and RAW10. Below it frames stay whole and on time with no error,
+  but the picture is dark and inverted (VTS 763 at 1280x720, 222..=230 at 320x200); further
+  down no frames arrive. Cause unknown; the crate keeps 4 lines of margin. So the 253 fps
+  640x400 setting (VTS 434) worked only at the edge, and 144 fps at 1280x720 still needs the
+  96 MHz clock (the crate's 80 MHz maximum there is 141.542 Hz).
+- **RAW10 at 1280 wide is link-limited at 96 MHz:** it needs HTS 840 or more (the crate uses
+  851), so 1280x800 RAW10 at 96 MHz tops out at 131.781 Hz [computed by the crate, not run].
+  Elsewhere HTS 728 is enough (the link term binds only for RAW10 at 96 MHz from width 1088).
+- **Window constraints:** RAW8 widths a multiple of 8; RAW10 widths a multiple of 64 and even
+  heights (the P4 receiver); the sensor truncates the x origin to a multiple of 8 and floors a
+  binned y origin to even; a window past the array still streams. The crate refuses all of
+  these instead of letting the sensor change them.
 - **96 MHz (modes 4 and 5) is above the datasheet's 80 MHz:** clean at gain 2x, but at gain
   15.5x vertical column stripes and a black floor raised by about 10 of 255. Keep the gain
   low at 96 MHz, or stay at 80 MHz.
 - **RAW10 costs about 1.3x RAW8 in the detector from strips** (1280x800: 5.6 ms dark, 6.8 ms
   with 64 blobs) and fits 120 fps; 640x400 RAW10 fits 210 fps.
-- **RAW10 stall fault (open driver defect):** in RAW10 a DMA stall of about 30 ms crashes the
-  board, where RAW8 recovers. Until `esp32p4-csi` is fixed, a RAW10 consumer must never let
-  the DMA reach a held strip (stop the stream and the receiver before any pause).
+- **Strip stalls are recoverable since `9d21695`:** when the consumer lets the DMA reach a
+  held strip, the driver restarts the ISP and the bridge before it resumes. In RAW8 and RAW10
+  a halt costs at most one skipped and one truncated frame, and the next whole frame comes
+  25–33 ms after the strip is returned at 120 fps (14–19 ms at 640x400, 210 fps). Stalls still
+  lose frames, so the ring must still be sized for the consumer (see below). A bridge discard
+  while the DMA runs starved, not halted, is not covered (see "Open points").
 - **L2 cache:** the bootloader bundled with espflash 4.7.0 sets the L2 cache to 128 KiB, not the
   256 KiB esp-hal assumes by default (`ESP_HAL_CONFIG_L2_CACHE_SIZE`). This crate sets
   `"128KB"` in `.cargo/esp-config.toml` and gets 128 KiB more internal RAM. `cam-p4` still uses
@@ -1019,19 +1210,34 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
 
 ## Open points
 
-- **RAW10 stall fault** in `esp32p4-csi` strips: open, mechanism unknown (see "The RAW10
-  stall fault"). In-run RAW10 stalls were never provoked.
+- **Bridge discard with the DMA running:** a discard while the DMA is running but starved,
+  rather than halted, does not go through the ISP and bridge restart. It was never provoked
+  and never seen; the same overrun is possible then [INFERENCE].
+- **No DMA write fence:** the DMA APM (TRM chapter 20, base 0x500A_6000) could contain any
+  overrun of the strip DMA; it is not implemented.
+- **Whole-frame path after dropped frames:** `Csi` may have the same exposure as the strip
+  path had [INFERENCE]; not checked.
+- **Interrupt handler 0.1–0.3 us slower since the stall fix** (means, RAW8 mode 0 and RAW10
+  soaks), unexplained: the restart code does not run without a stall (code layout
+  [INFERENCE]).
+- **Stall test scope:** the guard covers the list-item area and the ring tail only; the RAW8
+  strip soak was rerun on mode 0 only; one core, no Ethernet traffic.
 - **Whole-frame detection from PSRAM is slower than a frame** in modes 4, 5, 9 and 10: one
   captured frame each, dark scene, 10.9, 9.7, 13.8 and 12.3 ms against 6.9, 6.9, 8.3 and 8.3
   ms (`/tmp/poc-p4-eth/final/stills.log`; 11.1, 9.8, 14.1 and 12.6 ms in the first run).
   Those modes need the strip path; only modes 9 and 10 were soaked on it.
 - **No soak at the new rates:** modes 4..=8 have had capture-only verification (by
   decision); the RAW10 modes 9..=11 only the strip soak (the frame soak is RAW8 only).
-- **Dark picture at the shortest VTS**, with whole frames on time: VTS 763 in the 1280x720
-  window at 80 MHz, VTS 222..=230 in 320x200. Unexplained.
-- **Untested VTS values:** 764..=779 at 1280x720 with PSV off; 231, 233, 235, 237, 239 in
-  320x200, and below 222 with PSV off.
-- **96 MHz artefacts** at gains between 2x and 15.5x not measured; their cause is not known.
+- **Sensor limits not measured** (kept conservative by the `ov9281` crate; list "Not
+  measured, kept conservative" in its README): the minimum VTS of height 1; widths 113..119
+  (crop) and 104..112 (binned); HTS below 728 and above 2912; the PSV bands at HTS other than
+  728 and 1456; the dark-VTS limit at HTS 1000..1100 (crop) and 850..900 (binned); exposures
+  between VTS − 13 and VTS; windows outside the array; 96 MHz at gain above 8x; the fastest
+  96 MHz RAW10 1280 rate and the HTS 2912 rates (formula only); the causes of the dark-picture
+  limit, the PSV bands and the long-line brightening; one sensor at room temperature.
+- **96 MHz artefacts:** the column stripes and the raised floor were seen at gain 15.5x only.
+  The characterisation ran 96 MHz at gain 8x or less with its scene checks (correlation and
+  brightness, not column noise); gain above 8x at 96 MHz is not measured. Cause unknown.
 - **RAW10 under a bright live load:** every live RAW10 strip run had 0 blobs at threshold
   512, even in the brighter scene (at most 67 of 255 in RAW8 at gain 2x, 7.3 ms).
 - **Brightness ratios between stills** vary with the bench light (mode 0 read 1.23x after
