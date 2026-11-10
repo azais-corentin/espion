@@ -6,8 +6,9 @@ A throwaway proof of concept on the Waveshare ESP32-P4-ETH dev board (the board 
 camera stream of `espion-proto`, `docs/protocol.md`), on Ethernet and IPv6 with esp-hal's EMAC
 driver and embassy-net. Not part of the product.
 
-The `Stream` service (the default) streams raw frames; the `Bench` service (the network test
-it was built on) stays selectable.
+The `Stream` service (the default) streams the camera as greyscale JPEG from the P4's hardware
+encoder (`esp32p4-jpeg`), or raw; the `Bench` service (the network test it was built on) stays
+selectable.
 
 - Addressing: IPv6 only, the fixed link-local address `fe80::4553:9281/64`, neighbour discovery
   by smoltcp; no IPv4, no DHCP, no SLAAC. The MAC is the chip's factory MAC from eFuse
@@ -15,12 +16,20 @@ it was built on) stays selectable.
   on one switch never collide; the P4 has no radio that uses it too.
 - The host always talks first (its firewall drops unsolicited UDP): the board sends only to the
   address and port a request came from.
-- Status: the camera streams at the 100 Mbit/s wire rate in every mode the `ov9281` driver
-  accepts, the viewer's board test passes against it, and a 10-minute soak with mode changes,
-  viewer restarts and malformed datagrams ran without a crash or stall (see
-  [The camera stream](#the-camera-stream)). The network alone sends and receives at the wire
-  limit with every byte checked (see [Measured results](#measured-results)). esp-hal's
-  Ethernet driver needs three workarounds on the P4 (see [The Ethernet driver](#the-ethernet-driver)).
+- Status: the camera streams in JPEG at the sensor's full rate in every window measured (1280x800
+  at 153.98 Hz to 320x200 binned at 557.9 Hz) while the frames fit the 100 Mbit/s link, and the
+  automatic quality keeps the rate when they would not; raw frames stream at the wire rate.
+  `poc-viewer`'s board test passes against it (full run: every section but `auto`, whose one
+  failure led to the IJG-scaled room rule below; `auto` and `agreement` rerun on the final
+  build: 0 failed checks; logs `board-full1.log`, `board-auto2.log` in
+  `/tmp/poc-p4-eth/stream-jpeg/`). The
+  10-minute soak with JPEG (mode and encoding changes, viewer restarts, malformed datagrams,
+  injected encoder errors; `/tmp/poc-p4-eth/stream-jpeg/soak.py`) has not been run yet; the
+  raw-frame soak of the previous step passed (see [The camera stream](#the-camera-stream)).
+  The network alone sends and
+  receives at the wire limit with every byte checked (see [Measured results](#measured-results)).
+  esp-hal's Ethernet driver needs three workarounds on the P4 (see
+  [The Ethernet driver](#the-ethernet-driver)).
 
 ## Pins
 
@@ -150,11 +159,12 @@ and the EMAC's DMA status, missed-frame counter and MAC debug register.
 | `src/net/device.rs` | `embassy-net-driver` wrapper around esp-hal's driver: per-frame cycle counts, and the checksum capabilities (UDP and ICMPv6 computed by smoltcp) |
 | `src/cpu.rs` | Cycle counter and per-task CPU time from the executor's `trace` hooks |
 | `src/camera.rs` | OV9281 and CSI receiver: set-up, any mode's start (lanes checked in their stop state before stream-on), controls, stop, the newest frame, the fault switch of the stream's error-path test |
-| `src/stream/mod.rs` | The camera stream service: the shared stream state, the control task (requests, all-or-nothing `SetCamera`, repeats), the hand-off to the capture and send tasks |
+| `src/stream/mod.rs` | The camera stream service: the shared stream state, the control task (requests, all-or-nothing `SetCamera`, repeats), the hand-off to the capture, encode and send tasks |
 | `src/stream/check.rs` | The `SetCamera` checks in the protocol's order, as the viewer's fake camera makes them |
 | `src/stream/capture.rs` | The capture task: frames, counters, the stream rules, mode changes and recovery |
+| `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
 | `src/stream/send.rs` | The send task: answers and frame chunks, encoded straight into the socket's ring |
-| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU report, fault injection, stall, log marker |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU and encoder report, fault injection, stall, log marker, too-small encoder outputs, encode-only |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
 | `dram_dma.x` | Linker section for the Ethernet DMA storage at 0x4FF40000 or above (see below) |
@@ -163,19 +173,23 @@ and the EMAC's DMA status, missed-frame counter and MAC debug register.
 ## The camera stream
 
 `src/stream/`: the protocol of `espion_proto::cam` (`docs/protocol.md`, "Camera stream",
-version 2) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
+version 3) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
 the reference) does, with the real sensor.
 
 - **Requests.** `GetState` and `Poll` answer the full state; `SetStream` checks the encoding
-  against the format; `SetCamera` checks, in the protocol's order, the `ov9281` builder (size,
-  alignment, window, rate), the receiver's geometry (`esp32p4-csi`'s rules), the encoding
-  against the format, exposure (1..=the mode's longest) and gain (16..=248), and applies nothing
-  unless all pass; the answer is the state or the error with its values. Start-up settings are
-  the fake's: 1280x800 RAW8 crop, 120 Hz +- 0.5, exposure 200 lines, gain 2x, stream on, RAW8, no
-  limit. Every valid request makes its source the destination and restarts the 3 s stream
-  timeout; anything else on the port is counted and dropped. A repeat of the last request
-  (same number, op and source, which the host sends while it waits) gets that request's result
-  and is not executed again.
+  against the running mode (`Encoding::check`: RAW10 only from a RAW10 mode; JPEG only from a
+  RAW8 mode whose width and height are multiples of 8, refused as `Jpeg { reason, format,
+  width, height }` with the mode's values) and the JPEG quality (1..=100, `Quality { 1, 100 }`),
+  and sets the quality in use to the set quality; `SetCamera` checks, in the protocol's order,
+  the `ov9281` builder (size, alignment, window, rate), the receiver's geometry (`esp32p4-csi`'s
+  rules), the stream's encoding against the new mode (the same `Encoding::check`), exposure
+  (1..=the mode's longest) and gain (16..=248), and applies nothing unless all pass; the answer
+  is the state or the error with its values. Start-up settings are the fake's: 1280x800 RAW8
+  crop, 120 Hz +- 0.5, exposure 200 lines, gain 2x, stream on, JPEG at quality 90 with the
+  automatic quality, no limit. Every valid request makes its source the destination and
+  restarts the 3 s stream timeout; anything else on the port is counted and dropped. A repeat
+  of the last request (same number, op and source, which the host sends while it waits) gets
+  that request's result and is not executed again.
 - **Mode changes.** A request whose mode differs from the running one (`ov9281::Mode`
   equality): the frame in flight is abandoned, the sensor stream turned off, the frame let out,
   the receiver stopped, the mode and controls written (`Ov9281::configure`: software reset,
@@ -188,23 +202,217 @@ the reference) does, with the real sensor.
   camera; if that fails too, the capture task retries every second and on every request.
 - **Frames.** Four whole-frame buffers of 1 286 144 B (1280x800 RAW10) at the start of PSRAM,
   the newest complete frame taken. Frame numbers count captured frames from boot; each one is
-  counted, and goes out only while a host polls and the stream is on: one in flight (a frame
-  completing meanwhile counts as skipped, as do frames the receiver overwrote before the task
-  took them), `max_fps` honoured (frames held back by it are not counted), the chunks in order
-  on the 1409-byte grid to the last request's source. RAW10 goes out packed, or as RAW8 (the
-  first 4 bytes of every 5, taken as each chunk is copied). Capture errors count short frames,
-  the receiver's DMA, CSI host and bridge error interrupts, frames the receiver dropped for lack
-  of a buffer, and frames that did not come within two periods (the camera is then restarted).
+  counted, and goes out only while a host polls and the stream is on, `max_fps` honoured
+  (frames held back by it are not counted), the chunks in order on the 1409-byte grid to the
+  last request's source. Raw: one in flight (a frame completing meanwhile counts as skipped,
+  as do frames the receiver overwrote before the task took them); RAW10 goes out packed, or as
+  RAW8 (the first 4 bytes of every 5, taken as each chunk is copied). JPEG: through the encode
+  task ([JPEG](#jpeg)). Capture errors count short frames, the receiver's DMA, CSI host and
+  bridge error interrupts, frames the receiver dropped for lack of a buffer, and frames that
+  did not come within two periods (the camera is then restarted).
 - **Where it runs.** All on core 0, in the one embassy executor, with the network: control,
-  capture, send, diag, the runner and the link task; the EMAC and CSI interrupts are on core 0
-  too. The send task encodes each chunk straight into the socket's TX ring (`send_to_with`),
-  the one CPU copy of the pixels; smoltcp copies the datagram into the DMA buffer with its
-  checksum pass. Core 1 stays off (below: the two-core attempt hung).
+  capture, encode, send, diag, the runner and the link task; the EMAC, CSI, JPEG and 2D-DMA
+  interrupts are on core 0 too. The send task encodes each chunk straight into the socket's TX
+  ring (`send_to_with`), the one CPU copy of the pixels or of the JPEG file; smoltcp copies the
+  datagram into the DMA buffer with its checksum pass. Core 1 stays off (below: the two-core
+  attempt hung).
 - **RAM** (boot log): 182 272 B of internal RAM static, of which the service's sockets and
   buffers are 22 740 B (camera socket: 8 x 1452 B TX ring, 4 KiB RX ring; the hooks' socket);
-  399 296 B left for the main stack. PSRAM: the four frame buffers, 5 144 576 B.
+  399 296 B left for the main stack. PSRAM: the four frame buffers, 5 144 576 B, then the
+  encoder's three output buffers, 6 291 456 B.
 
-### Measured
+### JPEG
+
+The stream's default encoding, `Encoding::Jpeg`: one baseline greyscale JPEG file per frame,
+made by the P4's hardware encoder (`esp32p4-jpeg`) straight from the receiver's PSRAM buffer of
+a RAW8 frame; no CPU pass over the pixels. `src/stream/jpeg.rs`.
+
+**Pipeline**, all on core 0, one frame in work and one waiting at each stage, never a queue:
+
+1. The capture task offers every RAW8 frame it would send to the encode task: the frame waits
+   in a one-frame slot. A newer frame arriving before the encoder took it replaces it, and the
+   replaced one counts as a frame the encoder could not take (`encoder.frames_skipped`; frames
+   the receiver overwrote before the capture task took them count there too). At most two
+   captured frames are held (the one being encoded, the one waiting), which the receiver's
+   four buffers allow (0 receiver drops in every run).
+2. The encode task sets the encoder to the frame's size and the quality in use (only when they
+   change: `Encoder::set_config`, header and tables), takes a free output buffer, encodes
+   (`Encoder::encode` in a 100 ms timeout) and gives the receiver's buffer back at once.
+3. The file waits for the send task in the next one-frame slot (`JOB`). A newer file finished
+   before the send task took it replaces it, and the replaced one counts as skipped because
+   the link was busy (`counters.frames_skipped`). So the link never waits for an encode, and
+   the send task always gets the newest file. The send task sends it like a raw frame: the
+   chunks on the 1409-byte grid, `frame_len` the file's length, each chunk copied once from
+   PSRAM into the socket's ring.
+
+**Buffers.** Three output buffers (one being sent, one waiting, one being encoded into) of
+`JPEG_FRAME_MAX` = 2 MiB each in PSRAM after the receiver's buffers, 128-byte aligned (the
+driver's rule for PSRAM). The encoder gets the part `Config::max_output_len` gives for the
+size (the header and 2 bytes per pixel, 2 048 384 B at 1280x800), so any file the protocol
+allows fits. A buffer is freed when its file is sent, replaced or abandoned (an `Out` handle,
+as the receiver's `Frame`).
+
+**Errors.** A file that does not fit (`OutputTooSmall`), a codec or DMA error, or no end
+within 100 ms costs that frame: it counts in `encoder.errors`, the driver resets the hardware
+before the next frame, the stream goes on. The control task never waits for the encoder. A
+mode change aborts the stream epoch: frames and files of the old epoch are dropped where they
+are, and the next frame reconfigures the encoder.
+
+**Automatic quality** (`espion_proto::cam::auto_quality`, the same rule in the fake camera).
+Every `AUTO_QUALITY_PERIOD_MS` = 200 ms, while JPEG frames go out with `auto_quality` on, the
+encode task takes:
+
+- `skipped`: a file was replaced in the send slot during the period (the link was busy);
+- `busy_pct`: the share of the period the send task spent on frames, from a frame's first
+  chunk to its last chunk queued (`SEND_BUSY_US`).
+
+and sets the quality for the next period: above the set quality, the set quality; if
+`skipped`, down by max(2, q / 8), not below `AUTO_QUALITY_MIN` = 10; else up by 1 towards the
+set quality only if `busy_pct * S(q) < AUTO_QUALITY_ROOM_PCT * S(q + 1)` with
+`AUTO_QUALITY_ROOM_PCT` = 80 and `S` the IJG scale (`ijg_scale`: 5000 / q below 50, 200 - 2q
+up to 99, 1 at 100), that is if the step's expected growth still fits under 80 % (at q75 below
+77 % busy, q90 below 72 %, q97 below 53 %); else unchanged. Without the "room" condition the
+quality would climb until the link saturates, drop and climb again, a sawtooth with skips
+every few periods; with a plain "+1 below 80 %" it still jumped off the cliff near q95-100,
+where one step grows the file by 30-100 % (seen on the board: 98 → skip → 86 → 76 → ...). The
+send task's busy time ends when the last chunk is
+queued, about 24 datagrams (the socket's 8 and the EMAC's 16 descriptors) before it is on the
+wire, so 80 % of send-task time is about 90 % of the link: at 1280x800 153.98 Hz it settles
+at 83-88 Mbit/s of JPEG payload. A `SetStream` sets the quality in use back to the set
+quality. With `auto_quality` off the set quality is used and a busy link costs frames.
+
+On the board (1280x800 at 153.98 Hz, longest exposure, set quality 90; `auto1`, `auto2` in
+`/tmp/poc-p4-eth/stream-jpeg/`):
+
+| Phase | Quality in use, once a second | Host fps | Bytes/frame | Link skips |
+|---|---|---|---|---|
+| gain 15.5x, auto on, from q90 | 73, 74, 74, ... 74, 75 (t = 11 s), ... 76 (t = 18 s) | 153.82 over 20 s | 69 274 | 5 (first second) |
+| then gain 2x (controls only), auto on | 81, 86, 90, 90, ... | 154.01 over 12 s | 14 670 | 0 |
+| gain 15.5x, auto off, q90 | 90 | 69.94 | 165 378 | 504 in 7.2 s |
+
+It drops in the first second, then creeps up by 1 now and then while the send task is below
+80 % busy (once in 7 to 8 s here), and comes back to the set quality within 3 s when the
+frames get small again.
+
+#### Measured (JPEG)
+
+All on 2026-11-11, this board, the link to the host's ASIX AX88179 at 100 Mbit/s full duplex,
+the room dark (night). A host-side receiver for the bring-up (`jrx`, scratch, in
+`/tmp/poc-p4-eth/stream-jpeg/rx/`, with the test hooks' CPU report) set each case and measured
+6 s after 2 s of warm-up (`table1/`); fixed quality (auto off), longest exposure of the mode,
+gain 2x (mean pixel 4) and 15.5x (mean pixel 8 to 23, noise makes the files 3 to 11 times
+larger). Every case: every frame a valid JPEG of the mode's size (SOI, SOF0 size, EOI), 0
+incomplete frames at the host, 0 frames the encoder could not take, 0 encoder errors, 0
+capture errors, 0 receiver drops. Encode µs is the mean over the window as the encode task
+sees it (from the start to its wake-up after the end-of-frame interrupt); encoder busy is its
+share of the window.
+
+| Window, sensor rate | Gain | q | Host fps | Mbit/s | Bytes/frame | Encode µs | Encoder busy % | Link skips | Core 0 % (net / send / encode / capture) | RTT ms | Limit |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| crop 1280x800, 120.0 Hz | 2x | 90 | 120.09 | 15.91 | 16563 | 5989 | 71.9 | 0 | 16.9 (9.8 / 6.4 / 0.3 / 0.1) | 1.37 | sensor |
+| crop 1280x800, 120.0 Hz | 2x | 75 | 120.07 | 12.40 | 12906 | 5988 | 71.9 | 0 | 13.6 (8.2 / 4.8 / 0.3 / 0.1) | 1.37 | sensor |
+| crop 1280x800, 120.0 Hz | 15.5x | 90 | 102.57 | 92.67 | 112926 | 6238 | 74.9 | 105 | 99.0 (54.5 / 39.6 / 1.8 / 1.9) | 4.91 | link |
+| crop 1280x800, 120.0 Hz | 15.5x | 75 | 120.08 | 33.80 | 35187 | 5991 | 72.0 | 0 | 35.3 (20.6 / 13.9 / 0.3 / 0.2) | 2.09 | sensor |
+| crop 1280x800, 128.3 Hz | 2x | 90 | 128.37 | 16.46 | 16032 | 5989 | 76.9 | 0 | 17.5 (10.2 / 6.5 / 0.3 / 0.2) | 1.38 | sensor |
+| crop 1280x800, 128.3 Hz | 2x | 75 | 128.35 | 13.10 | 12758 | 5988 | 76.9 | 0 | 14.4 (8.7 / 5.0 / 0.3 / 0.1) | 1.38 | sensor |
+| crop 1280x800, 128.3 Hz | 15.5x | 90 | 106.07 | 92.61 | 109138 | 6236 | 80.1 | 133 | 99.1 (54.7 / 40.1 / 1.6 / 1.5) | 4.83 | link |
+| crop 1280x800, 128.3 Hz | 15.5x | 75 | 128.36 | 35.75 | 34812 | 5996 | 77.0 | 0 | 37.8 (21.8 / 15.1 / 0.3 / 0.2) | 2.91 | sensor |
+| crop 1280x800, 153.98 Hz | 2x | 90 | 154.03 | 18.50 | 15010 | 5992 | 92.3 | 0 | 20.1 (12.0 / 7.2 / 0.4 / 0.2) | 1.43 | sensor |
+| crop 1280x800, 153.98 Hz | 2x | 75 | 154.03 | 15.57 | 12639 | 5990 | 92.3 | 0 | 17.1 (9.5 / 6.7 / 0.3 / 0.2) | 1.38 | sensor |
+| crop 1280x800, 153.98 Hz | 15.5x | 90 | 70.28 | 92.62 | 164723 | 6354 | 97.9 | 503 | 99.5 (56.3 / 40.0 / 1.2 / 1.0) | 5.10 | link |
+| crop 1280x800, 153.98 Hz | 15.5x | 75 | 153.95 | 83.13 | 67493 | 6035 | 92.9 | 0 | 86.7 (47.7 / 37.4 / 0.6 / 0.3) | 3.51 | sensor |
+| crop 1280x720, 141.5 Hz | 2x | 90 | 141.59 | 14.82 | 13084 | 5392 | 76.4 | 0 | 16.3 (9.0 / 6.4 / 0.3 / 0.2) | 1.36 | sensor |
+| crop 1280x720, 141.5 Hz | 2x | 75 | 141.58 | 12.85 | 11345 | 5392 | 76.3 | 0 | 14.3 (7.9 / 5.6 / 0.3 / 0.2) | 1.37 | sensor |
+| crop 1280x720, 141.5 Hz | 15.5x | 90 | 136.37 | 92.61 | 84884 | 5657 | 80.1 | 32 | 99.3 (57.0 / 38.9 / 1.3 / 1.0) | 4.97 | link |
+| crop 1280x720, 141.5 Hz | 15.5x | 75 | 141.63 | 34.97 | 30864 | 5397 | 76.5 | 0 | 36.3 (21.1 / 14.2 / 0.4 / 0.2) | 2.10 | sensor |
+| crop 1280x720, 169.85 Hz | 2x | 90 | 169.94 | 18.22 | 13402 | 5394 | 91.7 | 0 | 20.1 (11.1 / 8.1 / 0.4 / 0.2) | 1.41 | sensor |
+| crop 1280x720, 169.85 Hz | 2x | 75 | 169.89 | 15.40 | 11332 | 5393 | 91.6 | 0 | 17.2 (9.5 / 6.8 / 0.4 / 0.2) | 1.38 | sensor |
+| crop 1280x720, 169.85 Hz | 15.5x | 90 | 79.42 | 92.62 | 145766 | 5703 | 96.9 | 543 | 99.5 (56.8 / 39.7 / 1.1 / 0.9) | 5.02 | link |
+| crop 1280x720, 169.85 Hz | 15.5x | 75 | 170.15 | 82.59 | 60674 | 5430 | 92.3 | 0 | 86.0 (47.4 / 37.0 / 0.6 / 0.4) | 3.25 | sensor |
+| crop 640x480, 204.9 Hz | 2x | 90 | 205.04 | 7.16 | 4362 | 1815 | 37.2 | 0 | 8.6 (4.4 / 3.2 / 0.5 / 0.3) | 1.36 | sensor |
+| crop 640x480, 204.9 Hz | 2x | 75 | 205.03 | 6.57 | 4003 | 1815 | 37.2 | 0 | 7.4 (3.5 / 2.8 / 0.5 / 0.3) | 1.36 | sensor |
+| crop 640x480, 204.9 Hz | 15.5x | 90 | 205.07 | 78.11 | 47613 | 1821 | 37.4 | 0 | 79.8 (45.9 / 32.3 / 0.6 / 0.4) | 3.20 | sensor |
+| crop 640x480, 204.9 Hz | 15.5x | 75 | 205.06 | 33.87 | 20647 | 1817 | 37.3 | 0 | 35.1 (21.1 / 12.9 / 0.5 / 0.3) | 1.38 | sensor |
+| crop 640x480, 245.85 Hz | 2x | 90 | 245.92 | 9.04 | 4592 | 1815 | 44.7 | 0 | 10.7 (5.5 / 4.0 / 0.6 / 0.3) | 1.36 | sensor |
+| crop 640x480, 245.85 Hz | 2x | 75 | 245.91 | 8.03 | 4079 | 1815 | 44.6 | 0 | 9.0 (4.3 / 3.5 / 0.5 / 0.3) | 1.36 | sensor |
+| crop 640x480, 245.85 Hz | 15.5x | 90 | 234.82 | 92.57 | 49277 | 1974 | 48.6 | 66 | 98.9 (59.1 / 37.2 / 0.8 / 0.6) | 4.73 | link |
+| crop 640x480, 245.85 Hz | 15.5x | 75 | 245.95 | 40.03 | 20345 | 1818 | 44.7 | 0 | 41.5 (24.9 / 15.3 / 0.6 / 0.3) | 1.47 | sensor |
+| binned 640x400, 251.8 Hz | 2x | 90 | 251.89 | 9.38 | 4656 | 1517 | 38.2 | 0 | 11.0 (5.6 / 4.1 / 0.6 / 0.3) | 1.36 | sensor |
+| binned 640x400, 251.8 Hz | 2x | 75 | 251.88 | 7.18 | 3563 | 1517 | 38.2 | 0 | 8.4 (4.0 / 3.2 / 0.6 / 0.3) | 1.36 | sensor |
+| binned 640x400, 251.8 Hz | 15.5x | 90 | 251.88 | 50.52 | 25071 | 1522 | 38.4 | 0 | 52.3 (31.1 / 19.7 / 0.7 / 0.3) | 1.68 | sensor |
+| binned 640x400, 251.8 Hz | 15.5x | 75 | 251.90 | 18.21 | 9034 | 1518 | 38.2 | 0 | 19.7 (10.8 / 7.6 / 0.6 / 0.3) | 1.36 | sensor |
+| binned 640x400, 302.2 Hz | 2x | 90 | 302.26 | 10.60 | 4384 | 1517 | 45.9 | 0 | 12.5 (6.3 / 4.7 / 0.7 / 0.4) | 1.36 | sensor |
+| binned 640x400, 302.2 Hz | 2x | 75 | 302.26 | 8.57 | 3545 | 1517 | 45.9 | 0 | 10.0 (4.7 / 3.8 / 0.7 / 0.4) | 1.36 | sensor |
+| binned 640x400, 302.2 Hz | 15.5x | 90 | 302.36 | 77.12 | 31882 | 1526 | 46.2 | 0 | 79.1 (46.0 / 31.3 / 0.9 / 0.4) | 2.74 | sensor |
+| binned 640x400, 302.2 Hz | 15.5x | 75 | 302.30 | 28.11 | 11621 | 1519 | 45.9 | 0 | 30.7 (17.1 / 11.9 / 0.7 / 0.4) | 1.36 | sensor |
+| binned 320x200, 464.9 Hz | 2x | 90 | 465.46 | 4.64 | 1245 | 400 | 18.6 | 0 | 6.9 (2.6 / 2.2 / 1.1 / 0.7) | 1.36 | sensor |
+| binned 320x200, 464.9 Hz | 2x | 75 | 465.45 | 4.29 | 1152 | 400 | 18.6 | 0 | 6.7 (2.6 / 2.1 / 1.1 / 0.7) | 1.36 | sensor |
+| binned 320x200, 464.9 Hz | 15.5x | 90 | 465.50 | 29.00 | 7786 | 400 | 18.7 | 0 | 31.5 (16.9 / 12.3 / 1.1 / 0.7) | 1.82 | sensor |
+| binned 320x200, 464.9 Hz | 15.5x | 75 | 465.46 | 11.47 | 3081 | 400 | 18.6 | 0 | 14.0 (6.6 / 5.2 / 1.1 / 0.7) | 1.36 | sensor |
+| binned 320x200, 557.9 Hz | 2x | 90 | 558.00 | 5.54 | 1241 | 400 | 22.4 | 0 | 8.3 (3.2 / 2.6 / 1.3 / 0.8) | 1.36 | sensor |
+| binned 320x200, 557.9 Hz | 2x | 75 | 558.00 | 5.10 | 1142 | 400 | 22.4 | 0 | 8.0 (3.1 / 2.5 / 1.3 / 0.8) | 1.38 | sensor |
+| binned 320x200, 557.9 Hz | 15.5x | 90 | 558.00 | 35.34 | 7917 | 401 | 22.4 | 0 | 38.3 (20.5 / 15.0 / 1.3 / 0.8) | 1.41 | sensor |
+| binned 320x200, 557.9 Hz | 15.5x | 75 | 558.01 | 14.18 | 3177 | 400 | 22.4 | 0 | 17.1 (8.1 / 6.4 / 1.3 / 0.8) | 1.36 | sensor |
+
+**What limits each window.** At gain 2x every window delivers every frame the sensor makes, up
+to each window's maximum: 154.03, 169.94, 245.92, 302.26 and 558.00 fps for the predicted 154,
+170, 246, 302 and 558; at 15.5x as well at quality 75. The cases that fall short are the
+noisy scene at quality 90 in 1280x800 (all three rates), 1280x720 (both) and 640x480 at
+245.85 Hz: the link, at 92.6 Mbit/s of JPEG payload (8 220 datagrams/s with their chunk
+headers, the wire limit) with the send task always busy and link skips counted, and the CPU at
+99 % (it is the same per-datagram cost as raw frames: about 27 000 cycles in the network task
+and 19 000 in the send task per datagram). Nothing in this crate can make that faster; the
+automatic quality keeps the frame rate there by lowering the quality (154 fps at quality
+74-76 in the table above). The encoder is the next limit: 92.3 % busy at 1280x800 153.98 Hz,
+and above about 300 kB per file its time grows (below).
+
+**CPU, core 0.** With JPEG the CPU load follows the bytes sent, not the pixels: 17-20 % at
+1280x800 at 2x gain (15-19 Mbit/s), against 94 % for raw frames at the wire rate. The encode
+task costs 0.3-1.8 % (one set-up per frame: about 20 register writes, a 384-byte header copy,
+three cache calls), the capture task 0.1-1.9 %.
+
+**Encoder with Ethernet traffic.** The same scene and settings with the files sent and with
+the test hooks' encode-only switch (`X1`: files made and dropped, the link idle; `bus.txt`,
+`bus2.txt`):
+
+| 1280x800 at 153.98 Hz | Bytes/frame | Encode µs, sent | Encode µs, not sent |
+|---|---|---|---|
+| gain 2x, q75 (14 Mbit/s) | 12 700-12 900 | 5 989, 5 989 | 5 987, 5 987 |
+| gain 15.5x, q75 (83 Mbit/s, core 0 93.5 %) | 71 300-71 700 | 6 083, 6 047 | 5 987, 5 987 |
+| gain 2x, q100 (link full, core 0 99.6 %) | 211 000-213 000 | 6 365, 6 378 | 6 008, 6 000 |
+
+No encoder error in any of them. Not sent, the encoder takes 5 987-6 008 µs for files up to
+214 kB, 6 090 µs at 288 kB (gain 15.5x, q95) and 6 713 µs at 542 kB (gain 15.5x, q100: longer
+than the frame period, 21 frames it could not take in 4 s). While the link is busy the encode
+takes up to 6 % longer;
+[INFERENCE: mostly the encode task's wake-up waiting behind the network and send tasks' polls,
+which last up to about 0.4-0.6 ms at the wire rate (8 datagrams of 19 000 cycles, 16
+descriptors of 27 000), rather than the encoder itself; the driver has no hardware timestamp
+to tell them apart]. At 1280x800 153.98 Hz the sensor gives 6 494 µs per frame, so at the
+wire rate with files above 200 kB an occasional frame is not encoded (2 in one 4 s window).
+
+**Too-small output** (the test hooks' `C<n>`: the next n encodes get a 4 KiB output; `small.txt`):
+20 injected at 1280x800 153.98 Hz: 20 encoder errors (`output_too_small`), 20 frames not sent
+(930 captured, 910 sent), 0 skipped, the stream at 154.0 fps again in the next second. The
+error came 1 505 µs into the encode: when the output is full, so at most one encode time.
+
+**Request round trip** (the receiver's polls, every 200 ms): 1.36-1.43 ms at 2x gain, 2.7-5.1
+ms with the link full (the request waits behind the queued datagrams), no poll lost. Control
+stays answered whatever the encoder does: the control task never waits for it.
+
+**Picture** (`corr/`, frames at 1280x800 120 Hz, decoded with libjpeg-turbo's `djpeg`):
+
+| Picture | Board JPEG q90 vs the RAW8 frame | libjpeg-turbo `cjpeg -grayscale -baseline -quality 90` of the same RAW8 frame vs it |
+|---|---|---|
+| bars test pattern (static; 0/255 runs, 520 120 B at q90) | PSNR 44.98 dB, max error 9 | PSNR 46.85 dB, max error 9 |
+| the scene at 2x (16 079 B) | PSNR 53.11 dB, max error 7 (a frame taken after it) | PSNR 53.55 dB, max error 7 |
+| the scene at 15.5x (111 598 B) | PSNR 39.15 dB, max error 21 (a frame taken after it: sensor noise included) | PSNR 42.68 dB, max error 11 |
+
+Two RAW8 bars frames are identical, so the bars row is the codec's error alone: the board's
+encoder is within libjpeg-turbo's (same largest error, 1.9 dB lower PSNR on this extreme
+picture; on camera scenes the driver measured them equal within 0.02 dB).
+
+### Measured: raw frames (protocol version 2)
 
 All on 2026-11-10, this board, the link to the host's ASIX AX88179 at 100 Mbit/s full duplex,
 `poc-viewer`'s board test (`host/poc-viewer/tests/board.rs`, run `full2`: 0 failed checks;
@@ -424,30 +632,21 @@ crate; they are defects to take upstream.
 Not verified: 10 Mbit/s or half duplex, link loss and re-negotiation, the PHY reset timing,
 multicast, the EMAC's PTP clock and timestamps.
 
-## For the next step (JPEG frames)
+## Not done, and what remains
 
-- **The hook**: `stream::capture`'s `Capture::frame` decides that a frame goes out and hands a
-  `stream::Job` to the send task (`JOB`, one in flight). The send task sends the first `len`
-  bytes of the job's buffer with the job's `encoding`, `width` and `height`, never assuming
-  width x height, chunk by chunk straight into the socket's TX ring: one CPU copy from the
-  buffer to the wire. An encoded frame goes in its own buffer in place of the captured
-  `esp32p4_csi::Frame` (today the job holds the frame itself, which keeps the receiver buffer
-  until the send ends; with 4 buffers the receiver still has two to write).
-- **Encoding a frame**: the capture task would, instead of handing the frame on, keep it
-  (16-byte aligned, straight from the receiver's PSRAM buffer), `encode` it into a PSRAM output
-  buffer (128-byte aligned) and hand that buffer on with its length; two output buffers in
-  turn, so the one being sent is never written. The encoder's interrupts go to the core that
-  creates it: core 0 here, like everything else.
-- **CPU**: at the wire rate core 0 is 91-97 % busy, almost all of it per datagram (about
-  46 000 cycles: smoltcp, the driver, the chunk copy). A 45 kB JPEG at 154 fps is about 4 800
-  datagrams/s [INFERENCE: computed], about 60 % of the wire rate's datagrams, so about 55 % of
-  core 0 [INFERENCE] plus the encoder's own work (hardware, async).
-- **Protocol and viewer** need a new `Encoding` variant (a version bump, `docs/protocol.md`),
-  its `frame_bytes` no longer fixed by the size (`FrameChunk::well_formed` checks
-  `frame_len == encoding.frame_bytes(width, height)` today, so a JPEG chunk would be refused),
-  and a decoder in the viewer's display path.
-- **Two cores**: see [The two-core attempt](#the-two-core-attempt) before moving anything to
-  core 1.
+- **The link** limits JPEG only for very detailed or noisy pictures at high quality (above
+  about 76 kB per frame at 154 fps); the automatic quality answers that. Raw frames stay
+  link-bound (11 fps at 1280x800).
+- **The encoder at the sensor's maximum**: 92.3 % busy at 1280x800 153.98 Hz. Files above
+  about 300 kB (q95-100 with noise) or the link at its limit lengthen the encode past the
+  frame period and cost an occasional frame (counted in `encoder.frames_skipped`). Running the
+  encode task in an interrupt-priority executor would remove the wake-up wait behind the
+  network's polls [INFERENCE: not tried; that the wait is the cause is not measured].
+- **CPU**: at the wire rate core 0 is 99 % busy, almost all per datagram (about 46 000 cycles:
+  smoltcp, the driver, the chunk copy). Core 1 is off ([the two-core attempt](#the-two-core-attempt)).
+- Not verified: an encoder timeout (never seen; the path is the same as the driver's errors),
+  the encoder's codec and DMA errors on this firmware (only `OutputTooSmall` was provoked),
+  quality below 20 on the camera, a scene in daylight (the room was dark for every run).
 - Keep `net/device.rs`'s checksum override and `net::tx_threshold_mode` until esp-hal fixes the
   driver; size TX socket metadata rings as in item 7 of [The Ethernet driver](#the-ethernet-driver)
   and give TX rings at least twice the largest datagram (smoltcp wants it contiguous).

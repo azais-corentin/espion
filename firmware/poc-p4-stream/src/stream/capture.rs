@@ -11,7 +11,7 @@ use espion_proto::cam::{CamError, Encoding};
 use log::{error, info, warn};
 use ov9281::Mode;
 
-use super::{CMDS, CameraResources, Cmd, DONE, FAULT, JOB, Job, Shared, shared};
+use super::{CMDS, CameraResources, Cmd, DONE, FAULT, JOB, Job, Payload, Shared, jpeg, shared};
 use crate::camera::{self, Camera, Controls, Fault, StartError};
 use crate::cpu;
 
@@ -158,8 +158,9 @@ impl Capture {
         }
     }
 
-    /// Counts `f` and hands it to the send task, or drops it: short frame, no host, a frame in
-    /// flight (skipped), or held back by `max_fps`.
+    /// Counts `f` and hands it on, or drops it: short frame, no host, held back by `max_fps`,
+    /// or (raw) a frame in flight (skipped). JPEG frames go to the encode task, which keeps
+    /// the newest one waiting ([`jpeg::offer`]); raw frames to the send task.
     fn frame(&mut self, f: Frame) {
         let now = Instant::now();
         let (frames, errors) = self.account();
@@ -167,6 +168,7 @@ impl Capture {
         let period_us = u64::from(self.mode.frame_ns()) / 1000;
         let job = shared(|s| {
             let active = s.active(now);
+            let jpeg = s.stream.encoding == Encoding::Jpeg;
             let c = &mut s.counters;
             c.frames_captured = c.frames_captured.wrapping_add(frames);
             c.capture_errors = c.capture_errors.wrapping_add(errors + u32::from(short));
@@ -174,12 +176,18 @@ impl Capture {
             if short || !active {
                 return None;
             }
-            if s.sending {
+            if !jpeg && s.sending {
                 c.frames_skipped = c.frames_skipped.wrapping_add(frames);
                 return None;
             }
-            // Frames overwritten before this task took them were not sent either.
-            c.frames_skipped = c.frames_skipped.wrapping_add(frames.saturating_sub(1));
+            // Frames overwritten before this task took them were not sent either: the link's
+            // (raw) or the encoder's (JPEG: they never reached it).
+            let lost = frames.saturating_sub(1);
+            if jpeg {
+                s.encoder.frames_skipped = s.encoder.frames_skipped.wrapping_add(lost);
+            } else {
+                c.frames_skipped = c.frames_skipped.wrapping_add(lost);
+            }
             if s.stream.max_fps > 0 {
                 let at = now.as_micros();
                 let slack = period_us / 2;
@@ -191,24 +199,39 @@ impl Capture {
                 let next = (next + interval).max((at + interval).saturating_sub(slack));
                 s.next_send = Instant::from_micros(next);
             }
-            s.sending = true;
+            if !jpeg {
+                s.sending = true;
+            }
             Some((number, s.generation, s.epoch, s.stream.encoding))
         });
         let Some((number, generation, epoch, encoding)) = job else {
             return;
         };
         let (width, height) = (self.mode.width(), self.mode.height());
+        let timestamp_us = now.as_micros();
+        let Some(len) = encoding.frame_bytes(width, height) else {
+            jpeg::offer(jpeg::Input {
+                frame: f,
+                number,
+                generation,
+                epoch,
+                width,
+                height,
+                timestamp_us,
+            });
+            return;
+        };
         JOB.signal(Job {
-            frame: f,
+            data: Payload::Raw(f),
             high_bits: self.mode.format() == ov9281::Format::Raw10 && encoding == Encoding::Raw8,
             number,
             generation,
             epoch,
             encoding,
-            len: encoding.frame_bytes(width, height) as u32,
+            len: len as u32,
             width,
             height,
-            timestamp_us: now.as_micros(),
+            timestamp_us,
         });
     }
 }

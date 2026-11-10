@@ -9,6 +9,8 @@ Python standard library only. The socket is bound to the link-local address of o
   streamdiag.py stall           sensor stream off behind the receiver's back
   streamdiag.py done            the board logs "stream: host done" (board-run.sh stops on it)
   streamdiag.py garbage N       N malformed datagrams to the camera port 5009, back to back
+  streamdiag.py small N         the next N JPEG encodes get a 4 KiB output (OutputTooSmall)
+  streamdiag.py encodeonly 1|0  JPEG files made and dropped, not sent (1), or sent again (0)
 """
 
 import argparse
@@ -34,7 +36,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--iface", default="eth0")
     p.add_argument("--board", default="fe80::4553:9281")
-    p.add_argument("command", choices=["mark", "report", "fault", "stall", "done", "garbage"])
+    p.add_argument(
+        "command",
+        choices=["mark", "report", "fault", "stall", "done", "garbage", "small", "encodeonly"],
+    )
     p.add_argument("arg", nargs="?", default="")
     args = p.parse_args()
 
@@ -58,6 +63,8 @@ def main():
         "fault": b"F" + args.arg.encode(),
         "stall": b"S",
         "done": b"D",
+        "small": b"C" + args.arg.encode(),
+        "encodeonly": b"X" + args.arg.encode(),
     }[args.command]
     for _ in range(5):
         s.sendto(cmd, (args.board, DIAG_PORT, 0, scope))

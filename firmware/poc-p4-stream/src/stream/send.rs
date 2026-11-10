@@ -1,10 +1,12 @@
 //! The send task: the only sender on the camera socket. Answers go first; the frame in flight
-//! goes out chunk by chunk on the protocol's grid, each chunk encoded straight into the
-//! socket's ring (one copy from the PSRAM frame; smoltcp makes the second into the DMA buffer).
+//! (a raw frame or a JPEG file) goes out chunk by chunk on the protocol's grid, each chunk
+//! encoded straight into the socket's ring (one copy from PSRAM; smoltcp makes the second into
+//! the DMA buffer).
 
 use core::cell::RefCell;
 use core::future::{Future, poll_fn};
 use core::pin::pin;
+use core::sync::atomic::Ordering;
 
 use embassy_futures::select::{Either, select};
 use embassy_net::IpEndpoint;
@@ -12,7 +14,7 @@ use embassy_net::udp::{SendError, UdpSocket};
 use embassy_time::Instant;
 use espion_proto::cam::{CHUNK_MAX, FrameChunk, MAX_DATAGRAM};
 
-use super::{JOB, Job, Outgoing, RESPONSES, shared};
+use super::{JOB, Job, Outgoing, RESPONSES, SEND_BUSY_US, shared};
 use crate::cpu;
 
 #[embassy_executor::task]
@@ -58,8 +60,17 @@ async fn respond(sock: &RefCell<UdpSocket<'static>>, r: &Outgoing) {
 }
 
 /// Sends `job`'s chunks in order; gives up when the stream stops (new mode or encoding, stream
-/// off, no request for the timeout) or the socket refuses.
+/// off, no request for the timeout) or the socket refuses. The time it takes counts as the
+/// link's busy time ([`SEND_BUSY_US`]).
 async fn send_frame(sock: &RefCell<UdpSocket<'static>>, job: Job) {
+    let start = Instant::now();
+    send_chunks(sock, &job).await;
+    drop(job);
+    let us = start.elapsed().as_micros() as u32;
+    SEND_BUSY_US.fetch_add(us, Ordering::Relaxed);
+}
+
+async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, job: &Job) {
     let len = job.len;
     let mut offset = 0;
     while offset < len {
@@ -78,7 +89,7 @@ async fn send_frame(sock: &RefCell<UdpSocket<'static>>, job: Job) {
             return;
         };
         let n = (len - offset).min(CHUNK_MAX as u32);
-        if send(sock, to, |buf| encode(&job, len, offset, n as usize, buf))
+        if send(sock, to, |buf| encode(job, len, offset, n as usize, buf))
             .await
             .is_err()
         {
@@ -107,7 +118,7 @@ fn encode(job: &Job, frame_len: u32, offset: u32, n: usize, buf: &mut [u8]) -> u
     let data = if job.high_bits {
         &ZEROS[..n]
     } else {
-        &job.frame[offset as usize..][..n]
+        &job.data[offset as usize..][..n]
     };
     let Ok(total) = FrameChunk {
         frame: job.number,
@@ -125,7 +136,7 @@ fn encode(job: &Job, frame_len: u32, offset: u32, n: usize, buf: &mut [u8]) -> u
         return 0;
     };
     if job.high_bits {
-        high_bits(&job.frame, offset as usize, &mut buf[total - n..total]);
+        high_bits(&job.data, offset as usize, &mut buf[total - n..total]);
     }
     total
 }

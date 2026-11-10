@@ -9,6 +9,7 @@ publish      = false
 
 [dependencies]
 esp32p4-csi  = { path = "../esp32p4-csi" }
+esp32p4-jpeg = { path = "../esp32p4-jpeg" }
 espion-proto = { path = "../../crates/espion-proto" }
 ov9281       = { path = "../ov9281" }
 

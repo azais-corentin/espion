@@ -13,6 +13,11 @@
 //! - `S`: stall: the sensor's stream is turned off behind the receiver's back; the capture task
 //!   must notice and restart the camera.
 //! - `D`: logs `stream: host done` (the end of a host test; `board-run.sh` stops on it).
+//! - `C<n>` (`n` in decimal ASCII): the next `n` JPEG encodes get a 4 KiB output, too small
+//!   for any camera frame: the driver's `OutputTooSmall` path (each costs one frame, counted
+//!   as an encoder error; the report has the time to the error).
+//! - `X1` / `X0`: encode-only on / off: JPEG files are made and dropped, not sent (the encode
+//!   time without the network's traffic on the bus).
 
 use core::cell::{Cell, RefCell};
 use core::fmt::{self, Write};
@@ -26,7 +31,7 @@ use esp32p4_csi::Stats;
 use log::info;
 use static_cell::ConstStaticCell;
 
-use super::{BAD_DATAGRAMS, CMDS, Cmd, DIAG_PORT, FAULT, shared};
+use super::{BAD_DATAGRAMS, CMDS, Cmd, DIAG_PORT, FAULT, SEND_BUSY_US, jpeg, shared};
 use crate::{cpu, net};
 
 const RX_BYTES: usize = 256;
@@ -113,6 +118,18 @@ pub(super) async fn task(stack: Stack<'static>) {
                         log_done();
                         let _ = w.write_str("done");
                     }
+                    [b'C', ref digits @ ..] => {
+                        let n = digits
+                            .iter()
+                            .take_while(|d| d.is_ascii_digit())
+                            .fold(0u32, |a, d| a * 10 + u32::from(d - b'0'));
+                        jpeg::SMALL_OUTPUTS.store(n, Ordering::Relaxed);
+                        let _ = write!(w, "small outputs {n}");
+                    }
+                    [b'X', d @ b'0'..=b'1', ..] => {
+                        jpeg::ENCODE_ONLY.store(d == b'1', Ordering::Relaxed);
+                        let _ = w.write_str(if d == b'1' { "encode only" } else { "send" });
+                    }
                     _ => {
                         let _ = w.write_str("unknown command");
                     }
@@ -159,7 +176,7 @@ fn write_report(w: &mut BufWriter<'_>) {
         )
     });
     let us = (now - since).as_micros().max(1);
-    let counters = shared(|s| s.counters);
+    let (counters, enc) = shared(|s| (s.counters, s.encoder));
     let csi = critical_section::with(|cs| CSI_STATS.borrow(cs).get());
     let window = us * u64::from(esp_hal::clock::cpu_clock().as_mhz());
     let _ = write!(w, "window_us={us} uptime_us={}", now.as_micros());
@@ -197,6 +214,21 @@ fn write_report(w: &mut BufWriter<'_>) {
         csi.bridge_errors,
         csi.bridge_error_bits,
         net::emac_regs().missed,
+    );
+    let _ = write!(
+        w,
+        " quality={} jpeg_len={} encode_us={} enc_errors={} enc_skipped={} encoded={} encode_us_sum={} encoded_bytes={} send_busy_us={} enc_last_error={} enc_last_error_us={}",
+        enc.quality,
+        enc.frame_len,
+        enc.encode_us,
+        enc.errors,
+        enc.frames_skipped,
+        jpeg::ENCODED.load(Ordering::Relaxed),
+        jpeg::ENCODE_US.load(Ordering::Relaxed),
+        jpeg::ENCODED_BYTES.load(Ordering::Relaxed),
+        SEND_BUSY_US.load(Ordering::Relaxed),
+        critical_section::with(|cs| jpeg::LAST_ERROR.borrow(cs).get()),
+        jpeg::LAST_ERROR_US.load(Ordering::Relaxed),
     );
 }
 

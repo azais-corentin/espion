@@ -7,18 +7,21 @@
 //! - **control** ([`control_task`]): receives the requests, checks them ([`check`]), applies
 //!   them (a mode or controls through the capture task), and queues the answer, the full
 //!   [`State`] or the error, for the send task.
-//! - **capture** ([`capture::task`]): owns the sensor and the receiver. Whole frames go into PSRAM; for each one it counts, applies
-//!   the stream rules (destination and timeout, one frame in flight, `max_fps`) and hands the
-//!   frame to the send task or drops it. It runs the mode changes, and restarts the camera when
-//!   frames stop.
+//! - **capture** ([`capture::task`]): owns the sensor and the receiver. Whole frames go into
+//!   PSRAM; for each one it counts, applies the stream rules (destination and timeout, one
+//!   frame in flight for the raw encodings, `max_fps`) and hands the frame to the send task, to
+//!   the encode task ([`Encoding::Jpeg`]) or drops it. It runs the mode changes, and restarts
+//!   the camera when frames stop.
+//! - **encode** ([`jpeg::task`]): the JPEG stage: the hardware encoder, from the receiver's
+//!   buffer into one of three output buffers, the newest frame at each stage, the automatic
+//!   quality ([`jpeg`] has the pipeline).
 //! - **send** ([`send::task`]): the only task that sends on the socket: the answers
 //!   first, then the frame in flight, chunk by chunk on the protocol's grid, to the address and
 //!   port of the last valid request; each chunk is encoded straight into the socket's ring, the
-//!   one CPU copy of the pixels (a RAW10 frame sent as RAW8 is reduced to its high bits in that
-//!   same copy).
+//!   one CPU copy of the pixels or of the JPEG file (a RAW10 frame sent as RAW8 is reduced to
+//!   its high bits in that same copy).
 //! - **diag** ([`diag::task`], UDP [`DIAG_PORT`]): the test hooks: the CPU and counter
 //!   report, a log marker, fault injection, and a sensor stall.
-
 //!
 //! The socket is shared by control (receive only) and send (send only) through a `RefCell`
 //! borrowed only inside a poll, so each of smoltcp's two wakers has one owner.
@@ -26,6 +29,7 @@
 mod capture;
 mod check;
 mod diag;
+mod jpeg;
 mod send;
 
 use core::cell::RefCell;
@@ -43,14 +47,15 @@ use embassy_time::{Duration, Instant};
 use esp_hal::peripherals::{I2C0, VDMA_CH0};
 use esp32p4_csi::Frame;
 use espion_proto::cam::{
-    CAM_PORT, CamError, CameraSettings, Counters, Encoding, Format, MAX_DATAGRAM, Message, Op,
-    Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern,
+    CAM_PORT, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, MAX_DATAGRAM,
+    Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, State, StreamSettings,
+    TestPattern,
 };
 use log::{error, info};
 use ov9281::Mode;
 use static_cell::{ConstStaticCell, StaticCell};
 
-use crate::camera::Controls;
+use crate::camera::{self, Controls};
 use crate::cpu;
 
 /// Port of the test hooks ([`diag`]).
@@ -70,11 +75,14 @@ pub const DEFAULT_CAMERA: CameraSettings = CameraSettings {
     test_pattern: TestPattern::Off,
 };
 
-/// The stream settings at boot: on, RAW8, no rate limit (the fake camera's).
+/// The stream settings at boot (the fake camera's): on, JPEG at quality 90 with the automatic
+/// quality, no rate limit.
 pub const DEFAULT_STREAM: StreamSettings = StreamSettings {
     enabled: true,
-    encoding: Encoding::Raw8,
+    encoding: Encoding::Jpeg,
     max_fps: 0,
+    jpeg_quality: 90,
+    auto_quality: true,
 };
 
 /// Datagrams the TX ring holds (the app copies into it, the stack drains it). At least two:
@@ -120,6 +128,7 @@ pub struct Resources {
 
 /// What the capture task gets.
 pub(crate) struct CameraResources {
+    /// The receiver's frame buffers ([`camera::BUFFERS`] x [`camera::BUFFER_LEN`]).
     pub psram: &'static mut [u8],
     pub i2c0: I2C0<'static>,
     pub vdma: VDMA_CH0<'static>,
@@ -141,6 +150,8 @@ struct Shared {
     /// `max_fps`: the earliest capture time of the next frame to send.
     next_send: Instant,
     counters: Counters,
+    /// The JPEG encoder's part of the state (the encode task keeps it).
+    encoder: EncoderState,
 }
 
 impl Shared {
@@ -174,7 +185,18 @@ static SHARED: Mutex<RefCell<Shared>> = Mutex::new(RefCell::new(Shared {
         capture_errors: 0,
         datagrams_sent: 0,
     },
+    encoder: EncoderState {
+        quality: DEFAULT_STREAM.jpeg_quality,
+        frame_len: 0,
+        encode_us: 0,
+        errors: 0,
+        frames_skipped: 0,
+    },
 }));
+
+/// Microseconds the send task spent on frames, from a frame's first chunk to its end (wraps):
+/// how busy the link is, for the automatic quality.
+static SEND_BUSY_US: AtomicU32 = AtomicU32::new(0);
 
 fn shared<R>(f: impl FnOnce(&mut Shared) -> R) -> R {
     critical_section::with(|cs| f(&mut SHARED.borrow_ref_mut(cs)))
@@ -209,16 +231,31 @@ struct Outgoing {
 
 static RESPONSES: Channel<CriticalSectionRawMutex, Outgoing, 2> = Channel::new();
 
-/// A frame handed from the capture task to the send task, with what its chunks carry.
-///
-/// The hand-off point for any other encoding (the JPEG encoder next): the send task sends the
-/// first `len` bytes of `frame` (any length, not width x height), with `encoding`, `width` and
-/// `height` as the chunks carry them, copying chunk by chunk straight into the socket's ring.
-/// An encoded frame would come in its own buffer in place of `frame`.
+/// What a [`Job`] sends: a captured frame, or a JPEG file the encode task made of one.
+enum Payload {
+    /// A receiver buffer, held until the send ends or is abandoned.
+    Raw(Frame),
+    /// An output buffer of the encode task ([`jpeg::Out`]), freed the same way.
+    Jpeg(jpeg::Out),
+}
+
+impl core::ops::Deref for Payload {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Raw(f) => f,
+            Self::Jpeg(o) => o,
+        }
+    }
+}
+
+/// A frame handed to the send task (by the capture task, or by the encode task for
+/// [`Encoding::Jpeg`]), with what its chunks carry: the send task sends the first `len` bytes
+/// of `data` with `encoding`, `width` and `height`, copying chunk by chunk straight into the
+/// socket's ring.
 struct Job {
-    /// The captured frame (a receiver buffer, held until the send ends or is abandoned).
-    frame: Frame,
-    /// `frame` is packed RAW10 and goes out as RAW8: each chunk takes the first 4 bytes of
+    data: Payload,
+    /// `data` is packed RAW10 and goes out as RAW8: each chunk takes the first 4 bytes of
     /// every 5.
     high_bits: bool,
     /// Frame number: captured frames since boot, from 0.
@@ -228,22 +265,26 @@ struct Job {
     epoch: u32,
     /// Encoding on the wire.
     encoding: Encoding,
-    /// Bytes of the frame on the wire (`frame_len` of its chunks); the send task takes it from
-    /// here, never from width x height, so an encoded frame of any length fits the same path.
+    /// Bytes of the frame on the wire (`frame_len` of its chunks): width x height for a raw
+    /// encoding, the file's length for JPEG.
     len: u32,
     width: u16,
     height: u16,
     timestamp_us: u64,
 }
 
-/// The frame in flight: at most one ([`Shared::sending`]).
+/// The next frame for the send task. Raw: at most one in flight ([`Shared::sending`]). JPEG:
+/// the newest file waits here while the send task sends the one before; the encode task
+/// replaces a waiting file with a newer one.
 static JOB: Signal<CriticalSectionRawMutex, Job> = Signal::new();
 
 /// A fault the next mode change injects ([`camera::Fault`]; 0 none, set by diag).
 static FAULT: AtomicU8 = AtomicU8::new(0);
 
-/// Spawns the service's tasks. Logs `stream: ready` once the socket listens; the camera comes
-/// up in the capture task right after.
+/// Spawns the service's tasks. Logs `stream: ready` once the socket listens; the camera and
+/// the JPEG encoder come up in their tasks right after.
+///
+/// PSRAM: the receiver's frame buffers at its start, then the encoder's output buffers.
 #[allow(
     clippy::large_stack_frames,
     reason = "once at boot, on the main stack, which has most of internal RAM"
@@ -256,6 +297,14 @@ pub fn start(spawner: Spawner, stack: Stack<'static>, res: Resources) {
             return;
         }
     };
+    let cam_len = camera::BUFFERS * camera::BUFFER_LEN;
+    let out_len = jpeg::OUT_BUFFERS * jpeg::OUT_LEN;
+    if res.psram.len() < cam_len + out_len {
+        error!("stream: PSRAM too small for {cam_len} + {out_len} B of buffers");
+        return;
+    }
+    let (cam_mem, rest) = res.psram.split_at_mut(cam_len);
+    let (out_mem, _) = rest.split_at_mut(out_len);
     let mut sock = UdpSocket::new(
         stack,
         RX_META_BUF.take(),
@@ -273,9 +322,10 @@ pub fn start(spawner: Spawner, stack: Stack<'static>, res: Resources) {
         "stream: ready, camera stream on UDP {CAM_PORT}, test hooks on UDP {DIAG_PORT}, {} B of buffers in internal RAM",
         RAM_BYTES
     );
+    spawner.spawn(jpeg::task(out_mem).unwrap());
     spawner.spawn(
         capture::task(CameraResources {
-            psram: res.psram,
+            psram: cam_mem,
             i2c0: res.i2c0,
             vdma: res.vdma,
             mode,
@@ -452,8 +502,10 @@ impl Control {
         }
     }
 
+    /// The checks of [`StreamSettings::check`] against the running mode, then the settings;
+    /// the quality in use restarts at the set quality (as the fake camera's).
     fn set_stream(&mut self, st: StreamSettings) -> Result<(), CamError> {
-        check::check_encoding(self.camera.format, st.encoding)?;
+        st.check(self.camera.format, self.camera.width, self.camera.height)?;
         let now = Instant::now();
         shared(|s| {
             if st.encoding != s.stream.encoding {
@@ -463,19 +515,22 @@ impl Control {
                 s.abort();
             }
             s.stream = st;
+            s.encoder.quality = st.jpeg_quality;
             s.next_send = now;
         });
         Ok(())
     }
 
     fn state(&self) -> State {
-        let (stream, generation, counters) = shared(|s| (s.stream, s.generation, s.counters));
+        let (stream, generation, counters, encoder) =
+            shared(|s| (s.stream, s.generation, s.counters, s.encoder));
         State {
             camera: self.camera,
             stream,
             mode: check::mode_info(&self.mode),
             generation,
             counters,
+            encoder,
             uptime_us: Instant::now().as_micros(),
         }
     }
