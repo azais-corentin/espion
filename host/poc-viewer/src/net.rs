@@ -133,6 +133,10 @@ pub struct Stats {
     pub frame_bytes: u64,
     /// Bytes of the last frame received whole.
     pub last_frame_len: u32,
+    /// JPEG frames received whole.
+    pub jpeg_whole: u64,
+    /// Bytes of the JPEG frames received whole (the files' lengths).
+    pub jpeg_bytes: u64,
     /// Frames dropped because a chunk was missing.
     pub frames_incomplete: u64,
     /// Frames the board stopped sending part-way for a new frame layout (its next chunk has
@@ -581,6 +585,10 @@ impl Worker {
             self.stats.frames_whole += 1;
             self.stats.frame_bytes += u64::from(a.frame_len);
             self.stats.last_frame_len = a.frame_len;
+            if a.encoding == Encoding::Jpeg {
+                self.stats.jpeg_whole += 1;
+                self.stats.jpeg_bytes += u64::from(a.frame_len);
+            }
             self.publish(Some(Frame {
                 number: a.frame,
                 generation: a.generation,

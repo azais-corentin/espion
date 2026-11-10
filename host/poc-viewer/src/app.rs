@@ -55,7 +55,8 @@ struct Meter {
     at: Instant,
     whole: u64,
     bytes: u64,
-    frame_bytes: u64,
+    jpeg_whole: u64,
+    jpeg_bytes: u64,
     presented: u64,
     decoded: u64,
     decode_total: Duration,
@@ -63,7 +64,7 @@ struct Meter {
     mbps: f64,
     shown_fps: f64,
     decoded_fps: f64,
-    /// Mean length of the frames received whole, bytes.
+    /// Mean length of the JPEG frames received whole, bytes.
     mean_len: f64,
     /// Mean decode time, ms.
     decode_ms: f64,
@@ -78,7 +79,8 @@ impl Meter {
             at: Instant::now(),
             whole: 0,
             bytes: 0,
-            frame_bytes: 0,
+            jpeg_whole: 0,
+            jpeg_bytes: 0,
             presented: 0,
             decoded: 0,
             decode_total: Duration::ZERO,
@@ -102,8 +104,9 @@ impl Meter {
         let whole = s.frames_whole - self.whole;
         self.rx_fps = whole as f64 / dt;
         self.mbps = (s.bytes - self.bytes) as f64 * 8.0 / dt / 1e6;
-        self.mean_len = if whole > 0 {
-            (s.frame_bytes - self.frame_bytes) as f64 / whole as f64
+        let jpeg = s.jpeg_whole - self.jpeg_whole;
+        self.mean_len = if jpeg > 0 {
+            (s.jpeg_bytes - self.jpeg_bytes) as f64 / jpeg as f64
         } else {
             0.0
         };
@@ -120,13 +123,9 @@ impl Meter {
         } else {
             0.0
         };
-        (
-            self.at,
-            self.whole,
-            self.bytes,
-            self.frame_bytes,
-            self.presented,
-        ) = (now, s.frames_whole, s.bytes, s.frame_bytes, presented);
+        (self.at, self.whole, self.bytes, self.presented) =
+            (now, s.frames_whole, s.bytes, presented);
+        (self.jpeg_whole, self.jpeg_bytes) = (s.jpeg_whole, s.jpeg_bytes);
         (self.decoded, self.decode_total) = (d.decoded + d.failures, d.decode_total);
         (self.cpu_sum, self.cpu_n) = (0.0, 0);
     }
@@ -337,7 +336,7 @@ impl App {
             row("Throughput", format!("{:.1} Mbit/s", m.mbps));
             row(
                 "Compressed frame, last / mean",
-                jpeg.map_or("-".into(), |_| {
+                jpeg.filter(|_| m.mean_len > 0.0).map_or("-".into(), |_| {
                     format!("{} B / {:.0} B", s.last_frame_len, m.mean_len)
                 }),
             );
@@ -740,7 +739,7 @@ impl App {
                 ),
             );
             row(
-                "JPEG quality",
+                "Quality set, automatic, in use",
                 format!(
                     "set {}, automatic {}, in use {}",
                     st.stream.jpeg_quality,
@@ -1029,8 +1028,8 @@ fn report(
         }
         _ => "board: no state".to_owned(),
     };
-    let whole = d(s.frames_whole, b.stats.frames_whole);
-    let mean_len = d(s.frame_bytes, b.stats.frame_bytes) as f64 / whole.max(1) as f64;
+    let jpeg = d(s.jpeg_whole, b.stats.jpeg_whole);
+    let mean_len = d(s.jpeg_bytes, b.stats.jpeg_bytes) as f64 / jpeg.max(1) as f64;
     let decoded = (dz.decoded + dz.failures) - (b.decode.decoded + b.decode.failures);
     let decode_mean =
         (dz.decode_total - b.decode.decode_total).as_secs_f64() * 1e3 / decoded.max(1) as f64;
@@ -1038,7 +1037,7 @@ fn report(
         .state
         .map_or(0.0, |st| st.camera.width as f64 * st.camera.height as f64);
     let decoding = format!(
-        "frames: mean {mean_len:.0} B whole (compression {:.1} : 1 against RAW8)\n\
+        "JPEG frames: {jpeg} whole, mean {mean_len:.0} B (compression {:.1} : 1 against RAW8)\n\
          decoded: {:.1} fps, decode mean {decode_mean:.3} ms, max {:.3} ms, {} failures, {} raw passed",
         raw_len / mean_len.max(1.0),
         decoded as f64 / dt,
