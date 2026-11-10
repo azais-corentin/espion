@@ -755,7 +755,7 @@ fn window(client: &Client, secs: f64) -> (f64, u32, u32, u8) {
 
 #[test]
 fn automatic_quality_follows_the_link() {
-    // Binned 640x400 at the sensor's maximum through a 20 Mbit/s line: at quality 100 the
+    // Binned 640x400 at the sensor's maximum through a 20 Mbit/s line: at quality 90 the
     // fake's frames do not fit (a small window keeps the unoptimised test build's rendering
     // ahead of the sensor).
     let fastest = CameraSettings {
@@ -768,7 +768,7 @@ fn automatic_quality_follows_the_link() {
         mbps: Some(20.0),
         camera: fastest,
         stream: StreamSettings {
-            jpeg_quality: 100,
+            jpeg_quality: 90,
             ..stream_in(Encoding::Jpeg)
         },
         ..FakeConfig::default()
@@ -776,14 +776,14 @@ fn automatic_quality_follows_the_link() {
     let state = apply(&client, Command::GetState, |_| true);
     next_frame(&client, state.generation);
     let (fps_off, skipped_off, captured, q) = window(&client, 1.5);
-    assert_eq!(q, 100);
+    assert_eq!(q, 90);
     assert!(
         skipped_off > captured / 10 && fps_off < 0.9 * sensor,
         "auto off: {fps_off:.1} fps, {skipped_off} of {captured} skipped"
     );
 
     let on = StreamSettings {
-        jpeg_quality: 100,
+        jpeg_quality: 90,
         auto_quality: true,
         ..stream_in(Encoding::Jpeg)
     };
@@ -795,7 +795,7 @@ fn automatic_quality_follows_the_link() {
     }
     let (fps_on, skipped_on, captured, q) = window(&client, 1.5);
     assert!(
-        (AUTO_QUALITY_MIN..100).contains(&q),
+        (AUTO_QUALITY_MIN..90).contains(&q),
         "quality {q}, trace {trace:?}"
     );
     assert!(
@@ -803,18 +803,19 @@ fn automatic_quality_follows_the_link() {
         "auto on: {fps_on:.1} fps, {skipped_on} of {captured} skipped, trace {trace:?}"
     );
 
-    // Room again (a test pattern of bars compresses to almost nothing): back up to the set
-    // quality, one step per period.
+    // Room again (a test pattern of bars at 100 Hz compresses to a small share of the link):
+    // back up to the set quality, one step per period.
     let bars = CameraSettings {
         test_pattern: TestPattern::Bars,
+        rate_mhz: 100_000,
         ..fastest
     };
     apply(&client, Command::SetCamera(bars), |s| {
         s.camera.test_pattern == TestPattern::Bars
     });
     let back = client.wait_until(
-        Duration::from_secs_f64(f64::from(100 - q) * 0.2 + 3.0),
-        |s| s.state.is_some_and(|st| st.encoder.quality == 100),
+        Duration::from_secs_f64(f64::from(90 - q) * 0.2 + 3.0),
+        |s| s.state.is_some_and(|st| st.encoder.quality == 90),
     );
     assert!(back.is_some(), "quality did not come back from {q}");
 

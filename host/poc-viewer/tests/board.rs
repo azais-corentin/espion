@@ -1416,17 +1416,17 @@ fn auto_quality(b: &mut Board) {
             },
         ),
     ];
-    // A load that fills the link at quality 100 without automatic quality.
+    // A load that fills the link at quality 90 without automatic quality.
     let mut loaded = None;
     for (label, mut c) in heavy {
         if let Ok(m) = camera::build_mode(&c) {
             c.exposure_lines = c.exposure_lines.max(m.max_exposure_lines());
         }
         b.set_camera(c).expect("heavy mode");
-        let st = b.set_stream(jstream(100, false)).expect("JPEG 100");
+        let st = b.set_stream(jstream(90, false)).expect("JPEG 90");
         let w = b.measure(&st, Duration::from_millis(500), 3.0);
         b.judge(&format!("auto off, {label}"), &st, &w);
-        b.check(w.encoder.quality == 100, || {
+        b.check(w.encoder.quality == 90, || {
             format!("auto off: quality in use {}", w.encoder.quality)
         });
         if w.board.frames_skipped > 0 {
@@ -1436,12 +1436,12 @@ fn auto_quality(b: &mut Board) {
         println!("  {label}: the link is not full ({:.1} Mbit/s)", w.mbps);
     }
     let Some((label, off, w_off)) = loaded else {
-        b.check(false, || "no scene filled the link at quality 100".into());
+        b.check(false, || "no scene filled the link at quality 90".into());
         b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
         return;
     };
-    let st = b.set_stream(jstream(100, true)).expect("auto on");
-    b.check(st.encoder.quality == 100, || {
+    let st = b.set_stream(jstream(90, true)).expect("auto on");
+    b.check(st.encoder.quality == 90, || {
         format!("auto on starts at {}", st.encoder.quality)
     });
     let trace = quality_trace(b, 6.0);
@@ -1461,7 +1461,7 @@ fn auto_quality(b: &mut Board) {
         w_on.encoder.quality
     );
     b.check(
-        w_on.encoder.quality < 100 && w_on.encoder.quality >= AUTO_QUALITY_MIN,
+        w_on.encoder.quality < 90 && w_on.encoder.quality >= AUTO_QUALITY_MIN,
         || format!("auto on: quality in use {}", w_on.encoder.quality),
     );
     b.check(
@@ -1487,10 +1487,10 @@ fn auto_quality(b: &mut Board) {
         ..off.camera
     };
     let st = b.set_camera(light).expect("scene at gain 2x");
-    let need = f64::from(100 - w_on.encoder.quality.min(100)) * 0.2 + 3.0;
+    let need = f64::from(90 - w_on.encoder.quality.min(90)) * 0.2 + 3.0;
     let trace = quality_trace(b, need);
     println!("  auto on, scene at gain 2x: quality every 200 ms {trace:?}");
-    b.check(trace.last() == Some(&100), || {
+    b.check(trace.last() == Some(&90), || {
         format!(
             "auto on with room: quality {:?} after {need:.1} s",
             trace.last()
