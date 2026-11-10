@@ -6,11 +6,11 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1794317854,
-        "narHash": "sha256-pZZK1fFUFGhg+s1/pHq9Mtd9NQSAZNqsyaIwVqzeaTo=",
+        "lastModified": 1794350063,
+        "narHash": "sha256-BO26z5S8WSUAWLXp2iCSdJ8sI1h70UMVzSMIgiuGcgk=",
         "owner": "azais-corentin",
         "repo": "ferrite",
-        "rev": "8e2d6189e133881dbb05cb5ade4ca760f888a07e",
+        "rev": "a7b0b9479ede59bd1f34e24ab9947604d07a5f89",
         "type": "github"
       },
       "original": {
