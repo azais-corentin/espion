@@ -47,6 +47,7 @@ mod camera;
     reason = "complete OV9281 register table; the camera section uses part of it"
 )]
 mod ov9281;
+mod soak;
 mod synth;
 mod vision;
 
@@ -58,7 +59,9 @@ const RUN_BENCH: bool = false;
 /// Run the camera section after the boot report (and the benchmark, if on).
 const RUN_CAMERA: bool = true;
 /// Camera section: modes (indexes into `ov9281::MODES`: 0 1280x800, 1 1280x720, 2 640x480,
-/// 3 640x400), sensor settings, checks and still dump (decode with `tools/still.py`).
+/// 3 640x400), sensor settings, checks, still dump (decode with `tools/still.py`) and the
+/// processing soak. For capture only, set `soak: None` (and `cache_check`/`still_dump` as
+/// wanted).
 const CAMERA_PLAN: camera::Plan = camera::Plan {
     modes: &[0, 1, 2, 3],
     test_pattern: false,
@@ -67,8 +70,16 @@ const CAMERA_PLAN: camera::Plan = camera::Plan {
     exposure_lines: 800,
     gain: 0x20,
     measure: Duration::from_secs(5),
-    cache_check: true,
+    cache_check: false,
     still_dump: false,
+    soak: Some(SOAK_PLAN),
+};
+/// Processing soak per mode: a live run, then synthetic frames with these disc counts, while
+/// capture keeps running (about 60 s per mode).
+const SOAK_PLAN: soak::Plan = soak::Plan {
+    live: Duration::from_secs(30),
+    synthetic: Duration::from_secs(10),
+    blob_counts: &[0, 16, 64],
 };
 
 /// SCCB data: net ESP_I2C_SDA, U6 pin 7 (GPIO7) to CSI connector J1 pin 2.

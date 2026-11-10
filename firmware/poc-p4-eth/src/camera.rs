@@ -13,6 +13,7 @@ use esp32p4_csi::{Config, Csi, Frame, LdoChannel, LdoSetting, PhyStatus, enable_
 use log::{error, info, warn};
 
 use crate::ov9281::{self, Mode};
+use crate::soak;
 
 type Bus = I2c<'static, esp_hal::Async>;
 
@@ -50,23 +51,45 @@ pub struct Plan {
     pub cache_check: bool,
     /// Dump one frame per mode over the log UART.
     pub still_dump: bool,
+    /// Run the processing soak per mode after the checks above (`soak`). `None`: capture only.
+    pub soak: Option<soak::Plan>,
 }
 
-/// Runs `plan`. `psram` must hold at least `BUFFERS * BUFFER_LEN` bytes; its start is
-/// cache-line aligned (PSRAM maps at 0x4800_0000).
+/// Runs `plan`. `psram` must hold at least `BUFFERS * BUFFER_LEN` bytes (plus one 1280x800
+/// frame for the soak's synthetic frames); its start is cache-line aligned (PSRAM maps at
+/// 0x4800_0000).
 pub async fn run(i2c: &mut Bus, vdma: VDMA_CH0<'static>, psram: &'static mut [u8], plan: &Plan) {
     if !power_up() {
         return;
     }
     // Settling time for VO3 (esp-hal's DSI driver waits 500 us).
     Timer::after_millis(1).await;
-    let Some(mut csi) = make_receiver(vdma, psram, &ov9281::MODES[plan.modes[0]]) else {
+    let split = (BUFFERS * BUFFER_LEN).min(psram.len());
+    let (buffers, rest) = psram.split_at_mut(split);
+    let Some(mut csi) = make_receiver(vdma, buffers, &ov9281::MODES[plan.modes[0]]) else {
         return;
     };
+    let mut soak = plan.soak.and_then(|p| make_soak(p, rest));
     for &index in plan.modes {
-        capture_mode(i2c, &mut csi, &ov9281::MODES[index], plan).await;
+        capture_mode(i2c, &mut csi, &ov9281::MODES[index], plan, soak.as_mut()).await;
+    }
+    if let Some(s) = &soak {
+        s.log_table();
     }
     note("done");
+}
+
+/// The soak's synthetic frames go right after the capture buffers (a multiple of 4096 B, so
+/// the area starts on a cache line).
+#[inline(never)]
+fn make_soak(plan: soak::Plan, rest: &'static mut [u8]) -> Option<soak::Soak> {
+    const _: () = assert!(BUFFER_LEN.is_multiple_of(128));
+    let need = Csi::buffer_len(&Config::new(1280, 800, ov9281::LANE_MBPS));
+    if rest.len() < need {
+        fail("PSRAM too small for the soak's synthetic frame", &need);
+        return None;
+    }
+    Some(soak::Soak::new(plan, &mut rest[..need]))
 }
 
 /// Turns on LDO VO3 at 2.5 V: `VDD_MIPI_DPHY` on this board.
@@ -127,7 +150,13 @@ fn csi_config(mode: &Mode) -> Config {
     Config::new(mode.width, mode.height, mode.lane_mbps)
 }
 
-async fn capture_mode(i2c: &mut Bus, csi: &mut Csi<'static>, mode: &Mode, plan: &Plan) {
+async fn capture_mode(
+    i2c: &mut Bus,
+    csi: &mut Csi<'static>,
+    mode: &Mode,
+    plan: &Plan,
+    soak: Option<&mut soak::Soak>,
+) {
     if start_mode(i2c, csi, mode, plan).await {
         measure(csi, mode, plan.measure).await;
         if plan.cache_check {
@@ -135,6 +164,9 @@ async fn capture_mode(i2c: &mut Bus, csi: &mut Csi<'static>, mode: &Mode, plan: 
         }
         if plan.still_dump {
             still(csi, mode, plan).await;
+        }
+        if let Some(s) = soak {
+            s.run_mode(csi, mode).await;
         }
     }
     stop(i2c, csi).await;
