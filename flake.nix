@@ -148,6 +148,9 @@
               export WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
               export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json
               export EGUI_INSPECTION=127.0.0.1:$port
+              # MangoHud's Vulkan layer crashes an eframe app at exit here (in its
+              # DestroySurfaceKHR, seen with poc-viewer).
+              export MANGOHUD=0
               # Compositor and application in their own session, so that stopping this
               # script stops both.
               # shellcheck disable=SC2016
