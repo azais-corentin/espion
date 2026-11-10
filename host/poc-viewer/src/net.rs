@@ -263,6 +263,24 @@ impl Client {
         lock(&self.shared).latest.take()
     }
 
+    /// Waits at most `timeout` for a complete frame not taken yet, and takes it.
+    pub fn wait_frame(&self, timeout: Duration) -> Option<Frame> {
+        let end = Instant::now() + timeout;
+        let mut inner = lock(&self.shared);
+        loop {
+            if let Some(f) = inner.latest.take() {
+                return Some(f);
+            }
+            let left = end.checked_duration_since(Instant::now())?;
+            inner = self
+                .shared
+                .1
+                .wait_timeout(inner, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+    }
+
     /// Gives a frame buffer back for reuse.
     pub fn recycle(&self, data: Vec<u8>) {
         let mut inner = lock(&self.shared);

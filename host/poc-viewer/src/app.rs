@@ -10,12 +10,14 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use eframe::egui::{self, Color32, RichText};
 use espion_proto::cam::{
-    CameraSettings, Encoding, Format, Op, Origin, Readout, StreamSettings, TestPattern,
+    CameraSettings, Encoding, Format, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, Op, Origin, Readout,
+    StreamSettings, TestPattern,
 };
 use poc_viewer::{
     camera,
+    decode::{DecodeStats, Decoder, Picture},
     fake::{self, FakeCamera},
-    net::{Client, Command, Frame, RETRY_INTERVAL, Stats},
+    net::{Client, Command, RETRY_INTERVAL, Stats},
 };
 
 use crate::display::{self, ImageCallback, Shown, UploadTiming};
@@ -53,10 +55,18 @@ struct Meter {
     at: Instant,
     whole: u64,
     bytes: u64,
+    frame_bytes: u64,
     presented: u64,
+    decoded: u64,
+    decode_total: Duration,
     rx_fps: f64,
     mbps: f64,
     shown_fps: f64,
+    decoded_fps: f64,
+    /// Mean length of the frames received whole, bytes.
+    mean_len: f64,
+    /// Mean decode time, ms.
+    decode_ms: f64,
     cpu_sum: f64,
     cpu_n: u32,
     cpu_ms: f64,
@@ -68,31 +78,56 @@ impl Meter {
             at: Instant::now(),
             whole: 0,
             bytes: 0,
+            frame_bytes: 0,
             presented: 0,
+            decoded: 0,
+            decode_total: Duration::ZERO,
             rx_fps: 0.0,
             mbps: 0.0,
             shown_fps: 0.0,
+            decoded_fps: 0.0,
+            mean_len: 0.0,
+            decode_ms: 0.0,
             cpu_sum: 0.0,
             cpu_n: 0,
             cpu_ms: 0.0,
         }
     }
 
-    fn update(&mut self, now: Instant, s: &Stats, presented: u64) {
+    fn update(&mut self, now: Instant, s: &Stats, d: &DecodeStats, presented: u64) {
         let dt = (now - self.at).as_secs_f64();
         if dt < 1.0 {
             return;
         }
-        self.rx_fps = (s.frames_whole - self.whole) as f64 / dt;
+        let whole = s.frames_whole - self.whole;
+        self.rx_fps = whole as f64 / dt;
         self.mbps = (s.bytes - self.bytes) as f64 * 8.0 / dt / 1e6;
+        self.mean_len = if whole > 0 {
+            (s.frame_bytes - self.frame_bytes) as f64 / whole as f64
+        } else {
+            0.0
+        };
         self.shown_fps = (presented - self.presented) as f64 / dt;
+        let decoded = d.decoded + d.failures - self.decoded;
+        self.decoded_fps = (d.decoded + d.failures - self.decoded) as f64 / dt;
+        self.decode_ms = if decoded > 0 {
+            (d.decode_total - self.decode_total).as_secs_f64() * 1e3 / decoded as f64
+        } else {
+            0.0
+        };
         self.cpu_ms = if self.cpu_n > 0 {
             self.cpu_sum / self.cpu_n as f64 * 1e3
         } else {
             0.0
         };
-        (self.at, self.whole, self.bytes, self.presented) =
-            (now, s.frames_whole, s.bytes, presented);
+        (
+            self.at,
+            self.whole,
+            self.bytes,
+            self.frame_bytes,
+            self.presented,
+        ) = (now, s.frames_whole, s.bytes, s.frame_bytes, presented);
+        (self.decoded, self.decode_total) = (d.decoded + d.failures, d.decode_total);
         (self.cpu_sum, self.cpu_n) = (0.0, 0);
     }
 }
@@ -101,6 +136,7 @@ impl Meter {
 struct Base {
     at: Instant,
     stats: Stats,
+    decode: DecodeStats,
     presented: u64,
     passes: u64,
     timing: UploadTiming,
@@ -116,7 +152,8 @@ struct SelfTest {
 }
 
 pub struct App {
-    client: Client,
+    client: Arc<Client>,
+    decoder: Decoder,
     _fake: Option<FakeCamera>,
     /// The mode and control settings being edited.
     edit: CameraSettings,
@@ -151,8 +188,13 @@ impl App {
             info.name, info.device_type, info.backend, rs.target_format
         );
         let ctx = cc.egui_ctx.clone();
-        let client = Client::connect(setup.camera, move || ctx.request_repaint())
-            .with_context(|| format!("opening a socket for {}", setup.camera))?;
+        let client = Arc::new(
+            Client::connect(setup.camera, move || ctx.request_repaint())
+                .with_context(|| format!("opening a socket for {}", setup.camera))?,
+        );
+        let ctx = cc.egui_ctx.clone();
+        let decoder = Decoder::spawn(client.clone(), move || ctx.request_repaint())
+            .context("starting the decoding thread")?;
         println!(
             "camera {}, bound {}, receive buffer granted {} bytes (requested {})",
             client.camera(),
@@ -172,6 +214,7 @@ impl App {
         let now = Instant::now();
         Ok(Self {
             client,
+            decoder,
             _fake: setup.fake,
             centred: edit.origin.is_none(),
             origin: edit.origin.unwrap_or(Origin { x: 0, y: 0 }),
@@ -206,32 +249,52 @@ impl App {
         }
     }
 
-    fn show(&mut self, f: Frame) {
+    /// The stream settings to use with the mode `req`: the stream's, or RAW8 when its
+    /// encoding cannot be made of that mode (RAW8 can be sent from every mode).
+    fn stream_for(&self, req: &CameraSettings) -> StreamSettings {
+        match self
+            .stream
+            .encoding
+            .check(req.format, req.width, req.height)
+        {
+            Ok(()) => self.stream,
+            Err(_) => StreamSettings {
+                encoding: Encoding::Raw8,
+                ..self.stream
+            },
+        }
+    }
+
+    fn show(&mut self, p: Picture) {
         self.serial += 1;
         self.presented += 1;
         let new = Arc::new(Shown {
             serial: self.serial,
-            frame: f,
+            frame: p.frame,
+            jpeg_len: p.jpeg_len,
         });
         if let Some(old) = self.shown.replace(new)
             && let Ok(old) = Arc::try_unwrap(old)
         {
-            self.client.recycle(old.frame.data);
+            self.decoder.recycle(Picture {
+                frame: old.frame,
+                jpeg_len: old.jpeg_len,
+            });
         }
     }
 
     /// One column: what is happening (link, status, the board's last refusal), the settings
     /// (mode, controls, stream, display), then the board's detailed state, collapsed.
-    fn panel(&mut self, ui: &mut egui::Ui, s: &Stats, now: Instant) {
+    fn panel(&mut self, ui: &mut egui::Ui, s: &Stats, d: &DecodeStats, now: Instant) {
         self.link(ui, s, now);
-        self.status(ui, s);
+        self.status(ui, s, d);
         answer_line(ui, s);
         ui.separator();
         self.mode_editor(ui, s);
         ui.separator();
         self.controls(ui, s);
         ui.separator();
-        self.stream_editor(ui);
+        self.stream_editor(ui, s);
         ui.separator();
         self.display_controls(ui);
         ui.separator();
@@ -261,14 +324,62 @@ impl App {
         ));
     }
 
-    fn status(&self, ui: &mut egui::Ui, s: &Stats) {
+    fn status(&self, ui: &mut egui::Ui, s: &Stats, d: &DecodeStats) {
         let m = &self.meter;
         let board = s.state.map(|st| st.counters);
+        let jpeg = s.state.filter(|st| st.stream.encoding == Encoding::Jpeg);
+        let ms = |t: Duration| t.as_secs_f64() * 1e3;
         egui::Grid::new("status").num_columns(2).show(ui, |ui| {
             let mut row = |k: &str, v: String| row(ui, k, v);
             row("Received whole", format!("{:.1} fps", m.rx_fps));
+            row("Decoded", format!("{:.1} fps", m.decoded_fps));
             row("Presented", format!("{:.1} fps", m.shown_fps));
             row("Throughput", format!("{:.1} Mbit/s", m.mbps));
+            row(
+                "Compressed frame, last / mean",
+                jpeg.map_or("-".into(), |_| {
+                    format!("{} B / {:.0} B", s.last_frame_len, m.mean_len)
+                }),
+            );
+            row(
+                "Compression ratio",
+                jpeg.filter(|_| m.mean_len > 0.0).map_or("-".into(), |st| {
+                    let raw = st.camera.width as f64 * st.camera.height as f64;
+                    format!("{:.1} : 1", raw / m.mean_len)
+                }),
+            );
+            row(
+                "Decode time, last / mean",
+                format!("{:.2} ms / {:.2} ms", ms(d.decode_last), m.decode_ms),
+            );
+            row("Decode failures", d.failures.to_string());
+            row(
+                "Board JPEG quality in use",
+                s.state.map_or("-".into(), |st| {
+                    format!(
+                        "{} (set {}, automatic {})",
+                        st.encoder.quality,
+                        st.stream.jpeg_quality,
+                        on_off(st.stream.auto_quality)
+                    )
+                }),
+            );
+            row(
+                "Board encode time",
+                s.state.map_or("-".into(), |st| {
+                    format!("{:.2} ms", st.encoder.encode_us as f64 / 1e3)
+                }),
+            );
+            row(
+                "Board encoder errors",
+                s.state
+                    .map_or("-".into(), |st| st.encoder.errors.to_string()),
+            );
+            row(
+                "Skipped by board encoder (busy)",
+                s.state
+                    .map_or("-".into(), |st| st.encoder.frames_skipped.to_string()),
+            );
             row("Dropped, chunk missing", s.frames_incomplete.to_string());
             row("Cut by a mode change", s.frames_cut.to_string());
             row("Replaced before shown", s.frames_replaced.to_string());
@@ -289,13 +400,16 @@ impl App {
                 "Frame",
                 self.shown.as_ref().map_or("-".into(), |sh| {
                     let f = &sh.frame;
-                    format!(
-                        "{}x{} {:?}, {} B",
-                        f.width,
-                        f.height,
-                        f.encoding,
-                        f.data.len()
-                    )
+                    match sh.jpeg_len {
+                        Some(n) => format!("{}x{} JPEG, {n} B", f.width, f.height),
+                        None => format!(
+                            "{}x{} {:?}, {} B",
+                            f.width,
+                            f.height,
+                            f.encoding,
+                            f.data.len()
+                        ),
+                    }
                 }),
             );
             row(
@@ -306,6 +420,9 @@ impl App {
             );
             row("UI frame time", format!("{:.2} ms", m.cpu_ms));
         });
+        if let Some(e) = &d.last_failure {
+            ui.colored_label(RED, format!("Last decode failure: {e}"));
+        }
     }
 
     fn mode_editor(&mut self, ui: &mut egui::Ui, s: &Stats) {
@@ -363,14 +480,29 @@ impl App {
         e.rate_mhz = (rate * 1000.0).round() as u32;
         e.tolerance_mhz = (tol * 1000.0).round() as u32;
 
-        // The driver's verdict on the edited mode, before anything is sent.
+        // The driver's verdict on the edited mode, before anything is sent, with the encoding
+        // the stream will have in it.
         let req = self.request();
+        let stream = self.stream_for(&req);
         let local = camera::build_mode(&req).and_then(|m| {
-            self.stream
+            stream
                 .encoding
                 .check(req.format, req.width, req.height)
                 .map(|()| m)
         });
+        if let Err(e) = self
+            .stream
+            .encoding
+            .check(req.format, req.width, req.height)
+        {
+            ui.colored_label(
+                ORANGE,
+                format!(
+                    "Applying moves the stream from {:?} to RAW8: {e}",
+                    self.stream.encoding
+                ),
+            );
+        }
         match &local {
             Ok(m) => {
                 let info = camera::mode_info(m);
@@ -418,8 +550,8 @@ impl App {
             && let Ok(m) = local
         {
             self.edit.exposure_lines = self.edit.exposure_lines.clamp(1, m.max_exposure_lines());
-            if req.format == Format::Raw8 && self.stream.encoding == Encoding::Raw10 {
-                self.stream.encoding = Encoding::Raw8;
+            if stream != self.stream {
+                self.stream = stream;
                 self.client.send(Command::SetStream(self.stream));
             }
             self.client.send(Command::SetCamera(self.request()));
@@ -486,19 +618,50 @@ impl App {
         }
     }
 
-    fn stream_editor(&mut self, ui: &mut egui::Ui) {
+    fn stream_editor(&mut self, ui: &mut egui::Ui, s: &Stats) {
         ui.heading("Stream (applied at once)");
+        // The running mode decides which encodings can be sent.
+        let mode = s.state.map_or_else(|| self.request(), |st| st.camera);
         let st = &mut self.stream;
         let mut changed = ui.checkbox(&mut st.enabled, "send frames").changed();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Encoding");
-            changed |= ui
-                .selectable_value(&mut st.encoding, Encoding::Raw8, "send RAW8")
-                .changed();
-            changed |= ui
-                .selectable_value(&mut st.encoding, Encoding::Raw10, "send RAW10 packed")
-                .changed();
+            for (e, label) in [
+                (Encoding::Jpeg, "send JPEG"),
+                (Encoding::Raw8, "send RAW8"),
+                (Encoding::Raw10, "send RAW10 packed"),
+            ] {
+                let allowed = e.check(mode.format, mode.width, mode.height);
+                let r = ui.add_enabled(
+                    allowed.is_ok(),
+                    egui::Button::selectable(st.encoding == e, label),
+                );
+                let r = match allowed {
+                    Ok(()) => r,
+                    Err(err) => r.on_disabled_hover_text(err.to_string()),
+                };
+                if r.clicked() && st.encoding != e {
+                    st.encoding = e;
+                    changed = true;
+                }
+            }
         });
+        if let Err(e) = Encoding::Jpeg.check(mode.format, mode.width, mode.height) {
+            ui.colored_label(ORANGE, format!("JPEG not available: {e}"));
+        }
+        changed |= ui
+            .add(
+                egui::Slider::new(&mut st.jpeg_quality, JPEG_QUALITY_MIN..=JPEG_QUALITY_MAX)
+                    .text("JPEG quality"),
+            )
+            .changed();
+        changed |= ui
+            .checkbox(&mut st.auto_quality, "automatic JPEG quality")
+            .on_hover_text(
+                "The board lowers the quality while frames are skipped because the link is \
+                 busy and raises it back to the set quality when there is room",
+            )
+            .changed();
         changed |= labelled(
             ui,
             "Frames per second at most (0: no limit)",
@@ -576,6 +739,27 @@ impl App {
                     }
                 ),
             );
+            row(
+                "JPEG quality",
+                format!(
+                    "set {}, automatic {}, in use {}",
+                    st.stream.jpeg_quality,
+                    on_off(st.stream.auto_quality),
+                    st.encoder.quality
+                ),
+            );
+            row(
+                "Last JPEG, encode time",
+                format!(
+                    "{} B, {:.3} ms",
+                    st.encoder.frame_len,
+                    st.encoder.encode_us as f64 / 1e3
+                ),
+            );
+            row(
+                "Encoder errors / skipped",
+                format!("{} / {}", st.encoder.errors, st.encoder.frames_skipped),
+            );
             row("Generation", st.generation.to_string());
             row(
                 "Captured / sent",
@@ -649,6 +833,7 @@ impl App {
             t.base = Some(Base {
                 at: now,
                 stats: s.clone(),
+                decode: self.decoder.stats(),
                 presented: self.presented,
                 passes: self.passes,
                 timing: *self.timing.lock().unwrap_or_else(|e| e.into_inner()),
@@ -678,6 +863,7 @@ impl App {
                 b,
                 now,
                 s,
+                &self.decoder.stats(),
                 self.presented,
                 self.passes,
                 &timing,
@@ -715,10 +901,11 @@ impl eframe::App for App {
                 self.cpu.push(cpu);
             }
         }
-        if let Some(f) = self.client.take_frame() {
-            self.show(f);
+        if let Some(p) = self.decoder.take() {
+            self.show(p);
         }
         let stats = self.client.stats();
+        let dstats = self.decoder.stats();
         if self.adopt
             && let Some(st) = stats.state
         {
@@ -728,13 +915,13 @@ impl eframe::App for App {
             self.stream = st.stream;
             self.adopt = false;
         }
-        self.meter.update(now, &stats, self.presented);
+        self.meter.update(now, &stats, &dstats, self.presented);
 
         egui::Panel::left("panel")
             .resizable(false)
             .exact_size(PANEL_WIDTH)
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.panel(ui, &stats, now));
+                egui::ScrollArea::vertical().show(ui, |ui| self.panel(ui, &stats, &dstats, now));
             });
         egui::CentralPanel::default().show(ui, |ui| self.image(ui, &stats, now));
         self.selftest_step(ui.ctx(), now, &stats);
@@ -803,6 +990,7 @@ fn report(
     b: &Base,
     now: Instant,
     s: &Stats,
+    dz: &DecodeStats,
     presented: u64,
     passes: u64,
     timing: &UploadTiming,
@@ -819,18 +1007,45 @@ fn report(
     let upload_mean = (timing.total - b.timing.total).as_secs_f64() * 1e3 / uploads.max(1) as f64;
     let board = match (b.stats.state, s.state) {
         (Some(a), Some(z)) => {
+            let (e, ez) = (a.encoder, z.encoder);
             let (a, z) = (a.counters, z.counters);
             format!(
-                "board: captured {}, sent {}, skipped (link busy) {}, capture errors {}, datagrams {}",
+                "board: captured {}, sent {}, skipped (link busy) {}, capture errors {}, datagrams {}\n\
+                 board encoder: quality in use {} (set {}, automatic {}), last JPEG {} B, encode {:.3} ms, \
+                 errors {}, skipped (busy) {}",
                 z.frames_captured.wrapping_sub(a.frames_captured),
                 z.frames_sent.wrapping_sub(a.frames_sent),
                 z.frames_skipped.wrapping_sub(a.frames_skipped),
                 z.capture_errors.wrapping_sub(a.capture_errors),
                 z.datagrams_sent.wrapping_sub(a.datagrams_sent),
+                ez.quality,
+                s.state.map_or(0, |st| st.stream.jpeg_quality),
+                on_off(s.state.is_some_and(|st| st.stream.auto_quality)),
+                ez.frame_len,
+                ez.encode_us as f64 / 1e3,
+                ez.errors.wrapping_sub(e.errors),
+                ez.frames_skipped.wrapping_sub(e.frames_skipped),
             )
         }
         _ => "board: no state".to_owned(),
     };
+    let whole = d(s.frames_whole, b.stats.frames_whole);
+    let mean_len = d(s.frame_bytes, b.stats.frame_bytes) as f64 / whole.max(1) as f64;
+    let decoded = (dz.decoded + dz.failures) - (b.decode.decoded + b.decode.failures);
+    let decode_mean =
+        (dz.decode_total - b.decode.decode_total).as_secs_f64() * 1e3 / decoded.max(1) as f64;
+    let raw_len = s
+        .state
+        .map_or(0.0, |st| st.camera.width as f64 * st.camera.height as f64);
+    let decoding = format!(
+        "frames: mean {mean_len:.0} B whole (compression {:.1} : 1 against RAW8)\n\
+         decoded: {:.1} fps, decode mean {decode_mean:.3} ms, max {:.3} ms, {} failures, {} raw passed",
+        raw_len / mean_len.max(1.0),
+        decoded as f64 / dt,
+        dz.decode_max.as_secs_f64() * 1e3,
+        dz.failures - b.decode.failures,
+        dz.passed - b.decode.passed,
+    );
     let mode = s.state.map_or("mode: none".to_owned(), |st| {
         format!(
             "mode: {:?} {}x{} {:?}, {} MHz HTS {} VTS {} PSV {}, {}; stream {:?} max_fps {}",
@@ -868,7 +1083,7 @@ fn report(
          ui frame time (eframe cpu_usage): mean {mean:.3} ms, p50 {:.3}, p99 {:.3}, max {:.3} \
          over {} passes\n\
          upload (write_texture): mean {upload_mean:.3} ms, max {:.3} ms over {uploads} frames\n\
-         {board}\nrtt: {}\n{refusal}",
+         {decoding}\n{board}\nrtt: {}\n{refusal}",
         on_off(vsync),
         d(s.frames_whole, b.stats.frames_whole) as f64 / dt,
         d(s.bytes, b.stats.bytes) as f64 * 8.0 / dt / 1e6,

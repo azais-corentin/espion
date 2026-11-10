@@ -1,7 +1,8 @@
-//! The image on the GPU: each new frame is uploaded as it came off the wire, one byte per
-//! texel (`R8Uint`), and a fragment shader turns it into grey: RAW8 directly, RAW10 unpacked
-//! from its CSI-2 5-byte groups at full 10-bit depth. The UI thread does no per-pixel work; it
-//! only hands the frame's bytes to `wgpu` (one copy into the staging buffer).
+//! The image on the GPU: each new frame is uploaded as it came off the wire (a JPEG frame as
+//! the decoding stage made it, RAW8), one byte per texel (`R8Uint`), and a fragment shader
+//! turns it into grey: RAW8 directly, RAW10 unpacked from its CSI-2 5-byte groups at full
+//! 10-bit depth. The UI thread does no per-pixel work; it only hands the frame's bytes to
+//! `wgpu` (one copy into the staging buffer).
 //!
 //! The shader also applies the display gain (a brightness multiplier that leaves the data
 //! alone) and samples nearest-neighbour, so 1:1 shows the sensor's pixels.
@@ -171,8 +172,10 @@ pub fn init(rs: &egui_wgpu::RenderState) {
 pub struct Shown {
     /// Increases with every frame shown.
     pub serial: u64,
-    /// The frame.
+    /// The frame (RAW8 or RAW10).
     pub frame: Frame,
+    /// For a decoded JPEG frame: the file's length, bytes.
+    pub jpeg_len: Option<usize>,
 }
 
 /// One paint of the image: the part of the frame inside `rect`.
