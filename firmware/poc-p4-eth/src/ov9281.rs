@@ -481,8 +481,15 @@ const REGS_640X400: [(u16, u8); COMMON.len() + MODE_640X400.len()] = concat(COMM
 /// 320x200: centred crop of the 2x2-binned readout, i.e. the centre 640x400 sensor pixels
 /// (active columns 320..=959, rows 200..=599), half the field of view. Derived: the 640x400
 /// binned block with its array window cut like the 640x480 crop (array window = 2 x (output +
-/// 2 x ISP offset 4) = output in sensor pixels + 16). Reading only 416 array rows is what lets
-/// VTS drop to 242.
+/// 2 x ISP offset 4) = output in sensor pixels + 16). Reading only 416 array rows (208 after the
+/// row skip) is what lets VTS drop to 241. Two common-block values are reset to the datasheet
+/// defaults (also the Linux `ov9282.c` values) in [`REGS_320X200_RAW8_453`], both measured on
+/// the board:
+/// - VFIFO read start 0x4601 = 0x04. It counts 8-byte units and must not exceed the line: at
+///   320 B per line 0x28 runs, 0x29 and the common 0x30 (384 B) deliver no frame (one CSI-2
+///   frame start/end pairing error per frame; the frame's last 2560 B stay in the CSI bridge).
+/// - PSV_CTRL 0x4F00 = 0x00. With the common 0x0C (power-saving mode on) the frames arrive but
+///   at VTS 241 rows 0..=187 and at VTS 260 every row are flat at the black level.
 const MODE_320X200: &[(u16, u8)] = &[
     (0x3778, 0x10),
     (0x3800, 0x01), // x start 320
@@ -526,8 +533,13 @@ const VFIFO_RAW10: (u16, u8) = (0x4601, 0x04);
 const VTS_210FPS: u16 = 523;
 /// VTS for 640x400 binned at 253 fps, 80 MHz: 80e6 / (433 x 728 + 1730) = 252.40 fps.
 const VTS_253FPS: u16 = 434;
-/// VTS for 320x200 at 453 fps, 80 MHz: 80e6 / (728 x 242) = 454.09 fps.
-const VTS_453FPS: u16 = 242;
+/// VTS for 320x200, 80 MHz: 80e6 / (728 x 241) = 455.98 fps by HTS x VTS; measured 453.40 fps
+/// ((VTS - 1) x HTS + 1730 SCLK cycles per frame), the rate closest to Inno-Maker's 453.
+/// Measured limits at the exposure maximum (VTS - 25): 232, 234, 236, 238, 240 and 241 give
+/// whole, correct pictures; 222 and 230 whole frames with a nearly black picture (230 also at
+/// 100 lines); 214, 215, 216, 218 and 220 stop the frames (CSI-2 frame start/end errors;
+/// measured with 0x4F00 still at 0x0C).
+const VTS_453FPS: u16 = 241;
 
 const fn vts_regs(vts: u16) -> [(u16, u8); 2] {
     [(0x380E, (vts >> 8) as u8), (0x380F, vts as u8)]
@@ -578,8 +590,15 @@ const REGS_640X400_RAW8_210: [(u16, u8); N_640X400] =
     build(MODE_640X400, &[VTS_REGS_210[0], VTS_REGS_210[1]]);
 const REGS_640X400_RAW8_253: [(u16, u8); N_640X400] =
     build(MODE_640X400, &[VTS_REGS_253[0], VTS_REGS_253[1]]);
-const REGS_320X200_RAW8_453: [(u16, u8); N_320X200] =
-    build(MODE_320X200, &[VTS_REGS_453[0], VTS_REGS_453[1]]);
+const REGS_320X200_RAW8_453: [(u16, u8); N_320X200] = build(
+    MODE_320X200,
+    &[
+        VTS_REGS_453[0],
+        VTS_REGS_453[1],
+        (0x4601, 0x04), // VFIFO read start: see `MODE_320X200`
+        (0x4F00, 0x00), // PSV_CTRL: power-saving mode off, see `MODE_320X200`
+    ],
+);
 const REGS_1280X800_RAW10: [(u16, u8); N_1280X800] =
     build(MODE_1280X800, &[ANA_RAW10, VFIFO_RAW10]);
 const REGS_1280X720_RAW10: [(u16, u8); N_1280X720] =
@@ -678,10 +697,10 @@ pub const MODES: [Mode; 12] = [
         &REGS_640X400_RAW8_253,
     ),
     raw8(
-        "320x200 bin2 crop RAW8 454fps",
+        "320x200 bin2 crop RAW8 455fps",
         320,
         200,
-        454,
+        455,
         VTS_453FPS,
         &REGS_320X200_RAW8_453,
     ),
