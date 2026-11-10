@@ -26,7 +26,7 @@ it is not a source value.
 | Outline | 64 × 64 mm, (100, 100)–(164, 164), corners r 1 mm | Smallest outline that fits the floorplan the user approved (user decisions 2026-10-31: 64 × 64 mm, J1 on the right, DP1435 on the left, J4 at an edge) |
 | FFC notch | Top edge, 18 mm wide, 3 mm deep, centred on the lens axis, inner corners rounded | The camera FFC wraps round the top edge into J4 (user decision 2026-10-31: "J4 at an edge", no slot); a 16 mm cable has 1 mm each side |
 | Lens cutout | Ø16 mm round cutout; lens axis at (129.7, 130.3) | The camera module sits behind the board (bottom side) with its lens on this axis; see [Camera and CSI-2](#camera-and-csi-2) |
-| Mounting holes H1–H4 | M3, Ø3.2 mm plated, Ø6.4 mm GND pad, 3.5 mm in from both edges at the four corners | User decision 2026-10-31: "4 × M3 corners" |
+| Mounting holes H1–H4 | M3, Ø3.2 mm plated, Ø6.4 mm GND pad, 3.5 mm in from both edges at the four corners; no via ring round the hole (the plated barrel joins the pads and planes) | User decision 2026-10-31: "4 × M3 corners"; via ring dropped for JLCDFM's via-to-PTH spacing (user decision 2026-11-10) |
 | Tooling holes TOOL1–TOOL3 | Ø1.152 mm NPTH, 0.148 mm mask expansion, in three corners | Required for Economic PCBA; see [Assembly](#assembly) |
 | Other NPTH | J1 and J2 locating pegs | Part datasheets |
 
@@ -99,6 +99,12 @@ C6.2) are GND vias on the same net as the pad. R72.2's GND via is the one except
 opening than the mask bridge. Further out it would meet XVS's via or the VLED_SENSE track, and south the VLED_SENSE
 diagonal blocks it (board review 2026-11-04).
 
+A via beside a pad of its own net, but not touching it, keeps a copper gap of at least 0.1 mm to that pad (user
+decision 2026-11-10). JLCDFM flags a narrower gap under pad spacing and via to pad: it may not etch, and the sliver
+left between the pad opening and the tented via is too thin. Three vias don't keep it, because no site nearby holds
+the clearances: C18.2's, held in by a USB_C_D_P B.Cu track and the copper round it; the GND via shared by U9.1 and
+U6.27 (B.Cu), which the MIPI_CSI spacing to U6.28 and R56.1 (LED_EN) hold in place; and the C40.2/U11.2 via above.
+
 Thermal vias are the exception: they sit inside the pads they cool, open (unfilled, unplugged) on the pad side and tented
 on the far side. They are in U1's exposed pad (GND) and U10's exposed pad (GND; TPS61170 DRV0006A land pattern p.35 draws
 them there). Solder paste over them can wick into the holes and leave voids under the pad; that is
@@ -109,7 +115,8 @@ Silk against pads: KiCad 10's `min_silk_clearance` board setting covers silk to 
 silk against pads only for overlap on the mask layer; a custom `silk_clearance` rule covers more. Rule "Board silk to
 pads" holds board-level silk (texts, marks) clear of pads. Footprint silk is exempt: the stock silk stays where it is
 closer (0402 resistor and capacitor outlines to their own pads, test-point rings, J4's outline to its mounting pad);
-JLCPCB clips legend at pads (user decision 2026-11-02: "Keep stock silk, JLC clips it"). Polarity marks inside
+JLCPCB clips legend at pads (user decision 2026-11-02: "Keep stock silk, JLC clips it") and at holes, so stock silk
+over tented vias stays too (user decision 2026-11-10). Polarity marks inside
 footprints are held ≥ 0.15 mm (JLCPCB pad to silkscreen) from pads by hand ([Assembly](#assembly)). Because JLCPCB gives no silk-to-silk figure, the rule
 "Silk to silk" lets two silk items touch; without it, widening the stock silk to JLCPCB's minimum line width put
 neighbouring 0402/SOT outlines closer than KiCad's silk clearance, and KiCad would flag every pair.
@@ -904,7 +911,10 @@ backside fillets in the vias and U1/U10/Q1 temperatures in the thermal runs. U5,
 placement preview on 2026-11-09 and have their `assembly.corrections` entries. D1 and the can part of C14, C46 and
 C47 have no 3D model in that preview, so it shows neither D1's pin 1 nor the cans' polarity: check them in the
 order's DFM Analysis (Order History, a few hours after ordering) before approving production, then add D1's
-LCSC-keyed entry (`{"rot": 0}` when it needs none).
+LCSC-keyed entry (`{"rot": 0}` when it needs none). JLCDFM's SMT check (2026-11-10, run on the `kicad_export` BOM and
+CPL) compares pins and pads with its own part models: it flags pin edges flush with pad edges, U1's exposed pad, and
+J2's shell legs off-centre in their slots. Check J2 in the placement preview too; if the legs sit off the slots there,
+correct J2's `assembly.corrections` offset.
 
 ## Accepted deviations
 
@@ -986,7 +996,7 @@ moved; placement is unchanged.
 | Deviation | Accepted by | Section |
 |---|---|---|
 | No impedance control ordered; MIPI outside the HDG's ± 10 % at the width extremes | User decision 2026-11-01 | [Impedance](#impedance) |
-| Stock silk closer to pads than the rule allows, JLCPCB clips it | User decision 2026-11-02 | [Fabrication rules](#fabrication-rules) |
+| Stock silk closer to pads than the rule allows, and over tented vias; JLCPCB clips it | User decisions 2026-11-02 and 2026-11-10 | [Fabrication rules](#fabrication-rules) |
 | CSI In2 neck narrower than SPRAAR7J's 90 mil each side; short of it with the 45° crossing | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | CAM pairs closer than 90 mil to the plane edge at the FFC notch | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | No GND guard round the MIPI CLK pairs | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
@@ -1012,3 +1022,24 @@ moved; placement is unchanged.
 | CAM_CLK_P/N split on F.Cu between J4 and their vias: P detours north of N to take up the length, uncoupled for a stretch | User decision 2026-11-04: "Accept + record" (re-coupling needs trapezoid bumps drawn in pcbnew) | [Lengths and skew](#lengths-and-skew) |
 | C4 (0805 MLCC) pads close to the east edge; order without mouse bites beside it | User decision 2026-11-04: "Note only" | [Assembly](#assembly) |
 | R72.2's GND via hole closer to the pad opening than the mask bridge | Board review 2026-11-04: no site further out | [Fabrication rules](#fabrication-rules) |
+| Vias closer than 0.1 mm to a pad of their own net: C18.2's, the U9.1/U6.27 GND via, C40.2/U11.2's | User decision 2026-11-10: no site that holds the clearances | [Fabrication rules](#fabrication-rules) |
+
+### JLCDFM
+
+JLCDFM's online check (https://jlcdfm.com, run 2026-11-10 on the `kicad_export` Gerbers, BOM and CPL) still reports
+these classes. Each one is a decision above or a check that doesn't apply to this board (user decision 2026-11-10).
+
+| Finding | Cause | Why it stays |
+|---|---|---|
+| Pad spacing (warning) | U12's LGA pads, U1's and J2's pin pitch | Rule "U12 LGA pads"; manufacturers' land patterns |
+| Pad spacing, via to pad | The three vias in the row above | No site that holds the clearances |
+| Slot width | J2's plated shell slots | At or above JLCPCB's plated-slot minimum (rule "Plated slot width"); stock HRO land pattern |
+| Lead to hole | The thermal vias in U1's and U10's exposed pads | User decision 2026-11-03 ([Fabrication rules](#fabrication-rules)) |
+| Silkscreen to pad, silkscreen to hole | Stock footprint silk | User decisions 2026-11-02 and 2026-11-10 ([Fabrication rules](#fabrication-rules)) |
+| Solder mask opening exposing trace | A track of the pad's own net next to the opening | Same net; KiCad's mask-to-copper clearance keeps other nets clear |
+| Negative solder mask expansion, soldermask bridge, silkscreen line width, annular ring, trace spacing | Openings 1:1 with pads, webs between fine-pitch pads, silk at the minimum line width, signal-via ring, diff-pair gaps | At JLCPCB's limits ([Fabrication rules](#fabrication-rules)) |
+| Plated through-hole to trace | J2's locating pegs beside VBUS tracks | At the board's hole clearance |
+| Missing plated through-hole | Top-side parts over U6's bottom pads | Different parts on opposite sides; no hole intended |
+| Component to board edge, clipped by board outline | J2's overhang; C4, R9 and the cans along the edges | J2 and C4: rows above; the rest stays inside JLCPCB's component-to-edge limit |
+| Component collision | C13 and C14 cans, courtyards touching | Courtyards (body plus margin) don't overlap |
+| Pin edges, lead area overlapping pad, component through-hole | JLCDFM's part models against the land patterns (U10, U1, J2 in its examples) | Manufacturers' land patterns; checked in the placement preview ([Assembly](#assembly)) |
