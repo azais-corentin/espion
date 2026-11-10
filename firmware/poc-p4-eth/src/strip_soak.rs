@@ -26,9 +26,10 @@
 //! caller starts it (and the sensor) for each run and stops both before the results are
 //! logged or the next run is prepared. While the firmware does anything else the DMA would
 //! fill the ring and halt (a stall). In RAW8 that costs about 4 frames; in RAW10 a halt of
-//! about 30 ms (right after stream-on, ring of 2 or 3 strips) corrupted internal RAM past
-//! the ring on the board (load access faults in the driver's DMA handler and the executor,
-//! the faulting words image data), so a RAW10 stall must be avoided, not just counted.
+//! about 30 ms (right after stream-on, ring of 2 or 3 strips) corrupted memory and crashed the
+//! board (load access faults in the driver's DMA handler and the executor, the faulting words
+//! image data; how the memory is hit is not known, see the `esp32p4_csi::strips` docs), so a
+//! RAW10 stall must be avoided, not just counted.
 
 use embassy_time::{Duration, Instant, with_timeout};
 use esp32p4_csi::{Config, CsiStrips, Strip, StripLink, StripStats};

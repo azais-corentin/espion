@@ -1,16 +1,20 @@
 # poc-p4-eth
 
 A throwaway proof of concept on a Waveshare ESP32-P4-ETH dev board. It is not part of the
-product (that is `firmware/cam-p4` on the espion-cam board). It answers two questions before the
-camera PCBs are ordered:
+product (that is `firmware/cam-p4` on the espion-cam board). It answers three questions before
+the camera PCBs are ordered:
 
 1. Does the OV9281 module deliver images to the ESP32-P4 over MIPI CSI-2 (2 lanes, RAW8)?
 2. At which resolutions can the P4 process every pixel for marker tracking (threshold,
    connected components, weighted centroids) at 120 fps, all on the board?
+3. Do the other modes of the Inno-Maker CAM-MIPIOV9281 V2 mode list work: RAW8 1280x800 and
+   1280x720 at 144 fps, 640x400 binned at 210 and 253 fps, 320x200 at 453 fps, and RAW10
+   1280x800 and 1280x720 at 120 fps and 640x400 at 210 fps?
 
-The modes under test are 1280x800, 1280x720 (crop), 640x480 (crop) and 640x400 (2x2 binned),
-with the sensor free-running (no XVS trigger). The PoC is minimal by intent: no Ethernet, no
-PTP, no LEDs, no protocol.
+The modes for question 2 are 1280x800, 1280x720 (crop), 640x480 (crop) and 640x400 (2x2
+binned), all at 120 fps (`ov9281::MODES` 0..=3); the Inno-Maker list is `MODES` 4..=11. The
+sensor free-runs (no XVS trigger). The PoC is minimal by intent: no Ethernet, no PTP, no LEDs,
+no protocol.
 
 Status, measured on the board (details below):
 
@@ -23,9 +27,15 @@ Status, measured on the board (details below):
   end of the frame (synthetic and dark live frames; up to 3.5 ms in a bright live scene).
   With whole frames read from PSRAM only 640x480 and 640x400 do; the 1280-wide modes fall to
   85–106 fps processed.
-
-Modes 4..=11 (faster RAW8 and RAW10) have had one first capture-only run; see "Fast modes
-and RAW10: first capture run".
+- Question 3: yes, all eight, with capture-only verification (no soak at the new rates): 5 s
+  of capture per mode with no dropped, short or overwritten frame and no error, at the rate
+  the frame-period formula predicts (+25 to +41 ppm): 143.907, 209.569, 252.409, 453.399 and
+  119.921 fps; a correct bar-pattern still and a correct scene still in every mode; the RAW10
+  byte layout confirmed as CSI-2 packed. Two modes needed changes: 1280x720 at 144 fps runs
+  the 96 MHz clock (as 1280x800 at 144 does), and 320x200 resets two common registers. The
+  three RAW10 modes also passed through the strip path (strips byte-identical to whole frames,
+  strip soak passed; 1280-wide RAW10 costs about 1.3x RAW8 and fits 120 fps), but a DMA stall
+  of about 30 ms in RAW10 crashes the board (open driver fault). See "All 12 modes".
 
 ## Hardware set-up
 
@@ -34,7 +44,7 @@ and RAW10: first capture run".
 | Board | [Waveshare ESP32-P4-ETH](https://docs.waveshare.com/ESP32-P4-ETH): ESP32-P4NRW32X (32 MB PSRAM in package), 32 MB flash, CH343P USB-UART bridge on the USB-C port |
 | Camera | SZYTF WX-1M-9281-79 OV9281 module, Raspberry-Pi-style 15-pin FFC (pin table in [docs/hardware/camera.md](../../docs/hardware/camera.md)) |
 | Cable | 22-pin to 15-pin FFC into the board's 22-pin MIPI-CSI connector J1 [INFERENCE: Pi-style mapping, J1 pin 6 to module pin 11] |
-| Host link | USB-C to the CH343, `/dev/ttyACM0` (UART0: 115200 baud for the ROM and bootloader, 2 Mbaud once the firmware runs) |
+| Host link | USB-C to the CH343, a `ttyACM` device on Linux (UART0: 115200 baud for the ROM and bootloader, 2 Mbaud once the firmware runs) |
 
 Pin map used, from the Waveshare schematic
 ([ESP32-P4-ETH-datasheet.pdf](https://files.waveshare.com/wiki/ESP32-P4-ETH/ESP32-P4-ETH-datasheet.pdf),
@@ -56,13 +66,18 @@ SCCB data here but XVS on the espion-cam board.
 
 ## Build, flash, capture the log
 
-From this directory, inside the dev shell (or prefix with `nix develop -c` from the repo root):
+From this directory, inside the dev shell (or prefix with `nix develop -c` from the repo root).
+`PORT` is the CH343's serial device. It shows up as a `ttyACM` device (`/dev/ttyACM0` on the
+computer of the first runs, but the number depends on what else is plugged in);
+`ls /dev/serial/by-id/` lists it by name as `usb-1a86_USB_Single_Serial_<serial>-if00`, which
+does not change.
 
 ```sh
+PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_<serial>-if00
 cargo build --release
 E=target/riscv32imafc-unknown-none-elf/release/poc-p4-eth
-timeout 120 espflash flash   --chip esp32p4 --port /dev/ttyACM0 --non-interactive "$E"
-timeout 330 espflash monitor --chip esp32p4 --port /dev/ttyACM0 --non-interactive --no-addresses \
+timeout 120 espflash flash   --chip esp32p4 --port "$PORT" --non-interactive "$E"
+timeout 330 espflash monitor --chip esp32p4 --port "$PORT" --non-interactive --no-addresses \
   --monitor-baud 2000000 --elf "$E" > /tmp/poc-p4-eth/soak.log 2>&1   # exits 124 at the timeout: expected
 sed 's/\x1b\[[0-9;]*m//g' /tmp/poc-p4-eth/soak.log | tr -d '\r' | grep -aE 'camera|soak|^INFO - \|'
 python3 tools/still.py /tmp/poc-p4-eth/soak.log   # only with still_dump: true
@@ -74,18 +89,23 @@ python3 tools/still.py /tmp/poc-p4-eth/soak.log   # only with still_dump: true
   `main.rs`). The ROM and bootloader lines before that are at 115200 and look garbled in a
   2 Mbaud monitor.
 - How long to let `monitor` run: the boot report is out within about 1 s; the default plan
-  (frame soak, four modes) needs about 330 s; the strip soak finishes in under 300 s; capture
-  only takes about 70 s for four modes with the cache check (about 100 s with the still dumps
-  too); the detector benchmark (`RUN_BENCH = true`) about 90 s.
+  (frame soak, four modes) needs about 330 s; the RAW8 strip soak finishes in under 300 s;
+  capture only takes about 70 s for four modes with the cache check (about 100 s with the
+  still dumps too); `MODE_STILLS_PLAN` about 180 s, `STRIP_CHECK_PLAN` about 45 s,
+  `RAW10_STRIP_SOAK_PLAN` about 190 s; the detector benchmark (`RUN_BENCH = true`) about 90 s.
+  Every camera plan ends with the line `camera: done`.
 - `--no-addresses` stops espflash from printing symbol lines for hex numbers in the log.
-- `cargo run --release` uses the runner `espflash flash --monitor ...`, which is interactive.
+- `cargo run --release` uses the runner in `.cargo/config.toml`,
+  `espflash flash --monitor ... --port /dev/ttyACM0`: interactive, and with the first
+  computer's port.
 - `tools/still.py <log> [out dir]` (Python standard library only) checks each still's CRC and
   line count and writes `<out dir>/<name>.pgm` and `.png` (default `/tmp/poc-p4-eth`). RAW10
   stills become a 16-bit PGM and an 8-bit PNG.
 
 ### Choosing what runs
 
-All in constants at the top of `src/main.rs`; one plan per boot.
+All in constants at the top of `src/main.rs`; one plan per boot. The default selection is
+`RUN_BENCH = false`, `PLAN = &CAMERA_PLAN`, `SOAK = Soak::Frames`.
 
 | Constant | Value | Runs |
 |---|---|---|
@@ -93,12 +113,23 @@ All in constants at the top of `src/main.rs`; one plan per boot.
 | `RUN_CAMERA` | `true` (default) | The camera section |
 | `PLAN` | `&CAMERA_PLAN` (default) | Modes 0..=3 (the 120 fps RAW8 modes), then the soak chosen by `SOAK` |
 | `PLAN` | `&FAST_CAPTURE_PLAN` | Capture only over modes 4..=11, 5 s each, then the detector check per mode |
-| `SOAK` | `Soak::Frames` (default) | Frame soak: whole frames in PSRAM (`SOAK_PLAN`) |
-| `SOAK` | `Soak::Strips` | Strip soak: 64-line strips in internal RAM (`STRIP_SOAK_PLAN`). Needs `RUN_BENCH = false` (checked at compile time) |
-| `SOAK` | `Soak::None` | Capture only, then the detector check per mode |
+| `PLAN` | `&MODE_STILLS_PLAN` | All 12 modes (order 0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3, so RAW10 follows its RAW8 window and 8 follows the binned modes), gain 2x: capture only, the detector check, a scene still and a 0x80 bar-pattern still per mode |
+| `PLAN` | `&RAW10_PATTERNS_PLAN` | Modes 6 and 11 (640x400 RAW8 and RAW10 at 210 fps): scene still, then stills of the random-data (0x81), grey-squares (0x82) and rolling-bar (0xC0) test patterns |
+| `PLAN` | `&STRIP_CHECK_PLAN` | Strip check on modes 0, 9, 10, 11: whole frames of the random test pattern as the reference, then 10 s of strips per mode checked row by row against it |
+| `PLAN` | `&RAW10_STRIP_SOAK_PLAN` | Strip soak on the RAW10 modes 9, 10, 11 |
+| `SOAK` | `Soak::Frames` (default) | With `CAMERA_PLAN`: frame soak, whole frames in PSRAM (`SOAK_PLAN`), RAW8 modes only |
+| `SOAK` | `Soak::Strips` | With `CAMERA_PLAN`: strip soak, strips in internal RAM (`STRIP_SOAK_PLAN`) |
+| `SOAK` | `Soak::None` | With `CAMERA_PLAN`: capture only, then the detector check per mode |
 
-`CAMERA_PLAN` also holds the sensor settings (exposure 800 lines, gain 0x20, continuous
-clock, scene), the measurement window (5 s) and the `cache_check` and `still_dump` switches.
+Every plan that uses the strip path needs `RUN_BENCH = false` (checked at compile time).
+`camera::Plan` holds the modes (indexes into `ov9281::MODES`), the sensor settings (exposure
+800 lines, gain 0x20, continuous clock, scene or test pattern), the measurement window (5 s),
+the `cache_check` and `still_dump` switches, `still_patterns` (one extra still per listed
+0x5E00 test-pattern value, written while the sensor streams; three frames are dropped before
+each, and the plan's own setting is restored afterwards), and the soak: `soak` (frames) or
+`strips` (`strip_soak::Plan`: the soak, or with `check: Some(window)` the strip check). Stills
+are named `<w>x<h>-<fps>fps-raw<bits>-scene` or `...-pattern<hex>`, for example
+`320x200-453fps-raw8-pattern80`.
 
 ## What the firmware does
 
@@ -121,13 +152,16 @@ At boot, in order:
    3. measures 5 s of capture: frames, sizes against the configured frame length, error
       counters, and the measured frame rate next to the sensor's predicted one. Nothing is
       logged inside the window;
-   4. optionally times the cache invalidation, checks cache coherence and dumps a still;
+   4. optionally times the cache invalidation, checks cache coherence and dumps the stills;
    5. runs the frame soak, or in a capture-only plan the detector check (below);
    6. writes `STREAM_OFF`, waits 20 ms, stops the receiver.
 
-   With the strip soak selected, the whole-frame receiver is never created, and steps 3 and
-   4 are skipped. Consecutive modes of one width share one strip receiver; at a change of
-   width it is dropped and a new one is built on the same 320 KiB, split for that width.
+   The strip path (strip soak or strip check) skips steps 3 and 4. The strip check first
+   captures its reference frames with a whole-frame receiver on the PSRAM buffers, for every
+   mode, and drops it; the strip soak never creates one. Consecutive modes with the same strip
+   size share one strip receiver; at a change it is dropped and a new one is built on the same
+   320 KiB, split for that size. The receiver and the sensor stream are started for every run
+   and stopped before the firmware logs or prepares the next run.
 
 The detector check (capture-only plans) runs after the measurement window, once per mode. The
 detector processes one held captured frame: `process_frame` at threshold 128 for RAW8,
@@ -138,13 +172,13 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | File | What |
 |---|---|
 | `src/main.rs` | Boot report: log baud switch, chip and cache info, PSRAM init and test, read-speed kernels, SCCB scan and chip ID. Pin and address choices, and the plans (see "Choosing what runs"), are constants at the top |
-| `src/camera.rs` | Camera section: LDO VO3, sensor set-up over SCCB, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement, cache check, still dump, detector check, and the strip receiver for the strip soak |
+| `src/camera.rs` | Camera section: LDO VO3, sensor set-up over SCCB, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement with the frame-rate prediction, cache check, still dumps, detector check, and the strip path (receiver, mode groups, the test pattern for the strip check) |
 | `src/soak.rs` | Frame soak: per mode, 30 s on live frames, then 10 s each on synthetic frames with 0, 16 and 64 discs, while capture keeps running; result table |
-| `src/strip_soak.rs` | Strip soak: the same runs on 64-line strips in a 320 KiB ring in internal RAM (4 strips of 80 KiB at 1280 wide, 8 of 40 KiB at 640), with per-frame processing and latency, per-strip hold times, and the driver's interrupt and invalidation times |
+| `src/strip_soak.rs` | Strip soak: the same runs on strips in a 320 KiB ring in internal RAM (RAW8: 4 strips of 80 KiB at 1280 wide, 8 of 40 KiB at 640, 64 lines; RAW10: 3 strips of 102 400 B, 64 lines at 1280 and 128 at 640), with per-frame processing and latency, per-strip hold times, and the driver's interrupt and invalidation times. `StripCheck`: row checksums of the reference frames and the strip check against them |
 | `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each |
 | `src/vision.rs` | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
 | `src/synth.rs` | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
-| `src/ov9281.rs` | OV9281 register tables for 12 modes, from the datasheet and the ESP-IDF, Linux, Raspberry Pi and Inno-Maker drivers. 0..=3: the four 120 fps RAW8 modes (HTS 728, VTS 915, 120.098 fps, 800 Mbit/s per lane), run on the board. 4..=8: faster RAW8 modes (up to 454 fps); 9..=11: RAW10. 4..=11: one first capture run (see "Fast modes and RAW10: first capture run") |
+| `src/ov9281.rs` | OV9281 register tables for 12 modes, from the datasheet and the ESP-IDF, Linux, Raspberry Pi and Inno-Maker drivers, and the frame-period formula (`Mode::frame_cycles`). All at HTS 728 and 800 Mbit/s per lane. 0..=3: 1280x800, 1280x720, 640x480, 640x400 binned, RAW8, 80 MHz, VTS 915, 119.918 fps. 4, 5: 1280x800 and 1280x720 RAW8 at 96 MHz, VTS 915, 143.901 fps. 6, 7: 640x400 binned RAW8, 80 MHz, VTS 523 (209.563 fps) and 434 (252.402). 8: 320x200 binned centre crop RAW8, 80 MHz, VTS 241, 453.386 fps. 9..=11: RAW10 1280x800, 1280x720 (VTS 915, 119.918 fps) and 640x400 binned (VTS 523, 209.563). Rates by the formula; measured in "All 12 modes" |
 | `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files |
 
 ## Measured results
@@ -152,7 +186,8 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 All figures are from this board on 2026-11-10. The boot report and benchmark are from the
 firmware as committed then; the capture results from commit `c0a70eb` and the soak from
 `08b7bef`, both with frame buffers of 1 028 096 B (1280x800 RAW8; the buffers are now sized
-for RAW10).
+for RAW10). The results for all 12 modes and RAW10 are from the later code named in their
+section.
 
 ### Chip and memory
 
@@ -275,10 +310,11 @@ Set-up: three frame buffers at the start of PSRAM (0x4800_0000), filled with the
 0x5A before the first frame. Continuous clock lane, exposure 800 lines, gain 0x20, indoor
 scene. In every mode, before stream-on, the clock and both data lanes were in stop state.
 
-The sensor predicts 120.098 fps (HTS 728, VTS 915). Every mode measured 600 frames in 5003 ms
-= **119.922 fps** (first-to-last 119.921–119.922). In every mode the following were all 0:
-wrong size, dropped, overwritten, DMA errors, host errors (main and all 9 detail registers),
-bridge errors.
+Every mode measured **119.921–119.922 fps** first-to-last over 5 s. The
+sensor's frame period is `(VTS − 1) × HTS + 1730` SCLK cycles (found later, see "Frame
+period"), which predicts 119.918 fps at HTS 728, VTS 915: the measurement is +25 ppm against
+it. In every mode the following were all 0: wrong size, dropped, overwritten, DMA errors,
+host errors (main and all 9 detail registers), bridge errors.
 
 | Mode | Readback 0x3808..0x380B | Bytes/frame (= w·h) | `CMPLTD_BLK_TFR_SIZE` |
 |---|---|---|---|
@@ -287,7 +323,9 @@ bridge errors.
 | 640x480 crop | 0280 x 01e0 | 307 200 | 38 399 |
 | 640x400 2x2 binned | 0280 x 0190 | 256 000 | 31 999 |
 
-- The −0.15 % against the predicted rate is [INFERENCE]: XVCLK is slightly under 24 MHz.
+- The first run compared this with `VTS × HTS` (120.098 fps) and put the −0.15 % down to
+  XVCLK being slightly under 24 MHz. The frame-period formula explains it instead; what is
+  left is +25 ppm.
 - The first frame's tail never held the sentinel: the DMA writes the whole frame. The
   block-size register under-reports by one item, so the driver takes the frame length from
   the DMA destination address instead.
@@ -299,7 +337,7 @@ Stills (dumped over the UART, decoded with `tools/still.py`):
 | 1280x800 scene (min 4, max 255, mean 41.0, 7.3 s to dump) | Office ceiling with suspended tiles: grid lines straight across the whole frame, sharp, no torn or wrapped lines |
 | 1280x720 scene (mean 47.2) | Best pixel match inside the 1280x800 frame at offset (0, 40): the centred crop |
 | 640x480 scene (min 5, max 83, mean 51.7) | Best match inside the 1280x800 frame at (320, 160), the exact centre, mean absolute difference 4.6 (noise level) |
-| 640x400 scene (mean 75.0) | The whole field of view: correlation 0.991 with a 2x2 average of the 1280x800 frame at (0, 0). It is 1.83x brighter [INFERENCE: the binning sums in at least one direction] |
+| 640x400 scene (mean 75.0) | The whole field of view: correlation 0.991 with a 2x2 average of the 1280x800 frame at (0, 0). It is 1.83x brighter in the mean (about 2x above the black level at equal exposure in the later stills: "Stills, bright scene") |
 | 640x400 and 1280x800 test pattern (0x5E00 = 0x80) | 8 vertical bars, 80 px apart at 640 and 162 px at 1280; every even row equals row 0 and every odd row row 1, so no shear and no lost bytes. Inside the bars each 2x2 Bayer phase is 0 or 255: the standard colour bar of an RGB Bayer generator seen on a mono sensor |
 
 Cache invalidation (`Cache_Invalidate_Addr` over L1 and L2, which `wait_frame` calls on each
@@ -363,9 +401,17 @@ Results (us; budget 8333 us):
 | 640x400 bin2 | synth 64 | 1199 | 1199 | 0 | 0 | 0 | 0 | 0 | 3929 | 3982 | 4112 | 0 | 119.919 | 64..64 | 0 | PASS |
 
 "done" = frames the DMA completed, "frames" = frames handed out and processed, "fps" = the
-processed rate. Each mode's 5 s capture-only measurement before the soak: 600 frames,
-119.922 fps, 0 errors. A first run, built against the in-progress strip driver, gave the same
-verdicts and figures within about 1 % (live 640x400 aside, which depends on the scene).
+processed rate. Each mode's 5 s capture-only measurement before the soak: 119.921–119.922 fps,
+0 errors. A first run, built against the in-progress strip driver, gave the same verdicts and
+figures within about 1 % (live 640x400 aside, which depends on the scene).
+
+Re-run on the final code (default build, `/tmp/poc-p4-eth/final/default.log`): capture
+119.921 fps (+25 ppm) with 0 errors in all four modes; the same verdicts: every 1280-wide run
+FAIL on overwritten frames (83.0–105.0 fps processed), every 640-wide run PASS. The live
+640x400 run passed this time: the scene of that day gave 0 blobs at threshold 128. Mean
+processing against the table: 1280x800 synth 0 10 539 us (+0.8 %), synth 64 11 751 (+1.3 %);
+1280x720 9446 (+0.8 %), 10 625 (+1.3 %); 640x480 3498 (+4.6 %), 4511 (+1.1 %); 640x400 2955
+(+5.0 %), 3975 (−0.2 %).
 
 Findings:
 
@@ -461,7 +507,9 @@ Driver timing (counters in `StripStats`):
 
 ### 120 fps soak, 64-line strips in internal RAM
 
-Method (`SOAK = Soak::Strips`, 2026-11-10, log `/tmp/poc-p4-eth/strip-soak4.log`):
+Method (`SOAK = Soak::Strips`, 2026-11-10, log `/tmp/poc-p4-eth/strip-soak4.log`; the soak
+has since been changed to restart the receiver and the stream for every run, see "RAW10
+through the strip path"):
 
 - Same board, sensor settings, scene and plan as the frame soak: per mode a live run of 30 s,
   then synthetic runs of 10 s aiming at 0, 16 and 64 blobs per frame, with capture running.
@@ -578,35 +626,326 @@ Caveats:
 - Frame end to centroids is measured from the moment the handler queued the last strip; the
   driver's bring-up measured that at 4 us after the ISP's frame-tail bit (23 us at 640x400).
 - The ring takes 320 KiB of internal RAM; with the 128 KiB buffer of the boot read bench this
-  build leaves 62.7 KiB for the stack.
+  build leaves 62.7 KiB for the stack (about 61 KiB with the RAW10 strip code: `_bss_end`
+  0x4FF9_EBC0, from the strips task).
 
-### Fast modes and RAW10: first capture run
+### All 12 modes: the Inno-Maker mode list and RAW10
 
-One 5 s capture-only run per mode, with frames returned at once. Log:
-`/tmp/poc-p4-eth/fast-capture.log`.
+Modes 4..=11 are the Inno-Maker CAM-MIPIOV9281 V2 mode list (`ov9281.rs`). They were brought
+up in three tasks on 2026-11-10 (logs in `/tmp/poc-p4-eth/raw10/`, `/tmp/poc-p4-eth/mode8/`
+and `/tmp/poc-p4-eth/strips10/`) and verified at the end on the merged code (commit
+`6963e63`; per run only `PLAN`, and for the repeat run the mode list of `MODE_STILLS_PLAN`,
+changed; logs in `/tmp/poc-p4-eth/final/`). The new modes have capture-only verification: 5 s
+of capture, stills, and the RAW10 strip runs below; no frame soak at the new rates.
 
-|Mode|Measured fps|Predicted fps|Bytes per frame|Result|
+#### Capture, all 12 modes
+
+`MODE_STILLS_PLAN`, log `/tmp/poc-p4-eth/final/stills.log`: one boot, modes in the order 0, 9,
+1, 10, 6, 11, 4, 5, 7, 8, 2, 3; exposure 800 lines (clamped to VTS − 25 in modes 6, 7, 8),
+gain 2x; 5 s first-to-last per mode. Every mode: 0 wrong size, 0 dropped, 0 overwritten, 0
+sequence gaps, DMA, host and bridge errors all 0; the worst interval between frames is the
+frame period plus at most 3.3 us.
+
+| Mode | Format | SCLK | VTS | Predicted fps | Measured fps | ppm | Frames in 5 s | Bytes/frame | Verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| 0: 1280x800 | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 1 024 000 | clean |
+| 1: 1280x720 crop | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 921 600 | clean |
+| 2: 640x480 crop | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 307 200 | clean |
+| 3: 640x400 binned | RAW8 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 256 000 | clean |
+| 4: 1280x800 | RAW8 | 96 MHz | 915 | 143.901 | 143.907 | +41 | 721 | 1 024 000 | clean |
+| 5: 1280x720 crop | RAW8 | 96 MHz | 915 | 143.901 | 143.907 | +41 | 721 | 921 600 | clean |
+| 6: 640x400 binned | RAW8 | 80 MHz | 523 | 209.563 | 209.569 | +28 | 1049 | 256 000 | clean |
+| 7: 640x400 binned | RAW8 | 80 MHz | 434 | 252.402 | 252.409 | +27 | 1263 | 256 000 | clean |
+| 8: 320x200 binned crop | RAW8 | 80 MHz | 241 | 453.386 | 453.399 | +28 | 2268 | 64 000 | clean |
+| 9: 1280x800 | RAW10 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 1 280 000 | clean |
+| 10: 1280x720 crop | RAW10 | 80 MHz | 915 | 119.918 | 119.921 | +25 | 601 | 1 152 000 | clean |
+| 11: 640x400 binned | RAW10 | 80 MHz | 523 | 209.563 | 209.569 | +28 | 1049 | 320 000 | clean |
+
+All modes run at HTS 728 and 800 Mbit/s per lane. The sensor readback in the same log shows
+every mode's window, output size, binning, HTS, VTS, exposure and gain as written. It cannot
+show the 96 MHz clock itself; the register 0x030D reads 0x60 in modes 4 and 5.
+
+The detector check on one captured frame per mode (dark scene: 0 blobs at threshold 128 for
+RAW8 and 512 for RAW10) gives, against the frame period: mode 4 10 886 us (6949), 5 9700
+(6949), 6 3097 (4771), 7 3092 (3961), 8 1100 (2205), 9 13 829 (8339), 10 12 338 (8339), 11 3866
+(4771). Whole-frame processing from PSRAM is slower than a frame in modes 4, 5, 9 and 10. The
+synthetic RAW10 frames with 16 discs gave 16 blobs in modes 9, 10 and 11.
+
+#### Frame period
+
+A frame lasts **`(VTS − 1) × HTS + 1730` SCLK cycles**, not `VTS × HTS` (`FRAME_LONG_LINE`
+and `Mode::frame_cycles()` in `ov9281.rs`; the capture log prints both the measured cycles
+and this prediction).
+
+- Evidence: 21 runs of 10 s (`/tmp/poc-p4-eth/raw10/TMP_TIMING_PLAN.log`, `TMP_HTS_PLAN.log`)
+  over HTS 728..=2912, VTS 434..=1830, SCLK 80 and 96 MHz, RAW8 and RAW10, crop and binned,
+  exposure 100 and 800 lines fit it within 1.4 cycles, with 1730.2 cycles and the sensor clock
+  28 ppm fast against the P4's timer. A model `HTS × VTS + constant` leaves up to 845 cycles.
+  Exposure has no effect. At HTS 1820 and above the frame is shorter than `HTS × VTS`. The
+  mode 8 task fitted its own runs at VTS 222..=915 to 9.09976 us × VTS + 12.51 us, the same
+  model.
+- The 12 modes above measure +25 to +41 ppm against it. The old `VTS × HTS` prediction was
+  120.098 fps at VTS 915 and 80 MHz (measured −1474 ppm from it), 144.118 at 96 MHz (−1464),
+  210.114 at VTS 523 (−2594), 253.203 at VTS 434 (−3136) and 455.976 at VTS 241 (−5652): the
+  shorter the frame, the larger the error. That is why the first capture run saw the 640x400
+  modes 0.26–0.31 % under prediction and the others 0.15 %.
+- That one line per frame lasts 1730 cycles instead of HTS is [INFERENCE]: only whole frame
+  periods were measured. Which of the sensor's 24 MHz oscillator and the P4's 40 MHz crystal
+  is off by the 25–41 ppm is not known.
+- The first-to-last rate (periods / time from the first to the last frame) is the
+  measurement. An earlier "frames over the window" figure counted one frame more than the
+  periods spanned (601 in 5007 ms = 120.03) and is no longer printed.
+
+#### RAW10 byte layout
+
+RAW10 in memory is CSI-2 packed, as the detector, `Synth::fill_raw10` and `tools/still.py`
+assume: per 4 pixels, bytes 0..3 hold bits 9..2 of P0..P3 and byte 4 holds
+`P3[1:0] P2[1:0] P1[1:0] P0[1:0]` (P0 in bits 1..0); no byte swap, no row padding. Evidence
+(`/tmp/poc-p4-eth/raw10/final_stills.log`, `MODE_STILLS_PLAN.log`, `stills.log`, scripts
+`layout_pattern.py`, `p13.py`, `fields.py` there):
+
+| Part | Evidence |
+|---|---|
+| Byte 4 holds the low bits; byte 0 = P0, byte 2 = P2; their field order | 0x80 bars in RAW8 and RAW10 of the same boot at 1280x800, 1280x720 and 640x400: of 2880 candidate layouts (byte swaps, low-byte position, orders of the top bytes and of the fields) only this one gives the RAW8 value in the top bits at every pixel; RAW8 0 and 255 become exactly 0 and 1023; byte 4 takes only 0x00, 0x33, 0xCC, 0xFF |
+| Byte 1 = P1, byte 3 = P3 (the bars cannot tell) | Scene pixels where RAW8 P1 and P3 differ by 20 or more: mean \|top byte − RAW8\| 5.6–11.1 as assumed, 16.7–38.9 with them swapped |
+| Field j of byte 4 = pixel j | Correlation of each 2-bit field with each pixel's residual below one RAW8 step: diagonal +0.43 (dark scene) and +0.07–0.10 (brighter), every other pair at most 0.06 |
+| Same data as the random test pattern | The strip check's reference frames: RAW10 row 0 starts `3c 71 cb 35 40 7e 86 57 0b eb`, RAW8 row 0 `3c 71 cb 35 7e 86 57 0b` (`/tmp/poc-p4-eth/final/check.log`) |
+| `tools/still.py` | Its 16-bit PGMs equal an independent unpack in all 10 RAW10 stills checked (`pgmcheck.py`) |
+
+RAW10 / 4 against RAW8 in the bright-scene stills below: correlation 0.978, 0.979 and 0.991
+(as high as between two RAW8 frames of the same window, 0.977), mean difference +0.37, +0.38
+and +0.45 of an 8-bit step [INFERENCE: the RAW8 output drops the two low bits, which gives
++0.375 on average].
+
+#### Stills, bright scene
+
+Same log and boot as the capture table (`/tmp/poc-p4-eth/final/stills.log`; PNGs in
+`/tmp/poc-p4-eth/final/stills/`, contrast-stretched copies in `stills_stretch/`; analysis
+`/tmp/poc-p4-eth/final/ana.py` and `m3.py`, using the numpy helpers of the raw10 folder). The
+scene: the underside of a desk with a cable, legs and a lit floor, gain 2x; the 1280x800
+RAW8 still has mean 10.1 and maximum 67 of 255 (nothing saturated), so the picture is usable
+but still dim. Every still was decoded with a good CRC and looked at: straight edges stay
+straight, no torn, wrapped or flat rows, in every mode.
+
+Bar pattern (0x5E00 = 0x80), every mode: every even row equals row 0 and every odd row row 1
+(no shear, no lost byte), values 0 and 255 (RAW10: 0 and 1023). Modes of one output size give
+byte-identical patterns: 1280x800 RAW8 CRC 4e25f7bb (modes 0 and 4), 1280x720 891881ed (1 and
+5), 640x400 d2a5c43f (3, 6 and 7), the same CRCs as in the earlier boots; RAW10 22ce4315,
+58da8cf8 and e716caa2. The generator scales its 8 bars to the output width, so the pattern
+says nothing about which sensor area is read.
+
+Scene, against the 1280x800 RAW8 still of the same boot (mode 0), or against the still of the
+same window taken just before. Offset = best integer placement by correlation, in full-
+resolution pixels; binned stills are compared with a 2x2 mean. Brightness = (mean − 4) / (mean
+of the reference − 4), 4 being the black level; the expected ratio is the ratio of the
+exposure times:
+
+| Mode | Against | Best offset (expected, where different) | Correlation | Brightness ratio (exposure ratio) |
 |---|---|---|---|---|
-|4: 1280x800 RAW8, 96 MHz|143.907|144.118|1 024 000|no drops, no errors|
-|5: 1280x720 RAW8|143.769|144.023|921 600|no drops, no errors|
-|6: 640x400 RAW8|209.570|210.114|256 000|no drops, no errors|
-|7: 640x400 RAW8|252.410|253.203|256 000|no drops, no errors|
-|8: 320x200 RAW8|no frames|454.09|-|fails: 225 host errors (frame start/end pairing), not investigated|
-|9: 1280x800 RAW10|119.921|120.098|1 280 000|no drops, no errors|
-|10: 1280x720 RAW10|119.922|120.098|1 152 000|no drops, no errors|
-|11: 640x400 RAW10|209.570|210.114|320 000|no drops, no errors|
+| 9: 1280x800 RAW10 | mode 0 | (0, 0) | 0.978 | 1.060 (1) |
+| 1: 1280x720 crop | mode 0 | (0, 40) | 0.977 | 1.003 (1) |
+| 10: 1280x720 RAW10 | mode 1 | (0, 0) | 0.979 | 1.063 (1) |
+| 6: 640x400 binned, 210 fps | mode 0, 2x2 mean | (0, −1) (0, 0) | 0.992 | 1.253 (0.622): binning 2.01x |
+| 11: 640x400 RAW10 | mode 6 | (0, 0) | 0.991 | 1.059 (1) |
+| 4: 1280x800, 96 MHz | mode 0 | (0, −1) (0, 0) | 0.973 | 0.822 (0.833) |
+| 5: 1280x720, 96 MHz | mode 1 | (0, −1) (0, 0) | 0.974 | 0.824 (0.833) |
+| 7: 640x400 binned, 253 fps | mode 6 | (0, 0) | 0.988 | 0.820 (0.821) |
+| 8: 320x200 binned crop | mode 6 | (160, 100) | 0.983 | 0.415 (0.434) |
+| 8 | mode 7 | (160, 100) | 0.982 | 0.506 (0.528) |
+| 2: 640x480 crop | mode 0 | (321, 159) (320, 160) | 0.979 | 0.998 (1) |
+| 3: 640x400 binned, 120 fps | mode 2, 2x2 mean | (160, 80) | 0.994 | 2.267 (1) |
 
-Not done:
+- **Every window is where the register tables put it**, within one pixel; the 1-px best
+  offsets in the table are motion. The camera or the scene moves between stills (cause not
+  looked for): in this boot the sub-pixel peak against the first still moves (in y steadily)
+  from (+0.3, +0.2) for mode 9, seconds after mode 0, to (+0.6 to +0.8, −1.2 to −1.3) for
+  modes 7, 8 and 2 and (+0.5, −1.5) for mode 3, three minutes later, whatever the window,
+  while stills taken close together agree within about 0.2 px: mode 10 against 1 (0.04,
+  −0.08), 11 against 6 (0.00, −0.02), 8 against 6, 7
+  and 3 (160.15, 99.82), (160.03, 100.00), (159.98, 100.10). In the repeat run below, mode 0
+  against itself 90 s later is off by (0.77, −0.11), and consecutive stills by up to 1.3 px.
+- Mode 8 covers active columns 320..=959 and rows 200..=599, the centre half of the field of
+  view; mode 2 columns 320..=959, rows 160..=639; mode 1 rows 40..=759. A binned pixel lines
+  up with the 2x2 mean of the full-resolution pixels it covers (no half-pixel offset beyond
+  the motion between stills).
+- **Brightness follows the exposure time** within 2 % in the unbinned modes and in the binned
+  modes at 210, 253 and 453 fps, and binning gives 2.01x at equal exposure (modes 6, 7 and 8
+  among themselves and against mode 0). Mode 3 read 2.27x mode 2, taken five seconds earlier
+  at the same exposure. The repeat run gives 2.03x for mode 3 against mode 0 and 0.621 for
+  mode 6 against mode 3 (exposure ratio 0.622), and there mode 0 itself read 1.23x brighter
+  after 90 s: the bench light changes now and then [INFERENCE], so a single brightness ratio
+  between two stills can be off by that much.
+- RAW10 modes read 6 % above their RAW8 partner in this brightness measure (+0.37 to +0.45
+  of an 8-bit step, see the layout section).
 
-- Mode 8 not investigated.
-- RAW10 byte layout not confirmed with the test pattern. The detector assumes CSI-2 packed
-  RAW10; its 16 synthetic discs were found on the board in all three RAW10 modes.
-- No stills of modes 4..=11 dumped or looked at.
-- RAW10 through the strip path not run.
-- The 640x400 modes run 0.26–0.31 % under prediction, against 0.15 % for the others; not
-  investigated.
-- Whole-frame detection from PSRAM takes longer than a frame in modes 4, 5, 9 and 10 (11.1,
-  9.8, 14.1, 12.6 ms).
+An earlier run in the dim evening scene (`/tmp/poc-p4-eth/raw10/final_stills.log`, gain
+15.5x, modes 0, 9, 1, 10, 6, 11, 4, 5, 7) gave the same offsets at integer precision, with
+correlations 0.95 (unbinned, 80 MHz), 0.98 (binned) and 0.84 (96 MHz, with the stripes
+below). Mode 8 was checked in its own task the same way (`/tmp/poc-p4-eth/mode8/final-scene.log`:
+(160, 100), correlation 0.900, at the noise floor of two frames, 0.895).
+
+#### Mode 8 (320x200): cause of "no frames" and fix
+
+Two values of the common register block break the 320-pixel-wide binned crop. Mode 8 sets
+both back to the datasheet defaults, which are also what Linux `ov9282.c` leaves: 0x4601 =
+0x04 and 0x4F00 = 0x00 (`REGS_320X200_RAW8_453`). Logs and stills in `/tmp/poc-p4-eth/mode8/`
+(`e1.log` .. `e12.log`, `final-scene.log`, `final-pattern.log`).
+
+| Experiment (one setting changed) | Result |
+|---|---|
+| Mode 8 window at VTS 242, 300, 523, 915; whole-array binned crop to 320x200; 320x400 binned; 320x200 unbinned | no frame: one host frame start/end pairing error per frame; 64 000 B reach the bridge (61 440 B written, 2560 B left in the bridge), the frame never ends |
+| 640x200 binned and unbinned (VTS 915) | 119.92 fps, clean |
+| 0x4601 = 0x04, 0x20, 0x28 (320x200, VTS 915) | clean |
+| 0x4601 = 0x29, 0x2F, 0x30 | no frame |
+| 0x4601 = 0x04, VTS 241, 0x4F00 = 0x0C (common) | clean link, but rows 0..=187 flat at the black level (4; 16 with the black-level calibration off); VTS 260: all rows flat |
+| same, exposure 50..=216 lines, window at the array top, calibration off, vertical-blanking power-down off | still flat |
+| 0x4F00 = 0x00 or 0x08 | whole picture at VTS 241 and 260 |
+
+- **VFIFO read start (0x4601)** counts 8-byte units and must not be longer than one line: the
+  limit is exactly 0x28 x 8 B = 320 B, the line of this mode. The common block's 0x30 (384 B)
+  is Espressif's RAW8 value; every other mode's line is 640 B or more. [INFERENCE: with a
+  read start past the line end the last line waits in the VFIFO and arrives after the frame
+  end.]
+- **PSV mode (0x4F00 = 0x0C, power saving)** blanks rows when the frame is short. Espressif's
+  table sets it, Linux never writes it; the datasheet does not describe it. [INFERENCE: the
+  flat, noise-free rows point to the analog chain being off.]
+- Lowest VTS with 0x4F00 = 0x00 at the exposure maximum (`e12.log`): 232, 234, 236, 238, 240
+  and 241 give a correct picture; 222 and 230 whole frames with a nearly black picture (mean
+  0.7–1.5, also at 100 lines); with 0x4F00 still at 0x0C, VTS 214..=220 stop the frames. VTS
+  241 leaves 9 lines of margin; VTS 232 would give 470.9 fps [INFERENCE: formula only]. VTS
+  231, 233, 235, 237 and 239, and 0x4F00 = 0x00 below 222, were not tried.
+
+#### Mode 5 (1280x720 at 144 fps): VTS limit, PSV, 96 MHz
+
+The first mode 5 (80 MHz, VTS 763) gave a wrong picture in every run (mean 0.6–2.0, bright
+areas lowest, at every exposure from 100 to 738 lines), while its frames were whole and on
+time (143.768–143.771 fps; `/tmp/poc-p4-eth/raw10/TMP_MODE5_PLAN.log`, `TMP_MODE5B_PLAN.log`,
+`TMP_MODE5C_PLAN.log`).
+
+| 1280x720 crop, 80 MHz | 0x4F00 | fps | Picture |
+|---|---|---|---|
+| VTS 763 | 0x0C (common) | 143.77 | wrong (dark, bright areas lowest); also with the window at rows 0..=735 |
+| VTS 780..=810 | 0x0C | | flat at the black level |
+| VTS 814, 816, 818, 820 | 0x0C | | normal |
+| VTS 763 | 0x00 | 143.769 | wrong: mean 0.61, correlation −0.31 against mode 1 |
+| VTS 780 | 0x00 | 140.641 | normal: shift (0, 0), correlation 0.934, brightness 1.001 against mode 1 |
+| VTS 800 | 0x00 | 137.131 | normal: shift (1, 0), correlation 0.935, brightness 1.008 |
+| VTS 780 | 0x0C (control, same boot) | 140.641 | 717 of 720 rows flat at 4 |
+
+(Last four rows: `/tmp/poc-p4-eth/mode8/psv720.log`, exposure 700 lines, gain 15.5x.)
+
+- So the flat frames at VTS 780..=810 are PSV, as in mode 8, and the dark, inverted-looking
+  picture at the shortest VTS (763 here, 222..=230 in mode 8) is a second limit that PSV off
+  does not fix. Unexplained. The steps between 763 and 780 were not tried.
+- **Decision:** PSV stays on in the common block (only mode 8 turns it off), and mode 5 runs
+  the 1280x720 window at 96 MHz with VTS 915, as mode 4: 143.907 fps, normal picture. The
+  80 MHz alternative, PSV off at VTS 780 (140.6 fps), is a finding only.
+- PSV off on modes that already worked (modes 1 and 3, VTS 915, same boot): frame rate,
+  picture (correlation 0.933 / 0.985, brightness 0.985 / 1.001), black level (1st/10th
+  percentile 3/5 and 4–5/7) and noise unchanged. Its power saving was not measured.
+
+#### What the 96 MHz clock costs in the picture
+
+Modes 4 and 5 run SCLK at 96 MHz, above the datasheet's 80 MHz. At gain 15.5x (dim scene,
+`/tmp/poc-p4-eth/raw10/final_stills.log`) they showed vertical column stripes (column noise
+0.834 against 0.101 in mode 0; std of the column means around their 9-column running median,
+8-bit scale) and a raised black floor (the reference's darkest 5 % of pixels read 14.2 against
+3.5). At gain 2x, bright scene, against the 80 MHz mode of the same window taken just before
+(the repeat run, `/tmp/poc-p4-eth/final/clock96.log`, is a separate boot with modes 0, 4, 1,
+5, 3, 6, 0; the same capture results as in the table above, modes 4 and 5 at 143.906 fps,
++34 ppm):
+
+| Still | Column noise (80 MHz partner) | Darkest 5 % of the partner (partner) | Fit against the partner (exposure ratio) |
+|---|---|---|---|
+| Mode 4, `final/stills.log` | 0.028 (0.028) | 4.78 (4.73) | 0.815 x + 0.79 (0.833) |
+| Mode 5, `final/stills.log` | 0.030 (0.029) | 4.39 (3.98) | 0.818 x + 0.77 (0.833) |
+| Mode 4, `final/clock96.log` | 0.029 (0.029) | 4.82 (4.76) | 0.824 x + 0.76 (0.833) |
+| Mode 5, `final/clock96.log` | 0.030 (0.030) | 4.77 (4.76) | 0.824 x + 0.73 (0.833) |
+
+So at a normal gain the 96 MHz clock costs nothing measurable: no stripes, the black floor
+within 0.4 of an 8-bit step, the slope at 98–99 % of the exposure ratio. The stripes and the
+raised floor are a high-gain effect [INFERENCE: ADC or black-level timing at the
+over-specified clock]. Whether they also appear at gains between 2x and 15.5x was not
+measured.
+
+#### RAW10 through the strip path (modes 9, 10, 11)
+
+Strips against whole frames (`STRIP_CHECK_PLAN`, log `/tmp/poc-p4-eth/final/check.log`, on the
+merged code): the sensor's random test pattern (0x5E00 = 0x81, and 0x5E01 = 0x51, "same seed
+enable": without it every row changes from frame to frame; both read back), 8 whole frames
+per mode as the reference (all 8 identical to the first, every row checksum unique), then
+10 s of strips per mode with every row checksummed against the reference.
+
+| Mode | Lines/strip | Strips/frame | Strips | Size / sequence errors | Frames | Frames = reference | Rows checked | Bad rows | Stalls, overruns, truncated, skipped, errors | Check max/strip (us) | fps | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0: 1280x800 RAW8 | 64 | 13 | 15 588 | 0 / 0 | 1199 | 1199 | 959 264 | 0 | 0 | 542 | 119.921 | PASS |
+| 9: 1280x800 RAW10 | 64 | 13 | 15 588 | 0 / 0 | 1199 | 1199 | 959 264 | 0 | 0 | 562 | 119.921 | PASS |
+| 10: 1280x720 RAW10 | 64 | 12 | 14 389 | 0 / 0 | 1199 | 1199 | 863 344 | 0 | 0 | 562 | 119.921 | PASS |
+| 11: 640x400 RAW10 | 128 | 4 | 8 382 | 0 / 0 | 2095 | 2095 | 838 256 | 0 | 0 | 567 | 209.568 | PASS |
+
+The strips task got the same table (`/tmp/poc-p4-eth/strips10/check3.log`).
+
+Strip soak (`RAW10_STRIP_SOAK_PLAN`, log `/tmp/poc-p4-eth/final/raw10soak.log`, on the merged
+code): the method of the RAW8 strip soak above, with a ring of 3 strips of 102 400 B in the
+same 320 KiB, 64-line strips at 1280 wide and 128 at 640 (a 64-line strip there is 51 200 B,
+not a whole number of the bridge's 4096-byte bursts; `strip_soak::lines`), threshold 512 in
+10-bit units, and the budget the mode's frame period (1 s / nominal fps: 8333 us, 4762 us at
+210 fps). The synthetic strip is filled with `Synth::fill_raw10`, its four 16-row bands
+repeated in a 128-row strip. The receiver and the sensor stream are started for every run
+and stopped before its results are logged (see the stall fault below).
+
+| Mode | Run | Blobs/frame fed | Frames complete | Truncated | Skipped | Stalls | Overruns | Errors | Proc min | Mean | Max | > budget | Hold max (row) | Frame end->centroids min/mean/max | fps | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 9: 1280x800 RAW10 | live | scene | 3597 | 0 | 0 | 0 | 0 | 0 | 5623 | 5624 | 5962 | 0 | 815 (0) | 388/389/425 | 119.921 | PASS |
+| 9 | synth 0 | 0 | 1199 | 0 | 0 | 0 | 0 | 0 | 5623 | 5623 | 5629 | 0 | 464 (704) | 394/394/399 | 119.921 | PASS |
+| 9 | synth 16 | 13 | 1199 | 0 | 0 | 0 | 0 | 0 | 5802 | 5803 | 6072 | 0 | 741 (0) | 422/422/428 | 119.921 | PASS |
+| 9 | synth 64 | 64 | 1199 | 0 | 0 | 0 | 0 | 0 | 6816 | 6816 | 6822 | 0 | 558 (704) | 559/560/566 | 119.921 | PASS |
+| 10: 1280x720 RAW10 | live | scene | 3597 | 0 | 0 | 0 | 0 | 0 | 5062 | 5062 | 5070 | 0 | 463 (0) | 433/433/439 | 119.921 | PASS |
+| 10 | synth 0 | 0 | 1199 | 0 | 0 | 0 | 0 | 0 | 5062 | 5062 | 5067 | 0 | 464 (640) | 438/438/444 | 119.921 | PASS |
+| 10 | synth 16 | 12 | 1199 | 0 | 0 | 0 | 0 | 0 | 5227 | 5227 | 5233 | 0 | 478 (640) | 466/466/472 | 119.921 | PASS |
+| 10 | synth 64 | 66 | 1199 | 0 | 0 | 0 | 0 | 0 | 6409 | 6410 | 6421 | 0 | 584 (256) | 565/566/575 | 119.921 | PASS |
+| 11: 640x400 RAW10 | live | scene | 6287 | 0 | 0 | 0 | 0 | 0 | 1700 | 1700 | 1701 | 0 | 547 (0) | 484/485/485 | 209.568 | PASS |
+| 11 | synth 0 | 0 | 2095 | 0 | 0 | 0 | 0 | 0 | 1700 | 1700 | 1701 | 0 | 550 (256) | 489/490/490 | 209.568 | PASS |
+| 11 | synth 16 | 18 | 2095 | 0 | 0 | 0 | 0 | 0 | 2063 | 2063 | 2070 | 0 | 672 (128) | 611/612/612 | 209.568 | PASS |
+| 11 | synth 64 | 64 | 2095 | 0 | 0 | 0 | 0 | 0 | 3035 | 3037 | 3044 | 0 | 975 (256) | 988/989/995 | 209.568 | PASS |
+
+(Times in us. Frames complete = every frame the sensor sent in 30 s or 10 s. The driver's
+interrupt handler took 2.0–3.2 us on average, 10.5 us at most; the strip invalidation 2.0–2.3
+us on average, 2.4 us at most.)
+
+- All 12 runs pass, as in the strips task (`/tmp/poc-p4-eth/strips10/soak2.log`, within 2 %).
+  The live runs had 0 blobs in every mode: even the brighter bench scene (at most 67 of 255 in
+  RAW8) stays below threshold 512, so RAW10 under a bright live load is still untested.
+- **RAW10 costs about 1.3 times RAW8 from strips** at 1280 wide (dark: 5623 against 4323 us;
+  64 blobs: 6816 against 5185 us, RAW8 from the table above) and still fits 120 fps with 82 %
+  of the budget at most; 640x400 RAW10 fits 210 fps at 64 %.
+- A ring of 3 RAW10 strips held: the longest hold was 975 us (640x400, 64 blobs, a 128-line
+  strip), no stall in any run.
+- RAW8 under the per-run restart (strips task, `/tmp/poc-p4-eth/strips10/raw8soak2.log`,
+  modes 0 and 3): all 8 runs PASS, max 4631/4371/4675/5233 us at 1280x800 and
+  1354/1355/1617/2296 us at 640x400 (live, synthetic 0, 16, 64); the means moved by at most
+  about 3 % against the one-stream-per-mode runs above.
+
+#### The RAW10 stall fault (open)
+
+Found by the strips task (`/tmp/poc-p4-eth/strips10/`, `soak1.log`, `diag1.log` ..
+`diag10.log`), not fixed:
+
+- The first RAW10 soak hung at its second run, after the pause between runs (results log and
+  synthetic preparation), during which the 3-strip ring filled and the DMA halted.
+- A deliberate 30 ms busy wait right after stream-on crashed or hung the board in RAW10 with
+  rings of 3 and of 2 strips (`diag5`, `diag9`): load access faults in the driver's DMA
+  handler (`State::collect`, the list-item pointer holding 0xA4070706, which looks like image
+  data; `diag2`) and in the executor's waker, called from the timer tick (`diag6`). RAW8 with
+  rings of 3 and 4 recovered from the same halt with a few lost frames (`diag4`, `diag8`).
+- Ruled out as fixes: restarting the DMA channel instead of `BLK_TFR_RESUMEREQ` (`diag7`), and
+  turning the bridge off for the length of the halt (`diag10`). A sentinel area right after
+  the ring (up to 237 KB) was never written, so how the memory is hit is not known.
+- RAW10 strips never failed while nothing stalled (the check and the soaks above). The strip
+  soak therefore starts the receiver and the stream for every run and stops both before it
+  logs or prepares the next run. Until the fault is solved, a RAW10 consumer must never let
+  the DMA reach a held strip. In-run RAW10 stalls were never provoked; one would probably
+  crash the board instead of giving a FAIL [INFERENCE].
 
 ### PSRAM tuning attempts
 
@@ -634,8 +973,31 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
   (ESP_LDO_VO3), no external rail, as the architecture doc says for the ESP32-P4-Core module.
   The camera section sets VO3 to 2.5 V (`esp32p4_csi::enable_ldo`) before it starts the
   receiver; capture works with that.
-- **CSI-2 link:** 2 lanes at 800 Mbit/s RAW8 with a continuous clock lane work in all four
-  modes, free-running at 119.92 fps; the gated clock was not needed and not tried.
+- **CSI-2 link:** 2 lanes at 800 Mbit/s with a continuous clock lane work in all 12 modes,
+  RAW8 and RAW10, free-running from 119.92 to 453.40 fps; the gated clock was not needed and
+  not tried.
+- **Frame period, for XVS and exposure timing:** a frame lasts `(VTS − 1) × HTS + 1730`
+  SCLK cycles, not `VTS × HTS` (0.15 % longer at VTS 915, 0.57 % at VTS 241; measured within
+  1.4 cycles over HTS 728..=2912 and VTS 434..=1830). Any trigger period, exposure window or
+  timestamp model on the product must use it; the sensor clock ran 25–41 ppm fast against
+  the P4's timer on this board.
+- **VFIFO read start (0x4601) must not exceed one line** (in 8-byte units): the common
+  block's 0x30 (384 B) loses every frame of a 320-pixel RAW8 line. Any mode narrower than
+  384 B per line needs a smaller value (0x04 is the datasheet default).
+- **PSV mode (0x4F00 = 0x0C) blanks short frames:** at VTS 241 (320x200) and 780..=810
+  (1280x720 at 80 MHz) rows come out flat at the black level. It stays on in the common
+  block by decision; mode 8 turns it off. A product mode with a short VTS must turn it off.
+- **The unbinned 1280x720 window has a minimum VTS** at 80 MHz: 814 with PSV on, at most 780
+  with it off; VTS 763 gives a dark, wrong picture either way (unexplained, like VTS 222..=230
+  in the 320x200 mode). 144 fps at 1280x720 needs the 96 MHz clock.
+- **96 MHz (modes 4 and 5) is above the datasheet's 80 MHz:** clean at gain 2x, but at gain
+  15.5x vertical column stripes and a black floor raised by about 10 of 255. Keep the gain
+  low at 96 MHz, or stay at 80 MHz.
+- **RAW10 costs about 1.3x RAW8 in the detector from strips** (1280x800: 5.6 ms dark, 6.8 ms
+  with 64 blobs) and fits 120 fps; 640x400 RAW10 fits 210 fps.
+- **RAW10 stall fault (open driver defect):** in RAW10 a DMA stall of about 30 ms crashes the
+  board, where RAW8 recovers. Until `esp32p4-csi` is fixed, a RAW10 consumer must never let
+  the DMA reach a held strip (stop the stream and the receiver before any pause).
 - **L2 cache:** the bootloader bundled with espflash 4.7.0 sets the L2 cache to 128 KiB, not the
   256 KiB esp-hal assumes by default (`ESP_HAL_CONFIG_L2_CACHE_SIZE`). This crate sets
   `"128KB"` in `.cargo/esp-config.toml` and gets 128 KiB more internal RAM. `cam-p4` still uses
@@ -654,3 +1016,26 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
 - **Logging masks interrupts:** each `esp-println` line holds a critical section for as long
   as it takes to send, enough at 115200 baud to cut a frame short. Log at 2 Mbaud and never
   inside a capture or processing loop.
+
+## Open points
+
+- **RAW10 stall fault** in `esp32p4-csi` strips: open, mechanism unknown (see "The RAW10
+  stall fault"). In-run RAW10 stalls were never provoked.
+- **Whole-frame detection from PSRAM is slower than a frame** in modes 4, 5, 9 and 10: one
+  captured frame each, dark scene, 10.9, 9.7, 13.8 and 12.3 ms against 6.9, 6.9, 8.3 and 8.3
+  ms (`/tmp/poc-p4-eth/final/stills.log`; 11.1, 9.8, 14.1 and 12.6 ms in the first run).
+  Those modes need the strip path; only modes 9 and 10 were soaked on it.
+- **No soak at the new rates:** modes 4..=8 have had capture-only verification (by
+  decision); the RAW10 modes 9..=11 only the strip soak (the frame soak is RAW8 only).
+- **Dark picture at the shortest VTS**, with whole frames on time: VTS 763 in the 1280x720
+  window at 80 MHz, VTS 222..=230 in 320x200. Unexplained.
+- **Untested VTS values:** 764..=779 at 1280x720 with PSV off; 231, 233, 235, 237, 239 in
+  320x200, and below 222 with PSV off.
+- **96 MHz artefacts** at gains between 2x and 15.5x not measured; their cause is not known.
+- **RAW10 under a bright live load:** every live RAW10 strip run had 0 blobs at threshold
+  512, even in the brighter scene (at most 67 of 255 in RAW8 at gain 2x, 7.3 ms).
+- **Brightness ratios between stills** vary with the bench light (mode 0 read 1.23x after
+  90 s in one boot), and the picture moves by up to about 1.5 px between stills: geometry is
+  verified to the whole pixel only.
+- **Camera-enable polarity:** low = off is untested; the check needs a person (see
+  "Enable polarity" above).
