@@ -21,6 +21,10 @@ hardware timestamps; target: about 1 µs). The boards elect the PTP grandmaster 
 themselves, with automatic failover. The board is powered over PoE (802.3af) or USB-C at
 5 V; USB-C also flashes and debugs the P4.
 
+The board's schematic, PCB and 3D view are published at
+<https://azais-corentin.github.io/espion/> (Ferrite's web viewer, rebuilt when the board
+changes on `main`).
+
 ## Layout
 
 | Path | Content |

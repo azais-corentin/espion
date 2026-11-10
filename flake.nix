@@ -19,7 +19,7 @@
       url = "git+https://gitlab.com/kicad/libraries/kicad-library-tools.git";
       flake = false;
     };
-    # Ferrite EDA: its web viewer publishes the camera board's schematic and PCB
+    # Ferrite EDA: its web viewer publishes the camera board's schematic, PCB and 3D board
     # (packages.<system>.espion-cam-viewer, deployed to GitHub Pages by
     # .github/workflows/viewer.yml). It keeps its own nixpkgs: the viewer bundle
     # is built with Ferrite's pinned toolchain.
@@ -54,7 +54,9 @@
     in
     {
       # The web viewer site of hardware/espion-cam: Ferrite's viewer bundle plus the
-      # KiCad project and the project-local libraries in hardware/lib it references.
+      # KiCad project and the project-local libraries in hardware/lib it references, with
+      # the board and its parts' 3D models baked at build time for the 3D view. Stock KiCad
+      # models come from nixpkgs' kicad.libraries.packages3d (this flake's pkgs).
       packages = forAllSystems (pkgs: {
         espion-cam-viewer = ferrite.lib.mkProjectSite {
           inherit pkgs;

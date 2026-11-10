@@ -1,6 +1,7 @@
-# Publishes the espion-cam schematic and PCB to GitHub Pages with Ferrite's web viewer
-# (packages.<system>.espion-cam-viewer in flake.nix). The viewer imports the KiCad project in
-# the browser; nothing is exported or rendered here.
+# Publishes the espion-cam schematic, PCB and 3D board to GitHub Pages with Ferrite's web
+# viewer (packages.<system>.espion-cam-viewer in flake.nix). The viewer imports the KiCad
+# project in the browser; the build bakes the board and its parts' 3D models (the local ones
+# in hardware/lib and the stock KiCad ones from nixpkgs) for the 3D view.
 #
 # Requires, once per repository:
 # - Settings → Pages → Source: GitHub Actions;
