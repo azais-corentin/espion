@@ -7,6 +7,12 @@
 //! and counted, as on the board. It can imitate the board's link: a line-rate limit in Mbit/s
 //! (Ethernet bytes on the wire, [`WIRE_OVERHEAD`]) and a fraction of datagrams lost.
 //!
+//! JPEG goes as on the board: capture, then the encoder (its own thread, `jpeg-encoder`, a
+//! baseline greyscale file at the quality in use), then the link; the encoder and the link
+//! each have one waiting slot holding the newest frame for them, and a frame replaced there is
+//! counted (`encoder.frames_skipped`, `frames_skipped`). The automatic quality takes one step of
+//! [`auto_quality`] every [`AUTO_QUALITY_PERIOD_MS`] with the link's busy share of the period.
+//!
 //! The frames ([`render`]) are synthetic and deterministic from the settings and the frame
 //! number: diagonal stripes that move every frame, scaled by exposure x gain, a white bar that
 //! moves 8 pixels per frame (tearing shows as a broken bar) and the frame number in large
@@ -16,7 +22,7 @@ use std::{
     io,
     net::{SocketAddr, UdpSocket},
     sync::{
-        Arc,
+        Arc, Condvar, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
     },
@@ -25,9 +31,9 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, FrameChunk,
-    MAX_DATAGRAM, Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, State,
-    StreamSettings, TestPattern,
+    AUTO_QUALITY_PERIOD_MS, CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding,
+    Format, FrameChunk, JPEG_FRAME_MAX, MAX_DATAGRAM, Message, Op, Readout, Reply, Request,
+    Response, STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern, auto_quality,
 };
 use ov9281::Mode;
 
@@ -53,11 +59,15 @@ pub const fn default_camera() -> CameraSettings {
     }
 }
 
-/// The stream settings the fake starts with: on, RAW8, no rate limit.
+/// Period of the automatic quality ([`AUTO_QUALITY_PERIOD_MS`]).
+const AUTO_PERIOD: Duration = Duration::from_millis(AUTO_QUALITY_PERIOD_MS as u64);
+
+/// The stream settings the fake starts with: on, JPEG at quality 90 with automatic quality,
+/// no rate limit.
 pub const fn default_stream() -> StreamSettings {
     StreamSettings {
         enabled: true,
-        encoding: Encoding::Raw8,
+        encoding: Encoding::Jpeg,
         max_fps: 0,
         jpeg_quality: 90,
         auto_quality: true,
@@ -105,8 +115,11 @@ pub struct FakeCamera {
 impl FakeCamera {
     /// Binds and starts the fake on its own threads.
     pub fn spawn(cfg: FakeConfig) -> io::Result<Self> {
-        let mode = camera::validate(&cfg.camera, cfg.stream.encoding)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+        let invalid = |e: CamError| io::Error::new(io::ErrorKind::InvalidInput, e.to_string());
+        let mode = camera::validate(&cfg.camera, cfg.stream.encoding).map_err(invalid)?;
+        cfg.stream
+            .check(cfg.camera.format, cfg.camera.width, cfg.camera.height)
+            .map_err(invalid)?;
         let sock = UdpSocket::bind(cfg.bind)?;
         let addr = sock.local_addr()?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -115,27 +128,34 @@ impl FakeCamera {
         let rsock = sock.try_clone()?;
         rsock.set_read_timeout(Some(Duration::from_millis(50)))?;
         let rstop = stop.clone();
+        let rtx = tx.clone();
         let receiver = thread::Builder::new()
             .name("fake-cam-rx".into())
             .spawn(move || {
                 let mut buf = [0u8; 2048];
                 while !rstop.load(Ordering::Relaxed) {
                     if let Ok((n, src)) = rsock.recv_from(&mut buf)
-                        && tx.send((buf[..n].to_vec(), src)).is_err()
+                        && rtx.send(Event::Datagram(buf[..n].to_vec(), src)).is_err()
                     {
                         break;
                     }
                 }
             })?;
 
+        let slot: Arc<EncoderSlot> = Arc::default();
+        let (estop, eslot) = (stop.clone(), slot.clone());
+        let encoder = thread::Builder::new()
+            .name("fake-cam-jpeg".into())
+            .spawn(move || encoder_thread(&eslot, &tx, &estop))?;
+
         let estop = stop.clone();
         let engine = thread::Builder::new()
             .name("fake-cam".into())
-            .spawn(move || Engine::new(sock, rx, cfg, mode).run(&estop))?;
+            .spawn(move || Engine::new(sock, rx, slot, cfg, mode).run(&estop))?;
         Ok(Self {
             addr,
             stop,
-            threads: vec![receiver, engine],
+            threads: vec![receiver, encoder, engine],
         })
     }
 
@@ -154,6 +174,96 @@ impl Drop for FakeCamera {
     }
 }
 
+/// What wakes the engine.
+enum Event {
+    /// A datagram from `SocketAddr`.
+    Datagram(Vec<u8>, SocketAddr),
+    /// The encoder finished a frame.
+    Encoded(Encoded),
+    /// The encoder failed on a frame (its output buffer back for reuse).
+    EncodeFailed(Vec<u8>),
+}
+
+/// A captured frame for the encoder.
+struct EncodeJob {
+    frame: u32,
+    generation: u32,
+    camera: CameraSettings,
+    quality: u8,
+    timestamp_us: u64,
+}
+
+/// A JPEG frame ready for the link.
+struct Encoded {
+    frame: u32,
+    generation: u32,
+    width: u16,
+    height: u16,
+    timestamp_us: u64,
+    data: Vec<u8>,
+    encode_us: u32,
+}
+
+/// The encoder's waiting slot (the newest captured frame for it) and the output buffers.
+#[derive(Default)]
+struct EncoderSlot {
+    state: Mutex<SlotState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct SlotState {
+    job: Option<EncodeJob>,
+    pool: Vec<Vec<u8>>,
+}
+
+impl EncoderSlot {
+    fn lock(&self) -> MutexGuard<'_, SlotState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// The fake's JPEG encoder: takes the waiting frame, renders it in RAW8, encodes it at its
+/// quality and hands the file to the engine.
+fn encoder_thread(slot: &EncoderSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBool) {
+    let mut raw = Vec::new();
+    while !stop.load(Ordering::Relaxed) {
+        let (job, mut out) = {
+            let mut s = slot.lock();
+            if s.job.is_none() {
+                let _ = slot
+                    .wake
+                    .wait_timeout(s, Duration::from_millis(50))
+                    .unwrap_or_else(|e| e.into_inner());
+                continue;
+            }
+            let job = s.job.take().expect("checked above");
+            (job, s.pool.pop().unwrap_or_default())
+        };
+        render(&job.camera, Encoding::Raw8, job.frame, &mut raw);
+        let t = Instant::now();
+        let ok = encode_jpeg(&job.camera, &raw, job.quality, &mut out).is_ok()
+            && out.len() <= JPEG_FRAME_MAX as usize;
+        let encode_us = t.elapsed().as_micros() as u32;
+        let event = if ok {
+            Event::Encoded(Encoded {
+                frame: job.frame,
+                generation: job.generation,
+                width: job.camera.width,
+                height: job.camera.height,
+                timestamp_us: job.timestamp_us,
+                data: out,
+                encode_us,
+            })
+        } else {
+            Event::EncodeFailed(out)
+        };
+        if tx.send(event).is_err() {
+            return;
+        }
+    }
+}
+
 /// The frame being sent.
 struct Sending {
     frame: u32,
@@ -168,7 +278,8 @@ struct Sending {
 
 struct Engine {
     sock: UdpSocket,
-    rx: Receiver<(Vec<u8>, SocketAddr)>,
+    rx: Receiver<Event>,
+    slot: Arc<EncoderSlot>,
     loss: f64,
     rng: u64,
     /// Bytes per second of the line-rate limit.
@@ -195,8 +306,16 @@ struct Engine {
     frame: u32,
     next_send: Instant,
     sending: Option<Sending>,
+    /// The link's waiting slot: the newest JPEG frame encoded while another was being sent.
+    ready: Option<Encoded>,
+    /// Automatic quality: end of the current period, link time spent on frames in it, when
+    /// the frame being sent started, and `frames_skipped` at the period's start.
+    auto_due: Instant,
+    link_busy: Duration,
+    busy_since: Option<Instant>,
+    skipped_at: u32,
+    /// The frame being sent (raw: rendered here; JPEG: the encoder's file).
     pixels: Vec<u8>,
-    raw: Vec<u8>,
     out: [u8; MAX_DATAGRAM],
 }
 
@@ -209,7 +328,8 @@ const BUCKET_DATAGRAMS: f64 = 8.0;
 impl Engine {
     fn new(
         sock: UdpSocket,
-        rx: Receiver<(Vec<u8>, SocketAddr)>,
+        rx: Receiver<Event>,
+        slot: Arc<EncoderSlot>,
         cfg: FakeConfig,
         mode: Mode,
     ) -> Self {
@@ -218,6 +338,7 @@ impl Engine {
         Self {
             sock,
             rx,
+            slot,
             loss: cfg.loss.clamp(0.0, 1.0),
             rng: cfg.seed | 1,
             rate: cfg.mbps.map(|m| m * 1e6 / 8.0),
@@ -241,18 +362,25 @@ impl Engine {
             frame: 0,
             next_send: now,
             sending: None,
+            ready: None,
+            auto_due: now + AUTO_PERIOD,
+            link_busy: Duration::ZERO,
+            busy_since: None,
+            skipped_at: 0,
             pixels: Vec::new(),
-            raw: Vec::new(),
             out: [0; MAX_DATAGRAM],
         }
     }
 
     fn run(mut self, stop: &AtomicBool) {
         while !stop.load(Ordering::Relaxed) {
-            while let Ok((d, src)) = self.rx.try_recv() {
-                self.handle(&d, src);
+            while let Ok(e) = self.rx.try_recv() {
+                self.event(e);
             }
             let now = Instant::now();
+            if now >= self.auto_due {
+                self.auto_quality(now);
+            }
             if now >= self.next_capture {
                 if now - self.next_capture > self.period * 8 {
                     // Fell far behind (the process was stopped): resume from now.
@@ -264,7 +392,7 @@ impl Engine {
                 continue;
             }
             if !self.active(now) {
-                self.sending = None;
+                self.drop_frames();
             }
             let mut sent = 0;
             let mut wait_tokens = None;
@@ -288,16 +416,105 @@ impl Engine {
                 continue;
             }
             let now = Instant::now();
-            let mut until = self.next_capture.saturating_duration_since(now);
+            let mut until = self
+                .next_capture
+                .min(self.auto_due)
+                .saturating_duration_since(now);
             if let Some(w) = wait_tokens {
                 until = until.min(w);
             }
             match self.rx.recv_timeout(until.min(Duration::from_millis(20))) {
-                Ok((d, src)) => self.handle(&d, src),
+                Ok(e) => self.event(e),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
+    }
+
+    fn event(&mut self, e: Event) {
+        match e {
+            Event::Datagram(d, src) => self.handle(&d, src),
+            Event::Encoded(f) => self.encoded(f),
+            Event::EncodeFailed(buf) => {
+                self.encoder.errors = self.encoder.errors.wrapping_add(1);
+                self.slot.lock().pool.push(buf);
+            }
+        }
+    }
+
+    /// A JPEG file from the encoder: sent now if the link is free, else it waits in the
+    /// link's slot (replacing an older waiting one, which counts as skipped).
+    fn encoded(&mut self, f: Encoded) {
+        self.encoder.frame_len = f.data.len() as u32;
+        self.encoder.encode_us = f.encode_us;
+        if f.generation != self.generation
+            || self.stream.encoding != Encoding::Jpeg
+            || !self.active(Instant::now())
+        {
+            self.slot.lock().pool.push(f.data);
+            return;
+        }
+        if self.sending.is_some() {
+            if let Some(old) = self.ready.replace(f) {
+                self.counters.frames_skipped = self.counters.frames_skipped.wrapping_add(1);
+                self.slot.lock().pool.push(old.data);
+            }
+        } else {
+            self.start_jpeg(f);
+        }
+    }
+
+    fn start_jpeg(&mut self, f: Encoded) {
+        let old = std::mem::replace(&mut self.pixels, f.data);
+        self.slot.lock().pool.push(old);
+        self.busy_since = Some(Instant::now());
+        self.sending = Some(Sending {
+            frame: f.frame,
+            generation: f.generation,
+            encoding: Encoding::Jpeg,
+            width: f.width,
+            height: f.height,
+            timestamp_us: f.timestamp_us,
+            len: self.pixels.len() as u32,
+            offset: 0,
+        });
+    }
+
+    /// Drops the frame being sent and the frames waiting for the encoder and the link.
+    fn drop_frames(&mut self) {
+        if self.sending.take().is_some()
+            && let Some(t) = self.busy_since.take()
+        {
+            self.link_busy += t.elapsed();
+        }
+        let mut slot = self.slot.lock();
+        slot.job = None;
+        if let Some(r) = self.ready.take() {
+            slot.pool.push(r.data);
+        }
+    }
+
+    /// One step of the automatic quality at the end of a period (`cam::auto_quality`).
+    fn auto_quality(&mut self, now: Instant) {
+        if let Some(t) = self.busy_since.as_mut() {
+            self.link_busy += now - *t;
+            *t = now;
+        }
+        let skipped = self.counters.frames_skipped != self.skipped_at;
+        let busy_pct = (self.link_busy.as_secs_f64() * 100.0 / AUTO_PERIOD.as_secs_f64())
+            .round()
+            .min(100.0) as u8;
+        if self.stream.encoding == Encoding::Jpeg && self.stream.auto_quality && self.active(now) {
+            self.encoder.quality = auto_quality(
+                self.encoder.quality,
+                self.stream.jpeg_quality,
+                skipped,
+                busy_pct,
+            );
+        }
+        self.skipped_at = self.counters.frames_skipped;
+        self.link_busy = Duration::ZERO;
+        self.auto_due = (self.auto_due + AUTO_PERIOD).max(now);
     }
 
     /// Takes `bytes` of line time from the bucket, or says how long until there is enough.
@@ -329,7 +546,9 @@ impl Engine {
         if !self.active(now) {
             return;
         }
-        if self.sending.is_some() {
+        let jpeg = self.stream.encoding == Encoding::Jpeg;
+        // Raw: one frame in flight. JPEG: the encoder and the link have waiting slots.
+        if !jpeg && self.sending.is_some() {
             self.counters.frames_skipped = self.counters.frames_skipped.wrapping_add(1);
             return;
         }
@@ -341,33 +560,30 @@ impl Engine {
             let interval = Duration::from_secs_f64(1.0 / self.stream.max_fps as f64);
             self.next_send = (self.next_send + interval).max(at + interval - slack);
         }
-        let encoding = self.stream.encoding;
-        if encoding == Encoding::Jpeg {
-            render(&self.camera, Encoding::Raw8, number, &mut self.raw);
-            let t = Instant::now();
-            if encode_jpeg(
-                &self.camera,
-                &self.raw,
-                self.encoder.quality,
-                &mut self.pixels,
-            )
-            .is_err()
-            {
-                self.encoder.errors = self.encoder.errors.wrapping_add(1);
-                return;
+        let timestamp_us = (at - self.start).as_micros() as u64;
+        if jpeg {
+            let job = EncodeJob {
+                frame: number,
+                generation: self.generation,
+                camera: self.camera,
+                quality: self.encoder.quality,
+                timestamp_us,
+            };
+            if self.slot.lock().job.replace(job).is_some() {
+                self.encoder.frames_skipped = self.encoder.frames_skipped.wrapping_add(1);
             }
-            self.encoder.encode_us = t.elapsed().as_micros() as u32;
-            self.encoder.frame_len = self.pixels.len() as u32;
-        } else {
-            render(&self.camera, encoding, number, &mut self.pixels);
+            self.slot.wake.notify_one();
+            return;
         }
+        let encoding = self.stream.encoding;
+        render(&self.camera, encoding, number, &mut self.pixels);
         self.sending = Some(Sending {
             frame: number,
             generation: self.generation,
             encoding,
             width: self.camera.width,
             height: self.camera.height,
-            timestamp_us: (at - self.start).as_micros() as u64,
+            timestamp_us,
             len: self.pixels.len() as u32,
             offset: 0,
         });
@@ -396,11 +612,18 @@ impl Engine {
             .expect("a chunk fits a datagram")
             .len();
         s.offset = end as u32;
-        if end == s.len as usize {
+        let done = end == s.len as usize;
+        self.transmit(n, peer);
+        if done {
             self.sending = None;
             self.counters.frames_sent = self.counters.frames_sent.wrapping_add(1);
+            if let Some(t) = self.busy_since.take() {
+                self.link_busy += t.elapsed();
+            }
+            if let Some(next) = self.ready.take() {
+                self.start_jpeg(next);
+            }
         }
-        self.transmit(n, peer);
         n
     }
 
@@ -464,7 +687,7 @@ impl Engine {
             self.mode = mode;
             self.period = Duration::from_nanos(mode.frame_ns() as u64);
             self.next_capture = now + self.period;
-            self.sending = None;
+            self.drop_frames();
         }
         self.camera = applied;
         Ok(())
@@ -472,15 +695,15 @@ impl Engine {
 
     fn set_stream(&mut self, s: StreamSettings, now: Instant) -> Result<(), CamError> {
         s.check(self.camera.format, self.camera.width, self.camera.height)?;
-        self.encoder.quality = s.jpeg_quality;
         if s.encoding != self.stream.encoding {
             self.generation = self.generation.wrapping_add(1);
-            self.sending = None;
+            self.drop_frames();
         }
         if !s.enabled {
-            self.sending = None;
+            self.drop_frames();
         }
         self.stream = s;
+        self.encoder.quality = s.jpeg_quality;
         self.next_send = now;
         Ok(())
     }

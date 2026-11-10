@@ -7,12 +7,14 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CamError, CameraSettings, Encoding, Format, MAX_DATAGRAM, Message, Op, Readout, Request,
+    AUTO_QUALITY_MIN, CHUNK_MAX, CamError, CameraSettings, Encoding, Format, FrameChunk,
+    JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, Op, Readout, Request,
     STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern,
 };
 use poc_viewer::{
     camera,
     fake::{self, FakeCamera, FakeConfig},
+    jpeg,
     net::{Client, Command, Frame, Stats},
 };
 
@@ -22,6 +24,24 @@ fn start(cfg: FakeConfig) -> (FakeCamera, Client) {
     let fake = FakeCamera::spawn(cfg).expect("fake camera starts");
     let client = Client::connect(fake.addr(), || {}).expect("client connects");
     (fake, client)
+}
+
+/// The fake's defaults with the stream in `encoding` (JPEG: automatic quality off, so every
+/// frame is at the set quality).
+fn stream_in(encoding: Encoding) -> StreamSettings {
+    StreamSettings {
+        encoding,
+        auto_quality: false,
+        ..fake::default_stream()
+    }
+}
+
+/// The fake's defaults, streaming RAW8.
+fn raw8() -> FakeConfig {
+    FakeConfig {
+        stream: stream_in(Encoding::Raw8),
+        ..FakeConfig::default()
+    }
 }
 
 fn binned_640(format: Format, rate_hz: u32) -> CameraSettings {
@@ -63,6 +83,19 @@ fn next_frame(client: &Client, generation: u32) -> Frame {
     }
 }
 
+/// The frame is the fake's frame `f.number` for `state` bit for bit: raw, the rendering; JPEG,
+/// the file the fake's encoder makes of it at the set quality (automatic quality off).
+/// The next frame of `state`'s generation captured after the state was sent.
+fn frame_captured_after(client: &Client, state: &State) -> Frame {
+    loop {
+        let f = next_frame(client, state.generation);
+        if f.timestamp_us > state.uptime_us {
+            return f;
+        }
+        client.recycle(f.data);
+    }
+}
+
 fn assert_bit_exact(f: &Frame, state: &State) {
     assert_eq!(
         (f.width, f.height),
@@ -70,14 +103,37 @@ fn assert_bit_exact(f: &Frame, state: &State) {
     );
     assert_eq!(f.encoding, state.stream.encoding);
     let mut expected = Vec::new();
-    fake::render(
-        &state.camera,
-        state.stream.encoding,
-        f.number,
-        &mut expected,
-    );
-    assert_eq!(f.data.len(), expected.len());
+    if f.encoding == Encoding::Jpeg {
+        let mut raw = Vec::new();
+        fake::render(&state.camera, Encoding::Raw8, f.number, &mut raw);
+        fake::encode_jpeg(
+            &state.camera,
+            &raw,
+            state.stream.jpeg_quality,
+            &mut expected,
+        )
+        .unwrap();
+    } else {
+        fake::render(
+            &state.camera,
+            state.stream.encoding,
+            f.number,
+            &mut expected,
+        );
+    }
+    assert_eq!(f.data.len(), expected.len(), "frame {}", f.number);
     assert!(f.data == expected, "frame {} differs", f.number);
+}
+
+/// PSNR of `a` against `b` (8-bit), dB.
+fn psnr(a: &[u8], b: &[u8]) -> f64 {
+    let mse = a
+        .iter()
+        .zip(b)
+        .map(|(&x, &y)| (f64::from(x) - f64::from(y)).powi(2))
+        .sum::<f64>()
+        / a.len() as f64;
+    10.0 * (255.0f64 * 255.0 / mse.max(1e-12)).log10()
 }
 
 #[test]
@@ -140,14 +196,6 @@ fn an_invalid_setting_returns_its_error_and_changes_nothing() {
     let (_fake, client) = start(FakeConfig::default());
     let before = apply(&client, Command::GetState, |_| true);
 
-    let refused = |client: &Client, cmd: Command| -> (CamError, Stats) {
-        client.send(cmd);
-        let s = client
-            .wait_until(WAIT, |s| s.refusal.is_some_and(|r| r.op == op_of(cmd)))
-            .expect("refused");
-        (s.refusal.unwrap().error, s)
-    };
-
     let bad_width = CameraSettings {
         width: 1276,
         ..before.camera
@@ -200,6 +248,19 @@ fn an_invalid_setting_returns_its_error_and_changes_nothing() {
     assert_eq!(after.generation, before.generation);
 }
 
+/// Sends `cmd` and waits for its refusal.
+fn refused(client: &Client, cmd: Command) -> (CamError, Stats) {
+    let sent = Instant::now();
+    client.send(cmd);
+    let s = client
+        .wait_until(WAIT, |s| {
+            s.refusal
+                .is_some_and(|r| r.op == op_of(cmd) && r.at >= sent)
+        })
+        .expect("refused");
+    (s.refusal.unwrap().error, s)
+}
+
 fn op_of(c: Command) -> Op {
     match c {
         Command::GetState => Op::GetState,
@@ -210,7 +271,7 @@ fn op_of(c: Command) -> Op {
 
 #[test]
 fn raw8_frames_arrive_bit_exact() {
-    let (_fake, client) = start(FakeConfig::default());
+    let (_fake, client) = start(raw8());
     let state = apply(&client, Command::GetState, |_| true);
     assert_eq!((state.camera.width, state.camera.height), (1280, 800));
     for _ in 0..5 {
@@ -222,7 +283,7 @@ fn raw8_frames_arrive_bit_exact() {
 
 #[test]
 fn raw10_frames_arrive_bit_exact() {
-    let (_fake, client) = start(FakeConfig::default());
+    let (_fake, client) = start(raw8());
     let raw10 = CameraSettings {
         format: Format::Raw10,
         ..fake::default_camera()
@@ -297,7 +358,7 @@ fn frames_missing_a_chunk_are_dropped_and_the_stream_goes_on() {
     let (_fake, client) = start(FakeConfig {
         loss: 0.002,
         camera: binned_640(Format::Raw8, 250),
-        ..FakeConfig::default()
+        ..raw8()
     });
     let state = apply(&client, Command::GetState, |_| true);
     let base = client.stats();
@@ -323,7 +384,7 @@ fn frames_missing_a_chunk_are_dropped_and_the_stream_goes_on() {
 fn the_link_limit_skips_frames_on_the_board() {
     let (_fake, client) = start(FakeConfig {
         mbps: Some(95.0),
-        ..FakeConfig::default()
+        ..raw8()
     });
     let state = apply(&client, Command::GetState, |_| true);
     next_frame(&client, state.generation);
@@ -392,7 +453,7 @@ fn the_board_talks_only_to_a_polling_host() {
 fn a_frame_cut_by_a_mode_change_is_not_counted_as_lost() {
     let (_fake, client) = start(FakeConfig {
         mbps: Some(95.0),
-        ..FakeConfig::default()
+        ..raw8()
     });
     let state = apply(&client, Command::GetState, |_| true);
     next_frame(&client, state.generation);
@@ -408,4 +469,403 @@ fn a_frame_cut_by_a_mode_change_is_not_counted_as_lost() {
     let s = client.stats();
     assert_eq!(s.frames_incomplete, base.frames_incomplete);
     assert!(s.frames_cut - base.frames_cut <= 1, "{} cut", s.frames_cut);
+}
+
+#[test]
+fn the_fake_starts_in_jpeg_at_quality_90_with_automatic_quality() {
+    let (_fake, client) = start(FakeConfig::default());
+    let state = apply(&client, Command::GetState, |_| true);
+    assert_eq!(
+        (state.camera.format, state.camera.width, state.camera.height),
+        (Format::Raw8, 1280, 800)
+    );
+    assert_eq!(state.camera.rate_mhz, 120_000);
+    let s = state.stream;
+    assert_eq!(
+        (
+            s.enabled,
+            s.encoding,
+            s.jpeg_quality,
+            s.auto_quality,
+            s.max_fps
+        ),
+        (true, Encoding::Jpeg, 90, true, 0)
+    );
+    assert_eq!(state.encoder.quality, 90);
+    let f = next_frame(&client, state.generation);
+    let mut pixels = Vec::new();
+    jpeg::decode(&f.data, f.width, f.height, &mut pixels).expect("a greyscale baseline JPEG");
+    // The encoder's figures in the next polls.
+    client
+        .wait_until(WAIT, |s| {
+            s.state
+                .is_some_and(|st| st.encoder.frame_len > 0 && st.encoder.encode_us > 0)
+        })
+        .expect("the encoder reports its last frame");
+}
+
+#[test]
+fn jpeg_frames_are_the_fakes_picture_within_the_codec_error() {
+    let (_fake, client) = start(FakeConfig {
+        stream: stream_in(Encoding::Jpeg),
+        ..FakeConfig::default()
+    });
+    for (camera, min_psnr) in [
+        (fake::default_camera(), 38.0),
+        (
+            CameraSettings {
+                test_pattern: TestPattern::Bars,
+                ..binned_640(Format::Raw8, 250)
+            },
+            40.0,
+        ),
+    ] {
+        let state = apply(&client, Command::SetCamera(camera), |s| {
+            s.camera.width == camera.width && s.camera.test_pattern == camera.test_pattern
+        });
+        let mut lengths = Vec::new();
+        for _ in 0..5 {
+            let f = next_frame(&client, state.generation);
+            assert_bit_exact(&f, &state);
+            let mut decoded = Vec::new();
+            jpeg::decode(&f.data, f.width, f.height, &mut decoded).unwrap();
+            let mut raw = Vec::new();
+            fake::render(&state.camera, Encoding::Raw8, f.number, &mut raw);
+            let p = psnr(&decoded, &raw);
+            assert!(p >= min_psnr, "frame {}: PSNR {p:.2} dB", f.number);
+            lengths.push(f.data.len());
+            client.recycle(f.data);
+        }
+        // Variable length: the moving bar and digits change the file.
+        lengths.dedup();
+        assert!(lengths.len() > 1, "{lengths:?}");
+    }
+}
+
+#[test]
+fn quality_is_applied_and_reported_and_refused_out_of_range() {
+    let (_fake, client) = start(FakeConfig {
+        stream: stream_in(Encoding::Jpeg),
+        ..FakeConfig::default()
+    });
+    let mut sizes = Vec::new();
+    for q in [30u8, 60, 95] {
+        let want = StreamSettings {
+            jpeg_quality: q,
+            ..stream_in(Encoding::Jpeg)
+        };
+        let state = apply(&client, Command::SetStream(want), |s| {
+            s.stream.jpeg_quality == q
+        });
+        assert_eq!(state.encoder.quality, q);
+        // A frame captured after the change is encoded at the new quality.
+        let f = frame_captured_after(&client, &state);
+        assert_bit_exact(&f, &state);
+        sizes.push(f.data.len());
+    }
+    assert!(sizes.windows(2).all(|w| w[1] > w[0]), "{sizes:?}");
+
+    let before = client.stats().state.unwrap();
+    for q in [0u8, 101] {
+        let bad = StreamSettings {
+            jpeg_quality: q,
+            ..before.stream
+        };
+        let (e, s) = refused(&client, Command::SetStream(bad));
+        assert_eq!(
+            e,
+            CamError::Quality {
+                min: JPEG_QUALITY_MIN,
+                max: JPEG_QUALITY_MAX
+            }
+        );
+        let after = s.state.unwrap();
+        assert_eq!(after.stream, before.stream);
+        assert_eq!(after.encoder.quality, before.encoder.quality);
+    }
+}
+
+#[test]
+fn jpeg_is_refused_for_raw10_modes_and_sizes_not_a_multiple_of_8() {
+    let (_fake, client) = start(FakeConfig::default());
+    let before = apply(&client, Command::GetState, |_| true);
+    let jpeg_err = |reason, c: &CameraSettings| CamError::Jpeg {
+        reason,
+        format: c.format,
+        width: c.width,
+        height: c.height,
+    };
+    // A mode JPEG cannot be made of, while the stream is JPEG.
+    for (c, reason) in [
+        (
+            CameraSettings {
+                format: Format::Raw10,
+                ..fake::default_camera()
+            },
+            JpegRefusal::Format,
+        ),
+        (
+            CameraSettings {
+                height: 796,
+                ..fake::default_camera()
+            },
+            JpegRefusal::Size,
+        ),
+        (
+            CameraSettings {
+                height: 396,
+                ..binned_640(Format::Raw8, 250)
+            },
+            JpegRefusal::Size,
+        ),
+    ] {
+        let (e, s) = refused(&client, Command::SetCamera(c));
+        assert_eq!(e, jpeg_err(reason, &c));
+        assert_eq!(camera::validate(&c, Encoding::Jpeg), Err(e));
+        let after = s.state.unwrap();
+        assert_eq!(
+            (after.camera, after.stream, after.generation),
+            (before.camera, before.stream, before.generation)
+        );
+    }
+    // JPEG asked for in such a mode.
+    apply(
+        &client,
+        Command::SetStream(stream_in(Encoding::Raw8)),
+        |s| s.stream.encoding == Encoding::Raw8,
+    );
+    for c in [
+        CameraSettings {
+            format: Format::Raw10,
+            ..fake::default_camera()
+        },
+        CameraSettings {
+            height: 796,
+            ..fake::default_camera()
+        },
+    ] {
+        apply(&client, Command::SetCamera(c), |s| {
+            (s.camera.format, s.camera.height) == (c.format, c.height)
+        });
+        let (e, s) = refused(&client, Command::SetStream(stream_in(Encoding::Jpeg)));
+        let reason = if c.format == Format::Raw10 {
+            JpegRefusal::Format
+        } else {
+            JpegRefusal::Size
+        };
+        assert_eq!(e, jpeg_err(reason, &c));
+        assert_eq!(s.state.unwrap().stream.encoding, Encoding::Raw8);
+    }
+}
+
+#[test]
+fn switching_between_jpeg_and_the_raw_encodings() {
+    let (_fake, client) = start(FakeConfig {
+        camera: binned_640(Format::Raw8, 250),
+        stream: stream_in(Encoding::Jpeg),
+        ..FakeConfig::default()
+    });
+    let mut generation = apply(&client, Command::GetState, |_| true).generation;
+    let raw10 = binned_640(Format::Raw10, 250);
+    let raw8 = binned_640(Format::Raw8, 250);
+    let steps: [(Option<CameraSettings>, Encoding); 6] = [
+        (None, Encoding::Raw8),
+        (None, Encoding::Jpeg),
+        (None, Encoding::Raw8),
+        (Some(raw10), Encoding::Raw10),
+        (Some(raw8), Encoding::Raw8),
+        (None, Encoding::Jpeg),
+    ];
+    for (mode, encoding) in steps {
+        if let Some(m) = mode {
+            if m.format == Format::Raw8 {
+                // RAW10 cannot be sent from a RAW8 sensor: the stream first.
+                apply(
+                    &client,
+                    Command::SetStream(stream_in(Encoding::Raw8)),
+                    |s| s.stream.encoding == Encoding::Raw8,
+                );
+            }
+            apply(&client, Command::SetCamera(m), |s| {
+                s.camera.format == m.format
+            });
+        }
+        let state = apply(&client, Command::SetStream(stream_in(encoding)), |s| {
+            s.stream.encoding == encoding
+        });
+        assert_ne!(state.generation, generation, "{encoding:?}");
+        generation = state.generation;
+        for _ in 0..3 {
+            let f = frame_captured_after(&client, &state);
+            assert_bit_exact(&f, &state);
+            client.recycle(f.data);
+        }
+    }
+}
+
+#[test]
+fn jpeg_frames_missing_a_chunk_are_dropped_and_the_stream_goes_on() {
+    let (_fake, client) = start(FakeConfig {
+        loss: 0.01,
+        stream: stream_in(Encoding::Jpeg),
+        ..FakeConfig::default()
+    });
+    let state = apply(&client, Command::GetState, |_| true);
+    let base = client.stats();
+    let end = Instant::now() + Duration::from_secs(2);
+    let mut checked = 0;
+    while Instant::now() < end {
+        let f = next_frame(&client, state.generation);
+        assert_bit_exact(&f, &state);
+        client.recycle(f.data);
+        checked += 1;
+    }
+    let s = client.stats();
+    let whole = s.frames_whole - base.frames_whole;
+    let incomplete = s.frames_incomplete - base.frames_incomplete;
+    // About 43 chunks per 1280x800 JPEG at 1 % loss: about 65 % arrive whole.
+    assert!(incomplete >= 20, "{incomplete} incomplete, {whole} whole");
+    assert!(whole >= 100, "{incomplete} incomplete, {whole} whole");
+    assert!(checked >= 20);
+    assert_eq!(s.mismatched_chunks, 0);
+}
+
+/// The fake's frame rate and quality in use over `secs`: (fps at the host, frames skipped for
+/// the link, captured, quality at the end).
+fn window(client: &Client, secs: f64) -> (f64, u32, u32, u8) {
+    let a = client.stats();
+    let end = Instant::now() + Duration::from_secs_f64(secs);
+    while Instant::now() < end {
+        if let Some(f) = client.take_frame() {
+            client.recycle(f.data);
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    let z = client.stats();
+    let (sa, sz) = (a.state.unwrap(), z.state.unwrap());
+    (
+        (z.frames_whole - a.frames_whole) as f64 / secs,
+        sz.counters.frames_skipped - sa.counters.frames_skipped,
+        sz.counters.frames_captured - sa.counters.frames_captured,
+        sz.encoder.quality,
+    )
+}
+
+#[test]
+fn automatic_quality_follows_the_link() {
+    // Binned 640x400 at the sensor's maximum through a 20 Mbit/s line: at quality 100 the
+    // fake's frames do not fit (a small window keeps the unoptimised test build's rendering
+    // ahead of the sensor).
+    let fastest = CameraSettings {
+        rate_mhz: 302_189,
+        tolerance_mhz: 0,
+        ..binned_640(Format::Raw8, 300)
+    };
+    let sensor = 302.19;
+    let (_fake, client) = start(FakeConfig {
+        mbps: Some(20.0),
+        camera: fastest,
+        stream: StreamSettings {
+            jpeg_quality: 100,
+            ..stream_in(Encoding::Jpeg)
+        },
+        ..FakeConfig::default()
+    });
+    let state = apply(&client, Command::GetState, |_| true);
+    next_frame(&client, state.generation);
+    let (fps_off, skipped_off, captured, q) = window(&client, 1.5);
+    assert_eq!(q, 100);
+    assert!(
+        skipped_off > captured / 10 && fps_off < 0.9 * sensor,
+        "auto off: {fps_off:.1} fps, {skipped_off} of {captured} skipped"
+    );
+
+    let on = StreamSettings {
+        jpeg_quality: 100,
+        auto_quality: true,
+        ..stream_in(Encoding::Jpeg)
+    };
+    apply(&client, Command::SetStream(on), |s| s.stream.auto_quality);
+    let mut trace = Vec::new();
+    for _ in 0..20 {
+        thread::sleep(Duration::from_millis(200));
+        trace.push(client.stats().state.unwrap().encoder.quality);
+    }
+    let (fps_on, skipped_on, captured, q) = window(&client, 1.5);
+    assert!(
+        (AUTO_QUALITY_MIN..100).contains(&q),
+        "quality {q}, trace {trace:?}"
+    );
+    assert!(
+        fps_on > 0.9 * sensor && skipped_on * 20 < captured,
+        "auto on: {fps_on:.1} fps, {skipped_on} of {captured} skipped, trace {trace:?}"
+    );
+
+    // Room again (a test pattern of bars compresses to almost nothing): back up to the set
+    // quality, one step per period.
+    let bars = CameraSettings {
+        test_pattern: TestPattern::Bars,
+        ..fastest
+    };
+    apply(&client, Command::SetCamera(bars), |s| {
+        s.camera.test_pattern == TestPattern::Bars
+    });
+    let back = client.wait_until(
+        Duration::from_secs_f64(f64::from(100 - q) * 0.2 + 3.0),
+        |s| s.state.is_some_and(|st| st.encoder.quality == 100),
+    );
+    assert!(back.is_some(), "quality did not come back from {q}");
+
+    // Off: the set quality at once, and it stays under load.
+    let off = StreamSettings {
+        jpeg_quality: 70,
+        auto_quality: false,
+        ..on
+    };
+    apply(&client, Command::SetStream(off), |s| !s.stream.auto_quality);
+    apply(&client, Command::SetCamera(fastest), |s| {
+        s.camera.test_pattern == TestPattern::Off
+    });
+    let (_, _, _, q) = window(&client, 1.0);
+    assert_eq!(q, 70);
+}
+
+#[test]
+fn chunks_that_disagree_with_their_frame_drop_it() {
+    // A camera that sends two chunks of one frame with different lengths.
+    let cam = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+    let client = Client::connect(cam.local_addr().unwrap(), || {}).unwrap();
+    let to = client.local_addr();
+    let data = [7u8; CHUNK_MAX];
+    let chunk = |frame: u32, frame_len: u32, index: u32| FrameChunk {
+        frame,
+        generation: 1,
+        encoding: Encoding::Jpeg,
+        width: 640,
+        height: 400,
+        timestamp_us: 0,
+        frame_len,
+        offset: index * CHUNK_MAX as u32,
+        data: &data[..(frame_len as usize - index as usize * CHUNK_MAX).min(CHUNK_MAX)],
+    };
+    let mut buf = [0u8; MAX_DATAGRAM];
+    for c in [
+        chunk(5, 3000, 0),
+        chunk(5, 4000, 1),
+        chunk(5, 3000, 1),
+        chunk(5, 3000, 2),
+        // The next frame is whole.
+        chunk(6, 2000, 0),
+        chunk(6, 2000, 1),
+    ] {
+        cam.send_to(c.encode(&mut buf).unwrap(), to).unwrap();
+    }
+    let s = client
+        .wait_until(WAIT, |s| s.frames_whole == 1)
+        .expect("frame 6 arrives");
+    assert_eq!(s.mismatched_chunks, 1);
+    assert_eq!(s.frames_incomplete, 1);
+    assert_eq!(s.stale_chunks, 2);
+    let f = client.take_frame().unwrap();
+    assert_eq!((f.number, f.data.len()), (6, 2000));
 }

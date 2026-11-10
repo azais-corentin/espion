@@ -99,16 +99,29 @@ struct InitArgs {
     pattern: Option<PatternArg>,
     /// Pixel encoding on the wire.
     #[arg(long)]
-    encoding: Option<FormatArg>,
+    encoding: Option<EncodingArg>,
     /// Most frames sent per second (0: no limit).
     #[arg(long)]
     max_fps: Option<u16>,
+    /// JPEG quality, 1..=100 (with automatic quality: the ceiling).
+    #[arg(long)]
+    quality: Option<u8>,
+    /// Automatic JPEG quality.
+    #[arg(long)]
+    auto_quality: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum FormatArg {
     Raw8,
     Raw10,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum EncodingArg {
+    Raw8,
+    Raw10,
+    Jpeg,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -188,19 +201,25 @@ impl InitArgs {
     }
 
     fn stream(&self) -> Option<StreamSettings> {
-        if self.encoding.is_none() && self.max_fps.is_none() {
+        if self.encoding.is_none()
+            && self.max_fps.is_none()
+            && self.quality.is_none()
+            && self.auto_quality.is_none()
+        {
             return None;
         }
         let d = fake::default_stream();
         Some(StreamSettings {
             enabled: true,
             encoding: match self.encoding {
-                Some(FormatArg::Raw8) => Encoding::Raw8,
-                Some(FormatArg::Raw10) => Encoding::Raw10,
+                Some(EncodingArg::Raw8) => Encoding::Raw8,
+                Some(EncodingArg::Raw10) => Encoding::Raw10,
+                Some(EncodingArg::Jpeg) => Encoding::Jpeg,
                 None => d.encoding,
             },
             max_fps: self.max_fps.unwrap_or(d.max_fps),
-            ..d
+            jpeg_quality: self.quality.unwrap_or(d.jpeg_quality),
+            auto_quality: self.auto_quality.unwrap_or(d.auto_quality),
         })
     }
 }
@@ -213,12 +232,35 @@ fn main() -> Result<()> {
             loss: args.fake_loss,
             ..FakeConfig::default()
         };
-        // Start the fake in the requested encoding's format family, so a RAW10 stream request
-        // finds a RAW10 sensor (the camera settings are sent right after).
-        if let Some(c) = args.init.camera()
-            && poc_viewer::camera::validate(&c, cfg.stream.encoding).is_ok()
+        // Start the fake in the requested settings when they go together (the viewer sends
+        // them right after anyway), so a RAW10 stream request finds a RAW10 sensor. A mode JPEG
+        // cannot be made of, without a stream given, starts the fake in RAW8.
+        let stream = args.init.stream();
+        if let Some(s) = stream {
+            cfg.stream = s;
+        }
+        if let Some(c) = args.init.camera() {
+            if stream.is_none()
+                && cfg
+                    .stream
+                    .encoding
+                    .check(c.format, c.width, c.height)
+                    .is_err()
+            {
+                cfg.stream.encoding = Encoding::Raw8;
+            }
+            if poc_viewer::camera::validate(&c, cfg.stream.encoding).is_ok()
+                && cfg.stream.check(c.format, c.width, c.height).is_ok()
+            {
+                cfg.camera = c;
+            }
+        }
+        if cfg
+            .stream
+            .check(cfg.camera.format, cfg.camera.width, cfg.camera.height)
+            .is_err()
         {
-            cfg.camera = c;
+            cfg.stream = fake::default_stream();
         }
         let f = FakeCamera::spawn(cfg).context("starting the fake camera")?;
         println!("fake camera on {}", f.addr());
