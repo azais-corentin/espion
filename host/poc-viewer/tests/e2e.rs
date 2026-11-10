@@ -386,3 +386,25 @@ fn the_board_talks_only_to_a_polling_host() {
         "stopped after {stopped} ms"
     );
 }
+
+#[test]
+fn a_frame_cut_by_a_mode_change_is_not_counted_as_lost() {
+    let (_fake, client) = start(FakeConfig {
+        mbps: Some(95.0),
+        ..FakeConfig::default()
+    });
+    let state = apply(&client, Command::GetState, |_| true);
+    next_frame(&client, state.generation);
+    // A 1280x800 frame takes about 90 ms on the line: the change lands in the middle of one.
+    thread::sleep(Duration::from_millis(40));
+    let base = client.stats();
+    let state = apply(
+        &client,
+        Command::SetCamera(binned_640(Format::Raw8, 250)),
+        |s| s.camera.width == 640,
+    );
+    next_frame(&client, state.generation);
+    let s = client.stats();
+    assert_eq!(s.frames_incomplete, base.frames_incomplete);
+    assert!(s.frames_cut - base.frames_cut <= 1, "{} cut", s.frames_cut);
+}

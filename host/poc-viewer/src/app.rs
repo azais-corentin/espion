@@ -40,6 +40,10 @@ pub struct SelfTestConfig {
     pub vsync: bool,
 }
 
+/// Width of the side panel, points: one column of settings and status; the picture takes the
+/// rest of the window.
+const PANEL_WIDTH: f32 = 390.0;
+
 const RED: Color32 = Color32::from_rgb(235, 70, 60);
 const GREEN: Color32 = Color32::from_rgb(90, 200, 90);
 const ORANGE: Color32 = Color32::from_rgb(240, 160, 40);
@@ -216,25 +220,24 @@ impl App {
         }
     }
 
-    /// Two columns: what is happening (link, status, the board's answer), then the settings.
+    /// One column: what is happening (link, status, the board's last refusal), the settings
+    /// (mode, controls, stream, display), then the board's detailed state, collapsed.
     fn panel(&mut self, ui: &mut egui::Ui, s: &Stats, now: Instant) {
-        ui.columns(2, |cols| {
-            let [left, right] = cols else {
-                return;
-            };
-            self.link(left, s, now);
-            left.separator();
-            self.status(left, s);
-            left.separator();
-            self.board(left, s);
-            self.mode_editor(right, s);
-            right.separator();
-            self.controls(right, s);
-            right.separator();
-            self.stream_editor(right);
-            right.separator();
-            self.display_controls(right);
-        });
+        self.link(ui, s, now);
+        self.status(ui, s);
+        answer_line(ui, s);
+        ui.separator();
+        self.mode_editor(ui, s);
+        ui.separator();
+        self.controls(ui, s);
+        ui.separator();
+        self.stream_editor(ui);
+        ui.separator();
+        self.display_controls(ui);
+        ui.separator();
+        egui::CollapsingHeader::new("Board: as applied")
+            .default_open(false)
+            .show(ui, |ui| self.board(ui, s));
     }
 
     fn link(&self, ui: &mut egui::Ui, s: &Stats, now: Instant) {
@@ -267,6 +270,7 @@ impl App {
             row("Presented", format!("{:.1} fps", m.shown_fps));
             row("Throughput", format!("{:.1} Mbit/s", m.mbps));
             row("Dropped, chunk missing", s.frames_incomplete.to_string());
+            row("Cut by a mode change", s.frames_cut.to_string());
             row("Replaced before shown", s.frames_replaced.to_string());
             row(
                 "Skipped by board (link busy)",
@@ -329,7 +333,7 @@ impl App {
                 egui::DragValue::new(&mut e.height).range(0..=2048),
             );
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.centred, "centred origin");
             ui.add_enabled_ui(!self.centred, |ui| {
                 labelled(ui, "Origin x", egui::DragValue::new(&mut self.origin.x));
@@ -338,7 +342,7 @@ impl App {
         });
         let mut rate = e.rate_mhz as f64 / 1000.0;
         let mut tol = e.tolerance_mhz as f64 / 1000.0;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             labelled(
                 ui,
                 "Rate, Hz",
@@ -516,18 +520,6 @@ impl App {
     }
 
     fn board(&self, ui: &mut egui::Ui, s: &Stats) {
-        ui.heading("Board: as applied");
-        if let Some(r) = &s.refusal {
-            let what = match r.op {
-                Op::SetCamera(_) => "camera settings",
-                Op::SetStream(_) => "stream settings",
-                Op::GetState | Op::Poll => "request",
-            };
-            ui.colored_label(RED, format!("Refused the {what}: {}", r.error));
-        }
-        if s.pending {
-            ui.label("waiting for an answer…");
-        }
         let Some(st) = s.state else {
             ui.label("no state yet");
             return;
@@ -736,7 +728,7 @@ impl eframe::App for App {
 
         egui::Panel::left("panel")
             .resizable(false)
-            .exact_size(860.0)
+            .exact_size(PANEL_WIDTH)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.panel(ui, &stats, now));
             });
@@ -744,6 +736,22 @@ impl eframe::App for App {
         self.selftest_step(ui.ctx(), now, &stats);
         // Keeps the status fresh when no frames come.
         ui.ctx().request_repaint_after(Duration::from_millis(250));
+    }
+}
+
+/// The board's latest refusal (until a request of the same kind succeeds), and whether a
+/// request waits for its answer.
+fn answer_line(ui: &mut egui::Ui, s: &Stats) {
+    if let Some(r) = &s.refusal {
+        let what = match r.op {
+            Op::SetCamera(_) => "camera settings",
+            Op::SetStream(_) => "stream settings",
+            Op::GetState | Op::Poll => "request",
+        };
+        ui.colored_label(RED, format!("Refused the {what}: {}", r.error));
+    }
+    if s.pending {
+        ui.label("waiting for an answer…");
     }
 }
 
@@ -851,7 +859,7 @@ fn report(
     format!(
         "selftest: vsync {}, measured over {dt:.2} s\n{mode}\n{frame}\n\
          received: {:.1} fps whole, {:.1} Mbit/s UDP payload, {} dropped (chunk missing), \
-         {} replaced before shown, {} stale chunks\n\
+         {} cut by a mode change, {} replaced before shown, {} stale chunks\n\
          presented: {:.1} fps (new frames drawn), {:.1} UI passes/s\n\
          ui frame time (eframe cpu_usage): mean {mean:.3} ms, p50 {:.3}, p99 {:.3}, max {:.3} \
          over {} passes\n\
@@ -861,6 +869,7 @@ fn report(
         d(s.frames_whole, b.stats.frames_whole) as f64 / dt,
         d(s.bytes, b.stats.bytes) as f64 * 8.0 / dt / 1e6,
         d(s.frames_incomplete, b.stats.frames_incomplete),
+        d(s.frames_cut, b.stats.frames_cut),
         d(s.frames_replaced, b.stats.frames_replaced),
         d(s.stale_chunks, b.stats.stale_chunks),
         d(presented, b.presented) as f64 / dt,

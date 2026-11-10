@@ -26,7 +26,8 @@ use std::{
 
 use espion_proto::cam::{
     CHUNK_MAX, CamError, CameraSettings, Counters, Encoding, Format, FrameChunk, MAX_DATAGRAM,
-    Message, Op, Readout, Reply, Response, STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern,
+    Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, State, StreamSettings,
+    TestPattern,
 };
 use ov9281::Mode;
 
@@ -182,6 +183,9 @@ struct Engine {
 
     peer: Option<SocketAddr>,
     last_request: Instant,
+    /// The last request executed, its source and its result: a repeat (same number, same
+    /// source) is answered with that result and not executed again, as on the board.
+    last: Option<(SocketAddr, Request, Result<(), CamError>)>,
 
     period: Duration,
     next_capture: Instant,
@@ -223,6 +227,7 @@ impl Engine {
             start: now,
             peer: None,
             last_request: now,
+            last: None,
             period,
             next_capture: now + period,
             frame: 0,
@@ -394,11 +399,15 @@ impl Engine {
         let now = Instant::now();
         self.peer = Some(src);
         self.last_request = now;
-        let reply = match req.op {
-            Op::GetState | Op::Poll => Ok(()),
-            Op::SetCamera(c) => self.set_camera(&c, now),
-            Op::SetStream(s) => self.set_stream(s, now),
+        let reply = match self.last {
+            Some((from, last, r)) if from == src && last == req => r,
+            _ => match req.op {
+                Op::GetState | Op::Poll => Ok(()),
+                Op::SetCamera(c) => self.set_camera(&c, now),
+                Op::SetStream(s) => self.set_stream(s, now),
+            },
         };
+        self.last = Some((src, req, reply));
         let reply = match reply {
             Ok(()) => Reply::State(self.state(now)),
             Err(e) => Reply::Error(e),

@@ -9,7 +9,9 @@
 //!
 //! Chunks are copied into the frame they belong to. A frame is handed over only when every
 //! chunk arrived; a frame missing a chunk is dropped when a chunk of a newer frame arrives (or
-//! after [`ASSEMBLY_TIMEOUT`]) and counted, never repaired. Only the newest complete frame
+//! after [`ASSEMBLY_TIMEOUT`]) and counted, never repaired: as cut by the board when the newer
+//! chunk has another generation (the board abandons the frame in flight at a mode or encoding
+//! change), otherwise as incomplete (a chunk was lost). Only the newest complete frame
 //! waits for the consumer: one it has not taken yet is replaced (and counted). Frame buffers
 //! come back through [`Client::recycle`], so a steady stream allocates nothing.
 
@@ -124,6 +126,9 @@ pub struct Stats {
     pub frames_whole: u64,
     /// Frames dropped because a chunk was missing.
     pub frames_incomplete: u64,
+    /// Frames the board stopped sending part-way for a new frame layout (its next chunk has
+    /// another generation: a mode or encoding change), dropped without counting as missing.
+    pub frames_cut: u64,
     /// Whole frames replaced by a newer one before the consumer took them.
     pub frames_replaced: u64,
     /// Requests sent, repeats included.
@@ -132,6 +137,17 @@ pub struct Stats {
     pub retries: u64,
     /// Round trip of the last answered request (from its last transmission).
     pub rtt: Option<Duration>,
+    /// Answered requests whose round trip is counted in [`Stats::rtt_sum`] and
+    /// [`Stats::rtt_max`].
+    pub rtt_count: u64,
+    /// Sum of the round trips of the answered requests.
+    pub rtt_sum: Duration,
+    /// Longest round trip of an answered request.
+    pub rtt_max: Duration,
+    /// Answers to the UI's commands ([`Command`], not the polls).
+    pub answers: u64,
+    /// The latest answer to a command: what was asked and the reply.
+    pub last_answer_to: Option<(Op, Reply)>,
     /// When the last response arrived.
     pub last_answer: Option<Instant>,
     /// The board's latest state.
@@ -394,7 +410,7 @@ impl Worker {
             .as_ref()
             .is_some_and(|a| now - a.started > ASSEMBLY_TIMEOUT)
         {
-            self.drop_assembly();
+            self.drop_assembly(false);
         }
     }
 
@@ -426,7 +442,15 @@ impl Worker {
             // An answer to an earlier repeat.
             return;
         };
-        self.stats.rtt = Some(now - f.last_sent);
+        let rtt = now - f.last_sent;
+        self.stats.rtt = Some(rtt);
+        self.stats.rtt_count += 1;
+        self.stats.rtt_sum += rtt;
+        self.stats.rtt_max = self.stats.rtt_max.max(rtt);
+        if f.op != Op::Poll {
+            self.stats.answers += 1;
+            self.stats.last_answer_to = Some((f.op, r.reply));
+        }
         self.stats.pending = false;
         match r.reply {
             Reply::State(s) => {
@@ -448,9 +472,14 @@ impl Worker {
         self.publish(None);
     }
 
-    fn drop_assembly(&mut self) {
+    /// Drops the frame being assembled; `cut`: the board abandoned it for a new layout.
+    fn drop_assembly(&mut self, cut: bool) {
         if let Some(a) = self.assembly.take() {
-            self.stats.frames_incomplete += 1;
+            if cut {
+                self.stats.frames_cut += 1;
+            } else {
+                self.stats.frames_incomplete += 1;
+            }
             let mut inner = lock(&self.shared);
             if inner.pool.len() < 4 {
                 inner.pool.push(a.data);
@@ -468,7 +497,8 @@ impl Worker {
                 self.stats.stale_chunks += 1;
                 return;
             }
-            self.drop_assembly();
+            let cut = a.generation != c.generation;
+            self.drop_assembly(cut);
         }
         if self.assembly.is_none() {
             if self
