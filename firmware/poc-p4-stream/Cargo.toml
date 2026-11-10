@@ -1,0 +1,53 @@
+[package]
+name         = "poc-p4-stream"
+description  = "Throwaway proof of concept on the Waveshare ESP32-P4-ETH: Ethernet, IPv6 and UDP throughput, the base of the camera streaming firmware"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+[dependencies]
+esp32p4-csi = { path = "../esp32p4-csi" }
+ov9281      = { path = "../ov9281" }
+
+esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32p4", "log-04"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32p4", "panic-handler", "println"] }
+# Logs go to UART0 (GPIO37 TX, GPIO38 RX), wired to the board's CH343 USB-UART bridge.
+esp-println = { version = "0.18.0", default-features = false, features = [
+  "colors",
+  "critical-section",
+  "esp32p4",
+  "log-04",
+  "uart",
+] }
+# UART and cache registers. Same major as esp-hal 1.2.2 uses.
+esp32p4 = { version = "0.3.0", features = ["critical-section"] }
+
+critical-section = "1.2.0"
+# `trace`: the executor's poll hooks, for the CPU time per task (src/cpu.rs).
+embassy-executor = { version = "0.10.0", features = ["log", "trace"] }
+# IPv6 only (no IPv4, no DHCP), UDP sockets, smoltcp's automatic ICMPv6 echo reply (ping).
+embassy-net = { version = "0.9.1", features = [
+  "auto-icmp-echo-reply",
+  "log",
+  "medium-ethernet",
+  "proto-ipv6",
+  "udp",
+] }
+# The driver trait esp-hal 1.2.2 implements (its `embassy-net-driver-02` dependency).
+embassy-net-driver = "0.2.0"
+embassy-time       = { version = "0.5.1", features = ["log"] }
+log                = "0.4.34"
+static_cell        = "2.1.1"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug         = 2
+lto           = "fat"
+opt-level     = 3

@@ -25,6 +25,8 @@ scopes = [
   "ov9281",
   # firmware/poc-p4-eth: throwaway proof of concept on the Waveshare ESP32-P4-ETH.
   "poc-p4-eth",
+  # firmware/poc-p4-stream: throwaway Ethernet and streaming proof of concept on the same board.
+  "poc-p4-stream",
   # host/espion-server, espion-viewer, espion-calib, espion-sync.
   "server",
   "viewer",

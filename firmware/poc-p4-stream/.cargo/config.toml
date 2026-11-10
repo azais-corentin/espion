@@ -1,0 +1,14 @@
+# Compilation settings. User/runtime settings live in esp-config.toml.
+include = ["esp-config.toml"]
+
+[target.riscv32imafc-unknown-none-elf]
+# The dev board's USB-C goes through a CH343 USB-UART bridge to UART0. No port here: espflash
+# takes it from ESPFLASH_PORT (see README.md). The firmware switches the log UART to 2 Mbaud.
+runner = "espflash flash --monitor --chip esp32p4 --monitor-baud 2000000"
+
+[build]
+target = "riscv32imafc-unknown-none-elf"
+rustflags = [
+  # Required for backtraces (esp-backtrace). May cost some performance.
+  "-C", "force-frame-pointers",
+]

@@ -1,11 +1,19 @@
 # Host workspace. Builds for the host target only.
 #
-# The firmware crates (cam-p4, esp32p4-csi, ov9281, poc-p4-eth) are excluded: they have their
-# own target, runner and lockfile, and are built from their own directories.
+# The firmware crates (cam-p4, esp32p4-csi, esp32p4-jpeg, ov9281, poc-p4-eth, poc-p4-stream) are
+# excluded: they have their own target, runner and lockfile, and are built from their own
+# directories.
 [workspace]
 resolver = "3"
 members  = ["crates/*", "host/*"]
-exclude  = ["firmware/cam-p4", "firmware/esp32p4-csi", "firmware/ov9281", "firmware/poc-p4-eth"]
+exclude  = [
+  "firmware/cam-p4",
+  "firmware/esp32p4-csi",
+  "firmware/esp32p4-jpeg",
+  "firmware/ov9281",
+  "firmware/poc-p4-eth",
+  "firmware/poc-p4-stream",
+]
 
 [workspace.package]
 edition      = "2024"

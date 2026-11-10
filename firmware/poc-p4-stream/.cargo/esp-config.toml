@@ -1,0 +1,7 @@
+# esp-config values (see each esp-* crate's "Additional configuration" docs).
+[env]
+ESP_LOG = "info"
+# Must match the L2 cache split the 2nd-stage bootloader programs. The ESP-IDF v6.1 bootloader
+# bundled with espflash 4.7.0 sets 128 KiB (read back from CACHE.L2_CACHE_CACHESIZE_CONF at
+# boot), not esp-hal's assumed default of 256 KiB.
+ESP_HAL_CONFIG_L2_CACHE_SIZE = "128KB"
