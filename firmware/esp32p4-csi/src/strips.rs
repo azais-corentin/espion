@@ -14,8 +14,10 @@
 //!   Handing a strip to the application leaves the item invalid. Returning the strip (drop it
 //!   or pass it to the next [`CsiStrips::wait_strip`]) sets `VALID` again. If the DMA reaches
 //!   an item that is still invalid, it halts with `SHADOWREG_OR_LLI_INVALID_ERR` until the
-//!   driver writes `BLK_TFR_RESUMEREQ` (TRM 7.5.4.2). The data the sensor sends meanwhile
-//!   overruns the bridge buffer and is lost; the driver counts that as a stall and resynchronises.
+//!   driver writes `BLK_TFR_RESUMEREQ` (TRM 7.5.4.2). Measured on the P4: during the halt the
+//!   bridge discards the rest of the frame (`CSI_BRIG_DISCARD`), flushes what it buffered as one
+//!   short block at resume, and the next frame's blocks come out shifted by a few hundred
+//!   items. The driver counts a stall and resynchronises as below.
 //!
 //! # Frame boundaries
 //!
@@ -32,15 +34,21 @@
 //! - a short block of exactly the expected size at the expected position ends the frame;
 //! - anything else (short too early, full where the short one was due, wrong size), a bridge
 //!   overrun, discard or FIFO overflow, a fatal CSI host error, a DMA error or a stall marks
-//!   the frame damaged. The driver then **discards every block until the next short one**
-//!   (the next frame end) and restarts the row counter at 0 for the block after it.
+//!   the frame damaged.
 //!
-//! So a strip handed out always carries rows that belong to its frame number. The one gap:
-//! when a damaged frame's last block happens to be full-sized, its frame end is missed and the
-//! next frame is skipped too. Never mislabelled, only one more frame lost.
+//! After damage the driver **discards every block until the next short one**, then keeps
+//! discarding for one **probation frame**: a whole frame whose every block has the size its
+//! position predicts and whose short last block arrives exactly where it should. Delivery
+//! starts with the block after that. One short block alone is not enough: after a stall the
+//! bridge emits a short block mid-frame and the following frame's blocks are shifted against
+//! its rows (measured), and only a frame that checks out from end to end proves the alignment.
+//! A failed check restarts the search.
 //!
-//! After [`CsiStrips::start`] the driver is in this resynchronising state, so the first frame
-//! is only used to find a frame end and is never delivered.
+//! So a strip handed out always carries rows that belong to its frame number. Cost: a damaged
+//! frame loses its remaining strips plus one to three more frames.
+//!
+//! After [`CsiStrips::start`] the driver is in the same state, so the first two frames (one to
+//! find a frame end, one probation frame) are never delivered.
 //!
 //! A frame was delivered whole when a strip with [`Strip::is_last`] arrives. A strip with
 //! `first_row() == 0` starts a frame; if one arrives before the previous frame's last strip,
@@ -61,8 +69,10 @@
 //! - if a `BLOCK_TFR_DONE` interrupt finds no written-back item, up to 64 more reads of one
 //!   status word (`WRITEBACK_SPINS`) before giving up.
 //!
-//! That is under 200 memory accesses for a 16-strip ring, a few microseconds
-//! [INFERENCE: not measured]. The strip buffers themselves are never touched in the handler.
+//! That is under 200 memory accesses for a 16-strip ring. Measured on the board (400 MHz, RAW8,
+//! all four 120 fps modes): 1.4–3.3 µs on average and under 4 µs in steady state, with rare
+//! peaks of 10–17 µs and up to 81 µs on the first blocks after `new` (cold caches). See
+//! `StripStats::isr_cycles_max`. The strip buffers themselves are never touched in the handler.
 //!
 //! # Memory
 //!
@@ -249,8 +259,9 @@ pub struct StripStats {
     pub frames_complete: u32,
     /// Frames abandoned after some of their strips were queued: damage was detected mid-frame.
     pub frames_truncated: u32,
-    /// Frames of which nothing was delivered: the first frame after `start`, and frames that
-    /// ended while the driver was resynchronising.
+    /// Frames of which nothing was delivered: the first two frames after `start`, and frames
+    /// that ended while the driver was resynchronising (seeking a frame end or checking the
+    /// probation frame).
     pub frames_skipped: u32,
     /// Times the DMA reached an item whose strip was not returned and halted
     /// (`SHADOWREG_OR_LLI_INVALID_ERR`).
@@ -264,6 +275,14 @@ pub struct StripStats {
     pub writeback_missing: u32,
     /// `LLP_STATUS` completed-items field of the last finished block, as written back.
     pub last_block_items: u32,
+    /// DMA handler runs, and their CPU cycles (critical section included): total and longest.
+    pub isr_runs: u32,
+    pub isr_cycles_total: u64,
+    pub isr_cycles_max: u32,
+    /// CPU cycles of the cache invalidation in [`CsiStrips::wait_strip`] (one per strip
+    /// delivered): total and longest.
+    pub invalidate_cycles_total: u64,
+    pub invalidate_cycles_max: u32,
     /// DW-GDMA channel error interrupts.
     pub dma_errors: u32,
     /// OR of all DW-GDMA channel `INTSTATUS` bits seen with an error.
@@ -294,6 +313,11 @@ impl StripStats {
         length_errors: 0,
         writeback_missing: 0,
         last_block_items: 0,
+        isr_runs: 0,
+        isr_cycles_total: 0,
+        isr_cycles_max: 0,
+        invalidate_cycles_total: 0,
+        invalidate_cycles_max: 0,
         dma_errors: 0,
         dma_error_bits: 0,
         host_errors: 0,
@@ -327,12 +351,26 @@ pub struct StripDebug {
 
 // ── Shared state (task ↔ ISRs) ──────────────────────────────────────────────────────────
 
+/// Frame alignment of the block stream.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sync {
+    /// Discarding up to the next short block (frame end).
+    Seeking,
+    /// Discarding one whole frame while checking that every block has the size its position
+    /// predicts; delivery starts after its last block.
+    Probation,
+    /// Delivering.
+    Synced,
+}
+
 #[derive(Clone, Copy)]
 struct Meta {
     frame: u32,
     first_row: u16,
     rows: u16,
     last: bool,
+    /// `mcycle` when the handler queued the strip.
+    queued_at: u32,
 }
 
 impl Meta {
@@ -341,7 +379,16 @@ impl Meta {
         first_row: 0,
         rows: 0,
         last: false,
+        queued_at: 0,
     };
+}
+
+/// CPU cycle counter (`mcycle`, low 32 bits).
+fn cycles() -> u32 {
+    let c: u32;
+    // SAFETY: reads a counter CSR; no side effects.
+    unsafe { core::arch::asm!("csrr {0}, mcycle", out(reg) c) };
+    c
 }
 
 struct State {
@@ -370,8 +417,8 @@ struct State {
     meta: [Meta; MAX_STRIPS],
     /// Ring slot whose block finishes next.
     dma_next: u8,
-    synced: bool,
-    /// First row of the next block while synced.
+    sync: Sync,
+    /// First row of the next block (Probation and Synced).
     row: u16,
     /// Frame number of the frame in progress: frame ends seen since `start`.
     frame: u32,
@@ -403,7 +450,7 @@ impl State {
             q_len: 0,
             meta: [Meta::EMPTY; MAX_STRIPS],
             dma_next: 0,
-            synced: false,
+            sync: Sync::Seeking,
             row: 0,
             frame: 0,
             damaged: false,
@@ -499,70 +546,87 @@ impl State {
             self.damaged = false;
             self.abandon();
         }
-        if !self.synced {
+        if self.sync == Sync::Seeking {
             self.discard(slot);
             if !full {
-                // Frame end: the next block starts a frame.
-                if self.partial {
-                    self.partial = false;
-                } else {
-                    self.stats.frames_skipped = self.stats.frames_skipped.wrapping_add(1);
-                }
-                self.frame_end();
-                self.synced = true;
+                // A frame end, but alignment is unproven: check one whole frame first.
+                self.frame_end_unused();
+                self.sync = Sync::Probation;
             }
             return;
         }
+        // Probation and Synced track rows the same way; only Synced delivers.
+        let deliver = self.sync == Sync::Synced;
         let rows_left = self.height - self.row;
         let expect_last = rows_left < self.lines;
         let expected_items = (rows_left as u32 * self.line_bytes) / 8;
         if full && !expect_last {
-            self.push(
-                slot,
-                Meta {
-                    frame: self.frame,
-                    first_row: self.row,
-                    rows: self.lines,
-                    last: false,
-                },
-            );
+            if deliver {
+                self.push(
+                    slot,
+                    Meta {
+                        frame: self.frame,
+                        first_row: self.row,
+                        rows: self.lines,
+                        last: false,
+                        queued_at: cycles(),
+                    },
+                );
+            } else {
+                self.discard(slot);
+            }
             self.row += self.lines;
         } else if !full && expect_last && items.abs_diff(expected_items) <= 1 {
-            self.push(
-                slot,
-                Meta {
-                    frame: self.frame,
-                    first_row: self.row,
-                    rows: rows_left,
-                    last: true,
-                },
-            );
-            self.stats.frames_complete = self.stats.frames_complete.wrapping_add(1);
-            self.frame_end();
+            if deliver {
+                self.push(
+                    slot,
+                    Meta {
+                        frame: self.frame,
+                        first_row: self.row,
+                        rows: rows_left,
+                        last: true,
+                        queued_at: cycles(),
+                    },
+                );
+                self.stats.frames_complete = self.stats.frames_complete.wrapping_add(1);
+                self.frame_end();
+            } else {
+                // A whole frame with the expected block sizes: aligned from the next block on.
+                self.discard(slot);
+                self.frame_end_unused();
+            }
+            self.sync = Sync::Synced;
         } else {
             self.stats.length_errors = self.stats.length_errors.wrapping_add(1);
             self.abandon();
             self.discard(slot);
             if !full {
-                // The frame ended at the wrong place: it was counted truncated or skipped by
-                // `abandon`; the next block starts a frame.
-                if !self.partial {
-                    self.stats.frames_skipped = self.stats.frames_skipped.wrapping_add(1);
-                }
-                self.partial = false;
-                self.frame_end();
-                self.synced = true;
+                // A frame end at the wrong place: rows were lost or shifted. Prove the next
+                // frame before delivering again.
+                self.frame_end_unused();
+                self.sync = Sync::Probation;
             }
         }
     }
 
-    /// Gives up the frame in progress: discard blocks up to the next frame end.
+    /// Gives up the frame in progress: discard blocks up to the next frame end, then check a
+    /// whole frame before delivering again.
     fn abandon(&mut self) {
-        if self.synced && self.row > 0 {
+        if self.sync == Sync::Synced && self.row > 0 {
             self.stats.frames_truncated = self.stats.frames_truncated.wrapping_add(1);
             self.partial = true;
         }
-        self.synced = false;
+        self.sync = Sync::Seeking;
+    }
+
+    /// End of a frame that was not delivered (counted truncated already, or skipped now).
+    fn frame_end_unused(&mut self) {
+        if self.partial {
+            self.partial = false;
+        } else {
+            self.stats.frames_skipped = self.stats.frames_skipped.wrapping_add(1);
+        }
+        self.frame_end();
     }
 
     fn frame_end(&mut self) {
@@ -624,6 +688,7 @@ static WAKER: AtomicWaker = AtomicWaker::new();
 #[esp_hal::ram]
 #[esp_hal::handler(priority = Priority::Priority2)]
 fn dma_isr() {
+    let t0 = cycles();
     critical_section::with(|cs| {
         let mut s = STATE.borrow_ref_mut(cs);
         let ch = s.channel;
@@ -670,6 +735,10 @@ fn dma_isr() {
         if s.q_len != queued {
             WAKER.wake();
         }
+        let dt = cycles().wrapping_sub(t0);
+        s.stats.isr_runs = s.stats.isr_runs.wrapping_add(1);
+        s.stats.isr_cycles_total = s.stats.isr_cycles_total.wrapping_add(dt as u64);
+        s.stats.isr_cycles_max = s.stats.isr_cycles_max.max(dt);
     });
 }
 
@@ -743,6 +812,12 @@ impl Strip {
     /// The last strip of its frame: every strip of the frame was delivered.
     pub fn is_last(&self) -> bool {
         self.meta.last
+    }
+
+    /// CPU cycle counter (`mcycle`, low 32 bits) when the DMA handler queued this strip, for
+    /// latency measurements against the caller's own `mcycle` reads.
+    pub fn queued_at_cycles(&self) -> u32 {
+        self.meta.queued_at
     }
 }
 
@@ -946,8 +1021,8 @@ impl<'d> CsiStrips<'d> {
 
     /// Brings up the link as [`crate::Csi::start`] does, with the bridge cutting blocks of
     /// `lines` rows, writes every list item and starts the channel on the first one. Call it
-    /// before the sensor's stream-on. All strips must have been returned. The first frame is
-    /// used to find the frame boundary and is not delivered.
+    /// before the sensor's stream-on. All strips must have been returned. The first two frames
+    /// are used to find and check the frame boundary and are not delivered.
     pub fn start(&mut self) -> Result<(), StripError> {
         if self.running {
             return Err(Error::Running.into());
@@ -970,7 +1045,7 @@ impl<'d> CsiStrips<'d> {
                 s.write_link(slot);
             }
             s.dma_next = 0;
-            s.synced = false;
+            s.sync = Sync::Seeking;
             s.partial = false;
             s.row = 0;
             s.frame = 0;
@@ -1035,7 +1110,14 @@ impl<'d> CsiStrips<'d> {
         .await?;
         let len = meta.rows as usize * self.config.line_bytes();
         let line = cache::line_size(addr);
+        let t0 = cycles();
         cache::invalidate(addr, len.div_ceil(line) * line);
+        let dt = cycles().wrapping_sub(t0);
+        critical_section::with(|cs| {
+            let st = &mut STATE.borrow_ref_mut(cs).stats;
+            st.invalidate_cycles_total = st.invalidate_cycles_total.wrapping_add(dt as u64);
+            st.invalidate_cycles_max = st.invalidate_cycles_max.max(dt);
+        });
         Ok(Strip {
             // SAFETY: the slot is held (its item invalid): the DMA does not write it until
             // the strip is dropped.
@@ -1074,7 +1156,7 @@ impl<'d> CsiStrips<'d> {
                 armed: s.armed,
                 held: s.held,
                 queued: s.q_len,
-                synced: s.synced,
+                synced: s.sync == Sync::Synced,
                 halted: s.halted,
             }
         })
