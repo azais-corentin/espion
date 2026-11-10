@@ -14,6 +14,12 @@
 //! is `>= threshold`; it is run on the OR of eight aligned words, then on each word of a
 //! chunk that passes, and only words that pass are looked at pixel by pixel.
 //!
+//! RAW10 frames in the MIPI CSI-2 packing ([`raw10`]) go through the same API
+//! ([`Detector::begin_frame_raw10`]): the threshold is in 10-bit units, the weights are the
+//! 10-bit values, `Blob::peak` is the top 8 bits. Their skip runs the same test on the top
+//! 8 bits of 32 pixels at a time (ten words, low-bit bytes masked out), then exactly on each
+//! group of four pixels.
+//!
 //! Rows can be pushed as a whole frame or in strips of whole rows as they arrive; both give
 //! the same blobs in the same order (the order in which their last row was seen).
 
@@ -30,7 +36,8 @@ pub struct Blob {
     pub peak: u8,
 }
 
-/// Counters for the current frame, reset by [`Detector::begin_frame`].
+/// Counters for the current frame, reset by [`Detector::begin_frame`] and
+/// [`Detector::begin_frame_raw10`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
     /// Pixels `>= threshold`, including those of dropped runs.
@@ -73,7 +80,7 @@ fn hot<const HIGH: bool>(w: u32, add: u32) -> u32 {
     }
 }
 
-/// `(add, HIGH)` for [`hot`] for a threshold in `1..=255`.
+/// `(add, HIGH)` for [`hot`] for a threshold in `0..=255` (0: every word is hot).
 const fn swar_params(t: u8) -> (u32, bool) {
     if t <= 128 {
         ((128 - t as u32) * LO, false)
@@ -105,17 +112,105 @@ fn skip_dark<const HIGH: bool>(chunks: &[[u32; CHUNK]], add: u32) -> usize {
         .unwrap_or(chunks.len())
 }
 
+/// The MIPI CSI-2 RAW10 packing; the only code that knows the byte layout.
+///
+/// Four pixels take five bytes: bytes 0..=3 hold bits 9..2 of pixels 0..=3, byte 4 holds
+/// their bits 1..0 (pixel 0 in bits 1..0, pixel 3 in bits 7..6). Rows have no padding.
+pub mod raw10 {
+    /// Bytes per group of four pixels.
+    pub const GROUP_BYTES: usize = 5;
+    /// Index in a group of the byte holding the top 8 bits of each pixel.
+    const HIGH: [usize; 4] = [0, 1, 2, 3];
+    /// Index in a group of the byte holding the low 2 bits of the pixels.
+    const LOW: usize = 4;
+    /// Bit position in the `LOW` byte of each pixel's low 2 bits.
+    const LOW_SHIFT: [u32; 4] = [0, 2, 4, 6];
+
+    /// The four 10-bit pixels of a group.
+    #[inline(always)]
+    pub fn unpack(g: &[u8; GROUP_BYTES]) -> [u32; 4] {
+        let low = g[LOW] as u32;
+        let px = |k: usize| (g[HIGH[k]] as u32) << 2 | (low >> LOW_SHIFT[k]) & 3;
+        [px(0), px(1), px(2), px(3)]
+    }
+
+    /// Whether the top 8 bits of all four pixels of a group are `< top`.
+    #[inline(always)]
+    pub(super) fn top_below(g: &[u8; GROUP_BYTES], top: u8) -> bool {
+        (g[HIGH[0]] < top) & (g[HIGH[1]] < top) & (g[HIGH[2]] < top) & (g[HIGH[3]] < top)
+    }
+
+    /// Packs four pixels (bits above the 10th are dropped).
+    pub fn pack(px: [u16; 4]) -> [u8; GROUP_BYTES] {
+        let mut g = [0u8; GROUP_BYTES];
+        for (k, &p) in px.iter().enumerate() {
+            g[HIGH[k]] = (p >> 2) as u8;
+            g[LOW] |= ((p & 3) as u8) << LOW_SHIFT[k];
+        }
+        g
+    }
+
+    /// For each phase `o` (the position in its group of the first byte of a chunk), the
+    /// masks of the chunk's first five words: 0x00 on the `LOW` bytes, 0xff elsewhere.
+    /// Words 5..=9 of a chunk repeat them (20 bytes are four whole groups).
+    pub(super) const SKIP_MASKS: [[u32; 5]; GROUP_BYTES] = {
+        let mut m = [[0u32; 5]; GROUP_BYTES];
+        let mut o = 0;
+        while o < GROUP_BYTES {
+            let mut w = 0;
+            while w < 5 {
+                let mut bytes = [0xffu8; 4];
+                let mut j = 0;
+                while j < 4 {
+                    if (o + 4 * w + j) % GROUP_BYTES == LOW {
+                        bytes[j] = 0;
+                    }
+                    j += 1;
+                }
+                m[o][w] = u32::from_ne_bytes(bytes);
+                w += 1;
+            }
+            o += 1;
+        }
+        m
+    };
+}
+
+/// Words per RAW10 skip chunk: 40 bytes, 32 pixels, 8 whole groups.
+const CHUNK10: usize = 10;
+
+/// OR of a RAW10 chunk's words with the low-bit bytes masked out.
+#[inline(always)]
+fn or_masked10(c: &[u32; CHUNK10], m: &[u32; 5]) -> u32 {
+    (c[0] | c[5]) & m[0]
+        | (c[1] | c[6]) & m[1]
+        | (c[2] | c[7]) & m[2]
+        | (c[3] | c[8]) & m[3]
+        | (c[4] | c[9]) & m[4]
+}
+
+/// [`skip_dark`] for RAW10 chunks, testing the top 8 bits of the pixels against
+/// `threshold >> 2`.
+#[inline(never)]
+fn skip_dark10<const HIGH: bool>(chunks: &[[u32; CHUNK10]], m: &[u32; 5], add: u32) -> usize {
+    chunks
+        .iter()
+        .position(|c| hot::<HIGH>(or_masked10(c, m), add) != 0)
+        .unwrap_or(chunks.len())
+}
+
 /// A horizontal run of foreground pixels `start..end` in one row with its sums.
 #[derive(Clone, Copy)]
 struct Run {
     start: u16,
     end: u16,
     label: u16,
-    peak: u8,
+    /// Brightest value, in the units of the pixel format.
+    peak: u16,
     /// Sum of pixel values.
     sw: u32,
-    /// Sum of pixel value times column. Fits: 255 * (0 + .. + 65535) < 2^32 for any run
-    /// in a row up to 2048 pixels (the Q11.5 limit), and up to 5800 in fact.
+    /// Sum of pixel value times column. Fits: 255 * (0 + .. + 2047) < 2^32 for any run in
+    /// a row up to 2048 pixels (the Q11.5 limit), up to 5800 in fact (RAW10: 2896).
     swx: u32,
 }
 
@@ -136,7 +231,7 @@ struct Comp {
     parent: u16,
     /// Last row a run was added (also marks a finished root within `end_row`).
     last_row: u16,
-    peak: u8,
+    peak: u16,
     area: u32,
     sw: u32,
     swx: u64,
@@ -161,7 +256,8 @@ struct Scan<'a> {
     n: usize,
     dropped: u32,
     pixels: u32,
-    t: u8,
+    /// Threshold in the units of the pixel format.
+    t: u32,
     open: bool,
     start: u32,
     sw: u32,
@@ -171,7 +267,7 @@ struct Scan<'a> {
 
 impl Scan<'_> {
     #[inline(always)]
-    fn pixel(&mut self, x: u32, v: u8) {
+    fn pixel(&mut self, x: u32, v: u32) {
         let fg = v >= self.t;
         if fg != self.open {
             if fg {
@@ -185,7 +281,7 @@ impl Scan<'_> {
             }
         }
         // Branch-free accumulation: weight 0 for a background pixel.
-        let w = v as u32 & 0u32.wrapping_sub(fg as u32);
+        let w = v & 0u32.wrapping_sub(fg as u32);
         self.sw += w;
         self.swx += w * x;
         self.peak = self.peak.max(w);
@@ -201,7 +297,7 @@ impl Scan<'_> {
                 start: self.start as u16,
                 end: x as u16,
                 label: NONE,
-                peak: self.peak as u8,
+                peak: self.peak as u16,
                 sw: self.sw,
                 swx: self.swx,
             };
@@ -220,10 +316,10 @@ impl Scan<'_> {
             }
         } else {
             let [a, b, c, d] = w.to_ne_bytes();
-            self.pixel(x, a);
-            self.pixel(x + 1, b);
-            self.pixel(x + 2, c);
-            self.pixel(x + 3, d);
+            self.pixel(x, a as u32);
+            self.pixel(x + 1, b as u32);
+            self.pixel(x + 2, c as u32);
+            self.pixel(x + 3, d as u32);
         }
     }
 
@@ -233,7 +329,7 @@ impl Scan<'_> {
         let (pre, mid, post) = unsafe { row.align_to::<u32>() };
         let mut x = 0u32;
         for &v in pre {
-            self.pixel(x, v);
+            self.pixel(x, v as u32);
             x += 1;
         }
         let (chunks, rest) = mid.as_chunks::<CHUNK>();
@@ -264,11 +360,87 @@ impl Scan<'_> {
             x += 4;
         }
         for &v in post {
-            self.pixel(x, v);
+            self.pixel(x, v as u32);
             x += 1;
         }
         if self.open {
             self.close(x);
+        }
+    }
+
+    /// The exact path of RAW10: pixel groups `from..to` of `row`.
+    #[inline(always)]
+    fn groups10(&mut self, row: &[u8], from: usize, to: usize) {
+        let (groups, _) = row[from * raw10::GROUP_BYTES..to * raw10::GROUP_BYTES]
+            .as_chunks::<{ raw10::GROUP_BYTES }>();
+        let t = self.t;
+        // A pixel with top 8 bits `< t >> 2` is `< t` whatever its low bits.
+        let top = (t >> 2) as u8;
+        let mut x = (from * 4) as u32;
+        for g in groups {
+            if raw10::top_below(g, top) {
+                if self.open {
+                    self.close(x);
+                }
+            } else {
+                let [a, b, c, d] = raw10::unpack(g);
+                if (a >= t) | (b >= t) | (c >= t) | (d >= t) {
+                    self.pixel(x, a);
+                    self.pixel(x + 1, b);
+                    self.pixel(x + 2, c);
+                    self.pixel(x + 3, d);
+                } else if self.open {
+                    self.close(x);
+                }
+            }
+            x += 4;
+        }
+    }
+
+    /// One RAW10 row (`width / 4` groups of [`raw10::GROUP_BYTES`] bytes).
+    ///
+    /// The skip works on aligned chunks of [`CHUNK10`] words (40 bytes, 32 pixels, 8
+    /// groups, so every chunk of a row has the same phase against the groups). The words'
+    /// low-bit bytes are masked to 0, which is below any skip threshold, and the rest are
+    /// the top 8 bits of a pixel: if they are all `< t >> 2`, every pixel whose top bits
+    /// lie in the chunk is `< t`. A chunk that passes is processed group by group, from the
+    /// first group not yet processed up to the group holding its last byte.
+    fn row10<const HIGH: bool>(&mut self, row: &[u8], add: u32) {
+        let ngroups = row.len() / raw10::GROUP_BYTES;
+        let row = &row[..ngroups * raw10::GROUP_BYTES];
+        // SAFETY: as in `row`.
+        let (pre, mid, _) = unsafe { row.align_to::<u32>() };
+        let lead = pre.len();
+        let (chunks, _) = mid.as_chunks::<CHUNK10>();
+        let masks = &raw10::SKIP_MASKS[lead % raw10::GROUP_BYTES];
+        // Groups with a byte before the first chunk.
+        let mut next = lead.div_ceil(raw10::GROUP_BYTES).min(ngroups);
+        self.groups10(row, 0, next);
+        let mut i = 0;
+        while i < chunks.len() {
+            if !self.open {
+                i += skip_dark10::<HIGH>(&chunks[i..], masks, add);
+                if i == chunks.len() {
+                    break;
+                }
+            }
+            let first = lead + i * CHUNK10 * 4;
+            if hot::<HIGH>(or_masked10(&chunks[i], masks), add) == 0 {
+                // Open run, dark chunk: group `next` starts in this chunk, so its first
+                // pixel is dark and the run ended there.
+                self.close((next * 4) as u32);
+            } else {
+                let last = (first + CHUNK10 * 4 - 1) / raw10::GROUP_BYTES;
+                self.groups10(row, next.max(first / raw10::GROUP_BYTES), last + 1);
+                next = last + 1;
+            }
+            i += 1;
+        }
+        // The bytes after the last chunk; groups before them that were skipped are dark.
+        let tail = (lead + chunks.len() * CHUNK10 * 4) / raw10::GROUP_BYTES;
+        self.groups10(row, next.max(tail), ngroups);
+        if self.open {
+            self.close((ngroups * 4) as u32);
         }
     }
 }
@@ -284,6 +456,8 @@ struct Labels<const COMPS: usize, const BLOBS: usize> {
     nmerged: usize,
     blobs: [Blob; BLOBS],
     nblobs: usize,
+    /// `Blob::peak` is the component peak shifted right by this (2 for RAW10).
+    peak_shift: u8,
     min_area: u32,
     max_area: u32,
     stats: Stats,
@@ -437,7 +611,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
             x: q5(c.swx),
             y: q5(c.swy),
             area: c.area.min(u16::MAX as u32) as u16,
-            peak: c.peak,
+            peak: (c.peak >> self.peak_shift) as u8,
         };
         if let Some(b) = self.blobs.get_mut(self.nblobs) {
             *b = blob;
@@ -452,10 +626,14 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
 /// alive at once (those crossing the current row; merged ones count until the row ends),
 /// `BLOBS` blobs per frame. Build it once (`new` is `const`, so it can live in a static).
 pub struct Detector<const RUNS: usize, const COMPS: usize, const BLOBS: usize> {
-    width: usize,
-    threshold: u8,
+    /// Bytes per row.
+    stride: usize,
+    /// In the units of the pixel format.
+    threshold: u16,
+    /// SWAR parameters of the skip (for RAW10, on the top 8 bits).
     add: u32,
     high: bool,
+    raw10: bool,
     next_row: u16,
     runs: [[Run; RUNS]; 2],
     nruns: [usize; 2],
@@ -479,10 +657,11 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     pub const fn new() -> Self {
         let () = Self::CAPACITY_OK;
         Self {
-            width: 0,
+            stride: 0,
             threshold: 1,
             add: 0,
             high: false,
+            raw10: false,
             next_row: 0,
             runs: [[Run::ZERO; RUNS]; 2],
             nruns: [0; 2],
@@ -500,6 +679,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
                     peak: 0,
                 }; BLOBS],
                 nblobs: 0,
+                peak_shift: 0,
                 min_area: 1,
                 max_area: u32::MAX,
                 stats: Stats {
@@ -519,33 +699,40 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         self.lab.max_area = max_area;
     }
 
-    /// Starts a frame of rows of `width` pixels (at most 65535; the Q11.5 centroid saturates
-    /// beyond 2048). A `threshold` of 0 is taken as 1.
+    /// Starts a RAW8 frame of rows of `width` pixels (at most 65535; the Q11.5 centroid
+    /// saturates beyond 2048). A `threshold` of 0 is taken as 1.
     pub fn begin_frame(&mut self, width: u16, threshold: u8) {
         let t = threshold.max(1);
         let (add, high) = swar_params(t);
-        self.width = width as usize;
-        self.threshold = t;
+        self.begin(width as usize, t as u16);
         self.add = add;
         self.high = high;
+        self.raw10 = false;
+        self.lab.peak_shift = 0;
+    }
+
+    fn begin(&mut self, stride: usize, threshold: u16) {
+        self.stride = stride;
+        self.threshold = threshold;
         self.next_row = 0;
         self.nruns = [0; 2];
         self.lab.reset();
     }
 
-    /// Processes whole rows (`rows.len()` a multiple of the width; a partial last row is
-    /// ignored), the first being row `first_row`. Strips normally follow each other; if
-    /// `first_row` is not the row after the last one pushed, the blobs crossing the last row
-    /// are finished first, as if a dark row lay between.
+    /// Processes whole rows (`rows.len()` a multiple of the row length: `width` bytes for
+    /// RAW8, `width / 4 * 5` for RAW10; a partial last row is ignored), the first being row
+    /// `first_row`, in the format the frame was begun with. Strips normally follow each
+    /// other; if `first_row` is not the row after the last one pushed, the blobs crossing
+    /// the last row are finished first, as if a dark row lay between.
     pub fn push_rows(&mut self, rows: &[u8], first_row: u16) {
-        if self.width == 0 {
+        if self.stride == 0 {
             return;
         }
         if first_row != self.next_row {
             self.flush();
         }
         let mut y = first_row;
-        for row in rows.chunks_exact(self.width) {
+        for row in rows.chunks_exact(self.stride) {
             self.row(row, y);
             y = y.wrapping_add(1);
         }
@@ -577,6 +764,37 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         self.finish(out)
     }
 
+    /// Starts a RAW10 frame of rows of `width` pixels, packed as described in [`raw10`]:
+    /// each row is `width / 4 * 5` bytes. `width` must be a multiple of 4 (a remainder is
+    /// ignored, which misreads the rows). `threshold` is in 10-bit units, clamped to
+    /// `1..=1023`. Rows then go to [`Self::push_rows`] and the frame ends with
+    /// [`Self::finish`], as for RAW8. Centroids weigh pixels by their 10-bit value;
+    /// `Blob::peak` holds the top 8 bits of the brightest pixel.
+    pub fn begin_frame_raw10(&mut self, width: u16, threshold: u16) {
+        let t = threshold.clamp(1, 1023);
+        // The skip tests the top 8 bits: a pixel `>= t` has them `>= t >> 2`.
+        let (add, high) = swar_params((t >> 2) as u8);
+        self.begin(width as usize / 4 * raw10::GROUP_BYTES, t);
+        self.add = add;
+        self.high = high;
+        self.raw10 = true;
+        self.lab.peak_shift = 2;
+    }
+
+    /// Detects the blobs of a whole RAW10 frame of `frame.len() / (width / 4 * 5)` rows
+    /// (see [`Self::begin_frame_raw10`]).
+    pub fn process_frame_raw10(
+        &mut self,
+        frame: &[u8],
+        width: u16,
+        threshold: u16,
+        out: &mut [Blob],
+    ) -> usize {
+        self.begin_frame_raw10(width, threshold);
+        self.push_rows(frame, 0);
+        self.finish(out)
+    }
+
     /// Counters of the current (or last finished) frame.
     pub fn stats(&self) -> Stats {
         self.lab.stats
@@ -590,17 +808,18 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             n: 0,
             dropped: 0,
             pixels: 0,
-            t: self.threshold,
+            t: self.threshold as u32,
             open: false,
             start: 0,
             sw: 0,
             swx: 0,
             peak: 0,
         };
-        if self.high {
-            scan.row::<true>(row, self.add);
-        } else {
-            scan.row::<false>(row, self.add);
+        match (self.raw10, self.high) {
+            (false, true) => scan.row::<true>(row, self.add),
+            (false, false) => scan.row::<false>(row, self.add),
+            (true, true) => scan.row10::<true>(row, self.add),
+            (true, false) => scan.row10::<false>(row, self.add),
         }
         let nc = scan.n;
         let stats = &mut self.lab.stats;
@@ -1010,5 +1229,324 @@ mod tests {
             (s.pixels, s.runs, s.overflow),
             ((W * H) as u32, H as u32, 0)
         );
+    }
+
+    // RAW10: 10-bit pixels, packed per row.
+    const W10: usize = 64;
+    const H10: usize = 16;
+    const S10: usize = W10 / 4 * raw10::GROUP_BYTES;
+
+    fn pack(px: &[u16], out: &mut [u8]) {
+        let groups = out.as_chunks_mut::<{ raw10::GROUP_BYTES }>().0;
+        for (p, g) in px.as_chunks::<4>().0.iter().zip(groups) {
+            *g = raw10::pack(*p);
+        }
+    }
+
+    fn frame10(pixels: &[(usize, usize, u16)], fill: u16) -> [u8; S10 * H10] {
+        let mut px = [fill; W10 * H10];
+        for &(x, y, v) in pixels {
+            px[y * W10 + x] = v;
+        }
+        let mut f = [0u8; S10 * H10];
+        pack(&px, &mut f);
+        f
+    }
+
+    fn detect10(f: &[u8], t: u16, out: &mut [Blob]) -> usize {
+        DefaultDetector::new().process_frame_raw10(f, W10 as u16, t, out)
+    }
+
+    #[test]
+    fn raw10_pack_round_trip() {
+        // The layout itself: top bits in bytes 0..=3, low bits of pixel 0 in bits 1..0.
+        assert_eq!(
+            raw10::pack([0x3ff, 0x000, 0x001, 0x2aa]),
+            [0xff, 0x00, 0x00, 0xaa, 0b10_01_00_11]
+        );
+        for v in 0..1024u16 {
+            for k in 0..4 {
+                let mut px = [(v * 7 + 300) % 1024, v ^ 0x155, 1023 - v, v / 3];
+                px[k] = v;
+                let back = raw10::unpack(&raw10::pack(px));
+                assert_eq!(back, px.map(u32::from), "{px:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn raw10_skip_masks_cover_low_bytes() {
+        for (o, m) in raw10::SKIP_MASKS.iter().enumerate() {
+            for (b, byte) in m.iter().flat_map(|w| w.to_ne_bytes()).enumerate() {
+                let low = (o + b) % raw10::GROUP_BYTES == 4;
+                assert_eq!(byte, if low { 0 } else { 0xff }, "phase {o} byte {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn raw10_single_pixel() {
+        let f = frame10(&[(37, 5, 1001)], 0);
+        let mut out = [Blob::default(); 4];
+        assert_eq!(detect10(&f, 512, &mut out), 1);
+        assert_eq!(
+            out[0],
+            Blob {
+                x: 37 * 32,
+                y: 5 * 32,
+                area: 1,
+                peak: 250
+            }
+        );
+    }
+
+    #[test]
+    fn raw10_weights_use_low_bits() {
+        // 10-bit weights 4, 7, 6: sw = 17, swx = 16 + 35 + 30 = 81 -> 4.765 px -> 152.5
+        // -> 152, swy = 8 + 14 + 18 = 40 -> 2.353 px -> 75.3 -> 75. With the top 8 bits
+        // only (1, 1, 1) x would be 14 / 3 px -> 149.
+        let f = frame10(&[(4, 2, 4), (5, 2, 7), (5, 3, 6)], 0);
+        let mut out = [Blob::default(); 4];
+        assert_eq!(detect10(&f, 4, &mut out), 1);
+        assert_eq!(
+            out[0],
+            Blob {
+                x: 152,
+                y: 75,
+                area: 3,
+                peak: 1
+            }
+        );
+    }
+
+    #[test]
+    fn raw10_thresholds_at_10_bit_edges() {
+        let values = [3u16, 4, 510, 511, 512, 513, 515, 516, 1022, 1023];
+        let mut px = [(0, 0, 0); 10];
+        for (i, &v) in values.iter().enumerate() {
+            px[i] = (3 + 6 * i, 1 + i, v);
+        }
+        let f = frame10(&px, 0);
+        let mut out = [Blob::default(); 16];
+        for t in [1u16, 4, 5, 511, 512, 513, 516, 517, 1022, 1023, 2000] {
+            let want = values.iter().filter(|&&v| v >= t.min(1023)).count();
+            assert_eq!(detect10(&f, t, &mut out), want, "t {t}");
+        }
+        assert_eq!(detect10(&f, 512, &mut out), 6);
+        assert_eq!(detect10(&f, 1023, &mut out), 1);
+        assert_eq!(out[0].peak, 255);
+        // Threshold 0 is taken as 1: the zero background stays dark.
+        assert_eq!(detect10(&f, 0, &mut out), 10);
+    }
+
+    #[test]
+    fn raw10_skip_passes_dark_rows_with_bright_low_bytes() {
+        // Pixels 3 everywhere (low-bit bytes 0xff): at every alignment the skip must go
+        // through the whole row, else the low bytes defeat it.
+        let f = frame10(&[], 3);
+        let mut buf = [0u8; S10 + 4];
+        for offset in 0..4 {
+            buf[offset..offset + S10].copy_from_slice(&f[..S10]);
+            let row = &buf[offset..offset + S10];
+            // SAFETY: as in `Scan::row`.
+            let (pre, mid, _) = unsafe { row.align_to::<u32>() };
+            let (chunks, _) = mid.as_chunks::<CHUNK10>();
+            assert!(!chunks.is_empty());
+            let masks = &raw10::SKIP_MASKS[pre.len() % raw10::GROUP_BYTES];
+            let (add, high) = swar_params(1);
+            assert!(!high);
+            let n = skip_dark10::<false>(chunks, masks, add);
+            assert_eq!(n, chunks.len(), "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn raw10_low_bytes_are_not_pixels() {
+        // Background 3: top bits 0, every low-bit byte 0xff, brighter than any threshold
+        // if it were read as a pixel. Background 0: nothing but the pixel can stop the
+        // skip, so a top-bits byte masked by mistake loses the pixel. The pixel sits at
+        // every column and byte alignment and equals the threshold.
+        let mut buf = [0u8; S10 * H10 + 4];
+        let mut out = [Blob::default(); 4];
+        let mut det = DefaultDetector::new();
+        for offset in 0..4 {
+            for t in [4u16, 5, 512, 1023] {
+                for bg in [0, 3] {
+                    let f = frame10(&[], bg);
+                    buf[offset..offset + f.len()].copy_from_slice(&f);
+                    let f = &buf[offset..offset + S10 * H10];
+                    let n = det.process_frame_raw10(f, W10 as u16, t, &mut out);
+                    assert_eq!((n, det.stats().pixels), (0, 0), "offset {offset} t {t}");
+                    for x in 0..W10 {
+                        let f = frame10(&[(x, 7, t)], bg);
+                        buf[offset..offset + f.len()].copy_from_slice(&f);
+                        let f = &buf[offset..offset + S10 * H10];
+                        let n = det.process_frame_raw10(f, W10 as u16, t, &mut out);
+                        assert_eq!(n, 1, "offset {offset} t {t} bg {bg} x {x}");
+                        assert_eq!(det.stats().pixels, 1);
+                        assert_eq!((out[0].x, out[0].y), (x as u16 * 32, 7 * 32));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raw10_strips_match_whole_frame_at_any_alignment() {
+        // A staircase crossing the 32-pixel chunk edge and a thin diagonal, rows 2..=7,
+        // with low bits set, on a background whose low-bit bytes are 0xff.
+        let mut px = [(0, 0, 0); 30];
+        let mut i = 0;
+        for y in 2..=7 {
+            for x in [26, 27, 28, 29, 50] {
+                px[i] = (x + y, y, 520 + ((x * 37 + y * 11) % 500) as u16);
+                i += 1;
+            }
+        }
+        let f = frame10(&px, 0x7f);
+        let mut want = [Blob::default(); 16];
+        let mut det = DefaultDetector::new();
+        let nw = det.process_frame_raw10(&f, W10 as u16, 512, &mut want);
+        assert_eq!(nw, 2);
+        let want_stats = det.stats();
+        assert_eq!(want_stats.pixels, 30);
+        for offset in 0..5 {
+            let mut buf = [0u8; S10 * H10 + 5];
+            buf[offset..offset + S10 * H10].copy_from_slice(&f);
+            let f = &buf[offset..offset + S10 * H10];
+            for strip in [1, 2, 3, 4, 5, H10] {
+                det.begin_frame_raw10(W10 as u16, 512);
+                let mut y = 0;
+                while y < H10 {
+                    let n = strip.min(H10 - y);
+                    det.push_rows(&f[y * S10..(y + n) * S10], y as u16);
+                    y += n;
+                }
+                let mut got = [Blob::default(); 16];
+                let ng = det.finish(&mut got);
+                assert_eq!(got[..ng], want[..nw], "offset {offset} strip {strip}");
+                assert_eq!(det.stats(), want_stats);
+            }
+        }
+    }
+
+    #[test]
+    fn raw10_blob_across_strip_boundary() {
+        // 3 x 3 square on rows 7..=9, pushed as strips of 8 rows: one blob.
+        let mut px = [(0, 0, 0); 9];
+        for (i, p) in px.iter_mut().enumerate() {
+            *p = (30 + i % 3, 7 + i / 3, 700 + i as u16);
+        }
+        let f = frame10(&px, 1);
+        let mut det = DefaultDetector::new();
+        det.begin_frame_raw10(W10 as u16, 600);
+        det.push_rows(&f[..8 * S10], 0);
+        det.push_rows(&f[8 * S10..], 8);
+        let mut out = [Blob::default(); 4];
+        assert_eq!(det.finish(&mut out), 1);
+        // Weights 700..=708 in row-major order: sw = 6336,
+        // swx = 30 * 2109 + 31 * 2112 + 32 * 2115 = 196422 -> 31.001 px -> 992,
+        // swy = 7 * 2103 + 8 * 2112 + 9 * 2121 = 50706 -> 8.0028 px -> 256.
+        assert_eq!(
+            out[0],
+            Blob {
+                x: 992,
+                y: 256,
+                area: 9,
+                peak: 177
+            }
+        );
+    }
+
+    /// Reference for RAW10: 8-connected flood fill over unpacked 10-bit values.
+    fn flood10(f: &[u16], w: usize, t: u16, out: &mut [Blob]) -> usize {
+        let h = f.len() / w;
+        let mut seen = [false; 128 * 32];
+        let mut stack = [0usize; 128 * 32];
+        let mut n = 0;
+        for start in 0..w * h {
+            if seen[start] || f[start] < t {
+                continue;
+            }
+            let (mut sp, mut area, mut sw, mut sx, mut sy, mut peak) =
+                (0, 0u32, 0u64, 0u64, 0u64, 0);
+            seen[start] = true;
+            stack[sp] = start;
+            sp += 1;
+            while sp > 0 {
+                sp -= 1;
+                let p = stack[sp];
+                let (x, y, v) = (p % w, p / w, f[p]);
+                area += 1;
+                sw += v as u64;
+                sx += v as u64 * x as u64;
+                sy += v as u64 * y as u64;
+                peak = peak.max(v);
+                for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
+                    for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
+                        let q = ny * w + nx;
+                        if !seen[q] && f[q] >= t {
+                            seen[q] = true;
+                            stack[sp] = q;
+                            sp += 1;
+                        }
+                    }
+                }
+            }
+            let q5 = |s: u64| ((s * 32 + sw / 2) / sw) as u16;
+            out[n] = Blob {
+                x: q5(sx),
+                y: q5(sy),
+                area: area as u16,
+                peak: (peak >> 2) as u8,
+            };
+            n += 1;
+        }
+        n
+    }
+
+    #[test]
+    fn raw10_random_frames_match_flood_fill() {
+        const RW: usize = 128;
+        const RH: usize = 32;
+        const RS: usize = RW / 4 * raw10::GROUP_BYTES;
+        let mut s = 0x6c07_8965u32;
+        let mut rnd = move || {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            s
+        };
+        let mut det = Detector::<256, 256, 1024>::new();
+        let mut px = [0u16; RW * RH];
+        let mut buf = [0u8; RS * RH + 4];
+        let mut want = [Blob::default(); RW * RH];
+        let mut got = [Blob::default(); 1024];
+        let thresholds = [4u16, 100, 511, 512, 513, 600, 1023];
+        for round in 0..280 {
+            let offset = round % 4;
+            let t = thresholds[round / 4 % thresholds.len()];
+            let density = 1 + round as u32 % 8;
+            for p in px.iter_mut() {
+                let r = rnd();
+                *p = if r % 16 < density {
+                    t + (r >> 8) as u16 % (1024 - t)
+                } else {
+                    // Dark, mostly with low bits 3 (low-bit bytes 0xff), top bits up to
+                    // just below the threshold's.
+                    let v = (r >> 8) as u16 % t;
+                    if r & 0x30 != 0 && v | 3 < t { v | 3 } else { v }
+                };
+            }
+            pack(&px, &mut buf[offset..offset + RS * RH]);
+            let f = &buf[offset..offset + RS * RH];
+            let nw = flood10(&px, RW, t, &mut want);
+            let ng = det.process_frame_raw10(f, RW as u16, t, &mut got);
+            assert_eq!(det.stats().overflow, 0, "round {round}");
+            let key = |b: &Blob| (b.y, b.x, b.area, b.peak);
+            want[..nw].sort_unstable_by_key(key);
+            got[..ng].sort_unstable_by_key(key);
+            assert_eq!(got[..ng], want[..nw], "round {round} t {t}");
+        }
     }
 }

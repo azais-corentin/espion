@@ -48,6 +48,7 @@ mod camera;
 )]
 mod ov9281;
 mod soak;
+mod strip_soak;
 mod synth;
 mod vision;
 
@@ -58,10 +59,28 @@ const LOG_BAUD: Option<u32> = Some(2_000_000);
 const RUN_BENCH: bool = false;
 /// Run the camera section after the boot report (and the benchmark, if on).
 const RUN_CAMERA: bool = true;
-/// Camera section: modes (indexes into `ov9281::MODES`: 0 1280x800, 1 1280x720, 2 640x480,
-/// 3 640x400), sensor settings, checks, still dump (decode with `tools/still.py`) and the
-/// processing soak. For capture only, set `soak: None` (and `cache_check`/`still_dump` as
-/// wanted).
+/// What the camera section runs after capture starts in each mode.
+#[allow(
+    dead_code,
+    reason = "the variants not selected by `SOAK` are the documented alternatives"
+)]
+enum Soak {
+    /// Capture only: frame rate and error counters (plus `cache_check`/`still_dump`).
+    None,
+    /// Frame soak: blob detection on whole frames in PSRAM ([`SOAK_PLAN`]).
+    Frames,
+    /// Strip soak: blob detection on 64-line strips in internal RAM ([`STRIP_SOAK_PLAN`]). The
+    /// whole-frame receiver is then never created, and `measure`, `cache_check` and
+    /// `still_dump` are ignored. Needs `RUN_BENCH = false` (checked at compile time).
+    Strips,
+}
+/// The soak [`CAMERA_PLAN`] runs.
+const SOAK: Soak = Soak::Frames;
+/// The plan the camera section runs: [`CAMERA_PLAN`] (default) or [`FAST_CAPTURE_PLAN`].
+const PLAN: &camera::Plan = &CAMERA_PLAN;
+/// Camera section on the 120 fps RAW8 modes (indexes into `ov9281::MODES`: 0 1280x800,
+/// 1 1280x720, 2 640x480, 3 640x400): sensor settings, checks, still dump (decode with
+/// `tools/still.py`) and the soak selected by [`SOAK`]. The soaks run on RAW8 modes only.
 const CAMERA_PLAN: camera::Plan = camera::Plan {
     modes: &[0, 1, 2, 3],
     test_pattern: false,
@@ -72,15 +91,42 @@ const CAMERA_PLAN: camera::Plan = camera::Plan {
     measure: Duration::from_secs(5),
     cache_check: false,
     still_dump: false,
-    soak: Some(SOAK_PLAN),
+    soak: match SOAK {
+        Soak::Frames => Some(SOAK_PLAN),
+        _ => None,
+    },
+    strips: match SOAK {
+        Soak::Strips => Some(STRIP_SOAK_PLAN),
+        _ => None,
+    },
 };
-/// Processing soak per mode: a live run, then synthetic frames with these disc counts, while
+/// Frame soak per mode: a live run, then synthetic frames with these disc counts, while
 /// capture keeps running (about 60 s per mode).
 const SOAK_PLAN: soak::Plan = soak::Plan {
     live: Duration::from_secs(30),
     synthetic: Duration::from_secs(10),
     blob_counts: &[0, 16, 64],
 };
+/// Strip soak per mode: a live run, then synthetic strips aiming at these blob counts per
+/// frame, while capture keeps running (about 60 s per mode).
+const STRIP_SOAK_PLAN: strip_soak::Plan = strip_soak::Plan {
+    live: Duration::from_secs(30),
+    synthetic: Duration::from_secs(10),
+    blob_targets: &[0, 16, 64],
+};
+/// Capture only over the extended modes 4..=11 (4..=8 faster RAW8 up to 454 fps, 9..=11
+/// RAW10): measured against the predicted frame rate, 5 s each. The exposure is clamped per
+/// mode to its longest (below 800 lines in modes 6, 7 and 8).
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const FAST_CAPTURE_PLAN: camera::Plan = camera::Plan {
+    modes: &[4, 5, 6, 7, 8, 9, 10, 11],
+    still_dump: false,
+    soak: None,
+    strips: None,
+    ..CAMERA_PLAN
+};
+// The benchmark's 300 KiB frame buffer and the strip ring do not both fit in internal RAM.
+const _: () = assert!(!(RUN_BENCH && PLAN.strips.is_some()));
 
 /// SCCB data: net ESP_I2C_SDA, U6 pin 7 (GPIO7) to CSI connector J1 pin 2.
 const SCCB_SDA_GPIO: u8 = 7;
@@ -122,8 +168,11 @@ unsafe extern "C" {
     fn Cache_WriteBack_Invalidate_Addr(map: u32, addr: u32, size: u32) -> i32;
 }
 
-static SRAM_BENCH: ConstStaticCell<[u8; SRAM_BENCH_LEN]> =
-    ConstStaticCell::new([0; SRAM_BENCH_LEN]);
+/// Internal-RAM buffer of the boot read-speed test, then the strip soak's synthetic strip.
+#[repr(C, align(64))]
+struct SramBench([u8; SRAM_BENCH_LEN]);
+static SRAM_BENCH: ConstStaticCell<SramBench> =
+    ConstStaticCell::new(SramBench([0; SRAM_BENCH_LEN]));
 /// Keeps the PSRAM driver (and its peripheral) alive for the whole run.
 static PSRAM_DRIVER: StaticCell<Psram> = StaticCell::new();
 
@@ -143,7 +192,7 @@ async fn main(_spawner: Spawner) -> ! {
         );
     }
     log_chip();
-    let psram_mem = memory_report(peripherals.PSRAM);
+    let (psram_mem, internal) = memory_report(peripherals.PSRAM);
     let mut i2c = sccb_report(peripherals.I2C0).await;
 
     info!("boot report done");
@@ -153,7 +202,8 @@ async fn main(_spawner: Spawner) -> ! {
                 bench::run(mem);
             }
             if RUN_CAMERA {
-                camera::run(&mut i2c, peripherals.VDMA_CH0, mem, &CAMERA_PLAN).await;
+                const STRIPS: bool = PLAN.strips.is_some();
+                camera::run::<STRIPS>(&mut i2c, peripherals.VDMA_CH0, mem, internal, PLAN).await;
             }
         }
         None => error!("detector benchmark and camera need PSRAM, skipped"),
@@ -177,8 +227,11 @@ fn log_chip() {
 }
 
 /// Brings up PSRAM, checks it and measures the read speeds. Returns the mapped PSRAM, if
-/// it is large enough for the tests.
-fn memory_report(psram: esp_hal::peripherals::PSRAM<'static>) -> Option<&'static mut [u8]> {
+/// it is large enough for the tests, and the internal-RAM read-speed buffer (reused by the
+/// strip soak for its synthetic strip).
+fn memory_report(
+    psram: esp_hal::peripherals::PSRAM<'static>,
+) -> (Option<&'static mut [u8]>, &'static mut [u8]) {
     let psram_config = PsramConfig {
         timing: PSRAM_TIMING,
         ..PsramConfig::default()
@@ -203,8 +256,9 @@ fn memory_report(psram: esp_hal::peripherals::PSRAM<'static>) -> Option<&'static
         error!("PSRAM: not mapped or too small, skipping its tests");
         None
     };
-    bench("internal RAM", SRAM_BENCH.take(), false);
-    psram_mem
+    let internal = &mut SRAM_BENCH.take().0[..];
+    bench("internal RAM", internal, false);
+    (psram_mem, internal)
 }
 
 /// Scans the camera's I2C bus and reads the OV9281 chip ID. Returns the bus for the camera.

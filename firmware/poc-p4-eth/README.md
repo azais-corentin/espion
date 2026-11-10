@@ -12,8 +12,15 @@ The modes under test are 1280x800, 1280x720 (crop), 640x480 (crop) and 640x400 (
 with the sensor free-running (no XVS trigger). The PoC is minimal by intent: no Ethernet, no
 PTP, no LEDs, no protocol.
 
-Status: question 2 is answered on synthetic frames (below). Camera capture over CSI is not in
-this firmware yet.
+Status, measured on the board (details below):
+
+- Question 1: yes. The camera delivers whole frames over CSI-2 in all four modes at
+  119.92 fps, with no dropped or short frame and no error.
+- Question 2, with whole frames read from PSRAM: 640x480 and 640x400 sustain 120 fps with
+  every pixel processed. The 1280-wide modes do not (85–106 fps processed).
+
+Built but not run on the board yet: the strip soak (64-line strips in internal RAM), the
+extended sensor modes 4..=11 (faster RAW8 and RAW10) and the RAW10 detector check.
 
 ## Hardware set-up
 
@@ -22,7 +29,7 @@ this firmware yet.
 | Board | [Waveshare ESP32-P4-ETH](https://docs.waveshare.com/ESP32-P4-ETH): ESP32-P4NRW32X (32 MB PSRAM in package), 32 MB flash, CH343P USB-UART bridge on the USB-C port |
 | Camera | SZYTF WX-1M-9281-79 OV9281 module, Raspberry-Pi-style 15-pin FFC (pin table in [docs/hardware/camera.md](../../docs/hardware/camera.md)) |
 | Cable | 22-pin to 15-pin FFC into the board's 22-pin MIPI-CSI connector J1 [INFERENCE: Pi-style mapping, J1 pin 6 to module pin 11] |
-| Host link | USB-C to the CH343, `/dev/ttyACM0` (UART0, 115200 baud) |
+| Host link | USB-C to the CH343, `/dev/ttyACM0` (UART0: 115200 baud for the ROM and bootloader, 2 Mbaud once the firmware runs) |
 
 Pin map used, from the Waveshare schematic
 ([ESP32-P4-ETH-datasheet.pdf](https://files.waveshare.com/wiki/ESP32-P4-ETH/ESP32-P4-ETH-datasheet.pdf),
@@ -50,42 +57,96 @@ From this directory, inside the dev shell (or prefix with `nix develop -c` from 
 cargo build --release
 E=target/riscv32imafc-unknown-none-elf/release/poc-p4-eth
 timeout 120 espflash flash   --chip esp32p4 --port /dev/ttyACM0 --non-interactive "$E"
-timeout 100 espflash monitor --chip esp32p4 --port /dev/ttyACM0 --non-interactive --no-addresses --elf "$E" \
-  > boot.log 2>&1          # exits 124 when timeout stops it: expected
-sed 's/\x1b\[[0-9;]*m//g' boot.log | tr -d '\r'
+timeout 330 espflash monitor --chip esp32p4 --port /dev/ttyACM0 --non-interactive --no-addresses \
+  --monitor-baud 2000000 --elf "$E" > /tmp/poc-p4-eth/soak.log 2>&1   # exits 124 at the timeout: expected
+sed 's/\x1b\[[0-9;]*m//g' /tmp/poc-p4-eth/soak.log | tr -d '\r' | grep -aE 'camera|soak|^INFO - \|'
+python3 tools/still.py /tmp/poc-p4-eth/soak.log   # only with still_dump: true
 ```
 
 - `monitor` resets the chip through the CH343's DTR/RTS on connect, so the log starts at the
   ROM banner. No BOOT or RESET press is needed.
-- The boot report is out within about 1 s of reset; the detector benchmark takes about 90 s
-  more, hence the 100 s timeout.
+- The firmware switches UART0 to 2 Mbaud right after `esp_hal::init` (`LOG_BAUD` in
+  `main.rs`). The ROM and bootloader lines before that are at 115200 and look garbled in a
+  2 Mbaud monitor.
+- How long to let `monitor` run: the boot report is out within about 1 s; the default plan
+  (frame soak, four modes) needs about 330 s; capture only takes about 70 s for four modes
+  with the cache check (about 100 s with the still dumps too); the detector benchmark
+  (`RUN_BENCH = true`) about 90 s.
 - `--no-addresses` stops espflash from printing symbol lines for hex numbers in the log.
 - `cargo run --release` uses the runner `espflash flash --monitor ...`, which is interactive.
+- `tools/still.py <log> [out dir]` (Python standard library only) checks each still's CRC and
+  line count and writes `<out dir>/<name>.pgm` and `.png` (default `/tmp/poc-p4-eth`). RAW10
+  stills become a 16-bit PGM and an 8-bit PNG.
+
+### Choosing what runs
+
+All in constants at the top of `src/main.rs`; one plan per boot.
+
+| Constant | Value | Runs |
+|---|---|---|
+| `RUN_BENCH` | `false` (default) / `true` | Detector benchmark on synthetic frames, before the camera |
+| `RUN_CAMERA` | `true` (default) | The camera section |
+| `PLAN` | `&CAMERA_PLAN` (default) | Modes 0..=3 (the 120 fps RAW8 modes), then the soak chosen by `SOAK` |
+| `PLAN` | `&FAST_CAPTURE_PLAN` | Capture only over modes 4..=11, 5 s each, then the detector check per mode |
+| `SOAK` | `Soak::Frames` (default) | Frame soak: whole frames in PSRAM (`SOAK_PLAN`) |
+| `SOAK` | `Soak::Strips` | Strip soak: 64-line strips in internal RAM (`STRIP_SOAK_PLAN`). Needs `RUN_BENCH = false` (checked at compile time) |
+| `SOAK` | `Soak::None` | Capture only, then the detector check per mode |
+
+`CAMERA_PLAN` also holds the sensor settings (exposure 800 lines, gain 0x20, continuous
+clock, scene), the measurement window (5 s) and the `cache_check` and `still_dump` switches.
 
 ## What the firmware does
 
 At boot, in order:
 
-1. Prints the chip revision, CPU clock, MAC, and the L1 data and L2 cache sizes read back from
-   the cache registers.
+1. Switches the log UART to 2 Mbaud, then prints the chip revision, CPU clock, MAC, and the L1
+   data and L2 cache sizes read back from the cache registers.
 2. Brings up PSRAM through esp-hal, prints its size and bus clock, and runs a write/read-back
    pattern test over the last 4 MiB plus an aliasing check.
 3. Measures one core's sequential read speed over 1 MiB of cold PSRAM and 128 KiB of internal
    RAM.
 4. Starts I2C0 at 100 kHz, scans the bus and reads the OV9281 chip ID.
-5. Runs the detector benchmark on synthetic frames (`bench::run`).
+5. If `RUN_BENCH`: runs the detector benchmark on synthetic frames (`bench::run`).
+6. If `RUN_CAMERA`: the camera section (`camera::run`). It turns on LDO VO3 at 2.5 V (the
+   D-PHY supply), then for each mode of the plan:
+   1. writes the mode's registers, the exposure (clamped to the mode's maximum and printed as
+      applied), gain, and optionally the test pattern or the gated clock; reads them back;
+   2. configures and starts the receiver, checks the lanes are in stop state, writes
+      `STREAM_ON`, waits for the first frame (500 ms timeout, then the driver's checklist);
+   3. measures 5 s of capture: frames, sizes against the configured frame length, error
+      counters, and the measured frame rate next to the sensor's predicted one. Nothing is
+      logged inside the window;
+   4. optionally times the cache invalidation, checks cache coherence and dumps a still;
+   5. runs the frame soak, or in a capture-only plan the detector check (below);
+   6. writes `STREAM_OFF`, waits 20 ms, stops the receiver.
+
+   With the strip soak selected, the whole-frame receiver is never created: one strip
+   receiver serves every mode, and steps 3 and 4 are skipped.
+
+The detector check (capture-only plans) runs after the measurement window, once per mode. The
+detector processes one held captured frame: `process_frame` at threshold 128 for RAW8,
+`process_frame_raw10` at 512 for RAW10. For a RAW10 mode it also processes a `Synth::fill_raw10`
+frame of the mode's size with 16 discs, held in PSRAM and written back from the cache first.
+Each call prints its blob count, the detector overflow and the time from the cycle counter.
 
 | File | What |
 |---|---|
-| `src/main.rs` | Boot report: chip and cache info, PSRAM init and test, read-speed kernels, SCCB scan and chip ID. Pin and address choices are constants at the top |
+| `src/main.rs` | Boot report: log baud switch, chip and cache info, PSRAM init and test, read-speed kernels, SCCB scan and chip ID. Pin and address choices, and the plans (see "Choosing what runs"), are constants at the top |
+| `src/camera.rs` | Camera section: LDO VO3, sensor set-up over SCCB, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement, cache check, still dump, detector check, and the strip receiver for the strip soak |
+| `src/soak.rs` | Frame soak: per mode, 30 s on live frames, then 10 s each on synthetic frames with 0, 16 and 64 discs, while capture keeps running; result table |
+| `src/strip_soak.rs` | Strip soak: the same runs on a ring of 4 strips of 64 lines in internal RAM (80 KiB each, 320 KiB in total), with per-frame processing and latency and per-strip hold times |
 | `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each |
-| `src/vision.rs` | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, 19 520 B. Whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
-| `src/synth.rs` | Deterministic synthetic RAW8 frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list) and `Synth::fill(&mut self, buf, width, height, blobs, seed)` |
-| `src/ov9281.rs` | OV9281 register tables for the four modes (HTS 728, VTS 915, 120.098 fps, 800 Mbit/s per lane), from the datasheet and the ESP-IDF, Linux and Raspberry Pi drivers. Not used yet; nothing in it has run on hardware |
+| `src/vision.rs` | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
+| `src/synth.rs` | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
+| `src/ov9281.rs` | OV9281 register tables for 12 modes, from the datasheet and the ESP-IDF, Linux, Raspberry Pi and Inno-Maker drivers. 0..=3: the four 120 fps RAW8 modes (HTS 728, VTS 915, 120.098 fps, 800 Mbit/s per lane), run on the board. 4..=8: faster RAW8 modes (up to 454 fps); 9..=11: RAW10. 4..=11 have not run on the board |
+| `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files |
 
 ## Measured results
 
-All figures are from this board on 2026-11-10, with the firmware as committed.
+All figures are from this board on 2026-11-10. The boot report and benchmark are from the
+firmware as committed then; the capture results from commit `c0a70eb` and the soak from
+`08b7bef`, both with frame buffers of 1 028 096 B (1280x800 RAW8; the buffers are now sized
+for RAW10).
 
 ### Chip and memory
 
@@ -193,14 +254,149 @@ Limits of these numbers:
 - No CSI DMA ran at the same time, on the PSRAM bus or into internal RAM. These are lower
   bounds for the live case [INFERENCE: the live PSRAM path will be slower].
 - Cache maintenance is untimed in every path. The live firmware must invalidate each frame
-  or strip before reading it; that cost is not measured.
-- The strip path is a stand-in. Strip capture is not implemented: DMA set-up and per-strip
-  interrupt latency are not included, and whether the CSI DMA can fill a ring of internal
-  strips is still to be confirmed.
+  or strip before reading it; for whole frames that cost was measured later (17–31 us per
+  frame, see "Camera capture").
+- The strip path is a stand-in: DMA set-up and per-strip interrupt latency are not included.
+  The strip soak, which measures them, has not run on the board yet.
 - Synthetic frames: a dark background (4..19) and round discs. Real frames with brighter
   backgrounds take the detector's per-pixel path more often [INFERENCE].
 - The buffers are not cache-line aligned. Between builds, with the buffers at other
   addresses, detector times moved by up to 2 % and the internal-RAM line-load figure by 11 %.
+
+### Camera capture (whole frames in PSRAM)
+
+Set-up: three frame buffers at the start of PSRAM (0x4800_0000), filled with the sentinel
+0x5A before the first frame. Continuous clock lane, exposure 800 lines, gain 0x20, indoor
+scene. In every mode, before stream-on, the clock and both data lanes were in stop state.
+
+The sensor predicts 120.098 fps (HTS 728, VTS 915). Every mode measured 600 frames in 5003 ms
+= **119.922 fps** (first-to-last 119.921–119.922). In every mode the following were all 0:
+wrong size, dropped, overwritten, DMA errors, host errors (main and all 9 detail registers),
+bridge errors.
+
+| Mode | Readback 0x3808..0x380B | Bytes/frame (= w·h) | `CMPLTD_BLK_TFR_SIZE` |
+|---|---|---|---|
+| 1280x800 | 0500 x 0320 | 1 024 000 | 127 999 |
+| 1280x720 crop | 0500 x 02d0 | 921 600 | 115 199 |
+| 640x480 crop | 0280 x 01e0 | 307 200 | 38 399 |
+| 640x400 2x2 binned | 0280 x 0190 | 256 000 | 31 999 |
+
+- The −0.15 % against the predicted rate is [INFERENCE]: XVCLK is slightly under 24 MHz.
+- The first frame's tail never held the sentinel: the DMA writes the whole frame. The
+  block-size register under-reports by one item, so the driver takes the frame length from
+  the DMA destination address instead.
+
+Stills (dumped over the UART, decoded with `tools/still.py`):
+
+| Still | Checked |
+|---|---|
+| 1280x800 scene (min 4, max 255, mean 41.0, 7.3 s to dump) | Office ceiling with suspended tiles: grid lines straight across the whole frame, sharp, no torn or wrapped lines |
+| 1280x720 scene (mean 47.2) | Best pixel match inside the 1280x800 frame at offset (0, 40): the centred crop |
+| 640x480 scene (min 5, max 83, mean 51.7) | Best match inside the 1280x800 frame at (320, 160), the exact centre, mean absolute difference 4.6 (noise level) |
+| 640x400 scene (mean 75.0) | The whole field of view: correlation 0.991 with a 2x2 average of the 1280x800 frame at (0, 0). It is 1.83x brighter [INFERENCE: the binning sums in at least one direction] |
+| 640x400 and 1280x800 test pattern (0x5E00 = 0x80) | 8 vertical bars, 80 px apart at 640 and 162 px at 1280; every even row equals row 0 and every odd row row 1, so no shear and no lost bytes. Inside the bars each 2x2 Bayer phase is 0 or 255: the standard colour bar of an RGB Bayer generator seen on a mono sensor |
+
+Cache invalidation (`Cache_Invalidate_Addr` over L1 and L2, which `wait_frame` calls on each
+delivered frame):
+
+- 17–31 us in all runs, return code 0, independent of the size: 24–28 us for 256 000 B and
+  for 1 024 000 B with the lines not cached; 19–26 us after reading every line.
+  [INFERENCE: the cache sync engine handles a range in constant time.]
+- It is needed and it works: after reading the first 16 KiB of a buffer and letting the DMA
+  run 40 ms into it, a cached read returns exactly the old sum, and a read after the
+  invalidation the new one. When that buffer is next delivered, the bytes `wait_frame` hands
+  out equal a fresh re-invalidation, in all 4 modes.
+
+Logging pitfall: `esp-println` holds a critical section for each log line. At 115200 baud a
+line logged right after a frame kept the DMA interrupt masked past vertical blanking, and the
+next frame arrived short (7680 B once). Hence the 2 Mbaud log, and the capture code drops the
+frame that completes during set-up and logging before it measures, and logs nothing inside a
+measurement window. With that, all frames were whole (2400 per run of four modes).
+
+### 120 fps soak, whole frames from PSRAM
+
+Method:
+
+- **One core, one executor.** The esp-rtos embassy main task on core 0 waits for frames
+  (`Csi::wait_frame`) and runs the detector in the same task; nothing else runs. Core 1 stays
+  parked. [INFERENCE: the CSI DMA interrupt also lands on core 0, as esp-hal binds handlers on
+  the core that creates the driver.]
+- Per mode: a live run of 30 s, then synthetic runs of 10 s with 0, 16 and 64 discs, while
+  capture keeps running. Each run first drops the frame that completed during set-up and
+  logging, then resets the driver's counters. Nothing is logged while a run measures.
+- Per frame: processing = `mcycle` around `DefaultDetector::process_frame` (threshold 128,
+  256-blob output). The cache invalidation inside `wait_frame` is not in it. The frame is held
+  while it is processed and given back by the next `wait_frame`.
+- **Live:** the delivered frame is processed.
+- **Synthetic:** `Synth::fill` (seed 0x1234_5678, as `bench`) builds a frame of the mode's size
+  in PSRAM outside the capture buffers. Before every pass it is written back and invalidated
+  (untimed), so every pass reads cold PSRAM while the DMA writes the next capture buffer.
+  Frames are waited for and given back exactly as in the live run.
+- PASS only if no frame was dropped, overwritten or skipped, no wrong size, no errors, no
+  timeout, and max processing < 8333 us.
+
+Results (us; budget 8333 us):
+
+| mode | run | frames | done | dropped | overwritten | seq gaps | wrong size | errors | proc min | mean | max | > budget | fps | blobs | overflow | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1280x800 | live | 2798 | 3598 | 0 | 799 | 798 | 0 | 0 | 10448 | 10606 | 10841 | 2798 | 93.277 | 1..5 | 0 | FAIL: overwritten |
+| 1280x800 | synth 0 | 950 | 1200 | 0 | 249 | 249 | 0 | 0 | 10365 | 10455 | 10620 | 950 | 94.984 | 0..0 | 0 | FAIL: overwritten |
+| 1280x800 | synth 16 | 909 | 1200 | 0 | 290 | 289 | 0 | 0 | 10755 | 10847 | 11206 | 909 | 90.908 | 16..16 | 0 | FAIL: overwritten |
+| 1280x800 | synth 64 | 849 | 1199 | 0 | 349 | 349 | 0 | 0 | 11503 | 11596 | 11881 | 849 | 84.952 | 64..64 | 0 | FAIL: overwritten |
+| 1280x720 crop | live | 3108 | 3597 | 0 | 488 | 488 | 0 | 0 | 9372 | 9535 | 9721 | 3108 | 103.624 | 1..4 | 0 | FAIL: overwritten |
+| 1280x720 crop | synth 0 | 1059 | 1199 | 0 | 139 | 139 | 0 | 0 | 9298 | 9371 | 9499 | 1059 | 105.944 | 0..0 | 0 | FAIL: overwritten |
+| 1280x720 crop | synth 16 | 1012 | 1200 | 0 | 187 | 187 | 0 | 0 | 9642 | 9736 | 9946 | 1012 | 101.156 | 16..16 | 0 | FAIL: overwritten |
+| 1280x720 crop | synth 64 | 938 | 1199 | 0 | 260 | 260 | 0 | 0 | 10355 | 10492 | 10854 | 938 | 93.823 | 64..64 | 0 | FAIL: overwritten |
+| 640x480 crop | live | 3598 | 3598 | 0 | 0 | 0 | 0 | 0 | 3303 | 3336 | 3430 | 0 | 119.920 | 0..0 | 0 | PASS |
+| 640x480 crop | synth 0 | 1200 | 1200 | 0 | 0 | 0 | 0 | 0 | 3296 | 3345 | 3423 | 0 | 119.920 | 0..0 | 0 | PASS |
+| 640x480 crop | synth 16 | 1200 | 1200 | 0 | 0 | 0 | 0 | 0 | 3729 | 3766 | 3912 | 0 | 119.920 | 16..16 | 0 | PASS |
+| 640x480 crop | synth 64 | 1200 | 1200 | 0 | 0 | 0 | 0 | 0 | 4411 | 4461 | 4600 | 0 | 119.920 | 64..64 | 0 | PASS |
+| 640x400 bin2 | live | 3597 | 3598 | 0 | 0 | 0 | 0 | 0 | 6193 | 7263 | 8507 | 259 | 119.920 | 182..256 | 15341 | FAIL: over budget |
+| 640x400 bin2 | synth 0 | 1200 | 1200 | 0 | 0 | 0 | 0 | 0 | 2769 | 2813 | 2910 | 0 | 119.920 | 0..0 | 0 | PASS |
+| 640x400 bin2 | synth 16 | 1199 | 1199 | 0 | 0 | 0 | 0 | 0 | 3213 | 3258 | 3393 | 0 | 119.920 | 16..16 | 0 | PASS |
+| 640x400 bin2 | synth 64 | 1199 | 1199 | 0 | 0 | 0 | 0 | 0 | 3929 | 3982 | 4112 | 0 | 119.919 | 64..64 | 0 | PASS |
+
+"done" = frames the DMA completed, "frames" = frames handed out and processed, "fps" = the
+processed rate. Each mode's 5 s capture-only measurement before the soak: 600 frames,
+119.922 fps, 0 errors. A first run, built against the in-progress strip driver, gave the same
+verdicts and figures within about 1 % (live 640x400 aside, which depends on the scene).
+
+Findings:
+
+- **640x480 crop and 640x400 binned sustain 120 fps** with every pixel processed from PSRAM
+  under live DMA: nothing dropped, overwritten or skipped, no errors, max 4.6 ms with 64
+  synthetic blobs (55 % of the budget). 640x480 also passes live (its crop of the scene has
+  no pixel >= 128).
+- **The 1280-wide modes do not.** Every frame takes longer than the frame period, so the
+  driver overwrites the older unclaimed frame and the detector always gets the newest one.
+  Nothing is dropped and there are no errors; the processed rate falls to 85–95 fps at
+  1280x800 (93.3 live) and 94–106 fps at 1280x720 (103.6 live). Processing takes
+  10.4–11.9 ms and 9.3–10.9 ms.
+- **DMA contention costs about 4–8 %.** Mean processing with live DMA against the benchmark
+  without DMA: 1280x800 0 blobs 10 455 vs 9 826 us (+6.4 %), 64 blobs 11 596 vs 10 740
+  (+8.0 %); 1280x720 0 blobs 9 371 vs 8 841 (+6.0 %); 640x480 0 blobs 3 345 vs 3 209
+  (+4.2 %); 640x400 0 blobs 2 813 vs 2 675 (+5.2 %).
+- **The live 640x400 FAIL is the scene, not the pipeline.** The binned mode is about 1.8x
+  brighter; at threshold 128 the indoor scene (lamp, white panels, no IR ring, 7.3 ms
+  exposure) gives 182 to 256+ components per frame. The 256-blob output saturates (overflow
+  15 341 in total) and processing reaches 8.5 ms; 259 of 3597 frames were over budget, yet
+  none was lost (the third buffer absorbs single late frames). [INFERENCE] With markers on a
+  dark background (short exposure, IR ring) the live cost is close to the synthetic runs. The
+  product still needs a bound on per-frame work for bright scenes (exposure control, an
+  ambient mask, or a cap on runs or blobs per frame).
+- The interval between handed-out frames is 8338 us on average (119.92 fps) in every 640-wide
+  run. In the 1280-wide runs it equals processing plus about 0.1 ms: the loop is CPU-bound.
+
+Caveats:
+
+- One core only; core 1 idle. No Ethernet, PTP or other bus master running.
+- Cache invalidation is outside the timed processing: inside `wait_frame` for live frames,
+  and the explicit write-back and invalidation for synthetic frames.
+- Synthetic frames are dark (4..19) with round discs; real marker scenes may differ.
+- Live blob counts depend on the bench scene at the time, so the live runs are not
+  repeatable workloads (two runs gave 6..256 and 182..256 blobs at 640x400).
+- The frame buffers and the synthetic area are 4 KiB aligned; the detector statics are not
+  cache-line aligned.
 
 ### PSRAM tuning attempts
 
@@ -226,7 +422,10 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
   the espion-cam board's GPIO10 must drive CAM_EN high to turn the camera on.
 - **D-PHY supply:** on the dev board VDD_MIPI_DPHY comes from the P4's internal LDO channel 3
   (ESP_LDO_VO3), no external rail, as the architecture doc says for the ESP32-P4-Core module.
-  This firmware does not set VO3 yet; the CSI driver has to.
+  The camera section sets VO3 to 2.5 V (`esp32p4_csi::enable_ldo`) before it starts the
+  receiver; capture works with that.
+- **CSI-2 link:** 2 lanes at 800 Mbit/s RAW8 with a continuous clock lane work in all four
+  modes, free-running at 119.92 fps; the gated clock was not needed and not tried.
 - **L2 cache:** the bootloader bundled with espflash 4.7.0 sets the L2 cache to 128 KiB, not the
   256 KiB esp-hal assumes by default (`ESP_HAL_CONFIG_L2_CACHE_SIZE`). This crate sets
   `"128KB"` in `.cargo/esp-config.toml` and gets 128 KiB more internal RAM. `cam-p4` still uses
@@ -234,5 +433,9 @@ The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no auto
 - **PSRAM read ceiling:** about 163 MB/s for one core reading cold PSRAM with no other work,
   and 120 MB/s when every word is summed. [docs/architecture.md](../../docs/architecture.md)
   assumes about 200 MB/s. In the detector the PSRAM path runs at about 104 MB/s, which puts
-  both 1280-wide modes over the 120 fps budget when the frame is read from PSRAM. Only the
-  internal-strip path brings them under it.
+  both 1280-wide modes over the 120 fps budget when the frame is read from PSRAM; the live
+  soak confirms it (85–106 fps processed, 4–8 % slower again under DMA). Only the
+  internal-strip path could bring them under it, and that is not measured live yet.
+- **Logging masks interrupts:** each `esp-println` line holds a critical section for as long
+  as it takes to send, enough at 115200 baud to cut a frame short. Log at 2 Mbaud and never
+  inside a capture or processing loop.

@@ -20,9 +20,9 @@ use crate::ov9281::Mode;
 use crate::{flush_cache, mcycle, synth, vision};
 
 /// Foreground threshold.
-const THRESHOLD: u8 = 128;
+pub(crate) const THRESHOLD: u8 = 128;
 /// Frame period at 120 fps.
-const BUDGET_US: u32 = 8333;
+pub(crate) const BUDGET_US: u32 = 8333;
 /// A run ends early if no frame arrives for this long.
 const FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 /// Processing-time histogram: 1 ms bins, the last one holds everything from 12 ms up.
@@ -163,14 +163,26 @@ pub struct Soak {
     mhz: u32,
 }
 
+/// The detector, its blob output and the synthetic-frame generator, in internal RAM. Shared
+/// by the frame soak and the strip soak (`strip_soak`); only one of them runs per boot, so
+/// this may be called once.
+pub(crate) fn take_detector() -> (
+    &'static mut vision::DefaultDetector,
+    &'static mut [vision::Blob; 256],
+    &'static mut synth::Synth,
+) {
+    (DETECTOR.take(), BLOBS.take(), SYNTH.take())
+}
+
 impl Soak {
     /// `scratch` must hold a 1280x800 frame and start on a cache line.
     pub fn new(plan: Plan, scratch: &'static mut [u8]) -> Self {
+        let (det, out, synth) = take_detector();
         Self {
             plan,
-            det: DETECTOR.take(),
-            out: BLOBS.take(),
-            synth: SYNTH.take(),
+            det,
+            out,
+            synth,
             scratch,
             results: RESULTS.take(),
             acc: ACC.take(),
@@ -390,7 +402,7 @@ fn verdict(r: &RunResult) -> (bool, &'static str) {
 }
 
 /// Millihertz as `x.yyy`.
-struct Fps(u64);
+pub(crate) struct Fps(pub(crate) u64);
 
 impl core::fmt::Display for Fps {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

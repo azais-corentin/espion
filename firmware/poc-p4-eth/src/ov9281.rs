@@ -1,21 +1,28 @@
-//! OV9281 register settings for the PoC: four free-running modes at 120 fps, RAW8, two MIPI
-//! CSI-2 data lanes at 800 Mbit/s each, 24 MHz external clock (XVCLK). `core` only.
+//! OV9281 register settings for the PoC: free-running modes, RAW8 or RAW10, two MIPI CSI-2 data
+//! lanes at 800 Mbit/s each, 24 MHz external clock (XVCLK). `core` only.
+//!
+//! [`MODES`] indexes 0..=3 are the 120 fps RAW8 modes (1280x800, 1280x720 crop, 640x480 crop,
+//! 640x400 binned). Indexes 4..=11 cover the Inno-Maker CAM-MIPIOV9281 V2 mode list: RAW8
+//! 1280x800 at 144 fps, 1280x720 at 144, 640x400 binned at 210 and 253, 320x200 at 453; RAW10
+//! 1280x800 at 120, 1280x720 at 120, 640x400 binned at 210. Only index 4 runs the system clock
+//! at 96 MHz, above the datasheet's 80 MHz; every other mode stays at 80 MHz.
 //!
 //! Sources and derivations are in the PoC notes (`poc-ov9281.md`). In short: the common block
 //! is Espressif's `esp_cam_sensor` OV9281 table (RAW8, 2 lanes, 24 MHz, 800 Mbit/s), the windows
-//! come from the Linux `ov9282.c` and Raspberry Pi `ov9281.c` drivers, and HTS/VTS for 120 fps,
-//! the 640x480 window and the 8-bit register choices are derived from the OV9281 datasheet v1.1.
+//! come from the Linux `ov9282.c` and Raspberry Pi `ov9281.c` drivers (which also give the RAW10
+//! and 96 MHz register values), and HTS/VTS, the 640x480 and 320x200 windows and the 8-bit
+//! register choices are derived from the OV9281 datasheet v1.1.
 //!
 //! Sequence for the caller (SCCB: 16-bit register address, 8-bit value):
 //! 1. Read [`CHIP_ID_HIGH`] and [`CHIP_ID_LOW`] and compare with [`CHIP_ID`].
 //! 2. Write every pair of [`Mode::regs`] in order. A pair whose address is [`DELAY`] is not a
 //!    register: wait its value in milliseconds instead. The list starts with a software reset,
-//!    leaves the sensor in software standby, and sets exposure [`DEFAULT_EXPOSURE_LINES`] and
-//!    gain [`DEFAULT_GAIN`].
-//! 3. Optionally write [`exposure_regs`], [`gain_regs`], [`TEST_PATTERN_ON`] or
+//!    leaves the sensor in software standby, and sets exposure [`Mode::default_exposure_lines`]
+//!    and gain [`DEFAULT_GAIN`].
+//! 3. Optionally write [`Mode::exposure_regs`], [`gain_regs`], [`TEST_PATTERN_ON`] or
 //!    [`MIPI_CLOCK_GATED`] (the last only in standby).
-//! 4. Start the CSI receiver, then write [`STREAM_ON`]. The datasheet allows up to 10 ms from
-//!    streaming to the first frame.
+//! 4. Start the CSI receiver (data type [`Mode::data_type`]), then write [`STREAM_ON`]. The
+//!    datasheet allows up to 10 ms from streaming to the first frame.
 //!
 //! The sensor free-runs: FSIN/XVS trigger mode stays off (0x3030 bit 2 = 0) and the STROBE output
 //! stays disabled (0x3006 bit 3 = 0).
@@ -57,23 +64,35 @@ pub const MIPI_CLOCK_CONTINUOUS: (u16, u8) = (0x4800, 0x00);
 /// reserved in the datasheet but set by Espressif). Write in standby only.
 pub const MIPI_CLOCK_GATED: (u16, u8) = (0x4800, 0x60);
 
-/// System clock (PLL2 sys clk) in Hz: 24 MHz / 3 x 80 / 4 / 2. HTS counts these cycles.
+/// System clock (PLL2 sys clk) of the 80 MHz modes in Hz: 24 MHz / 3 x 80 / 4 / 2. HTS counts
+/// these cycles. Each mode's own clock is [`Mode::sclk_mhz`].
 pub const SCLK_HZ: u32 = 80_000_000;
-/// MIPI bit rate per data lane in Mbit/s: 24 MHz / 1.5 x 50 / 1 (PLL1).
+/// MIPI bit rate per data lane in Mbit/s: 24 MHz / 1.5 x 50 / 1 (PLL1), the same in every mode.
 pub const LANE_MBPS: u16 = 800;
 
-/// HTS register value (SCLK cycles per line): 728 / 80 MHz = 9.1 us per line.
+/// HTS register value (SCLK cycles per line) of every mode: 728 / 80 MHz = 9.1 us per line,
+/// 728 / 96 MHz = 7.583 us.
 pub const HTS: u16 = 728;
 /// VTS register value (lines per frame) for 120 fps: 80 MHz / (728 x 915) = 120.10 fps.
 pub const VTS_120FPS: u16 = 915;
+
+/// CSI-2 data type of RAW8 long packets: one byte per pixel.
+pub const DT_RAW8: u8 = 0x2A;
+/// CSI-2 data type of RAW10 long packets. Packing (CSI-2 RAW10): every 4 pixels P0..P3 take
+/// 5 bytes, `P0[9:2] P1[9:2] P2[9:2] P3[9:2]`, then `P3[1:0] << 6 | P2[1:0] << 4 |
+/// P1[1:0] << 2 | P0[1:0]`; a line is `width * 5 / 4` bytes (1600 for 1280, 800 for 640).
+pub const DT_RAW10: u8 = 0x2B;
 
 /// Exposure must stay this many lines below VTS (Linux, Raspberry Pi and Espressif drivers;
 /// datasheet v1.1 says 12).
 pub const EXPOSURE_MAX_OFFSET: u16 = 25;
 /// Shortest exposure in lines (datasheet: 1 row period).
 pub const EXPOSURE_MIN_LINES: u16 = 1;
-/// Default exposure: 110 lines x 9.1 us = 1.001 ms.
+/// Default exposure of the 80 MHz modes: 110 lines x 9.1 us = 1.001 ms. Each mode's own default
+/// is [`Mode::default_exposure_lines`].
 pub const DEFAULT_EXPOSURE_LINES: u16 = 110;
+/// Default exposure of the 96 MHz mode: 132 lines x 7.583 us = 1.001 ms.
+pub const DEFAULT_EXPOSURE_LINES_96MHZ: u16 = 132;
 
 /// Lowest gain, 1x (real gain format, 4 fraction bits).
 pub const GAIN_MIN: u8 = 0x10;
@@ -85,11 +104,12 @@ pub const DEFAULT_GAIN: u8 = GAIN_MIN;
 /// One sensor mode.
 pub struct Mode {
     pub name: &'static str,
-    /// Output width in pixels (RAW8: bytes per line).
+    /// Output width in pixels.
     pub width: u16,
     /// Output height in lines.
     pub height: u16,
-    /// Nominal frame rate; the exact one is [`Mode::frame_rate_mhz`].
+    /// Frame rate rounded down to whole frames per second; the exact one is
+    /// [`Mode::frame_rate_mhz`] (120098 mHz for "120", 144118 for "144").
     pub fps: u16,
     /// MIPI bit rate per data lane, for the receiver's D-PHY setup.
     pub lane_mbps: u16,
@@ -99,27 +119,67 @@ pub struct Mode {
     pub vts: u16,
     /// Full register list from software reset to standby, ready to stream.
     pub regs: &'static [(u16, u8)],
+    /// Bits per pixel on the wire: 8 (RAW8) or 10 (RAW10).
+    pub bits_per_pixel: u8,
+    /// CSI-2 data type of the image packets, [`DT_RAW8`] or [`DT_RAW10`], on virtual channel 0.
+    pub data_type: u8,
+    /// Sensor system clock (PLL2 sys clk) in MHz at XVCLK 24 MHz: 80 (datasheet maximum) or 96.
+    /// HTS counts its cycles; the array's pixel rate is twice it.
+    pub sclk_mhz: u8,
+    /// Exposure that `regs` sets, in lines: about 1 ms, within [`Mode::max_exposure_lines`].
+    pub default_exposure_lines: u16,
 }
 
 impl Mode {
     /// Line period in nanoseconds.
     pub const fn line_ns(&self) -> u32 {
-        (self.hts as u64 * 1_000_000_000 / SCLK_HZ as u64) as u32
+        (self.hts as u64 * 1000 / self.sclk_mhz as u64) as u32
+    }
+
+    /// Frame period in nanoseconds.
+    pub const fn frame_ns(&self) -> u32 {
+        (self.hts as u64 * self.vts as u64 * 1000 / self.sclk_mhz as u64) as u32
     }
 
     /// Frame rate in millihertz.
     pub const fn frame_rate_mhz(&self) -> u32 {
-        (SCLK_HZ as u64 * 1000 / (self.hts as u64 * self.vts as u64)) as u32
+        (self.sclk_mhz as u64 * 1_000_000_000 / (self.hts as u64 * self.vts as u64)) as u32
+    }
+
+    /// Bytes of image data per line on the wire (RAW10: 5 bytes per 4 pixels).
+    pub const fn line_bytes(&self) -> u32 {
+        self.width as u32 * self.bits_per_pixel as u32 / 8
+    }
+
+    /// Bytes of image data per frame on the wire.
+    pub const fn frame_bytes(&self) -> u32 {
+        self.line_bytes() * self.height as u32
     }
 
     /// Longest exposure in lines for this mode's VTS.
     pub const fn max_exposure_lines(&self) -> u16 {
         self.vts - EXPOSURE_MAX_OFFSET
     }
+
+    /// [`exposure_regs`] with `lines` clamped to
+    /// [`EXPOSURE_MIN_LINES`]..=[`Mode::max_exposure_lines`], so the exposure never stretches
+    /// the frame. The shortest maximum is 217 lines = 1.97 ms, in the 320x200 mode.
+    pub const fn exposure_regs(&self, lines: u16) -> [(u16, u8); 3] {
+        let max = self.max_exposure_lines();
+        let l = if lines < EXPOSURE_MIN_LINES {
+            EXPOSURE_MIN_LINES
+        } else if lines > max {
+            max
+        } else {
+            lines
+        };
+        exposure_regs(l)
+    }
 }
 
-/// Exposure in lines (one line = [`Mode::line_ns`]). Valid range
-/// [`EXPOSURE_MIN_LINES`]..=[`Mode::max_exposure_lines`] (890 lines = 8.1 ms at VTS 915).
+/// Exposure in lines (one line = [`Mode::line_ns`]), not clamped. Valid range
+/// [`EXPOSURE_MIN_LINES`]..=[`Mode::max_exposure_lines`], which depends on the mode: 890 lines at
+/// VTS 915 down to 217 at VTS 242. [`Mode::exposure_regs`] clamps to it.
 /// Writes EXPO {0x3500[3:0], 0x3501, 0x3502}, whose low 4 bits are a fraction of a line and are
 /// left at 0. Takes effect one frame later (0x3503 bits 0 and 1 = 0).
 pub const fn exposure_regs(lines: u16) -> [(u16, u8); 3] {
@@ -398,46 +458,229 @@ const REGS_1280X720: [(u16, u8); COMMON.len() + MODE_1280X720.len()] =
 const REGS_640X480: [(u16, u8); COMMON.len() + MODE_640X480.len()] = concat(COMMON, MODE_640X480);
 const REGS_640X400: [(u16, u8); COMMON.len() + MODE_640X400.len()] = concat(COMMON, MODE_640X400);
 
-/// The four modes under test, all at HTS 728, VTS 915: 9.1 us per line, 120.10 fps.
-pub const MODES: [Mode; 4] = [
+/// 320x200: centred crop of the 2x2-binned readout, i.e. the centre 640x400 sensor pixels
+/// (active columns 320..=959, rows 200..=599), half the field of view. Derived: the 640x400
+/// binned block with its array window cut like the 640x480 crop (array window = 2 x (output +
+/// 2 x ISP offset 4) = output in sensor pixels + 16). Reading only 416 array rows is what lets
+/// VTS drop to 242.
+const MODE_320X200: &[(u16, u8)] = &[
+    (0x3778, 0x10),
+    (0x3800, 0x01), // x start 320
+    (0x3801, 0x40),
+    (0x3802, 0x00), // y start 200
+    (0x3803, 0xC8),
+    (0x3804, 0x03), // x end 975 = 320 + 640 + 16 - 1
+    (0x3805, 0xCF),
+    (0x3806, 0x02), // y end 615 = 200 + 400 + 16 - 1
+    (0x3807, 0x67),
+    (0x3808, 0x01), // width 320
+    (0x3809, 0x40),
+    (0x380A, 0x00), // height 200
+    (0x380B, 0xC8),
+    (0x3810, 0x00), // ISP x offset 4 (binned pixels)
+    (0x3811, 0x04),
+    (0x3812, 0x00), // ISP y offset 4
+    (0x3813, 0x04),
+    (0x3814, 0x31),
+    (0x3815, 0x22),
+    (0x3820, 0x60),
+    (0x3821, 0x01),
+    (0x4008, 0x02),
+    (0x4009, 0x05),
+    (0x400D, 0x03),
+    (0x4507, 0x03),
+    (0x4509, 0x80),
+];
+
+/// PLL2 multiplier 96: SCLK 96 MHz (VCO 768 MHz), above the datasheet's 80 MHz. Linux and
+/// Raspberry Pi RAW8 value.
+const SCLK_96MHZ: (u16, u8) = (0x030D, 0x60);
+/// ANA_CORE_2 RAW10 (Linux, Raspberry Pi).
+const ANA_RAW10: (u16, u8) = (0x3662, 0x05);
+/// VFIFO read start of the RAW10 tables (Linux, Raspberry Pi; Espressif's original before its
+/// RAW8 change to 0x30).
+const VFIFO_RAW10: (u16, u8) = (0x4601, 0x04);
+
+/// VTS for 1280x720 at 144 fps, 80 MHz: 80e6 / (728 x 763) = 144.02 fps (minimum 761).
+const VTS_144FPS_720: u16 = 763;
+/// VTS for 640x400 binned at 210 fps, 80 MHz: 80e6 / (728 x 523) = 210.12 fps (minimum 422).
+const VTS_210FPS: u16 = 523;
+/// VTS for 640x400 binned at 253 fps, 80 MHz: 80e6 / (728 x 434) = 253.20 fps.
+const VTS_253FPS: u16 = 434;
+/// VTS for 320x200 at 453 fps, 80 MHz: 80e6 / (728 x 242) = 454.09 fps.
+const VTS_453FPS: u16 = 242;
+
+const fn vts_regs(vts: u16) -> [(u16, u8); 2] {
+    [(0x380E, (vts >> 8) as u8), (0x380F, vts as u8)]
+}
+
+const EXP_96MHZ: [(u16, u8); 3] = exposure_regs(DEFAULT_EXPOSURE_LINES_96MHZ);
+const VTS_REGS_720_144: [(u16, u8); 2] = vts_regs(VTS_144FPS_720);
+const VTS_REGS_210: [(u16, u8); 2] = vts_regs(VTS_210FPS);
+const VTS_REGS_253: [(u16, u8); 2] = vts_regs(VTS_253FPS);
+const VTS_REGS_453: [(u16, u8); 2] = vts_regs(VTS_453FPS);
+
+/// `COMMON` + `mode`, then each pair of `over` replaces the value of the one entry with its
+/// address (the build fails if there is none or more than one). Keeps the write order.
+const fn build<const N: usize>(mode: &[(u16, u8)], over: &[(u16, u8)]) -> [(u16, u8); N] {
+    let mut out: [(u16, u8); N] = concat(COMMON, mode);
+    let mut k = 0;
+    while k < over.len() {
+        let mut hits = 0;
+        let mut i = 0;
+        while i < N {
+            if out[i].0 == over[k].0 {
+                out[i].1 = over[k].1;
+                hits += 1;
+            }
+            i += 1;
+        }
+        assert!(hits == 1);
+        k += 1;
+    }
+    out
+}
+
+const N_1280X800: usize = COMMON.len() + MODE_1280X800.len();
+const N_1280X720: usize = COMMON.len() + MODE_1280X720.len();
+const N_640X400: usize = COMMON.len() + MODE_640X400.len();
+const N_320X200: usize = COMMON.len() + MODE_320X200.len();
+
+const REGS_1280X800_RAW8_144: [(u16, u8); N_1280X800] = build(
+    MODE_1280X800,
+    &[SCLK_96MHZ, EXP_96MHZ[0], EXP_96MHZ[1], EXP_96MHZ[2]],
+);
+const REGS_1280X720_RAW8_144: [(u16, u8); N_1280X720] =
+    build(MODE_1280X720, &[VTS_REGS_720_144[0], VTS_REGS_720_144[1]]);
+const REGS_640X400_RAW8_210: [(u16, u8); N_640X400] =
+    build(MODE_640X400, &[VTS_REGS_210[0], VTS_REGS_210[1]]);
+const REGS_640X400_RAW8_253: [(u16, u8); N_640X400] =
+    build(MODE_640X400, &[VTS_REGS_253[0], VTS_REGS_253[1]]);
+const REGS_320X200_RAW8_453: [(u16, u8); N_320X200] =
+    build(MODE_320X200, &[VTS_REGS_453[0], VTS_REGS_453[1]]);
+const REGS_1280X800_RAW10: [(u16, u8); N_1280X800] =
+    build(MODE_1280X800, &[ANA_RAW10, VFIFO_RAW10]);
+const REGS_1280X720_RAW10: [(u16, u8); N_1280X720] =
+    build(MODE_1280X720, &[ANA_RAW10, VFIFO_RAW10]);
+const REGS_640X400_RAW10_210: [(u16, u8); N_640X400] = build(
+    MODE_640X400,
+    &[ANA_RAW10, VFIFO_RAW10, VTS_REGS_210[0], VTS_REGS_210[1]],
+);
+
+/// A RAW8 mode at SCLK 80 MHz, HTS 728 and the default 1 ms exposure.
+const fn raw8(
+    name: &'static str,
+    width: u16,
+    height: u16,
+    fps: u16,
+    vts: u16,
+    regs: &'static [(u16, u8)],
+) -> Mode {
     Mode {
-        name: "1280x800",
-        width: 1280,
-        height: 800,
-        fps: 120,
+        name,
+        width,
+        height,
+        fps,
         lane_mbps: LANE_MBPS,
         hts: HTS,
-        vts: VTS_120FPS,
-        regs: &REGS_1280X800,
-    },
+        vts,
+        regs,
+        bits_per_pixel: 8,
+        data_type: DT_RAW8,
+        sclk_mhz: 80,
+        default_exposure_lines: DEFAULT_EXPOSURE_LINES,
+    }
+}
+
+/// A RAW10 mode at SCLK 80 MHz, HTS 728 and the default 1 ms exposure.
+const fn raw10(
+    name: &'static str,
+    width: u16,
+    height: u16,
+    fps: u16,
+    vts: u16,
+    regs: &'static [(u16, u8)],
+) -> Mode {
     Mode {
-        name: "1280x720 crop",
-        width: 1280,
-        height: 720,
-        fps: 120,
-        lane_mbps: LANE_MBPS,
-        hts: HTS,
-        vts: VTS_120FPS,
-        regs: &REGS_1280X720,
-    },
+        bits_per_pixel: 10,
+        data_type: DT_RAW10,
+        ..raw8(name, width, height, fps, vts, regs)
+    }
+}
+
+/// Every mode, all at HTS 728 and 800 Mbit/s per lane. 0..=3: the 120 fps RAW8 modes under test
+/// (VTS 915, 9.1 us per line, 120.10 fps). 4..=11: the Inno-Maker mode list.
+pub const MODES: [Mode; 12] = [
+    raw8("1280x800", 1280, 800, 120, VTS_120FPS, &REGS_1280X800),
+    raw8("1280x720 crop", 1280, 720, 120, VTS_120FPS, &REGS_1280X720),
+    raw8("640x480 crop", 640, 480, 120, VTS_120FPS, &REGS_640X480),
+    raw8("640x400 bin2", 640, 400, 120, VTS_120FPS, &REGS_640X400),
     Mode {
-        name: "640x480 crop",
-        width: 640,
-        height: 480,
-        fps: 120,
-        lane_mbps: LANE_MBPS,
-        hts: HTS,
-        vts: VTS_120FPS,
-        regs: &REGS_640X480,
+        sclk_mhz: 96,
+        default_exposure_lines: DEFAULT_EXPOSURE_LINES_96MHZ,
+        ..raw8(
+            "1280x800 RAW8 144fps 96MHz",
+            1280,
+            800,
+            144,
+            VTS_120FPS,
+            &REGS_1280X800_RAW8_144,
+        )
     },
-    Mode {
-        name: "640x400 bin2",
-        width: 640,
-        height: 400,
-        fps: 120,
-        lane_mbps: LANE_MBPS,
-        hts: HTS,
-        vts: VTS_120FPS,
-        regs: &REGS_640X400,
-    },
+    raw8(
+        "1280x720 crop RAW8 144fps",
+        1280,
+        720,
+        144,
+        VTS_144FPS_720,
+        &REGS_1280X720_RAW8_144,
+    ),
+    raw8(
+        "640x400 bin2 RAW8 210fps",
+        640,
+        400,
+        210,
+        VTS_210FPS,
+        &REGS_640X400_RAW8_210,
+    ),
+    raw8(
+        "640x400 bin2 RAW8 253fps",
+        640,
+        400,
+        253,
+        VTS_253FPS,
+        &REGS_640X400_RAW8_253,
+    ),
+    raw8(
+        "320x200 bin2 crop RAW8 454fps",
+        320,
+        200,
+        454,
+        VTS_453FPS,
+        &REGS_320X200_RAW8_453,
+    ),
+    raw10(
+        "1280x800 RAW10",
+        1280,
+        800,
+        120,
+        VTS_120FPS,
+        &REGS_1280X800_RAW10,
+    ),
+    raw10(
+        "1280x720 crop RAW10",
+        1280,
+        720,
+        120,
+        VTS_120FPS,
+        &REGS_1280X720_RAW10,
+    ),
+    raw10(
+        "640x400 bin2 RAW10 210fps",
+        640,
+        400,
+        210,
+        VTS_210FPS,
+        &REGS_640X400_RAW10_210,
+    ),
 ];

@@ -9,18 +9,24 @@ use embassy_time::{Duration, Instant as EInstant, Timer, with_timeout};
 use esp_hal::i2c::master::{Error as I2cError, I2c};
 use esp_hal::peripherals::VDMA_CH0;
 use esp_println::println;
-use esp32p4_csi::{Config, Csi, Frame, LdoChannel, LdoSetting, PhyStatus, enable_ldo};
+use esp32p4_csi::{
+    Config, Csi, CsiStrips, Frame, LdoChannel, LdoSetting, PhyStatus, StripError, enable_ldo,
+};
 use log::{error, info, warn};
+use static_cell::StaticCell;
 
 use crate::ov9281::{self, Mode};
-use crate::soak;
+use crate::{soak, strip_soak, synth, vision};
 
 type Bus = I2c<'static, esp_hal::Async>;
 
+/// The sensor modes, as a promoted `&'static` slice: indexing the `const` array itself would
+/// copy all of it onto the stack (or into the future) first.
+const MODES: &[Mode] = &ov9281::MODES;
 /// Frame buffers the driver rotates.
 const BUFFERS: usize = 3;
-/// Every buffer is sized for the largest mode.
-const BUFFER_LEN: usize = Csi::buffer_len(&Config::new(1280, 800, ov9281::LANE_MBPS));
+/// Every buffer is sized for the largest configuration: 1280x800 RAW10 (1 286 144 B).
+const BUFFER_LEN: usize = Csi::buffer_len(&Config::raw10(1280, 800, ov9281::LANE_MBPS));
 /// How long to wait for a frame before printing the debugging checklist.
 const FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 /// Fill value of the frame buffers before the first capture.
@@ -53,48 +59,103 @@ pub struct Plan {
     pub still_dump: bool,
     /// Run the processing soak per mode after the checks above (`soak`). `None`: capture only.
     pub soak: Option<soak::Plan>,
+    /// Run the strip soak instead (`strip_soak`): the whole-frame receiver is never created,
+    /// and `measure`, `cache_check`, `still_dump` and `soak` are ignored.
+    pub strips: Option<strip_soak::Plan>,
 }
 
-/// Runs `plan`. `psram` must hold at least `BUFFERS * BUFFER_LEN` bytes (plus one 1280x800
-/// frame for the soak's synthetic frames); its start is cache-line aligned (PSRAM maps at
-/// 0x4800_0000).
-pub async fn run(i2c: &mut Bus, vdma: VDMA_CH0<'static>, psram: &'static mut [u8], plan: &Plan) {
-    if !power_up() {
-        return;
+/// Runs `plan`. `psram` must hold at least `BUFFERS * BUFFER_LEN` bytes (plus one frame
+/// of the largest mode for the synthetic frames); its start is cache-line aligned (PSRAM
+/// maps at 0x4800_0000). `internal` (internal RAM, cache-line aligned) holds the strip soak's
+/// synthetic strip. `STRIPS` must be `plan.strips.is_some()`: a constant, so a build without
+/// the strip soak does not link its ring (320 KiB of internal RAM).
+pub async fn run<const STRIPS: bool>(
+    i2c: &mut Bus,
+    vdma: VDMA_CH0<'static>,
+    psram: &'static mut [u8],
+    internal: &'static mut [u8],
+    plan: &Plan,
+) {
+    if power_up().await {
+        match plan.strips {
+            Some(strips) => strip_modes::<STRIPS>(i2c, vdma, internal, plan, strips).await,
+            None => run_frames(i2c, vdma, psram, plan).await,
+        }
     }
-    // Settling time for VO3 (esp-hal's DSI driver waits 500 us).
-    Timer::after_millis(1).await;
+    note("done");
+}
+
+// The receiver and the soaks live in statics: kept in the futures they would sit next to the
+// SCCB futures (about 380 B each) and push `main`'s frame over the stack limit.
+static CSI: StaticCell<Csi<'static>> = StaticCell::new();
+static SOAK: StaticCell<soak::Soak> = StaticCell::new();
+
+/// The whole-frame path: one `Csi` for every mode of the plan, then per mode the frame soak
+/// or, in a capture-only plan, the detector check.
+async fn run_frames(i2c: &mut Bus, vdma: VDMA_CH0<'static>, psram: &'static mut [u8], plan: &Plan) {
     let split = (BUFFERS * BUFFER_LEN).min(psram.len());
     let (buffers, rest) = psram.split_at_mut(split);
-    let Some(mut csi) = make_receiver(vdma, buffers, &ov9281::MODES[plan.modes[0]]) else {
+    let Some(csi) = make_receiver(vdma, buffers, &MODES[plan.modes[0]]) else {
         return;
     };
-    let mut soak = plan.soak.and_then(|p| make_soak(p, rest));
+    let (mut soak, mut check) = match plan.soak {
+        Some(p) => (make_soak(p, rest), None),
+        None => (None, make_check(rest)),
+    };
     for &index in plan.modes {
-        capture_mode(i2c, &mut csi, &ov9281::MODES[index], plan, soak.as_mut()).await;
+        let mode = &MODES[index];
+        capture_mode(i2c, csi, mode, plan, soak.as_deref_mut(), check.as_mut()).await;
     }
     if let Some(s) = &soak {
         s.log_table();
     }
-    note("done");
 }
 
 /// The soak's synthetic frames go right after the capture buffers (a multiple of 4096 B, so
 /// the area starts on a cache line).
 #[inline(never)]
-fn make_soak(plan: soak::Plan, rest: &'static mut [u8]) -> Option<soak::Soak> {
+fn make_soak(plan: soak::Plan, rest: &'static mut [u8]) -> Option<&'static mut soak::Soak> {
     const _: () = assert!(BUFFER_LEN.is_multiple_of(128));
     let need = Csi::buffer_len(&Config::new(1280, 800, ov9281::LANE_MBPS));
     if rest.len() < need {
         fail("PSRAM too small for the soak's synthetic frame", &need);
         return None;
     }
-    Some(soak::Soak::new(plan, &mut rest[..need]))
+    Some(SOAK.init(soak::Soak::new(plan, &mut rest[..need])))
 }
 
-/// Turns on LDO VO3 at 2.5 V: `VDD_MIPI_DPHY` on this board.
+/// The detector check's synthetic frame goes where the soak's would (cache-line aligned).
 #[inline(never)]
-fn power_up() -> bool {
+fn make_check(rest: &'static mut [u8]) -> Option<DetectorCheck> {
+    if rest.len() < BUFFER_LEN {
+        fail(
+            "PSRAM too small for the detector check's synthetic frame",
+            &BUFFER_LEN,
+        );
+        return None;
+    }
+    let (det, out, synth) = soak::take_detector();
+    Some(DetectorCheck {
+        det,
+        out,
+        synth,
+        area: &mut rest[..BUFFER_LEN],
+        mhz: esp_hal::clock::cpu_clock().as_mhz(),
+    })
+}
+
+/// Turns on LDO VO3 at 2.5 V (`VDD_MIPI_DPHY` on this board) and lets it settle.
+async fn power_up() -> bool {
+    if !enable_vo3() {
+        return false;
+    }
+    // Settling time for VO3 (esp-hal's DSI driver waits 500 us).
+    Timer::after_millis(1).await;
+    true
+}
+
+#[inline(never)]
+fn enable_vo3() -> bool {
     match enable_ldo(LdoChannel::Vo3, 2500) {
         Ok(s) => {
             log_ldo(&s);
@@ -113,7 +174,7 @@ fn make_receiver(
     vdma: VDMA_CH0<'static>,
     psram: &'static mut [u8],
     first: &Mode,
-) -> Option<Csi<'static>> {
+) -> Option<&'static mut Csi<'static>> {
     if psram.len() < BUFFERS * BUFFER_LEN {
         fail(
             "PSRAM too small for the frame buffers",
@@ -137,7 +198,7 @@ fn make_receiver(
     match Csi::new(vdma, [b0, b1, b2], csi_config(first)) {
         Ok(c) => {
             log_ready(&c);
-            Some(c)
+            Some(CSI.init(c))
         }
         Err(e) => {
             fail("Csi::new", &e);
@@ -146,8 +207,13 @@ fn make_receiver(
     }
 }
 
+/// Receiver configuration for `mode`: RAW8 or RAW10 by its data type.
 fn csi_config(mode: &Mode) -> Config {
-    Config::new(mode.width, mode.height, mode.lane_mbps)
+    if mode.data_type == ov9281::DT_RAW10 {
+        Config::raw10(mode.width, mode.height, mode.lane_mbps)
+    } else {
+        Config::new(mode.width, mode.height, mode.lane_mbps)
+    }
 }
 
 async fn capture_mode(
@@ -156,6 +222,7 @@ async fn capture_mode(
     mode: &Mode,
     plan: &Plan,
     soak: Option<&mut soak::Soak>,
+    check: Option<&mut DetectorCheck>,
 ) {
     if start_mode(i2c, csi, mode, plan).await {
         measure(csi, mode, plan.measure).await;
@@ -165,8 +232,13 @@ async fn capture_mode(
         if plan.still_dump {
             still(csi, mode, plan).await;
         }
-        if let Some(s) = soak {
-            s.run_mode(csi, mode).await;
+        if let Some(c) = check {
+            detector_check(csi, mode, c).await;
+        }
+        match soak {
+            Some(s) if mode.data_type == ov9281::DT_RAW8 => s.run_mode(csi, mode).await,
+            Some(_) => note("soak skipped: RAW8 modes only"),
+            None => {}
         }
     }
     stop(i2c, csi).await;
@@ -226,6 +298,105 @@ async fn stop(i2c: &mut Bus, csi: &mut Csi<'static>) {
     csi.stop();
 }
 
+/// The detector on the pixels of a capture-only mode: borrowed from the soak (which does not
+/// run in such a plan), plus a PSRAM area for one synthetic frame of the largest mode.
+struct DetectorCheck {
+    det: &'static mut vision::DefaultDetector,
+    out: &'static mut [vision::Blob; 256],
+    synth: &'static mut synth::Synth,
+    area: &'static mut [u8],
+    mhz: u32,
+}
+
+/// Detector threshold of the check on RAW8 frames.
+const CHECK_THRESHOLD_RAW8: u8 = 128;
+/// Detector threshold of the check on RAW10 frames, in 10-bit units (the same level).
+const CHECK_THRESHOLD_RAW10: u16 = 512;
+/// Discs in the check's synthetic RAW10 frame, and its seed.
+const CHECK_DISCS: u16 = 16;
+const CHECK_SEED: u32 = 0x5EED_0010;
+
+/// One detector call of the check.
+struct Detected {
+    blobs: usize,
+    overflow: u32,
+    cycles: u32,
+}
+
+/// After the measurement window: the detector once over a captured frame, held while it
+/// runs (the DMA keeps filling the other buffers), and for a RAW10 mode once more over a
+/// synthetic frame of the mode's size in PSRAM with [`CHECK_DISCS`] discs, written back from
+/// the cache first so it is read from PSRAM like a captured one. Logs after each call.
+async fn detector_check(csi: &mut Csi<'static>, mode: &Mode, c: &mut DetectorCheck) {
+    let Ok(Ok(f)) = with_timeout(FRAME_TIMEOUT, csi.wait_frame(None)).await else {
+        note("no frame for the detector check");
+        return;
+    };
+    let r = detect_frame(c.det, c.out, &f, mode);
+    drop(f);
+    log_detected(mode, "captured frame", &r, c.mhz);
+    if mode.data_type == ov9281::DT_RAW10 {
+        let area = &mut c.area[..mode.frame_bytes() as usize];
+        let (w, h) = (mode.width as usize, mode.height as usize);
+        c.synth.fill_raw10(area, w, h, CHECK_DISCS, CHECK_SEED);
+        crate::flush_cache(area);
+        let r = detect_frame(c.det, c.out, area, mode);
+        log_synthetic();
+        log_detected(mode, "synthetic frame", &r, c.mhz);
+    }
+}
+
+/// `process_frame` (RAW8) or `process_frame_raw10` over `frame`, timed with the cycle counter.
+#[inline(never)]
+fn detect_frame(
+    det: &mut vision::DefaultDetector,
+    out: &mut [vision::Blob],
+    frame: &[u8],
+    mode: &Mode,
+) -> Detected {
+    let t0 = crate::mcycle();
+    let blobs = if mode.data_type == ov9281::DT_RAW10 {
+        det.process_frame_raw10(frame, mode.width, CHECK_THRESHOLD_RAW10, out)
+    } else {
+        det.process_frame(frame, mode.width, CHECK_THRESHOLD_RAW8, out)
+    };
+    let cycles = crate::mcycle().wrapping_sub(t0);
+    Detected {
+        blobs,
+        overflow: det.stats().overflow,
+        cycles,
+    }
+}
+
+#[inline(never)]
+fn log_synthetic() {
+    info!(
+        "camera: synthetic RAW10 frame: {CHECK_DISCS} discs (peak {}), background below {} (10-bit), seed {CHECK_SEED:#x}",
+        synth::PEAK_RAW10,
+        synth::NOISE_MAX_RAW10
+    );
+}
+
+#[inline(never)]
+fn log_detected(mode: &Mode, what: &str, r: &Detected, mhz: u32) {
+    info!(
+        "camera: {}: detector on {what} ({} B, RAW{}, threshold {}): {} blobs, overflow {}, {} us ({} cycles), frame period {} us",
+        mode.name,
+        mode.frame_bytes(),
+        mode.bits_per_pixel,
+        if mode.data_type == ov9281::DT_RAW10 {
+            CHECK_THRESHOLD_RAW10
+        } else {
+            CHECK_THRESHOLD_RAW8 as u16
+        },
+        r.blobs,
+        r.overflow,
+        r.cycles / mhz,
+        r.cycles,
+        mode.frame_ns() / 1000
+    );
+}
+
 /// Frame counts and sizes over one measurement window.
 struct Measurement {
     expected: usize,
@@ -241,12 +412,15 @@ struct Measurement {
 /// Counts frames for `window` and checks every frame's size.
 async fn measure(csi: &mut Csi<'static>, mode: &Mode, window: Duration) {
     // Drop what completed while the previous log lines went out (esp-println holds a critical
-    // section per line, so the swap interrupt can be late and a frame cut short).
+    // section per line, about 0.5 ms at 2 Mbaud, so the swap interrupt can be late and a frame
+    // cut short; at 454 fps a frame lasts 2.2 ms). Nothing logs from here to the end of the
+    // window.
+    Timer::after_millis(20).await;
     let _ = with_timeout(FRAME_TIMEOUT, csi.wait_frame(None)).await;
     csi.reset_stats();
     let t0 = EInstant::now();
     let mut m = Measurement {
-        expected: mode.width as usize * mode.height as usize,
+        expected: csi_config(mode).frame_bytes(),
         window_us: 0,
         delivered: 0,
         wrong_size: 0,
@@ -397,6 +571,119 @@ fn byte_sum(buf: &[u8]) -> u32 {
     buf.iter().fold(0u32, |a, &b| a.wrapping_add(b as u32))
 }
 
+// ── Strip soak ──────────────────────────────────────────────────────────────────────────
+
+static STRIP_RX: StaticCell<CsiStrips<'static>> = StaticCell::new();
+static STRIP_SOAK: StaticCell<strip_soak::StripSoak> = StaticCell::new();
+
+/// The strip path (does nothing unless `ON`): one `CsiStrips` for every mode of the plan
+/// (the whole-frame `Csi` is never created, both need the DMA channel and the driver allows
+/// one receiver at a time).
+async fn strip_modes<const ON: bool>(
+    i2c: &mut Bus,
+    vdma: VDMA_CH0<'static>,
+    internal: &'static mut [u8],
+    plan: &Plan,
+    strips: strip_soak::Plan,
+) {
+    // Before the first await: with `ON` false the compiler drops the set-up below, and with it
+    // every reference to the ring.
+    if !ON {
+        return;
+    }
+    let Some(soak) = strip_soak::StripSoak::new(strips, internal) else {
+        fail("internal buffer too small for the synthetic strip", &());
+        return;
+    };
+    let soak = STRIP_SOAK.init(soak);
+    let Some(cs) = make_strip_receiver(vdma, &MODES[plan.modes[0]]) else {
+        return;
+    };
+    for &index in plan.modes {
+        let mode = &MODES[index];
+        if mode.data_type != ov9281::DT_RAW8 {
+            note("strip soak skipped: RAW8 modes only");
+            continue;
+        }
+        if start_strip_mode(i2c, cs, mode, plan).await && !soak.run_mode(cs, mode).await {
+            note("no whole frame of strips");
+            log_strip_state(cs);
+        }
+        if let Err(e) = sccb_write(i2c, ov9281::STREAM_OFF).await {
+            fail("stream off", &e);
+        }
+        // Let the current frame finish so the lanes go back to LP-11.
+        Timer::after_millis(20).await;
+        cs.stop();
+    }
+    soak.log_table();
+}
+
+/// Creates the strip receiver on the ring of `strip_soak` (internal RAM).
+#[inline(never)]
+fn make_strip_receiver(
+    vdma: VDMA_CH0<'static>,
+    first: &Mode,
+) -> Option<&'static mut CsiStrips<'static>> {
+    let (strips, links) = strip_soak::ring();
+    match CsiStrips::new(vdma, strips, links, csi_config(first), strip_soak::LINES) {
+        Ok(c) => {
+            log_strip_ready(&c);
+            Some(STRIP_RX.init(c))
+        }
+        Err(e) => {
+            fail("CsiStrips::new", &e);
+            None
+        }
+    }
+}
+
+/// Sensor set-up, strip receiver start and stream-on. `false` if something failed.
+async fn start_strip_mode(
+    i2c: &mut Bus,
+    cs: &mut CsiStrips<'static>,
+    mode: &Mode,
+    plan: &Plan,
+) -> bool {
+    log_mode(mode, plan);
+    if let Err(e) = sensor_setup(i2c, mode, plan).await {
+        fail("SCCB write", &e);
+        return false;
+    }
+    log_sensor_regs(i2c).await;
+    let started: Result<(), StripError> = cs
+        .set_config(csi_config(mode), strip_soak::LINES)
+        .and_then(|()| cs.start());
+    if let Err(e) = started {
+        fail("strip receiver start", &e);
+        return false;
+    }
+    Timer::after_millis(1).await;
+    log_phy_before_stream(&cs.phy_status());
+    if let Err(e) = sccb_write(i2c, ov9281::STREAM_ON).await {
+        fail("stream on", &e);
+        return false;
+    }
+    true
+}
+
+#[inline(never)]
+fn log_strip_ready(cs: &CsiStrips<'static>) {
+    info!(
+        "camera: strip receiver ready: {} strips of {} lines in internal RAM, chip rev {}",
+        strip_soak::STRIPS,
+        cs.strip_lines(),
+        cs.chip_revision()
+    );
+}
+
+/// The strip receiver's counters and ring snapshot (bring-up checklist in `poc-csi.md`).
+#[inline(never)]
+fn log_strip_state(cs: &CsiStrips<'static>) {
+    info!("camera: strip stats {:?}", cs.stats());
+    info!("camera: strip debug {:?}", cs.debug_status());
+}
+
 // ── SCCB ────────────────────────────────────────────────────────────────────────────────
 
 async fn sensor_setup(i2c: &mut Bus, mode: &Mode, plan: &Plan) -> Result<(), I2cError> {
@@ -407,7 +694,8 @@ async fn sensor_setup(i2c: &mut Bus, mode: &Mode, plan: &Plan) -> Result<(), I2c
             sccb_write(i2c, (reg, val)).await?;
         }
     }
-    for r in ov9281::exposure_regs(plan.exposure_lines) {
+    // Clamped to the mode's longest exposure, so a fast mode's frame is not stretched.
+    for r in mode.exposure_regs(plan.exposure_lines) {
         sccb_write(i2c, r).await?;
     }
     for r in ov9281::gain_regs(plan.gain) {
@@ -479,11 +767,15 @@ fn log_ready(csi: &Csi<'static>) {
 
 #[inline(never)]
 fn log_mode(mode: &Mode, plan: &Plan) {
+    let lines = applied_exposure(mode, plan.exposure_lines);
     info!(
-        "camera: mode {} ({}x{}), {} clock, {}, exposure {} lines, gain {:#04x}",
+        "camera: mode {} ({}x{} RAW{}, SCLK {} MHz, VTS {}), {} clock, {}, exposure {} lines = {} us (asked {}, max {}), gain {:#04x}",
         mode.name,
         mode.width,
         mode.height,
+        mode.bits_per_pixel,
+        mode.sclk_mhz,
+        mode.vts,
         if plan.clock_gated {
             "gated"
         } else {
@@ -494,9 +786,19 @@ fn log_mode(mode: &Mode, plan: &Plan) {
         } else {
             "scene"
         },
+        lines,
+        lines as u32 * mode.line_ns() / 1000,
         plan.exposure_lines,
+        mode.max_exposure_lines(),
         plan.gain
     );
+}
+
+/// The exposure in lines that [`Mode::exposure_regs`] writes for `lines` (decoded from the
+/// register values, so it shows the clamp actually applied).
+fn applied_exposure(mode: &Mode, lines: u16) -> u16 {
+    let [(_, hi), (_, mid), (_, lo)] = mode.exposure_regs(lines);
+    (hi as u16 & 0x0F) << 12 | (mid as u16) << 4 | (lo as u16) >> 4
 }
 
 #[inline(never)]
@@ -540,13 +842,16 @@ fn log_measurement(csi: &Csi<'static>, mode: &Mode, m: &Measurement) {
     let counted = Fps(s.frames_done as u64 * 1_000_000_000 / m.window_us);
     // Frame period from first to last arrival: no ±1 frame counting error.
     let span_us = (m.last.0 - m.first.0).max(1);
-    let span = Fps((m.last.1 - m.first.1) as u64 * 1_000_000_000 / span_us);
+    let span_mhz = (m.last.1 - m.first.1) as u64 * 1_000_000_000 / span_us;
+    let predicted = mode.frame_rate_mhz() as u64;
+    let ppm = (span_mhz as i64 - predicted as i64) * 1_000_000 / predicted as i64;
     info!(
-        "camera: {}: {} frames in {} ms = {counted} fps, first-to-last {span} fps (sensor {}), delivered {}, bytes/frame {} (expected {}, block items reported {}), wrong size {} (first {}), dropped {}, overwritten {}",
+        "camera: {}: {} frames in {} ms = {counted} fps, first-to-last {} fps, predicted {} fps ({ppm:+} ppm), delivered {}, bytes/frame {} (expected {}, block items reported {}), wrong size {} (first {}), dropped {}, overwritten {}",
         mode.name,
         s.frames_done,
         m.window_us / 1000,
-        Fps(mode.frame_rate_mhz() as u64),
+        Fps(span_mhz),
+        Fps(predicted),
         m.delivered,
         s.last_frame_bytes,
         m.expected,
@@ -639,21 +944,8 @@ const DUMP_CHUNK: usize = 96;
 /// as zlib) over the pixels. `tools/still.py` turns it into a PGM and PNG.
 #[inline(never)]
 fn dump_still(mode: &Mode, plan: &Plan, frame: &Frame) {
-    let kind = if plan.test_pattern {
-        "pattern"
-    } else {
-        "scene"
-    };
     let t = esp_hal::time::Instant::now();
-    println!(
-        "@@IMG {}x{}-{} {} {} {}",
-        mode.width,
-        mode.height,
-        kind,
-        mode.width,
-        mode.height,
-        frame.len()
-    );
+    still_header(mode, plan, frame.len());
     let mut crc = !0u32;
     let mut line = [0u8; DUMP_CHUNK / 3 * 4];
     for (i, chunk) in frame.chunks(DUMP_CHUNK).enumerate() {
@@ -667,6 +959,30 @@ fn dump_still(mode: &Mode, plan: &Plan, frame: &Frame) {
     info!(
         "camera: still dumped in {} ms",
         t.elapsed().as_micros() / 1000
+    );
+}
+
+/// The `@@IMG` line. The bytes go out as they are in memory: one byte per pixel for RAW8,
+/// packed CSI-2 RAW10 (5 bytes per 4 pixels) for RAW10; `tools/still.py` unpacks by the last
+/// field (bits per pixel).
+#[inline(never)]
+fn still_header(mode: &Mode, plan: &Plan, len: usize) {
+    let kind = if plan.test_pattern {
+        "pattern"
+    } else {
+        "scene"
+    };
+    println!(
+        "@@IMG {}x{}-{}fps-raw{}-{} {} {} {} {}",
+        mode.width,
+        mode.height,
+        mode.fps,
+        mode.bits_per_pixel,
+        kind,
+        mode.width,
+        mode.height,
+        len,
+        mode.bits_per_pixel
     );
 }
 
