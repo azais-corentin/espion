@@ -7,6 +7,7 @@ use espion_proto::{
         EncoderState, Encoding, Format, FrameChunk, JPEG_ALIGN, JPEG_FRAME_MAX, JPEG_QUALITY_MAX,
         JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply,
         Request, Response, State, StreamSettings, TestPattern, auto_quality, chunk_count,
+        ijg_scale,
     },
     kind,
 };
@@ -554,11 +555,29 @@ fn automatic_quality_steps() {
     );
     assert_eq!(auto_quality(5, 5, true, 100), 5);
     assert_eq!(auto_quality(4, 50, true, 100), 4);
-    // Up by 1 towards the set quality only with room on the link; hold otherwise.
-    assert_eq!(auto_quality(79, 90, false, AUTO_QUALITY_ROOM_PCT - 1), 80);
+    // Up by 1 towards the set quality only with room on the link for the step's growth
+    // (busy * S(q) < 80 * S(q + 1)); hold otherwise.
+    assert_eq!(auto_quality(30, 90, false, 76), 31); // S 166 -> 161: below 77.6 %
+    assert_eq!(auto_quality(30, 90, false, 78), 30);
+    assert_eq!(auto_quality(79, 90, false, 0), 80);
+    assert_eq!(auto_quality(79, 90, false, 76), 80); // S 42 -> 40: below 76.2 %
+    assert_eq!(auto_quality(79, 90, false, 77), 79);
     assert_eq!(auto_quality(79, 90, false, AUTO_QUALITY_ROOM_PCT), 79);
     assert_eq!(auto_quality(79, 90, false, 100), 79);
+    assert_eq!(auto_quality(89, 100, false, 72), 90); // S 22 -> 20: below 72.7 %
+    assert_eq!(auto_quality(89, 100, false, 73), 89);
+    assert_eq!(auto_quality(98, 100, false, 39), 99); // S 4 -> 2: below 40 %
+    assert_eq!(auto_quality(98, 100, false, 40), 98);
+    assert_eq!(auto_quality(99, 100, false, 39), 100); // S 2 -> 1
     assert_eq!(auto_quality(90, 90, false, 0), 90);
+    assert_eq!(
+        (ijg_scale(0), ijg_scale(1), ijg_scale(10), ijg_scale(49)),
+        (5000, 5000, 500, 102)
+    );
+    assert_eq!(
+        (ijg_scale(50), ijg_scale(90), ijg_scale(99), ijg_scale(100)),
+        (100, 20, 2, 1)
+    );
     // Never above the set quality.
     assert_eq!(auto_quality(95, 90, false, 0), 90);
     assert_eq!(auto_quality(95, 90, true, 100), 90);

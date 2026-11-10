@@ -61,9 +61,24 @@ pub const AUTO_QUALITY_PERIOD_MS: u32 = 200;
 /// Lowest quality the automatic control lowers to (or the set quality, if lower).
 pub const AUTO_QUALITY_MIN: u8 = 10;
 
-/// The automatic control raises the quality only while the link was busy sending frames for
-/// less than this share of the period, percent.
+/// The automatic control raises the quality only while the link, busy sending frames for this
+/// share of the period (percent) scaled by the step's growth, has room ([`auto_quality`]).
 pub const AUTO_QUALITY_ROOM_PCT: u8 = 80;
+
+/// The IJG quality scaling of the base quantisation tables, percent: `5000 / q` below 50,
+/// `200 - 2q` from 50 (at least 1). A frame's size grows roughly as the scaling shrinks, so
+/// one quality step near 100 grows the file far more than one near 50.
+pub const fn ijg_scale(q: u8) -> u32 {
+    if q == 0 {
+        5000
+    } else if q < 50 {
+        5000 / q as u32
+    } else if q >= 100 {
+        1
+    } else {
+        200 - 2 * q as u32
+    }
+}
 
 /// One step of the automatic JPEG quality control, taken at the end of every
 /// [`AUTO_QUALITY_PERIOD_MS`] while the stream sends [`Encoding::Jpeg`] with
@@ -76,8 +91,10 @@ pub const AUTO_QUALITY_ROOM_PCT: u8 = 80;
 ///
 /// Above `set` (the ceiling) it returns `set`. When frames were skipped the quality drops by
 /// an eighth (at least 2) down to [`AUTO_QUALITY_MIN`], never below it and never up.
-/// Otherwise it rises by 1 towards `set` while `busy_pct` < [`AUTO_QUALITY_ROOM_PCT`] (there
-/// is room), and holds when the link is fuller than that: no sawtooth against the link.
+/// Otherwise it rises by 1 towards `set` when the link has room for the step:
+/// `busy_pct * ijg_scale(q) < AUTO_QUALITY_ROOM_PCT * ijg_scale(q + 1)` (below 80 % busy,
+/// less the step's expected growth: 72 % at 90, 53 % at 97, 40 % at 98 and 99), and holds
+/// otherwise, so it settles below the link's limit instead of a sawtooth against it.
 pub const fn auto_quality(in_use: u8, set: u8, skipped: bool, busy_pct: u8) -> u8 {
     let floor = if set < AUTO_QUALITY_MIN {
         set
@@ -93,7 +110,10 @@ pub const fn auto_quality(in_use: u8, set: u8, skipped: bool, busy_pct: u8) -> u
         let step = if in_use / 8 > 2 { in_use / 8 } else { 2 };
         let q = in_use.saturating_sub(step);
         if q < floor { floor } else { q }
-    } else if in_use < set && busy_pct < AUTO_QUALITY_ROOM_PCT {
+    } else if in_use < set
+        && (busy_pct as u32) * ijg_scale(in_use)
+            < AUTO_QUALITY_ROOM_PCT as u32 * ijg_scale(in_use + 1)
+    {
         in_use + 1
     } else {
         in_use

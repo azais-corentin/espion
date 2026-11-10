@@ -267,9 +267,12 @@ Chunks are self-describing: a host shows a frame without having seen any respons
   share of the period the link was busy sending frames (from the first to the last chunk of
   each). Skipped: the quality in use drops by an eighth (at least 2) down to 10
   (`AUTO_QUALITY_MIN`, or the set quality if lower), never up. Otherwise it rises by 1
-  towards `jpeg_quality` while `busy_pct` is below 80 (`AUTO_QUALITY_ROOM_PCT`) and holds
-  above, so it settles below the link's limit instead of oscillating against it. Never above
-  `jpeg_quality`. With `auto_quality` off the quality in use is `jpeg_quality`.
+  towards `jpeg_quality` when the link has room for the step,
+  `busy_pct × S(q) < 80 × S(q + 1)` (`AUTO_QUALITY_ROOM_PCT`; `S` the IJG scaling of the
+  quantisation tables, `cam::ijg_scale`: 5000 / q below 50, 200 − 2q from 50, at least 1),
+  so below 80 % busy less the step's expected growth (72 % at 90, 53 % at 97, 40 % at 98),
+  and holds otherwise: it settles below the link's limit instead of oscillating against it.
+  Never above `jpeg_quality`. With `auto_quality` off the quality in use is `jpeg_quality`.
 - **Start-up defaults** (board and fake camera): 1280x800 RAW8 crop, 120 Hz, stream on,
   encoding `Jpeg`, quality 90, automatic quality on, no `max_fps` limit.
 - **Loss.** No retransmission. A frame with a missing chunk is dropped by the host, never
