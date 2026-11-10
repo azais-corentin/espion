@@ -41,6 +41,65 @@ pub const CHUNK_OVERHEAD_MAX: usize = HEADER_LEN + 5 + 5 + 1 + 3 + 3 + 10 + 5 + 
 /// chunk datagram is at most [`MAX_DATAGRAM`] bytes.
 pub const CHUNK_MAX: usize = MAX_DATAGRAM - CHUNK_OVERHEAD_MAX;
 
+/// Largest [`Encoding::Jpeg`] frame a receiver accepts, bytes (2 MiB). It holds the board
+/// encoder's worst case for 1280x800: a 384-byte header plus 2 bytes per pixel.
+pub const JPEG_FRAME_MAX: u32 = 2 * 1024 * 1024;
+
+/// [`Encoding::Jpeg`] needs a width and a height that are multiples of this (the 8x8 blocks
+/// of a greyscale JPEG).
+pub const JPEG_ALIGN: u16 = 8;
+
+/// Lowest JPEG quality ([`StreamSettings::jpeg_quality`]).
+pub const JPEG_QUALITY_MIN: u8 = 1;
+
+/// Highest JPEG quality ([`StreamSettings::jpeg_quality`]).
+pub const JPEG_QUALITY_MAX: u8 = 100;
+
+/// Period of the automatic JPEG quality control, ms ([`auto_quality`]).
+pub const AUTO_QUALITY_PERIOD_MS: u32 = 200;
+
+/// Lowest quality the automatic control lowers to (or the set quality, if lower).
+pub const AUTO_QUALITY_MIN: u8 = 10;
+
+/// The automatic control raises the quality only while the link was busy sending frames for
+/// less than this share of the period, percent.
+pub const AUTO_QUALITY_ROOM_PCT: u8 = 80;
+
+/// One step of the automatic JPEG quality control, taken at the end of every
+/// [`AUTO_QUALITY_PERIOD_MS`] while the stream sends [`Encoding::Jpeg`] with
+/// [`StreamSettings::auto_quality`] on: the quality in use for the next period.
+///
+/// - `skipped`: at least one frame was skipped in the period because the link was still busy
+///   with the previous one ([`Counters::frames_skipped`] grew).
+/// - `busy_pct`: share of the period the link was busy sending frames (from the first to the
+///   last chunk of each frame), percent.
+///
+/// Above `set` (the ceiling) it returns `set`. When frames were skipped the quality drops by
+/// an eighth (at least 2) down to [`AUTO_QUALITY_MIN`], never below it and never up.
+/// Otherwise it rises by 1 towards `set` while `busy_pct` < [`AUTO_QUALITY_ROOM_PCT`] (there
+/// is room), and holds when the link is fuller than that: no sawtooth against the link.
+pub const fn auto_quality(in_use: u8, set: u8, skipped: bool, busy_pct: u8) -> u8 {
+    let floor = if set < AUTO_QUALITY_MIN {
+        set
+    } else {
+        AUTO_QUALITY_MIN
+    };
+    if in_use > set {
+        set
+    } else if skipped {
+        if in_use <= floor {
+            return in_use;
+        }
+        let step = if in_use / 8 > 2 { in_use / 8 } else { 2 };
+        let q = in_use.saturating_sub(step);
+        if q < floor { floor } else { q }
+    } else if in_use < set && busy_pct < AUTO_QUALITY_ROOM_PCT {
+        in_use + 1
+    } else {
+        in_use
+    }
+}
+
 /// Sensor pixel format (mirrors `ov9281::Format`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Format {
@@ -85,21 +144,89 @@ pub enum Encoding {
     /// P3[9:2]`, then `P3[1:0] << 6 | P2[1:0] << 4 | P1[1:0] << 2 | P0[1:0]`. Needs a RAW10
     /// sensor format.
     Raw10,
+    /// One complete baseline greyscale JPEG file per frame (JFIF header included, as the
+    /// board's encoder writes it) of the 8-bit picture, `width` x `height`. Its length varies
+    /// from frame to frame, at most [`JPEG_FRAME_MAX`]. Needs a RAW8 sensor format and a
+    /// width and a height that are multiples of [`JPEG_ALIGN`].
+    Jpeg,
 }
 
 impl Encoding {
-    /// Bytes of a `width`-pixel line (RAW10 widths are multiples of 4).
-    pub const fn line_bytes(self, width: u16) -> u32 {
+    /// Bytes of a `width`-pixel line of a raw encoding (RAW10 widths are multiples of 4);
+    /// `None` for [`Encoding::Jpeg`], which has no fixed line length.
+    pub const fn line_bytes(self, width: u16) -> Option<u32> {
         match self {
-            Self::Raw8 => width as u32,
-            Self::Raw10 => width as u32 * 5 / 4,
+            Self::Raw8 => Some(width as u32),
+            Self::Raw10 => Some(width as u32 * 5 / 4),
+            Self::Jpeg => None,
         }
     }
 
-    /// Bytes of a frame (`u64`: a RAW10 frame of the largest `u16` sizes overflows `u32`).
-    pub const fn frame_bytes(self, width: u16, height: u16) -> u64 {
-        self.line_bytes(width) as u64 * height as u64
+    /// Bytes of a frame of a raw encoding (`u64`: a RAW10 frame of the largest `u16` sizes
+    /// overflows `u32`); `None` for [`Encoding::Jpeg`], whose length varies.
+    pub const fn frame_bytes(self, width: u16, height: u16) -> Option<u64> {
+        match self.line_bytes(width) {
+            Some(line) => Some(line as u64 * height as u64),
+            None => None,
+        }
     }
+
+    /// `true` when `frame_len` is a possible length of a frame of this encoding and size:
+    /// exactly [`Encoding::frame_bytes`] for a raw encoding; for [`Encoding::Jpeg`],
+    /// 1..=[`JPEG_FRAME_MAX`] with both sides non-zero multiples of [`JPEG_ALIGN`].
+    pub const fn frame_len_ok(self, width: u16, height: u16, frame_len: u32) -> bool {
+        match self.frame_bytes(width, height) {
+            Some(bytes) => frame_len as u64 == bytes,
+            None => {
+                width != 0
+                    && height != 0
+                    && width.is_multiple_of(JPEG_ALIGN)
+                    && height.is_multiple_of(JPEG_ALIGN)
+                    && frame_len >= 1
+                    && frame_len <= JPEG_FRAME_MAX
+            }
+        }
+    }
+
+    /// Whether this encoding can be made of a sensor mode of `format`, `width` x `height`:
+    /// RAW10 needs a RAW10 sensor ([`CamError::Encoding`]); JPEG needs a RAW8 sensor and both
+    /// sides multiples of [`JPEG_ALIGN`] ([`CamError::Jpeg`], the format checked first).
+    pub const fn check(self, format: Format, width: u16, height: u16) -> Result<(), CamError> {
+        match (self, format) {
+            (Self::Raw8, _) | (Self::Raw10, Format::Raw10) => Ok(()),
+            (Self::Raw10, Format::Raw8) => Err(CamError::Encoding {
+                format,
+                encoding: self,
+            }),
+            (Self::Jpeg, Format::Raw10) => Err(CamError::Jpeg {
+                reason: JpegRefusal::Format,
+                format,
+                width,
+                height,
+            }),
+            (Self::Jpeg, Format::Raw8) => {
+                if width.is_multiple_of(JPEG_ALIGN) && height.is_multiple_of(JPEG_ALIGN) {
+                    Ok(())
+                } else {
+                    Err(CamError::Jpeg {
+                        reason: JpegRefusal::Size,
+                        format,
+                        width,
+                        height,
+                    })
+                }
+            }
+        }
+    }
+}
+
+/// Why [`Encoding::Jpeg`] cannot be made of a sensor mode ([`CamError::Jpeg`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum JpegRefusal {
+    /// The sensor format is RAW10; the encoder takes 8-bit pixels.
+    Format,
+    /// The width or the height is not a multiple of [`JPEG_ALIGN`].
+    Size,
 }
 
 /// Top-left corner of the window, in sensor pixels of the 1280x800 active area.
@@ -169,6 +296,29 @@ pub struct StreamSettings {
     pub encoding: Encoding,
     /// Most frames sent per second; 0: no limit (every frame the link can take).
     pub max_fps: u16,
+    /// JPEG quality, [`JPEG_QUALITY_MIN`]..=[`JPEG_QUALITY_MAX`] (IJG scale); with
+    /// `auto_quality` the ceiling. Checked and kept whatever the encoding.
+    pub jpeg_quality: u8,
+    /// Automatic JPEG quality ([`auto_quality`]): lower the quality while frames are skipped
+    /// because the link is busy, raise it back towards `jpeg_quality` when there is room.
+    pub auto_quality: bool,
+}
+
+impl StreamSettings {
+    /// The checks of a `SetStream` against the running sensor mode, in the board's order: the
+    /// encoding ([`Encoding::check`]), then the JPEG quality ([`CamError::Quality`]).
+    pub const fn check(&self, format: Format, width: u16, height: u16) -> Result<(), CamError> {
+        if let Err(e) = self.encoding.check(format, width, height) {
+            return Err(e);
+        }
+        if self.jpeg_quality < JPEG_QUALITY_MIN || self.jpeg_quality > JPEG_QUALITY_MAX {
+            return Err(CamError::Quality {
+                min: JPEG_QUALITY_MIN,
+                max: JPEG_QUALITY_MAX,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// The operation of a [`Request`].
@@ -235,6 +385,24 @@ pub struct Counters {
     pub datagrams_sent: u32,
 }
 
+/// The board's JPEG encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct EncoderState {
+    /// Quality the next JPEG frame is encoded at: [`StreamSettings::jpeg_quality`], or lower
+    /// while the automatic quality holds it down.
+    pub quality: u8,
+    /// Bytes of the last JPEG frame encoded (the file, header included); 0 before the first.
+    pub frame_len: u32,
+    /// Time the encoder took for that frame, µs.
+    pub encode_us: u32,
+    /// Encoder errors since boot (output too small, codec or DMA error, timeout): the frame
+    /// is lost. Wraps at `u32::MAX`.
+    pub errors: u32,
+    /// Captured frames the encoder could not take since boot because it was still busy (not
+    /// counted in [`Counters::frames_skipped`], which is the link). Wraps at `u32::MAX`.
+    pub frames_skipped: u32,
+}
+
 /// The board's complete state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct State {
@@ -248,6 +416,8 @@ pub struct State {
     pub generation: u32,
     /// Counters.
     pub counters: Counters,
+    /// The JPEG encoder.
+    pub encoder: EncoderState,
     /// Time since boot, µs (the clock of [`FrameChunk::timestamp_us`]).
     pub uptime_us: u64,
 }
@@ -309,6 +479,24 @@ pub enum CamError {
         format: Format,
         /// Encoding asked for.
         encoding: Encoding,
+    },
+    /// [`Encoding::Jpeg`] cannot be made of the sensor mode ([`Encoding::check`]).
+    Jpeg {
+        /// Why.
+        reason: JpegRefusal,
+        /// Sensor format of the mode.
+        format: Format,
+        /// Width of the mode.
+        width: u16,
+        /// Height of the mode.
+        height: u16,
+    },
+    /// JPEG quality outside `min..=max`.
+    Quality {
+        /// Lowest quality.
+        min: u8,
+        /// Highest quality.
+        max: u8,
     },
 }
 
@@ -374,6 +562,28 @@ impl fmt::Display for CamError {
                     "encoding {encoding:?} cannot be sent from a {format:?} sensor"
                 )
             }
+            Self::Jpeg {
+                reason: JpegRefusal::Format,
+                format,
+                ..
+            } => write!(
+                f,
+                "JPEG needs a RAW8 sensor format; the mode is {format:?} (the encoder takes \
+                 8-bit pixels)"
+            ),
+            Self::Jpeg {
+                reason: JpegRefusal::Size,
+                width,
+                height,
+                ..
+            } => write!(
+                f,
+                "JPEG needs a width and a height that are multiples of {JPEG_ALIGN}; the mode \
+                 is {width}x{height}"
+            ),
+            Self::Quality { min, max } => {
+                write!(f, "JPEG quality outside {min}..={max}")
+            }
         }
     }
 }
@@ -402,7 +612,8 @@ pub struct Response {
 ///
 /// A frame of `frame_len` bytes is cut into chunks of [`CHUNK_MAX`] bytes, the last one
 /// shorter; chunk `i` has offset `i * CHUNK_MAX`. [`Message::decode`] rejects a chunk off this
-/// grid or whose length disagrees with the encoding, width and height.
+/// grid or whose frame length is not possible for the encoding, width and height
+/// ([`Encoding::frame_len_ok`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FrameChunk<'a> {
     /// Frame number, counted by the board from boot over captured frames (sent or not).
@@ -417,7 +628,8 @@ pub struct FrameChunk<'a> {
     pub height: u16,
     /// Board time of the frame's capture (end of frame), µs since boot.
     pub timestamp_us: u64,
-    /// Bytes of the whole frame: `encoding.frame_bytes(width, height)`.
+    /// Bytes of the whole frame: `encoding.frame_bytes(width, height)` for a raw encoding;
+    /// the JPEG file's length for [`Encoding::Jpeg`] (1..=[`JPEG_FRAME_MAX`]).
     pub frame_len: u32,
     /// Offset of `data` in the frame.
     pub offset: u32,
@@ -446,7 +658,8 @@ impl FrameChunk<'_> {
     fn well_formed(&self) -> bool {
         let chunk = CHUNK_MAX as u32;
         let len = self.data.len() as u32;
-        self.frame_len as u64 == self.encoding.frame_bytes(self.width, self.height)
+        self.encoding
+            .frame_len_ok(self.width, self.height, self.frame_len)
             && self.offset.is_multiple_of(chunk)
             && self.offset < self.frame_len
             && len == chunk.min(self.frame_len - self.offset)

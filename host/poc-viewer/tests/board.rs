@@ -217,7 +217,7 @@ impl Board {
                         state.camera.height,
                         state.stream.encoding,
                     )
-                || f.data.len() as u64 != len
+                || len.is_some_and(|l| f.data.len() as u64 != l)
             {
                 w.wrong += 1;
             }
@@ -360,7 +360,8 @@ fn expected_fps(st: &State) -> (f64, f64) {
     let len = st
         .stream
         .encoding
-        .frame_bytes(st.camera.width, st.camera.height) as u32;
+        .frame_bytes(st.camera.width, st.camera.height)
+        .unwrap_or(0) as u32;
     let chunks = chunk_count(len);
     // The chunks' real header length: encode one with values of this order.
     let data = [0u8; CHUNK_MAX];
@@ -421,6 +422,8 @@ fn stream(encoding: Encoding, max_fps: u16) -> StreamSettings {
         enabled: true,
         encoding,
         max_fps,
+        jpeg_quality: 90,
+        auto_quality: false,
     }
 }
 

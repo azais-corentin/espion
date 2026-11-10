@@ -207,7 +207,9 @@ impl egui_wgpu::CallbackTrait for ImageCallback {
             return Vec::new();
         };
         let f = &self.shown.frame;
-        let (tw, th) = (f.encoding.line_bytes(f.width), f.height as u32);
+        // JPEG frames are decoded to RAW8 before they get here.
+        let tw = f.encoding.line_bytes(f.width).unwrap_or(f.width as u32);
+        let th = f.height as u32;
         if res.uploaded != self.shown.serial {
             let size = wgpu::Extent3d {
                 width: tw,

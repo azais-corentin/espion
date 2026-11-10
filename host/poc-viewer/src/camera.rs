@@ -108,18 +108,6 @@ pub fn build_mode(c: &CameraSettings) -> Result<Mode, CamError> {
     Ok(mode)
 }
 
-/// The encoding can be produced from the sensor format: RAW8 from either, RAW10 only from
-/// RAW10.
-pub fn check_encoding(f: Format, e: Encoding) -> Result<(), CamError> {
-    match (f, e) {
-        (Format::Raw8, Encoding::Raw10) => Err(CamError::Encoding {
-            format: f,
-            encoding: e,
-        }),
-        _ => Ok(()),
-    }
-}
-
 /// Exposure and gain against the mode (the driver's `set_exposure` and `set_gain` ranges).
 pub fn check_controls(c: &CameraSettings, mode: &Mode) -> Result<(), CamError> {
     let max_lines = mode.max_exposure_lines();
@@ -136,11 +124,11 @@ pub fn check_controls(c: &CameraSettings, mode: &Mode) -> Result<(), CamError> {
 }
 
 /// Every check of a `SetCamera`, in the board's order: the mode (builder, then receiver),
-/// the stream's encoding against the format, then exposure and gain. Nothing is applied
-/// unless all pass.
+/// the stream's encoding against the format and size ([`Encoding::check`]), then exposure and
+/// gain. Nothing is applied unless all pass.
 pub fn validate(c: &CameraSettings, encoding: Encoding) -> Result<Mode, CamError> {
     let mode = build_mode(c)?;
-    check_encoding(c.format, encoding)?;
+    encoding.check(c.format, c.width, c.height)?;
     check_controls(c, &mode)?;
     Ok(mode)
 }

@@ -365,8 +365,12 @@ impl App {
 
         // The driver's verdict on the edited mode, before anything is sent.
         let req = self.request();
-        let local = camera::build_mode(&req)
-            .and_then(|m| camera::check_encoding(req.format, self.stream.encoding).map(|()| m));
+        let local = camera::build_mode(&req).and_then(|m| {
+            self.stream
+                .encoding
+                .check(req.format, req.width, req.height)
+                .map(|()| m)
+        });
         match &local {
             Ok(m) => {
                 let info = camera::mode_info(m);

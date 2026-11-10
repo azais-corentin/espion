@@ -3,9 +3,10 @@
 use espion_proto::{
     Error, HEADER_LEN, MAGIC, VERSION,
     cam::{
-        CHUNK_MAX, CamError, CameraSettings, Counters, Encoding, Format, FrameChunk, MAX_DATAGRAM,
-        Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response, State, StreamSettings,
-        TestPattern, chunk_count,
+        AUTO_QUALITY_MIN, AUTO_QUALITY_ROOM_PCT, CHUNK_MAX, CamError, CameraSettings, Counters,
+        EncoderState, Encoding, Format, FrameChunk, JPEG_ALIGN, JPEG_FRAME_MAX, JPEG_QUALITY_MAX,
+        JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply,
+        Request, Response, State, StreamSettings, TestPattern, auto_quality, chunk_count,
     },
     kind,
 };
@@ -49,8 +50,10 @@ fn state(max: bool) -> State {
         camera: camera(max),
         stream: StreamSettings {
             enabled: max,
-            encoding: if max { Encoding::Raw10 } else { Encoding::Raw8 },
+            encoding: if max { Encoding::Jpeg } else { Encoding::Raw8 },
             max_fps: m(u16::MAX as u32) as u16,
+            jpeg_quality: m(u8::MAX as u32) as u8,
+            auto_quality: max,
         },
         mode: ModeInfo {
             sensor_clock_mhz: m(u8::MAX as u32) as u8,
@@ -72,11 +75,18 @@ fn state(max: bool) -> State {
             capture_errors: m(u32::MAX),
             datagrams_sent: m(u32::MAX),
         },
+        encoder: EncoderState {
+            quality: m(u8::MAX as u32) as u8,
+            frame_len: m(u32::MAX),
+            encode_us: m(u32::MAX),
+            errors: m(u32::MAX),
+            frames_skipped: m(u32::MAX),
+        },
         uptime_us: if max { u64::MAX } else { 0 },
     }
 }
 
-fn every_error() -> [CamError; 11] {
+fn every_error() -> [CamError; 16] {
     [
         CamError::Size {
             max_width: 1280,
@@ -101,6 +111,27 @@ fn every_error() -> [CamError; 11] {
         CamError::Encoding {
             format: Format::Raw8,
             encoding: Encoding::Raw10,
+        },
+        CamError::Encoding {
+            format: Format::Raw10,
+            encoding: Encoding::Jpeg,
+        },
+        CamError::Jpeg {
+            reason: JpegRefusal::Format,
+            format: Format::Raw10,
+            width: 1280,
+            height: 800,
+        },
+        CamError::Jpeg {
+            reason: JpegRefusal::Size,
+            format: Format::Raw8,
+            width: u16::MAX,
+            height: u16::MAX,
+        },
+        CamError::Quality { min: 0, max: 0 },
+        CamError::Quality {
+            min: JPEG_QUALITY_MIN,
+            max: JPEG_QUALITY_MAX,
         },
     ]
 }
@@ -130,11 +161,22 @@ fn requests_round_trip() {
                 enabled: false,
                 encoding: Encoding::Raw8,
                 max_fps: 0,
+                jpeg_quality: 0,
+                auto_quality: false,
             }),
             Op::SetStream(StreamSettings {
                 enabled: true,
                 encoding: Encoding::Raw10,
                 max_fps: u16::MAX,
+                jpeg_quality: u8::MAX,
+                auto_quality: true,
+            }),
+            Op::SetStream(StreamSettings {
+                enabled: true,
+                encoding: Encoding::Jpeg,
+                max_fps: 120,
+                jpeg_quality: 90,
+                auto_quality: true,
             }),
         ] {
             round_trip(Message::Request(Request { seq, op }));
@@ -190,7 +232,7 @@ fn every_error_round_trips() {
 /// A chunk whose every header field takes its largest varint, at a valid place in a valid
 /// frame (RAW8 65535x65535: the frame length needs 5 bytes too).
 fn largest_chunk(data: &[u8]) -> FrameChunk<'_> {
-    let frame_len = Encoding::Raw8.frame_bytes(u16::MAX, u16::MAX) as u32;
+    let frame_len = Encoding::Raw8.frame_bytes(u16::MAX, u16::MAX).unwrap() as u32;
     let offset = (frame_len / CHUNK_MAX as u32 - 1) * CHUNK_MAX as u32;
     assert!(offset >= 1 << 28, "offset needs 5 varint bytes");
     FrameChunk {
@@ -228,7 +270,7 @@ fn chunk_longer_than_the_maximum_is_refused() {
 fn a_frame_cut_into_chunks_round_trips() {
     // RAW10 1280x800 and RAW8 640x400: whole chunks and a short last one.
     for (encoding, width, height) in [(Encoding::Raw10, 1280, 800), (Encoding::Raw8, 640, 400)] {
-        let frame_len = encoding.frame_bytes(width, height) as u32;
+        let frame_len = encoding.frame_bytes(width, height).unwrap() as u32;
         let frame: Vec<u8> = (0..frame_len).map(|i| (i % 251) as u8).collect();
         let mut rebuilt = vec![0u8; frame.len()];
         let n = chunk_count(frame_len);
@@ -264,7 +306,7 @@ fn a_frame_cut_into_chunks_round_trips() {
 #[test]
 fn chunks_off_the_grid_are_rejected() {
     let (w, h) = (640u16, 400u16);
-    let frame_len = Encoding::Raw8.frame_bytes(w, h) as u32;
+    let frame_len = Encoding::Raw8.frame_bytes(w, h).unwrap() as u32;
     let data = vec![1u8; CHUNK_MAX];
     let good = FrameChunk {
         frame: 1,
@@ -315,6 +357,275 @@ fn chunks_off_the_grid_are_rejected() {
         let dgram = c.encode(&mut buf).unwrap();
         assert_eq!(Message::decode(dgram), Err(Error::ChunkLayout), "{c:?}");
     }
+}
+
+/// Chunk `index` of a JPEG frame of `frame_len` bytes at 1280x800, its data cut from `file`.
+fn jpeg_chunk(file: &[u8], frame_len: u32, index: u32) -> FrameChunk<'_> {
+    let offset = index * CHUNK_MAX as u32;
+    let end = (offset + CHUNK_MAX as u32).min(frame_len);
+    FrameChunk {
+        frame: 9,
+        generation: 4,
+        encoding: Encoding::Jpeg,
+        width: 1280,
+        height: 800,
+        timestamp_us: 77,
+        frame_len,
+        offset,
+        data: &file[offset as usize..end as usize],
+    }
+}
+
+#[test]
+fn a_jpeg_frame_of_the_largest_length_round_trips() {
+    // Every length from one byte to JPEG_FRAME_MAX is accepted; each frame's chunks rebuild it.
+    let file: Vec<u8> = (0..JPEG_FRAME_MAX).map(|i| (i % 253) as u8).collect();
+    for frame_len in [
+        1,
+        2,
+        CHUNK_MAX as u32,
+        CHUNK_MAX as u32 + 1,
+        45_123,
+        JPEG_FRAME_MAX,
+    ] {
+        let mut rebuilt = vec![0u8; frame_len as usize];
+        for i in 0..chunk_count(frame_len) {
+            let c = jpeg_chunk(&file, frame_len, i);
+            let mut buf = [0u8; MAX_DATAGRAM];
+            let dgram = c.encode(&mut buf).unwrap();
+            assert!(dgram.len() <= MAX_DATAGRAM);
+            let Ok(Message::Chunk(back)) = Message::decode(dgram) else {
+                panic!("JPEG chunk {i} of {frame_len} does not decode");
+            };
+            assert_eq!(back, c);
+            rebuilt[back.offset as usize..][..back.data.len()].copy_from_slice(back.data);
+        }
+        assert_eq!(rebuilt, file[..frame_len as usize]);
+    }
+}
+
+#[test]
+fn a_jpeg_frame_one_byte_too_long_is_rejected() {
+    let file = vec![0xA5u8; JPEG_FRAME_MAX as usize + 1];
+    let mut buf = [0u8; MAX_DATAGRAM];
+    for i in [0, chunk_count(JPEG_FRAME_MAX + 1) - 1] {
+        let c = jpeg_chunk(&file, JPEG_FRAME_MAX + 1, i);
+        let dgram = c.encode(&mut buf).unwrap();
+        assert_eq!(Message::decode(dgram), Err(Error::ChunkLayout), "chunk {i}");
+    }
+}
+
+#[test]
+fn jpeg_chunks_that_disagree_with_their_frame_are_rejected() {
+    let frame_len = 45_123u32;
+    let file = vec![7u8; frame_len as usize];
+    let good = jpeg_chunk(&file, frame_len, 3);
+    let last = jpeg_chunk(&file, frame_len, chunk_count(frame_len) - 1);
+    let mut buf = [0u8; MAX_DATAGRAM];
+    assert!(Message::decode(good.encode(&mut buf).unwrap()).is_ok());
+    assert!(Message::decode(last.encode(&mut buf).unwrap()).is_ok());
+    let bad = [
+        // Length disagrees with the offset and frame_len: short in the middle, long at the end.
+        FrameChunk {
+            data: &file[..CHUNK_MAX - 1],
+            ..good
+        },
+        FrameChunk {
+            data: &file[..last.data.len() + 1],
+            ..last
+        },
+        FrameChunk {
+            data: &file[..last.data.len() - 1],
+            ..last
+        },
+        // Offset off the grid, or past the end.
+        FrameChunk {
+            offset: good.offset + 1,
+            ..good
+        },
+        FrameChunk {
+            offset: chunk_count(frame_len) * CHUNK_MAX as u32,
+            data: &file[..0],
+            ..good
+        },
+        // An empty frame, and sizes JPEG cannot have.
+        FrameChunk {
+            frame_len: 0,
+            offset: 0,
+            data: &file[..0],
+            ..good
+        },
+        FrameChunk {
+            width: 1284,
+            ..good
+        },
+        FrameChunk {
+            height: 802,
+            ..good
+        },
+        FrameChunk { width: 0, ..good },
+    ];
+    for c in bad {
+        let dgram = c.encode(&mut buf).unwrap();
+        assert_eq!(Message::decode(dgram), Err(Error::ChunkLayout), "{c:?}");
+    }
+}
+
+#[test]
+fn frame_lengths_by_encoding() {
+    assert_eq!(Encoding::Raw8.frame_bytes(1280, 800), Some(1_024_000));
+    assert_eq!(Encoding::Raw10.frame_bytes(1280, 800), Some(1_280_000));
+    assert_eq!(Encoding::Jpeg.frame_bytes(1280, 800), None);
+    assert_eq!(Encoding::Jpeg.line_bytes(1280), None);
+    assert!(Encoding::Jpeg.frame_len_ok(1280, 800, 1));
+    assert!(Encoding::Jpeg.frame_len_ok(8, 8, JPEG_FRAME_MAX));
+    assert!(!Encoding::Jpeg.frame_len_ok(1280, 800, JPEG_FRAME_MAX + 1));
+    assert!(!Encoding::Jpeg.frame_len_ok(1280, 800, 0));
+    assert!(Encoding::Raw8.frame_len_ok(1280, 800, 1_024_000));
+    assert!(!Encoding::Raw8.frame_len_ok(1280, 800, 45_000));
+}
+
+#[test]
+fn encodings_are_checked_against_the_mode() {
+    assert_eq!(Encoding::Raw8.check(Format::Raw10, 1280, 800), Ok(()));
+    assert_eq!(Encoding::Raw10.check(Format::Raw10, 1280, 800), Ok(()));
+    assert_eq!(
+        Encoding::Raw10.check(Format::Raw8, 1280, 800),
+        Err(CamError::Encoding {
+            format: Format::Raw8,
+            encoding: Encoding::Raw10
+        })
+    );
+    assert_eq!(Encoding::Jpeg.check(Format::Raw8, 1280, 800), Ok(()));
+    assert_eq!(Encoding::Jpeg.check(Format::Raw8, 128, 8), Ok(()));
+    // The format is checked first.
+    assert_eq!(
+        Encoding::Jpeg.check(Format::Raw10, 1280, 802),
+        Err(CamError::Jpeg {
+            reason: JpegRefusal::Format,
+            format: Format::Raw10,
+            width: 1280,
+            height: 802
+        })
+    );
+    for (w, h) in [(1280, 802), (1284, 800), (1288, 4)] {
+        assert_eq!(
+            Encoding::Jpeg.check(Format::Raw8, w, h),
+            Err(CamError::Jpeg {
+                reason: JpegRefusal::Size,
+                format: Format::Raw8,
+                width: w,
+                height: h
+            })
+        );
+    }
+    assert_eq!(JPEG_ALIGN, 8);
+    let shown = CamError::Jpeg {
+        reason: JpegRefusal::Size,
+        format: Format::Raw8,
+        width: 1280,
+        height: 802,
+    }
+    .to_string();
+    assert!(
+        shown.contains("1280x802") && shown.contains("multiples of 8"),
+        "{shown}"
+    );
+    let shown = CamError::Jpeg {
+        reason: JpegRefusal::Format,
+        format: Format::Raw10,
+        width: 1280,
+        height: 800,
+    }
+    .to_string();
+    assert!(shown.contains("RAW8") && shown.contains("Raw10"), "{shown}");
+}
+
+#[test]
+fn automatic_quality_steps() {
+    // Down by an eighth (at least 2) while frames are skipped, to the floor and never up.
+    assert_eq!(auto_quality(90, 90, true, 100), 79);
+    assert_eq!(auto_quality(90, 90, true, 0), 79);
+    assert_eq!(auto_quality(16, 90, true, 100), 14);
+    assert_eq!(auto_quality(11, 90, true, 100), AUTO_QUALITY_MIN);
+    assert_eq!(
+        auto_quality(AUTO_QUALITY_MIN, 90, true, 100),
+        AUTO_QUALITY_MIN
+    );
+    assert_eq!(auto_quality(5, 5, true, 100), 5);
+    assert_eq!(auto_quality(4, 50, true, 100), 4);
+    // Up by 1 towards the set quality only with room on the link; hold otherwise.
+    assert_eq!(auto_quality(79, 90, false, AUTO_QUALITY_ROOM_PCT - 1), 80);
+    assert_eq!(auto_quality(79, 90, false, AUTO_QUALITY_ROOM_PCT), 79);
+    assert_eq!(auto_quality(79, 90, false, 100), 79);
+    assert_eq!(auto_quality(90, 90, false, 0), 90);
+    // Never above the set quality.
+    assert_eq!(auto_quality(95, 90, false, 0), 90);
+    assert_eq!(auto_quality(95, 90, true, 100), 90);
+    // From 90 to the floor and back.
+    let mut q = 90;
+    let mut down = 0;
+    while q > AUTO_QUALITY_MIN {
+        q = auto_quality(q, 90, true, 100);
+        down += 1;
+    }
+    assert_eq!(down, 18);
+    let mut up = 0;
+    while q < 90 {
+        q = auto_quality(q, 90, false, 50);
+        up += 1;
+    }
+    assert_eq!(up, 80);
+}
+
+#[test]
+fn stream_settings_are_checked_against_the_mode() {
+    let s = StreamSettings {
+        enabled: true,
+        encoding: Encoding::Jpeg,
+        max_fps: 0,
+        jpeg_quality: 90,
+        auto_quality: true,
+    };
+    assert_eq!(s.check(Format::Raw8, 1280, 800), Ok(()));
+    let quality = Err(CamError::Quality {
+        min: JPEG_QUALITY_MIN,
+        max: JPEG_QUALITY_MAX,
+    });
+    for q in [0, 101, u8::MAX] {
+        let bad = StreamSettings {
+            jpeg_quality: q,
+            ..s
+        };
+        assert_eq!(bad.check(Format::Raw8, 1280, 800), quality, "{q}");
+        // Checked whatever the encoding.
+        let raw = StreamSettings {
+            encoding: Encoding::Raw8,
+            ..bad
+        };
+        assert_eq!(raw.check(Format::Raw8, 1280, 800), quality, "{q}");
+    }
+    for q in [JPEG_QUALITY_MIN, JPEG_QUALITY_MAX] {
+        let ok = StreamSettings {
+            jpeg_quality: q,
+            ..s
+        };
+        assert_eq!(ok.check(Format::Raw8, 1280, 800), Ok(()));
+    }
+    // The encoding first.
+    let both = StreamSettings {
+        jpeg_quality: 0,
+        ..s
+    };
+    assert_eq!(
+        both.check(Format::Raw10, 1280, 800),
+        Err(CamError::Jpeg {
+            reason: JpegRefusal::Format,
+            format: Format::Raw10,
+            width: 1280,
+            height: 800
+        })
+    );
 }
 
 fn poll_datagram() -> Vec<u8> {

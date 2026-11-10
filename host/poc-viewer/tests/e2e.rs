@@ -97,6 +97,7 @@ fn settings_are_applied_and_read_back() {
         enabled: true,
         encoding: Encoding::Raw8,
         max_fps: 30,
+        ..fake::default_stream()
     };
     let state = apply(&client, Command::SetStream(stream), |s| {
         s.stream.max_fps == 30

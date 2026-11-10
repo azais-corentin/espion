@@ -25,9 +25,9 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CHUNK_MAX, CamError, CameraSettings, Counters, Encoding, Format, FrameChunk, MAX_DATAGRAM,
-    Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, State, StreamSettings,
-    TestPattern,
+    CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, FrameChunk,
+    MAX_DATAGRAM, Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, State,
+    StreamSettings, TestPattern,
 };
 use ov9281::Mode;
 
@@ -59,6 +59,8 @@ pub const fn default_stream() -> StreamSettings {
         enabled: true,
         encoding: Encoding::Raw8,
         max_fps: 0,
+        jpeg_quality: 90,
+        auto_quality: true,
     }
 }
 
@@ -179,6 +181,7 @@ struct Engine {
     stream: StreamSettings,
     generation: u32,
     counters: Counters,
+    encoder: EncoderState,
     start: Instant,
 
     peer: Option<SocketAddr>,
@@ -193,6 +196,7 @@ struct Engine {
     next_send: Instant,
     sending: Option<Sending>,
     pixels: Vec<u8>,
+    raw: Vec<u8>,
     out: [u8; MAX_DATAGRAM],
 }
 
@@ -224,6 +228,10 @@ impl Engine {
             stream: cfg.stream,
             generation: 1,
             counters: Counters::default(),
+            encoder: EncoderState {
+                quality: cfg.stream.jpeg_quality,
+                ..EncoderState::default()
+            },
             start: now,
             peer: None,
             last_request: now,
@@ -234,6 +242,7 @@ impl Engine {
             next_send: now,
             sending: None,
             pixels: Vec::new(),
+            raw: Vec::new(),
             out: [0; MAX_DATAGRAM],
         }
     }
@@ -333,7 +342,25 @@ impl Engine {
             self.next_send = (self.next_send + interval).max(at + interval - slack);
         }
         let encoding = self.stream.encoding;
-        render(&self.camera, encoding, number, &mut self.pixels);
+        if encoding == Encoding::Jpeg {
+            render(&self.camera, Encoding::Raw8, number, &mut self.raw);
+            let t = Instant::now();
+            if encode_jpeg(
+                &self.camera,
+                &self.raw,
+                self.encoder.quality,
+                &mut self.pixels,
+            )
+            .is_err()
+            {
+                self.encoder.errors = self.encoder.errors.wrapping_add(1);
+                return;
+            }
+            self.encoder.encode_us = t.elapsed().as_micros() as u32;
+            self.encoder.frame_len = self.pixels.len() as u32;
+        } else {
+            render(&self.camera, encoding, number, &mut self.pixels);
+        }
         self.sending = Some(Sending {
             frame: number,
             generation: self.generation,
@@ -444,7 +471,8 @@ impl Engine {
     }
 
     fn set_stream(&mut self, s: StreamSettings, now: Instant) -> Result<(), CamError> {
-        camera::check_encoding(self.camera.format, s.encoding)?;
+        s.check(self.camera.format, self.camera.width, self.camera.height)?;
+        self.encoder.quality = s.jpeg_quality;
         if s.encoding != self.stream.encoding {
             self.generation = self.generation.wrapping_add(1);
             self.sending = None;
@@ -464,19 +492,46 @@ impl Engine {
             mode: camera::mode_info(&self.mode),
             generation: self.generation,
             counters: self.counters,
+            encoder: self.encoder,
             uptime_us: (now - self.start).as_micros() as u64,
         }
     }
 }
 
-/// Frame `number` of the fake for these settings, in `encoding`, into `out` (resized to the
-/// frame length). Deterministic: the tests compare received frames with it bit for bit.
+/// A baseline greyscale JPEG of the RAW8 picture `raw` of the settings' size at `quality`,
+/// into `out`.
+pub fn encode_jpeg(
+    c: &CameraSettings,
+    raw: &[u8],
+    quality: u8,
+    out: &mut Vec<u8>,
+) -> Result<(), jpeg_encoder::EncodingError> {
+    out.clear();
+    jpeg_encoder::Encoder::new(&mut *out, quality).encode(
+        raw,
+        c.width,
+        c.height,
+        jpeg_encoder::ColorType::Luma,
+    )
+}
+
+/// Frame `number` of the fake for these settings, in the raw `encoding`, into `out` (resized
+/// to the frame length). Deterministic: the tests compare received frames with it bit for bit.
+///
+/// # Panics
+///
+/// For [`Encoding::Jpeg`]: render RAW8 and [`encode_jpeg`] it.
 pub fn render(c: &CameraSettings, encoding: Encoding, number: u32, out: &mut Vec<u8>) {
     let (w, h) = (c.width as usize, c.height as usize);
-    let lb = encoding.line_bytes(c.width) as usize;
+    let raw_line = |width: u16| {
+        encoding
+            .line_bytes(width)
+            .expect("render makes raw encodings") as usize
+    };
+    let lb = raw_line(c.width);
     out.resize(lb * h, 0);
     let mut line = vec![0u16; w + 1024];
-    let mut packed = vec![0u8; encoding.line_bytes((w + 1024) as u16) as usize];
+    let mut packed = vec![0u8; raw_line((w + 1024) as u16)];
     match c.test_pattern {
         TestPattern::Off => {
             // Stripes: one base line, each row a slice of it shifted by a multiple of 4
@@ -494,7 +549,7 @@ pub fn render(c: &CameraSettings, encoding: Encoding, number: u32, out: &mut Vec
             encode_line(encoding, &line, &mut packed);
             for (y, row) in out.chunks_exact_mut(lb).enumerate() {
                 let shift = 4 * ((y + 2 * number as usize) % 256);
-                let at = encoding.line_bytes(shift as u16) as usize;
+                let at = raw_line(shift as u16);
                 row.copy_from_slice(&packed[at..at + lb]);
             }
         }
@@ -615,6 +670,7 @@ fn encode_line(encoding: Encoding, line: &[u16], out: &mut [u8]) {
                 o[4] = ((p[3] & 3) << 6 | (p[2] & 3) << 4 | (p[1] & 3) << 2 | (p[0] & 3)) as u8;
             }
         }
+        Encoding::Jpeg => unreachable!("render makes raw encodings"),
     }
 }
 
@@ -642,6 +698,7 @@ impl Canvas<'_> {
                         row[g + 4] = row[g + 4] & !(3 << shift) | ((v & 3) as u8) << shift;
                     }
                 }
+                Encoding::Jpeg => unreachable!("render makes raw encodings"),
             }
         }
     }

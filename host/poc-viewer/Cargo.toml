@@ -19,6 +19,7 @@ anyhow.workspace  = true
 clap.workspace    = true
 eframe.workspace  = true
 espion-proto      = { workspace = true, features = ["std"] }
+jpeg-encoder.workspace = true
 ov9281.workspace  = true
 png.workspace     = true
 socket2.workspace = true

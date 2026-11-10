@@ -200,6 +200,7 @@ impl InitArgs {
                 None => d.encoding,
             },
             max_fps: self.max_fps.unwrap_or(d.max_fps),
+            ..d
         })
     }
 }

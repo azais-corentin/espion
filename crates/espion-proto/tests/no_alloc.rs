@@ -7,9 +7,9 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CHUNK_MAX, CamError, CameraSettings, Counters, Encoding, Format, FrameChunk, MAX_DATAGRAM,
-    Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response, State, StreamSettings,
-    TestPattern,
+    CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, FrameChunk,
+    JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response,
+    State, StreamSettings, TestPattern,
 };
 
 struct Counting;
@@ -64,6 +64,8 @@ fn encode_and_decode_allocate_nothing() {
         enabled: true,
         encoding: Encoding::Raw10,
         max_fps: 30,
+        jpeg_quality: 90,
+        auto_quality: true,
     };
     let state = State {
         camera,
@@ -82,10 +84,18 @@ fn encode_and_decode_allocate_nothing() {
         },
         generation: 3,
         counters: Counters::default(),
+        encoder: EncoderState {
+            quality: 74,
+            frame_len: 45_123,
+            encode_us: 5_986,
+            errors: 1,
+            frames_skipped: 2,
+        },
         uptime_us: 12_345_678,
     };
     let data = [0x5Au8; CHUNK_MAX];
-    let frame_len = Encoding::Raw10.frame_bytes(1280, 800) as u32;
+    let frame_len = Encoding::Raw10.frame_bytes(1280, 800).unwrap() as u32;
+    let jpeg_len = 45_123u32;
     let messages = [
         Message::Request(Request {
             seq: 1,
@@ -120,6 +130,26 @@ fn encode_and_decode_allocate_nothing() {
             timestamp_us: 12_000_000,
             frame_len,
             offset: CHUNK_MAX as u32 * 5,
+            data: &data,
+        }),
+        Message::Response(Response {
+            seq: 5,
+            reply: Reply::Error(CamError::Jpeg {
+                reason: JpegRefusal::Size,
+                format: Format::Raw8,
+                width: 1280,
+                height: 802,
+            }),
+        }),
+        Message::Chunk(FrameChunk {
+            frame: 78,
+            generation: 4,
+            encoding: Encoding::Jpeg,
+            width: 1280,
+            height: 800,
+            timestamp_us: 12_008_000,
+            frame_len: jpeg_len,
+            offset: CHUNK_MAX as u32 * 2,
             data: &data,
         }),
     ];

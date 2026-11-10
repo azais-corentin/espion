@@ -21,7 +21,7 @@ pub mod cam;
 pub const MAGIC: [u8; 2] = *b"ES";
 
 /// Protocol version. Firmware and host must match exactly.
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 
 /// Length of the raw header: magic (2), version (1), kind (1).
 pub const HEADER_LEN: usize = 4;

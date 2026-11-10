@@ -6,7 +6,7 @@ protocol version and updates this page and its changelog in the same commit.
 > **Status.** The tracking messages (`0x01`..`0x11`) are a draft, not implemented. Settled:
 > header, versioning (exact match), boards identified by their Ethernet MAC, Q11.5 blob
 > coordinates; their other fields may still change. The [camera stream](#camera-stream)
-> (`0x20`..`0x22`) is implemented (version 2).
+> (`0x20`..`0x22`) is implemented (version 3).
 
 ## Transport (tracking)
 
@@ -30,7 +30,7 @@ protocol version and updates this page and its changelog in the same commit.
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
 | 0 | 2 | magic | `0x45 0x53` (`"ES"`). Anything else is not an espion packet |
-| 2 | 1 | version | Protocol version, currently `2` |
+| 2 | 1 | version | Protocol version, currently `3` |
 | 3 | 1 | kind | Message kind (table below) |
 | 4 | … | body | [postcard](https://postcard.jamesmunns.com/wire-format)-encoded struct for (`version`, `kind`) |
 
@@ -127,9 +127,15 @@ the `poc-viewer` host app; not by the tracking path above.
   (with its counters) too. Any valid request refreshes the destination and the timeout.
 - `SetCamera` is all or nothing. The board checks, in this order: the sensor mode (the
   `ov9281` builder: size, alignment, window, rate), the receiver's geometry, the stream's
-  encoding against the format, then exposure and gain; it applies nothing unless every check
-  passes. A request whose mode resolves to the running one (same `ov9281::Mode`) only changes
-  exposure, gain and test pattern; any other restarts the stream in the new mode.
+  encoding against the new mode's format and size (`Encoding::check`), then exposure and
+  gain; it applies nothing unless every check passes. A request whose mode resolves to the
+  running one (same `ov9281::Mode`) only changes exposure, gain and test pattern; any other
+  restarts the stream in the new mode.
+- `SetStream` is all or nothing too: the encoding against the running mode
+  (`Encoding::check`), then the JPEG quality (`StreamSettings::check`). It sets the quality
+  in use (`EncoderState::quality`) to the set quality.
+- To go from JPEG to a RAW10 mode the host first sets a raw encoding, then the mode (and
+  from a RAW10 mode to JPEG: the RAW8 mode first, then the encoding).
 
 `CameraSettings`:
 
@@ -150,8 +156,10 @@ the `poc-viewer` host app; not by the tracking path above.
 | Field | Type | Meaning |
 |---|---|---|
 | enabled | `bool` | Send frames (while a host polls) |
-| encoding | `Encoding` | `Raw8` or `Raw10` on the wire |
+| encoding | `Encoding` | `Raw8`, `Raw10` or `Jpeg` on the wire |
 | max_fps | `u16` | Most frames sent per second; 0: no limit |
+| jpeg_quality | `u8` | JPEG quality, 1..=100 (`JPEG_QUALITY_MIN`..=`JPEG_QUALITY_MAX`, IJG scale); with `auto_quality` the ceiling. Checked and kept whatever the encoding |
+| auto_quality | `bool` | Automatic JPEG quality (below) |
 
 ### `0x21` CamResponse (board → host)
 
@@ -169,12 +177,23 @@ the `poc-viewer` host app; not by the tracking path above.
 | mode | `ModeInfo` | What the sensor driver chose (below) |
 | generation | `u32` | Changes whenever the frame layout changes: format, size, readout, origin or encoding |
 | counters | `Counters` | Since boot, each wrapping at `u32::MAX`: frames captured, frames sent, frames skipped because the previous one was still being sent, capture errors, datagrams sent |
+| encoder | `EncoderState` | The JPEG encoder (below) |
 | uptime_us | `u64` | µs since boot, the clock of the frame timestamps |
 
 `ModeInfo`: `sensor_clock_mhz: u8` (80 or 96), `exceeds_datasheet_clock: bool` (96 MHz),
 `hts: u16`, `vts: u16`, `psv: bool`, `frame_rate_mhz: u32` (at the nominal 24 MHz XVCLK),
 `rate_error_mhz: i32` (rate minus request), `max_exposure_lines: u16`, `line_ns: u32`,
 `frame_bytes: u32` (from the sensor).
+
+`EncoderState`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| quality | `u8` | Quality the next JPEG frame is encoded at: `jpeg_quality`, or lower while the automatic quality holds it down |
+| frame_len | `u32` | Bytes of the last JPEG frame encoded (the whole file); 0 before the first |
+| encode_us | `u32` | Time the encoder took for that frame, µs |
+| errors | `u32` | Encoder errors since boot (output too small, codec or DMA error, timeout); that frame is lost. Wraps |
+| frames_skipped | `u32` | Captured frames the encoder could not take since boot because it was still busy with the previous one; not in `counters.frames_skipped` (the link). Wraps |
 
 `CamError`, the first six mirroring `ov9281::Error` variant for variant (rates in mHz):
 
@@ -191,6 +210,8 @@ the `poc-viewer` host app; not by the tracking path above.
 | Exposure | `max_lines: u16` | Exposure outside 1..=max for the mode |
 | Gain | `min: u8`, `max: u8` | Gain outside min..=max sixteenths |
 | Encoding | `format: Format`, `encoding: Encoding` | The encoding cannot be made from the format (RAW10 from a RAW8 sensor) |
+| Jpeg | `reason: JpegRefusal`, `format: Format`, `width: u16`, `height: u16` | JPEG cannot be made of the mode (values: the mode's): `reason` `Format` (a RAW10 sensor format; checked first) or `Size` (width or height not a multiple of 8, `JPEG_ALIGN`) |
+| Quality | `min: u8`, `max: u8` | JPEG quality outside `min..=max` (1..=100) |
 
 ### `0x22` FrameChunk (board → host)
 
@@ -201,7 +222,7 @@ the `poc-viewer` host app; not by the tracking path above.
 | encoding | `Encoding` | Pixel encoding of the frame |
 | width, height | `u16`, `u16` | Frame size |
 | timestamp_us | `u64` | Board time of the capture (end of frame), µs since boot |
-| frame_len | `u32` | Bytes of the whole frame: `encoding.frame_bytes(width, height)` |
+| frame_len | `u32` | Bytes of the whole frame: `encoding.frame_bytes(width, height)` for a raw encoding; for `Jpeg` the file's length, 1..=2 097 152 (`JPEG_FRAME_MAX`), varying from frame to frame |
 | offset | `u32` | Offset of `data` in the frame |
 | data | `[u8]` | The bytes (postcard: length, then the bytes) |
 
@@ -211,22 +232,52 @@ Chunks are self-describing: a host shows a frame without having seen any respons
   high bits. `Raw10`: CSI-2 packed, every 4 pixels P0..P3 in 5 bytes,
   `P0[9:2] P1[9:2] P2[9:2] P3[9:2]`, then `P3[1:0] << 6 | P2[1:0] << 4 | P1[1:0] << 2 | P0[1:0]`
   (the layout the P4 receives, `firmware/poc-p4-eth/README.md`); it needs a RAW10 sensor.
+  `Jpeg`: one complete baseline greyscale JPEG file per frame, from SOI to EOI with its
+  header (as the board's encoder writes it, `firmware/esp32p4-jpeg`), of the 8-bit picture
+  of `width` x `height`. It needs a RAW8 sensor (the encoder takes 8-bit pixels) and a width
+  and height that are multiples of 8 (`JPEG_ALIGN`). `frame_len` is the file's length; the
+  receiver accepts at most 2 MiB (`JPEG_FRAME_MAX`: the board encoder's worst case for
+  1280x800, a 384-byte header plus 2 bytes per pixel, fits). Chunks keep the 1409-byte grid
+  of `frame_len`.
 - **Chunking.** Every chunk but a frame's last carries exactly **1409 bytes** (`CHUNK_MAX`);
   chunk `i` has offset `i × 1409`. 1409 is what the worst case leaves: header 4 bytes plus
   the largest postcard varints of frame (5), generation (5), encoding (1), width (3),
   height (3), timestamp (10), frame length (5), offset (5) and the data length (2) is 43
   bytes (`CHUNK_OVERHEAD_MAX`), and 4 + 39 + 1409 = 1452. A receiver rejects a chunk off this
-  grid or whose frame length disagrees with encoding, width and height.
+  grid, whose length disagrees with its offset and `frame_len`, or whose `frame_len` is not
+  possible for the encoding, width and height (`Encoding::frame_len_ok`: exactly
+  `frame_bytes` for a raw encoding; for `Jpeg` 1..=`JPEG_FRAME_MAX` with both sides non-zero
+  multiples of 8). Chunks of one frame (same `frame` and `generation`) carry the same
+  encoding, size and `frame_len`; a receiver drops a frame whose chunks disagree.
 - **One frame in flight.** The board sends a frame's chunks in order, then the next frame's.
   A frame captured while the previous one is still being sent is skipped and counted
-  (`frames_skipped`). Frames held back by `max_fps` are not counted.
+  (`frames_skipped`). Frames held back by `max_fps` are not counted. With `Jpeg` a frame
+  goes capture → encoder → link, one frame in each: a captured frame the encoder cannot take
+  because it is still busy with the previous one is skipped and counted in
+  `encoder.frames_skipped`; an encoded frame that finds the link still busy with the
+  previous one is skipped and counted in `frames_skipped`. A frame the encoder fails on is
+  counted in `encoder.errors` and not sent.
+- **Automatic JPEG quality** (`auto_quality` on, while the stream sends `Jpeg`): at the end
+  of every 200 ms (`AUTO_QUALITY_PERIOD_MS`) the board takes one step of
+  `cam::auto_quality(in_use, set, skipped, busy_pct)`, which the board and the fake camera
+  share: `skipped` is whether `frames_skipped` grew in the period (the link), `busy_pct` the
+  share of the period the link was busy sending frames (from the first to the last chunk of
+  each). Skipped: the quality in use drops by an eighth (at least 2) down to 10
+  (`AUTO_QUALITY_MIN`, or the set quality if lower), never up. Otherwise it rises by 1
+  towards `jpeg_quality` while `busy_pct` is below 80 (`AUTO_QUALITY_ROOM_PCT`) and holds
+  above, so it settles below the link's limit instead of oscillating against it. Never above
+  `jpeg_quality`. With `auto_quality` off the quality in use is `jpeg_quality`.
+- **Start-up defaults** (board and fake camera): 1280x800 RAW8 crop, 120 Hz, stream on,
+  encoding `Jpeg`, quality 90, automatic quality on, no `max_fps` limit.
 - **Loss.** No retransmission. A frame with a missing chunk is dropped by the host, never
   repaired: when a chunk of a newer frame arrives (or after a timeout), the incomplete frame
   is discarded and counted.
 - **Link budget** (computed, 100 Mbit/s): a 1452-byte datagram takes 1538 bytes of line
   time with UDP, IPv6, Ethernet header and FCS, preamble and inter-frame gap, so at most
   8127 chunks/s, 11.45 MB/s of pixels: 1280x800 RAW8 (727 chunks) at most 11.2 fps, RAW10
-  (909 chunks) 8.9 fps, 640x400 RAW8 (182 chunks) 44.7 fps.
+  (909 chunks) 8.9 fps, 640x400 RAW8 (182 chunks) 44.7 fps. A 45 kB JPEG (1280x800 at
+  quality 90 on the encoder's test scene, `firmware/esp32p4-jpeg`) takes 32 chunks: at most
+  254 fps, so the sensor's 153.98 Hz fits with room.
 
 ## Changelog
 
@@ -234,3 +285,4 @@ Chunks are self-describing: a host shows a frame without having seen any respons
 |---|---|
 | 1 | Initial draft (not implemented). Revised before implementation for Ethernet + PTP: Announce (`0x03`) dropped, boards identified by their Ethernet MAC, `SyncState` carries the grandmaster clockIdentity instead of a timescale id |
 | 2 | Camera stream added (`0x20` CamRequest, `0x21` CamResponse, `0x22` FrameChunk) over IPv6 link-local, port 5009, for `poc-p4-stream` and `poc-viewer`. The tracking kinds are unchanged and still a draft |
+| 3 | Camera stream: encoding `Jpeg` (one baseline greyscale JPEG file per frame, variable `frame_len` up to `JPEG_FRAME_MAX`, RAW8 modes with both sides multiples of 8); `StreamSettings` gains `jpeg_quality` and `auto_quality`; `State` gains `encoder: EncoderState`; `CamError` gains `Jpeg` and `Quality`; start-up default `Jpeg` at quality 90 with automatic quality. Everything else of version 2 stays |

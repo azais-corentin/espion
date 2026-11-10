@@ -34,6 +34,7 @@ serde        = { version = "1.0.229", default-features = false, features = ["der
 anyhow             = "1.0.104"
 clap               = { version = "4.6.7", features = ["derive"] }
 eframe             = "0.37.0"
+jpeg-encoder       = "0.7.1"
 nalgebra           = "0.35.0"
 png                = "0.18.1"
 socket2            = "0.6.5"
