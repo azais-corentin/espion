@@ -6,6 +6,12 @@
       "command": "nix",
       "args": ["develop", "--command", "solidcraft-cli", "mcp", "--param-check", "warn", "--allow-path", "hardware/lib"],
       "timeout": 120000
+    },
+    "egui": {
+      "type": "stdio",
+      "command": "nix",
+      "args": ["develop", "--command", "egui-mcp"],
+      "timeout": 120000
     }
   }
 }

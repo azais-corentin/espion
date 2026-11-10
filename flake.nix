@@ -90,6 +90,26 @@
             libxrandr
           ];
 
+          # MCP server that lets omp drive a running egui app (click, type, read the widget
+          # tree, screenshot) over eframe's `inspection` feature: .omp/mcp.json starts it.
+          # Its egui version must match the workspace's eframe.
+          eguiMcp =
+            (pkgs.makeRustPlatform {
+              cargo = rust;
+              rustc = rust;
+            }).buildRustPackage
+              rec {
+                pname = "egui_mcp";
+                version = "0.3.0";
+                src = pkgs.fetchCrate {
+                  inherit pname version;
+                  hash = "sha256-zKqVwK4ksDz0yP1nRazUvq5FlXE9GzWmk6O5hjO82N4=";
+                };
+                cargoHash = "sha256-fyoS6pu/EBg44rKwqgApVAzIuZ3v0MbLYlHNmKmatEo=";
+                # The tests render egui's demo app with wgpu.
+                doCheck = false;
+              };
+
           # SolidCraft's modelling skills for omp. The shellHook links them from the locked
           # `solidcraft` input into .omp/skills (gitignored), so they always match the
           # solidcraft-cli above. omp reads skills at startup: restart it after a bump.
@@ -109,6 +129,7 @@
               pkgs.kicad
               solidcraft.packages.${pkgs.stdenv.hostPlatform.system}.solidcraft
               pkgs.pkg-config
+              eguiMcp
               # KiCad toolkit (.omp/extensions/kicad): bun runs its tests, Python the KLC
               # scripts and the official symbol/footprint generators.
               pkgs.bun
