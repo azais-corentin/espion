@@ -13,6 +13,9 @@ and PNG. RAW10: packed CSI-2 RAW10, per 4 pixels 4 bytes with bits 9..2 of pixel
 one byte with the four 2-bit remainders (pixel 0 in bits 1..0), a row being width*5/4 bytes;
 written as a 16-bit PGM (maxval 1023) and an 8-bit PNG (the top 8 bits).
 
+`@@JPG <name> <width> <height> <bytes>` in place of `@@IMG` (`src/jpeg_bench.rs`) carries a JPEG
+file, written as is to `<name>.jpg`; `tools/jpeg_check.py` decodes and checks it.
+
 Usage: still.py <log file> [output dir, default /tmp/poc-p4-eth]
 
 Only the Python standard library is used (the nix dev shell has python3, no PIL).
@@ -88,12 +91,12 @@ def main():
             continue
         fields = line[at:].split()
         tag = fields[0]
-        if tag == "@@IMG" and len(fields) in (5, 6):
+        if (tag == "@@IMG" and len(fields) in (5, 6)) or (tag == "@@JPG" and len(fields) == 5):
             name, width, height, size = fields[1], int(fields[2]), int(fields[3]), int(fields[4])
             bits = int(fields[5]) if len(fields) == 6 else 8
             image = {
                 "name": name, "w": width, "h": height, "size": size, "bits": bits,
-                "parts": {}, "bad": 0,
+                "parts": {}, "bad": 0, "jpeg": tag == "@@JPG",
             }
         elif tag == "@@D" and image is not None and len(fields) == 3:
             try:
@@ -111,6 +114,12 @@ def main():
                     f"{image['bad']} undecodable, {len(data)} of {image['size']} B, "
                     f"crc {zlib.crc32(data):08x} vs {crc:08x}"
                 )
+            elif image["jpeg"]:
+                path = os.path.join(out_dir, name + ".jpg")
+                with open(path, "wb") as f:
+                    f.write(data)
+                print(f"{name}: OK JPEG {len(data)} B, crc {crc:08x} -> {path}")
+                ok += 1
             elif image["bits"] not in (8, 10) or len(data) != image["w"] * image["h"] * image["bits"] // 8:
                 print(f"{name}: BAD: {len(data)} B do not hold {image['w']}x{image['h']} RAW{image['bits']}")
             else:

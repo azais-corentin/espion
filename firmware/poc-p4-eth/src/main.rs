@@ -43,6 +43,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 mod bench;
 mod camera;
+mod jpeg_bench;
 mod modes;
 mod requests;
 mod soak;
@@ -76,7 +77,7 @@ enum Soak {
 const SOAK: Soak = Soak::Frames;
 /// The plan the camera section runs: [`CAMERA_PLAN`] (default), [`FAST_CAPTURE_PLAN`],
 /// [`MODE_STILLS_PLAN`], [`RAW10_PATTERNS_PLAN`], [`REQUESTS_PLAN`], [`RAW10_STRIP_SOAK_PLAN`],
-/// [`STRIP_CHECK_PLAN`] or [`STRIP_STALL_PLAN`].
+/// [`STRIP_CHECK_PLAN`], [`STRIP_STALL_PLAN`] or [`JPEG_PLAN`].
 const PLAN: &camera::Plan = &CAMERA_PLAN;
 /// Camera section on the 120 fps RAW8 modes (indexes into `modes::MODES`: 0 1280x800,
 /// 1 1280x720, 2 640x480, 3 640x400): sensor settings, checks, still dump (decode with
@@ -104,6 +105,7 @@ const CAMERA_PLAN: camera::Plan = camera::Plan {
         Soak::Strips => Some(STRIP_SOAK_PLAN),
         _ => None,
     },
+    jpeg: None,
 };
 /// Frame soak per mode: a live run, then synthetic frames with these disc counts, while
 /// capture keeps running (about 60 s per mode).
@@ -206,6 +208,26 @@ const REQUESTS_PLAN: camera::Plan = camera::Plan {
     },
     measure: Duration::from_secs(3),
     ..FAST_CAPTURE_PLAN
+};
+/// JPEG encoder test and benchmark (`jpeg_bench`, `esp32p4-jpeg`): correctness on a synthetic
+/// picture and on camera frames (dumped for `tools/jpeg_check.py`), speed alone, speed while
+/// the camera captures, robustness. About 8 min with the dumps. Select with `PLAN`.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const JPEG_PLAN: camera::Plan = camera::Plan {
+    modes: &[],
+    soak: None,
+    strips: None,
+    jpeg: Some(jpeg_bench::Plan {
+        synthetic: true,
+        camera_stills: jpeg_bench::CAMERA_STILLS,
+        speed_frames: 200,
+        variants: true,
+        baseline: Duration::from_secs(5),
+        capture: jpeg_bench::CAPTURE_RUNS,
+        robustness: true,
+        soak: Duration::from_secs(60),
+    }),
+    ..CAMERA_PLAN
 };
 // The benchmark's 300 KiB frame buffer and the strip ring do not both fit in internal RAM.
 const _: () = assert!(!(RUN_BENCH && PLAN.strips.is_some()));

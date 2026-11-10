@@ -18,7 +18,7 @@ use ov9281::{DeviceError, Exposure, Format, Gain, Mode, Ov9281, Readout, TestPat
 use static_cell::StaticCell;
 
 use crate::modes::{self, CamMode};
-use crate::{requests, soak, strip_soak, synth, vision};
+use crate::{jpeg_bench, requests, soak, strip_soak, synth, vision};
 
 /// The sensor on the camera's I2C bus.
 pub type Cam = Ov9281<I2c<'static, esp_hal::Async>>;
@@ -73,6 +73,9 @@ pub struct Plan {
     /// check, whose references alone use a whole-frame receiver), and `measure`,
     /// `cache_check`, `still_dump` and `soak` are ignored.
     pub strips: Option<strip_soak::Plan>,
+    /// With a plan: the JPEG encoder test and benchmark ([`jpeg_bench`]) instead of `modes`,
+    /// on the whole-frame path, with `sensor` for its camera runs.
+    pub jpeg: Option<jpeg_bench::Plan>,
 }
 
 /// Runs `plan`. `psram` must hold at least `BUFFERS * BUFFER_LEN` bytes (plus one frame
@@ -90,7 +93,7 @@ pub async fn run<const STRIPS: bool>(
     if power_up().await {
         match plan.strips {
             Some(strips) => strip_modes::<STRIPS>(cam, vdma, psram, internal, plan, strips).await,
-            None => run_frames(cam, vdma, psram, plan).await,
+            None => run_frames(cam, vdma, psram, internal, plan).await,
         }
     }
     note("done");
@@ -103,7 +106,13 @@ static SOAK: StaticCell<soak::Soak> = StaticCell::new();
 
 /// The whole-frame path: one `Csi` for every mode of the plan, then per mode the frame soak
 /// or, in a capture-only plan, the detector check; or the request verification.
-async fn run_frames(cam: &mut Cam, vdma: VDMA_CH0<'static>, psram: &'static mut [u8], plan: &Plan) {
+async fn run_frames(
+    cam: &mut Cam,
+    vdma: VDMA_CH0<'static>,
+    psram: &'static mut [u8],
+    internal: &'static mut [u8],
+    plan: &Plan,
+) {
     let split = (BUFFERS * BUFFER_LEN).min(psram.len());
     let (buffers, rest) = psram.split_at_mut(split);
     let first = plan.modes.first().map_or(&MODES[0], |&i| &MODES[i]);
@@ -112,6 +121,10 @@ async fn run_frames(cam: &mut Cam, vdma: VDMA_CH0<'static>, psram: &'static mut 
     };
     if !plan.requests.is_empty() {
         requests::run(cam, csi, plan).await;
+        return;
+    }
+    if let Some(j) = &plan.jpeg {
+        jpeg_bench::run(cam, csi, rest, internal, &plan.sensor, j).await;
         return;
     }
     let (mut soak, mut check) = match plan.soak {
@@ -1477,20 +1490,27 @@ const DUMP_CHUNK: usize = 96;
 fn dump_still(prefix: [&str; 2], mode: &CamMode, pattern: TestPattern, frame: &Frame) {
     let t = esp_hal::time::Instant::now();
     still_header(prefix, mode, pattern, frame.len());
+    dump_body(frame);
+    info!(
+        "camera: still dumped in {} ms",
+        t.elapsed().as_micros() / 1000
+    );
+}
+
+/// The numbered base64 `@@D` lines of `data` and `@@END` with a CRC-32 (IEEE, as zlib), after
+/// a header line (`@@IMG` here, `@@JPG` in `jpeg_bench`).
+#[inline(never)]
+pub fn dump_body(data: &[u8]) {
     let mut crc = !0u32;
     let mut line = [0u8; DUMP_CHUNK / 3 * 4];
-    for (i, chunk) in frame.chunks(DUMP_CHUNK).enumerate() {
+    for (i, chunk) in data.chunks(DUMP_CHUNK).enumerate() {
         crc = crc32_update(crc, chunk);
         let n = base64(chunk, &mut line);
         // SAFETY: base64 output is ASCII.
         let text = unsafe { core::str::from_utf8_unchecked(&line[..n]) };
         println!("@@D {i:x} {text}");
     }
-    println!("@@END {:08x} {}", !crc, frame.len().div_ceil(DUMP_CHUNK));
-    info!(
-        "camera: still dumped in {} ms",
-        t.elapsed().as_micros() / 1000
-    );
+    println!("@@END {:08x} {}", !crc, data.len().div_ceil(DUMP_CHUNK));
 }
 
 /// The `@@IMG` line, named `<prefix><w>x<h>-<fps>fps-raw<bits>-<pattern>` ([`pattern_name`]:
@@ -1505,7 +1525,7 @@ fn still_header([p0, p1]: [&str; 2], mode: &CamMode, pattern: TestPattern, len: 
     println!("@@IMG {p0}{p1}{w}x{h}-{fps}fps-raw{bits}-{p} {w} {h} {len} {bits}");
 }
 
-fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
+pub fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
     for &b in data {
         crc ^= b as u32;
         for _ in 0..8 {

@@ -940,6 +940,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32p4-jpeg"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "esp-hal",
+ "esp32p4",
+]
+
+[[package]]
 name = "esp32s2"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1318,6 +1327,7 @@ dependencies = [
  "esp-rtos",
  "esp32p4",
  "esp32p4-csi",
+ "esp32p4-jpeg",
  "log",
  "ov9281",
  "static_cell",

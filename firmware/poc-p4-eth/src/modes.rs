@@ -34,7 +34,7 @@ impl CamMode {
 }
 
 /// `format`, `width` x `height` with `readout`, centred, at `hz` +- `tol_hz`.
-const fn request(
+pub const fn request(
     name: &'static str,
     format: Format,
     (width, height): (u16, u16),

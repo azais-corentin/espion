@@ -110,15 +110,21 @@ python3 tools/still.py /tmp/poc-p4-eth/soak.log   # only with still_dump: true
   capture only takes about 70 s for four modes with the cache check (about 100 s with the
   still dumps too); `MODE_STILLS_PLAN` about 180 s, `REQUESTS_PLAN` about 25 min,
   `STRIP_CHECK_PLAN` about 45 s, `RAW10_STRIP_SOAK_PLAN` about 190 s, `STRIP_STALL_PLAN` about
-  90 s; the detector benchmark (`RUN_BENCH = true`) about 90 s. Every camera plan ends with
-  the line `camera: done`.
+  90 s, `JPEG_PLAN` about 8 min; the detector benchmark (`RUN_BENCH = true`) about 90 s.
+  Every camera plan ends with the line `camera: done`.
 - `--no-addresses` stops espflash from printing symbol lines for hex numbers in the log.
 - `cargo run --release` uses the runner in `.cargo/config.toml`,
   `espflash flash --monitor ... --port /dev/ttyACM0`: interactive, and with the first
   computer's port.
 - `tools/still.py <log> [out dir]` (Python standard library only) checks each still's CRC and
   line count and writes `<out dir>/<name>.pgm` and `.png` (default `/tmp/poc-p4-eth`). RAW10
-  stills become a 16-bit PGM and an 8-bit PNG.
+  stills become a 16-bit PGM and an 8-bit PNG. It also writes the JPEG files of `JPEG_PLAN`
+  (`@@JPG` lines) as `<name>.jpg`.
+- `tools/jpeg_check.py <dir>` checks every `<name>-q<q>.jpg` there against its source
+  `<name>.pgm`: markers (SOF0, 8-bit, one component, size, EOI), decoding with `djpeg`, PSNR
+  against the source, and `cjpeg -grayscale -baseline -quality <q>` of the same source as the
+  reference (size and PSNR); it writes `<name>-q<q>.decoded.png`. Run it with libjpeg-turbo:
+  `nix shell nixpkgs#libjpeg_turbo -c python3 tools/jpeg_check.py /tmp/poc-p4-eth/jpeg`.
 
 ### Choosing what runs
 
@@ -137,6 +143,7 @@ All in constants at the top of `src/main.rs`; one plan per boot. The default sel
 | `PLAN` | `&STRIP_CHECK_PLAN` | Strip check on modes 0, 9, 10, 11: whole frames of the random test pattern as the reference, then 10 s of strips per mode checked row by row against it |
 | `PLAN` | `&RAW10_STRIP_SOAK_PLAN` | Strip soak on the RAW10 modes 9, 10, 11 |
 | `PLAN` | `&STRIP_STALL_PLAN` | Stall test on the modes of `STRIP_CHECK_PLAN`: provoked DMA halts (1, 5, 30 and 100 ms, bursts of 20 x 2 ms and 8 x 30 ms), every strip checked against the reference, a memory guard around the list items and after the ring |
+| `PLAN` | `&JPEG_PLAN` | Hardware JPEG encoder (`esp32p4-jpeg`, `src/jpeg_bench.rs`): synthetic and camera pictures at 3 sizes x 3 qualities dumped for `tools/jpeg_check.py`, speed alone, capture-and-encode runs up to the sensor's fastest rates, robustness (bad settings, output too small, dropped encode, 60 s soak). See "JPEG encoder" |
 | `SOAK` | `Soak::Frames` (default) | With `CAMERA_PLAN`: frame soak, whole frames in PSRAM (`SOAK_PLAN`), RAW8 modes only |
 | `SOAK` | `Soak::Strips` | With `CAMERA_PLAN`: strip soak, strips in internal RAM (`STRIP_SOAK_PLAN`) |
 | `SOAK` | `Soak::None` | With `CAMERA_PLAN`: capture only, then the detector check per mode |
@@ -208,8 +215,11 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each |
 | `src/vision.rs` | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
 | `src/synth.rs` | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
+| `src/jpeg_bench.rs` | `JPEG_PLAN`: test and benchmark of the hardware JPEG encoder (`esp32p4-jpeg`): test picture, camera stills, speed table, capture-and-encode runs, robustness |
+| `../esp32p4-jpeg` (crate) | Hardware JPEG encoder driver (greyscale) and its 2D-DMA channels, on the PAC |
 | `../ov9281` (crate) | The sensor driver: mode builder and solver, the measured limits, the register list, SCCB control (`firmware/ov9281/README.md`) |
-| `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files |
+| `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files, and the JPEG dumps into `.jpg` files |
+| `tools/jpeg_check.py` | Checks the board's JPEG files against libjpeg-turbo (decoding, PSNR, size against `cjpeg`) |
 
 ## Measured results
 
@@ -1303,6 +1313,108 @@ in flash; the repeats run from the cache].
 | L1/L2 autoload (prefetch) | No esp-hal config key on the P4; needs ROM or register calls. Not tried |
 
 The firmware runs with the default: 250 MHz, L2 128 KiB with 64 B lines, no autoload.
+
+### JPEG encoder (`firmware/esp32p4-jpeg`, `JPEG_PLAN`)
+
+The chip's hardware JPEG codec, greyscale baseline, driven by the `esp32p4-jpeg` crate (its
+docs: bring-up, buffers, cache, interrupts, errors). `src/jpeg_bench.rs` runs five phases:
+test picture, camera stills, speed alone, capture and encode, robustness. Encode times are
+the whole `Encoder::encode` call (header copy, cache calls, descriptors, the codec, the
+wait), from the cycle counter. Clocks: CPU 400 MHz, SYS_CLK 200 MHz (the codec's clock,
+TRM §37.2; `root_clk` in the driver's `DebugStatus`: SYS = MEM / 1 = CPU / 2), PSRAM 250 MHz.
+
+Logs: `/tmp/poc-p4-eth/jpeg/run1.log` .. `run5.log`; files decoded with `tools/still.py` and
+checked with `tools/jpeg_check.py` in `/tmp/poc-p4-eth/jpeg/run<n>/`. Run 4 is the full plan;
+run 5 repeats it on the final code.
+
+#### Correctness
+
+The test picture (`draw_test`: a gradient in the top half, `Synth` discs on noise in the
+bottom half, a white border, a 3-pixel diagonal) and one camera frame per size, each at
+quality 50, 75 and 90, dumped and checked against libjpeg-turbo (`djpeg` decodes it,
+`cjpeg -grayscale -baseline -quality <q>` is the reference encoder). Every file: SOF0, 8 bits,
+one component, the right size, EOI at the end, decoded without a warning. Bytes and PSNR
+against the source (run 4; the test-picture files are identical in every run):
+
+| Picture | q 50 / 75 / 90: board B | cjpeg B | board dB | cjpeg dB |
+|---|---|---|---|---|
+| test 1280x800 | 35 471 / 66 541 / 143 109 | 35 724 / 66 935 / 144 133 | 37.05 / 38.47 / 41.01 | 37.05 / 38.47 / 41.01 |
+| test 640x400 | 12 881 / 20 126 / 39 805 | 12 883 / 20 198 / 39 995 | 36.17 / 38.07 / 40.89 | 36.18 / 38.08 / 40.89 |
+| test 320x200 | 5 203 / 7 354 / 12 795 | 5 167 / 7 347 / 12 805 | 34.68 / 37.30 / 40.67 | 34.70 / 37.30 / 40.68 |
+| camera 1280x800 | 15 402 / 19 358 / 47 591 | 15 373 / 19 468 / 49 655 | 46.56 / 47.76 / 48.54 | 46.56 / 47.76 / 48.54 |
+| camera 640x400 binned | 6 038 / 8 659 / 17 874 | 6 006 / 8 685 / 18 321 | 44.79 / 46.45 / 47.94 | 44.79 / 46.44 / 47.94 |
+| camera 320x200 binned | 1 342 / 1 587 / 2 742 | 1 287 / 1 538 / 2 773 | 48.01 / 50.13 / 51.01 | 48.01 / 50.13 / 51.02 |
+
+The camera scene is dim and indoor (exposure 7.3 ms at 1280x800, gain 2x), so its files are
+small and its PSNR high. The quality equals libjpeg-turbo's to 0.02 dB. The board's header is
+56 bytes longer (a COM segment pads it to 384 bytes so the hardware's part starts on a cache
+line); its entropy-coded data is 0.1 to 4.4 % smaller (the most at q90 on camera frames).
+Decoded, 83 to 98 % of the pixels equal those of libjpeg-turbo's encode; the others differ by
+at most 28 levels on the test picture (q50) and 6 on camera frames [INFERENCE: the codec's DCT
+and quantiser round differently; the tables are the same]. The decoded pictures were looked
+at: orientation, gradient, diagonal, discs and border right, no shifted rows, no swapped
+blocks.
+
+#### Speed alone (200 encodes each, run 4)
+
+| Size | us per frame (mean) | fps | Mpixel/s | Study prediction |
+|---|---|---|---|---|
+| 1280x800 | 5 986 .. 5 988 | 167.0 | 171.0 | 147 fps |
+| 1280x720 | 5 390 .. 5 392 | 185.5 | 171.0 | 163 fps (Espressif: CPU 360 MHz, PSRAM 200 MHz) |
+| 640x480 | 1 814 .. 1 816 | 551 | 169.3 | 489 fps |
+| 640x400 | 1 516 .. 1 518 | 659 | 168.8 | 587 fps |
+| 320x200 | 398 .. 399 | 2 505 | 160.5 | about 2 300 fps |
+
+- The quality changes nothing (q50, q75 and q90 within 2 us), nor does the content (camera
+  1280x800 frames 5 988 us).
+- Memory changes little: 320x200 from and to internal RAM 394 us, PSRAM to internal RAM 396 us,
+  internal RAM to PSRAM 397 us; 1280x800 q50 from PSRAM into internal RAM 5 985 us.
+- 171 Mpixel/s at 200 MHz is 0.86 pixel per codec clock [INFERENCE: Espressif's 150 Mpixel/s
+  is the same rate at a 180 MHz SYS_CLK, which their 360 MHz CPU set-up gives]. The fixed
+  cost per frame shows at 320x200 (160.5 instead of 171 Mpixel/s: about 25 us).
+- The first encode after a size or quality change takes longer: up to 6 380 us at 1280x800.
+  The worst of 200 back-to-back frames is 6 286 us; the codec is not reset between frames.
+
+#### Capture and encode at once (run 4)
+
+Per mode: 5 s of capture alone (`camera::measure`), then 20 s in which every delivered frame
+(`Csi::wait_frame`, 3 buffers in PSRAM) is encoded at q90 into PSRAM while the CSI DMA writes
+the next frames into PSRAM. Busy-skipped counts the frames the receiver completed while the
+encoder was busy (sequence numbers skipped between two frames taken).
+
+| Mode | Hz | Delivered = encoded | Busy-skipped | Encode us mean / max | Bytes mean | CSI errors |
+|---|---|---|---|---|---|---|
+| 1280x800 | 120.05 | 2 402 | 0 | 5 986 / 6 050 | 47 805 | 0 |
+| 1280x800 | 128.32 | 2 567 | 0 | 5 988 / 5 989 | 47 893 | 0 |
+| 1280x800 | 149.96 | 2 999 | 0 | 5 988 / 5 989 | 43 566 | 0 |
+| 1280x800 | 153.98 (the sensor's maximum) | 3 080 | 0 | 5 986 / 5 987 | 43 489 | 0 |
+| 1280x720 | 141.55 | 2 831 | 0 | 5 390 / 5 391 | 41 842 | 0 |
+| 1280x720 | 169.86 | 3 397 | 0 | 5 390 / 5 391 | 38 017 | 0 |
+| 640x400 binned | 250.11 | 5 003 | 0 | 1 516 / 1 517 | 12 306 | 0 |
+| 640x400 binned | 300.13 | 6 003 | 0 | 1 516 / 1 516 | 11 160 | 0 |
+| 320x200 binned | 464.91 | 9 299 | 0 | 398 / 399 | 2 708 | 0 |
+
+The rates are those `camera::measure` logged before each window; run 3 gave the same counts
+(without the 153.98 Hz run). Encoding while the CSI DMA writes into PSRAM takes as long as
+alone. **Every frame is encoded at every rate the sensor gives**, 1280x800 at 153.98 Hz
+included (the encoder busy 92 % of the frame period): the encoder's limit, 167 fps at
+1280x800, is above the sensor's. 153.98 Hz x 43 489 B is 53.6 Mbit/s of JPEG for this scene.
+
+#### Robustness (runs 3 and 4)
+
+- `set_config` with 1284x800 gives `Geometry`, quality 0 gives `Quality`.
+- An output of the header + 4 096 B for the 143 109 B file gives `OutputTooSmall` after
+  702 us (run 4; 721 us in run 3), from the RX channel's `DSCR_EMPTY` interrupt: the codec
+  stalls and raises nothing. The next encode runs the reset sequence (`Stats::resets`) and
+  gives the reference file again (same length, same CRC).
+- An encode dropped after 300 us (`with_timeout`): the next encode gives the reference file.
+- 60 s at 1280x800 120 Hz q90: 7 203 delivered, 7 203 encoded, no error, no bad file; the
+  last file decoded at 48.61 dB (cjpeg 48.61 dB).
+
+Before the driver bound the 2D-DMA interrupts (run 2, 1280x800 q75 into 64 KiB of internal
+RAM), the too-small output was also reported as `OutputTooSmall`, with no codec interrupt
+seen (`last_jpeg` 0) [INFERENCE: found when the caller's 200 ms timeout polled the future;
+the time was not logged].
 
 ## Findings for the camera board
 
