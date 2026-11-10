@@ -57,6 +57,10 @@ pub struct Plan {
     pub cache_check: bool,
     /// Dump one frame per mode over the log UART.
     pub still_dump: bool,
+    /// With `still_dump`: one more still per value, with PRE_CTRL00 (0x5E00) set to it while
+    /// streaming (0x00 the scene, 0x80 bars, 0x81 random data, 0x82 grey squares, 0xC0
+    /// rolling bars). The plan's own setting (`test_pattern`) is restored afterwards.
+    pub still_patterns: &'static [u8],
     /// Run the processing soak per mode after the checks above (`soak`). `None`: capture only.
     pub soak: Option<soak::Plan>,
     /// Run the strip soak instead (`strip_soak`): the whole-frame receiver is never created,
@@ -230,7 +234,7 @@ async fn capture_mode(
             cache_check(csi).await;
         }
         if plan.still_dump {
-            still(csi, mode, plan).await;
+            stills(i2c, csi, mode, plan).await;
         }
         if let Some(c) = check {
             detector_check(csi, mode, c).await;
@@ -282,9 +286,44 @@ async fn first_frame(csi: &mut Csi<'static>) -> bool {
     }
 }
 
-async fn still(csi: &mut Csi<'static>, mode: &Mode, plan: &Plan) {
+/// The still of the plan's own setting, then one per [`Plan::still_patterns`] value.
+async fn stills(i2c: &mut Bus, csi: &mut Csi<'static>, mode: &Mode, plan: &Plan) {
+    let own = if plan.test_pattern {
+        ov9281::TEST_PATTERN_ON.1
+    } else {
+        ov9281::TEST_PATTERN_OFF.1
+    };
+    still(csi, mode, own).await;
+    for &p in plan.still_patterns {
+        if pattern(i2c, csi, p).await {
+            still(csi, mode, p).await;
+        }
+    }
+    if !plan.still_patterns.is_empty() {
+        pattern(i2c, csi, own).await;
+    }
+}
+
+/// Frames dropped after a write to PRE_CTRL00 before a still: the one in flight may change
+/// pattern part-way, and the write may only take effect at the next frame start.
+const PATTERN_SETTLE_FRAMES: usize = 3;
+
+/// Writes PRE_CTRL00 = `value` while streaming and lets [`PATTERN_SETTLE_FRAMES`] pass.
+async fn pattern(i2c: &mut Bus, csi: &mut Csi<'static>, value: u8) -> bool {
+    if let Err(e) = sccb_write(i2c, (ov9281::TEST_PATTERN_OFF.0, value)).await {
+        fail("test pattern write", &e);
+        return false;
+    }
+    for _ in 0..PATTERN_SETTLE_FRAMES {
+        let _ = with_timeout(FRAME_TIMEOUT, csi.wait_frame(None)).await;
+    }
+    true
+}
+
+/// Dumps the next frame; `pattern` is the PRE_CTRL00 value it was taken with (its name).
+async fn still(csi: &mut Csi<'static>, mode: &Mode, pattern: u8) {
     match with_timeout(FRAME_TIMEOUT, csi.wait_frame(None)).await {
-        Ok(Ok(f)) => dump_still(mode, plan, &f),
+        Ok(Ok(f)) => dump_still(mode, pattern, &f),
         _ => note("no frame for the still"),
     }
 }
@@ -910,10 +949,10 @@ fn log_first_frame(f: &Frame) {
     );
 }
 
-/// Millihertz as `x.yyy`.
-struct Fps(u64);
+/// Thousandths as `x.yyy` (millihertz as hertz, millilines as lines).
+struct Milli(u64);
 
-impl core::fmt::Display for Fps {
+impl core::fmt::Display for Milli {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}.{:03}", self.0 / 1000, self.0 % 1000)
     }
@@ -921,20 +960,13 @@ impl core::fmt::Display for Fps {
 
 #[inline(never)]
 fn log_measurement(csi: &Csi<'static>, mode: &Mode, m: &Measurement) {
+    log_rate(mode, m);
     let s = csi.stats();
-    let counted = Fps(s.frames_done as u64 * 1_000_000_000 / m.window_us);
-    // Frame period from first to last arrival: no ±1 frame counting error.
-    let span_us = (m.last.0 - m.first.0).max(1) as u64;
-    let span_mhz = (m.last.1 - m.first.1) as u64 * 1_000_000_000 / span_us;
-    let predicted = mode.frame_rate_mhz() as u64;
-    let ppm = (span_mhz as i64 - predicted as i64) * 1_000_000 / predicted as i64;
     info!(
-        "camera: {}: {} frames in {} ms = {counted} fps, first-to-last {} fps, predicted {} fps ({ppm:+} ppm), delivered {}, bytes/frame {} (expected {}, block items reported {}), wrong size {} (first {}), dropped {}, overwritten {}, worst interval {} us, seq gaps {}",
+        "camera: {}: {} frames in {} ms, delivered {}, bytes/frame {} (expected {}, block items reported {}), wrong size {} (first {}), dropped {}, overwritten {}, worst interval {} us, seq gaps {}",
         mode.name,
         s.frames_done,
         m.window_us / 1000,
-        Fps(span_mhz),
-        Fps(predicted),
         m.delivered,
         s.last_frame_bytes,
         m.expected,
@@ -945,6 +977,33 @@ fn log_measurement(csi: &Csi<'static>, mode: &Mode, m: &Measurement) {
         s.frames_overwritten,
         m.max_gap_us,
         m.seq_gaps
+    );
+}
+
+/// The rate from the first to the last arrival. The window starts just before a delivery and
+/// ends just after one, so `frames_done` over the window counts one frame more than the
+/// periods it spans (+0.17 % at 600 frames): it is not used for the rate.
+#[inline(never)]
+fn log_rate(mode: &Mode, m: &Measurement) {
+    let span_us = (m.last.0 - m.first.0).max(1) as u64;
+    let periods = (m.last.1 - m.first.1).max(1) as u64;
+    let rate_mhz = periods * 1_000_000_000 / span_us;
+    let predicted = mode.frame_rate_mhz() as u64;
+    let ppm = (rate_mhz as i64 - predicted as i64) * 1_000_000 / predicted as i64;
+    // Measured period in units of 100 ps, and in SCLK cycles of the mode.
+    let period_100ps = span_us * 10_000 / periods;
+    let cycles = span_us * mode.sclk_mhz as u64 / periods;
+    info!(
+        "camera: {}: first-to-last {} fps over {periods} periods = {}.{} ns = {cycles} SCLK cycles (predicted {} = (VTS {} - 1) x HTS {} + {}), predicted {} fps ({ppm:+} ppm)",
+        mode.name,
+        Milli(rate_mhz),
+        period_100ps / 10,
+        period_100ps % 10,
+        mode.frame_cycles(),
+        mode.vts,
+        mode.hts,
+        ov9281::FRAME_LONG_LINE,
+        Milli(predicted),
     );
 }
 
@@ -1028,9 +1087,9 @@ const DUMP_CHUNK: usize = 96;
 /// Prints `frame` as `@@IMG`, numbered base64 `@@D` lines and `@@END` with a CRC-32 (IEEE,
 /// as zlib) over the pixels. `tools/still.py` turns it into a PGM and PNG.
 #[inline(never)]
-fn dump_still(mode: &Mode, plan: &Plan, frame: &Frame) {
+fn dump_still(mode: &Mode, pattern: u8, frame: &Frame) {
     let t = esp_hal::time::Instant::now();
-    still_header(mode, plan, frame.len());
+    still_header(mode, pattern, frame.len());
     let mut crc = !0u32;
     let mut line = [0u8; DUMP_CHUNK / 3 * 4];
     for (i, chunk) in frame.chunks(DUMP_CHUNK).enumerate() {
@@ -1047,28 +1106,18 @@ fn dump_still(mode: &Mode, plan: &Plan, frame: &Frame) {
     );
 }
 
-/// The `@@IMG` line. The bytes go out as they are in memory: one byte per pixel for RAW8,
-/// packed CSI-2 RAW10 (5 bytes per 4 pixels) for RAW10; `tools/still.py` unpacks by the last
-/// field (bits per pixel).
+/// The `@@IMG` line, named `<w>x<h>-<fps>fps-raw<bits>-scene` or `...-pattern<0x5E00 hex>`.
+/// The bytes go out as they are in memory: one byte per pixel for RAW8, packed CSI-2 RAW10
+/// (5 bytes per 4 pixels) for RAW10; `tools/still.py` unpacks by the last field (bits per
+/// pixel).
 #[inline(never)]
-fn still_header(mode: &Mode, plan: &Plan, len: usize) {
-    let kind = if plan.test_pattern {
-        "pattern"
+fn still_header(mode: &Mode, pattern: u8, len: usize) {
+    let (w, h, fps, bits) = (mode.width, mode.height, mode.fps, mode.bits_per_pixel);
+    if pattern == ov9281::TEST_PATTERN_OFF.1 {
+        println!("@@IMG {w}x{h}-{fps}fps-raw{bits}-scene {w} {h} {len} {bits}");
     } else {
-        "scene"
-    };
-    println!(
-        "@@IMG {}x{}-{}fps-raw{}-{} {} {} {} {}",
-        mode.width,
-        mode.height,
-        mode.fps,
-        mode.bits_per_pixel,
-        kind,
-        mode.width,
-        mode.height,
-        len,
-        mode.bits_per_pixel
-    );
+        println!("@@IMG {w}x{h}-{fps}fps-raw{bits}-pattern{pattern:02x} {w} {h} {len} {bits}");
+    }
 }
 
 fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {

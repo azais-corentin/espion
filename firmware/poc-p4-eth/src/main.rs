@@ -76,7 +76,8 @@ enum Soak {
 }
 /// The soak [`CAMERA_PLAN`] runs.
 const SOAK: Soak = Soak::Frames;
-/// The plan the camera section runs: [`CAMERA_PLAN`] (default) or [`FAST_CAPTURE_PLAN`].
+/// The plan the camera section runs: [`CAMERA_PLAN`] (default), [`FAST_CAPTURE_PLAN`],
+/// [`MODE_STILLS_PLAN`] or [`RAW10_PATTERNS_PLAN`].
 const PLAN: &camera::Plan = &CAMERA_PLAN;
 /// Camera section on the 120 fps RAW8 modes (indexes into `ov9281::MODES`: 0 1280x800,
 /// 1 1280x720, 2 640x480, 3 640x400): sensor settings, checks, still dump (decode with
@@ -91,6 +92,7 @@ const CAMERA_PLAN: camera::Plan = camera::Plan {
     measure: Duration::from_secs(5),
     cache_check: false,
     still_dump: false,
+    still_patterns: &[],
     soak: match SOAK {
         Soak::Frames => Some(SOAK_PLAN),
         _ => None,
@@ -124,6 +126,26 @@ const FAST_CAPTURE_PLAN: camera::Plan = camera::Plan {
     soak: None,
     strips: None,
     ..CAMERA_PLAN
+};
+/// [`FAST_CAPTURE_PLAN`] without mode 8, with a scene still and a bar-pattern still per mode,
+/// each RAW10 mode right after the RAW8 mode of the same window (0 before 9, 1 before 10, 6
+/// before 11) so their stills show the same scene. Gain 15.5x (the highest) for a dim scene.
+/// About 4 minutes.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const MODE_STILLS_PLAN: camera::Plan = camera::Plan {
+    modes: &[0, 9, 1, 10, 6, 11, 4, 5, 7],
+    gain: ov9281::GAIN_MAX,
+    still_dump: true,
+    still_patterns: &[0x80],
+    ..FAST_CAPTURE_PLAN
+};
+/// The RAW10 byte layout against RAW8 on 640x400 at 210 fps (modes 6 and 11): a scene still,
+/// then the random-data, grey-squares and rolling-bar test patterns.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const RAW10_PATTERNS_PLAN: camera::Plan = camera::Plan {
+    modes: &[6, 11],
+    still_patterns: &[0x81, 0x82, 0xC0],
+    ..MODE_STILLS_PLAN
 };
 // The benchmark's 300 KiB frame buffer and the strip ring do not both fit in internal RAM.
 const _: () = assert!(!(RUN_BENCH && PLAN.strips.is_some()));

@@ -4,8 +4,14 @@
 //! [`MODES`] indexes 0..=3 are the 120 fps RAW8 modes (1280x800, 1280x720 crop, 640x480 crop,
 //! 640x400 binned). Indexes 4..=11 cover the Inno-Maker CAM-MIPIOV9281 V2 mode list: RAW8
 //! 1280x800 at 144 fps, 1280x720 at 144, 640x400 binned at 210 and 253, 320x200 at 453; RAW10
-//! 1280x800 at 120, 1280x720 at 120, 640x400 binned at 210. Only index 4 runs the system clock
-//! at 96 MHz, above the datasheet's 80 MHz; every other mode stays at 80 MHz.
+//! 1280x800 at 120, 1280x720 at 120, 640x400 binned at 210. Indexes 4 and 5 run the system
+//! clock at 96 MHz, above the datasheet's 80 MHz; every other mode stays at 80 MHz.
+//!
+//! The unbinned 1280x720 window needs VTS >= 814 (measured on the board at 80 MHz, also with
+//! the window moved to rows 0..=735): VTS 763 gives a dark image whose bright areas read
+//! lowest, VTS 780..=810 a flat black-level frame, VTS 814..=820 the normal image, while the
+//! frames themselves stay whole and on time [INFERENCE: the unbinned readout needs about the
+//! full 816 array rows]. The binned modes read two rows per line and run at VTS 434.
 //!
 //! Sources and derivations are in the PoC notes (`poc-ov9281.md`). In short: the common block
 //! is Espressif's `esp_cam_sensor` OV9281 table (RAW8, 2 lanes, 24 MHz, 800 Mbit/s), the windows
@@ -73,7 +79,16 @@ pub const LANE_MBPS: u16 = 800;
 /// HTS register value (SCLK cycles per line) of every mode: 728 / 80 MHz = 9.1 us per line,
 /// 728 / 96 MHz = 7.583 us.
 pub const HTS: u16 = 728;
-/// VTS register value (lines per frame) for 120 fps: 80 MHz / (728 x 915) = 120.10 fps.
+/// A frame lasts `(VTS - 1) * HTS + FRAME_LONG_LINE` SCLK cycles, not `VTS * HTS`: as if one
+/// line per frame lasted this many cycles instead of HTS (an inference). Measured on the board
+/// (2026-11-10): 21 runs of 10 s over HTS 728..=2912, VTS 434..=1830, SCLK 80 and 96 MHz,
+/// RAW8, RAW10, cropped and binned, exposure 100..=800 lines fit this within 1.4 cycles, with
+/// 1730.2 cycles and the sensor clock 28 ppm fast against the ESP32-P4's timer. The datasheet
+/// does not give it. At HTS 728 the frame is 1.38 lines longer than VTS (0.15 % at VTS 915,
+/// 0.32 % at VTS 434); with HTS above 1730 it is shorter.
+pub const FRAME_LONG_LINE: u32 = 1730;
+/// VTS register value (lines per frame) for 120 fps: 80 MHz / (914 x 728 + 1730) =
+/// 119.918 fps.
 pub const VTS_120FPS: u16 = 915;
 
 /// CSI-2 data type of RAW8 long packets: one byte per pixel.
@@ -91,7 +106,7 @@ pub const EXPOSURE_MIN_LINES: u16 = 1;
 /// Default exposure of the 80 MHz modes: 110 lines x 9.1 us = 1.001 ms. Each mode's own default
 /// is [`Mode::default_exposure_lines`].
 pub const DEFAULT_EXPOSURE_LINES: u16 = 110;
-/// Default exposure of the 96 MHz mode: 132 lines x 7.583 us = 1.001 ms.
+/// Default exposure of the 96 MHz modes: 132 lines x 7.583 us = 1.001 ms.
 pub const DEFAULT_EXPOSURE_LINES_96MHZ: u16 = 132;
 
 /// Lowest gain, 1x (real gain format, 4 fraction bits).
@@ -108,8 +123,8 @@ pub struct Mode {
     pub width: u16,
     /// Output height in lines.
     pub height: u16,
-    /// Frame rate rounded down to whole frames per second; the exact one is
-    /// [`Mode::frame_rate_mhz`] (120098 mHz for "120", 144118 for "144").
+    /// Nominal frame rate in whole frames per second, as in the mode lists (120, 144, ...);
+    /// the exact one is [`Mode::frame_rate_mhz`] (119918 mHz for "120", 143901 for "144").
     pub fps: u16,
     /// MIPI bit rate per data lane, for the receiver's D-PHY setup.
     pub lane_mbps: u16,
@@ -136,14 +151,19 @@ impl Mode {
         (self.hts as u64 * 1000 / self.sclk_mhz as u64) as u32
     }
 
+    /// SCLK cycles per frame: `(VTS - 1) * HTS + FRAME_LONG_LINE`, as measured.
+    pub const fn frame_cycles(&self) -> u64 {
+        (self.vts as u64 - 1) * self.hts as u64 + FRAME_LONG_LINE as u64
+    }
+
     /// Frame period in nanoseconds.
     pub const fn frame_ns(&self) -> u32 {
-        (self.hts as u64 * self.vts as u64 * 1000 / self.sclk_mhz as u64) as u32
+        (self.frame_cycles() * 1000 / self.sclk_mhz as u64) as u32
     }
 
     /// Frame rate in millihertz.
     pub const fn frame_rate_mhz(&self) -> u32 {
-        (self.sclk_mhz as u64 * 1_000_000_000 / (self.hts as u64 * self.vts as u64)) as u32
+        (self.sclk_mhz as u64 * 1_000_000_000 / self.frame_cycles()) as u32
     }
 
     /// Bytes of image data per line on the wire (RAW10: 5 bytes per 4 pixels).
@@ -501,11 +521,10 @@ const ANA_RAW10: (u16, u8) = (0x3662, 0x05);
 /// RAW8 change to 0x30).
 const VFIFO_RAW10: (u16, u8) = (0x4601, 0x04);
 
-/// VTS for 1280x720 at 144 fps, 80 MHz: 80e6 / (728 x 763) = 144.02 fps (minimum 761).
-const VTS_144FPS_720: u16 = 763;
-/// VTS for 640x400 binned at 210 fps, 80 MHz: 80e6 / (728 x 523) = 210.12 fps (minimum 422).
+/// VTS for 640x400 binned at 210 fps, 80 MHz: 80e6 / (522 x 728 + 1730) = 209.56 fps (minimum
+/// 422).
 const VTS_210FPS: u16 = 523;
-/// VTS for 640x400 binned at 253 fps, 80 MHz: 80e6 / (728 x 434) = 253.20 fps.
+/// VTS for 640x400 binned at 253 fps, 80 MHz: 80e6 / (433 x 728 + 1730) = 252.40 fps.
 const VTS_253FPS: u16 = 434;
 /// VTS for 320x200 at 453 fps, 80 MHz: 80e6 / (728 x 242) = 454.09 fps.
 const VTS_453FPS: u16 = 242;
@@ -515,7 +534,6 @@ const fn vts_regs(vts: u16) -> [(u16, u8); 2] {
 }
 
 const EXP_96MHZ: [(u16, u8); 3] = exposure_regs(DEFAULT_EXPOSURE_LINES_96MHZ);
-const VTS_REGS_720_144: [(u16, u8); 2] = vts_regs(VTS_144FPS_720);
 const VTS_REGS_210: [(u16, u8); 2] = vts_regs(VTS_210FPS);
 const VTS_REGS_253: [(u16, u8); 2] = vts_regs(VTS_253FPS);
 const VTS_REGS_453: [(u16, u8); 2] = vts_regs(VTS_453FPS);
@@ -550,8 +568,12 @@ const REGS_1280X800_RAW8_144: [(u16, u8); N_1280X800] = build(
     MODE_1280X800,
     &[SCLK_96MHZ, EXP_96MHZ[0], EXP_96MHZ[1], EXP_96MHZ[2]],
 );
-const REGS_1280X720_RAW8_144: [(u16, u8); N_1280X720] =
-    build(MODE_1280X720, &[VTS_REGS_720_144[0], VTS_REGS_720_144[1]]);
+/// 1280x720 at 144 fps: the 1280x720 window at 96 MHz and VTS 915, as the 1280x800 144 fps
+/// mode (80 MHz needs VTS >= 814, at most 134.8 fps).
+const REGS_1280X720_RAW8_144: [(u16, u8); N_1280X720] = build(
+    MODE_1280X720,
+    &[SCLK_96MHZ, EXP_96MHZ[0], EXP_96MHZ[1], EXP_96MHZ[2]],
+);
 const REGS_640X400_RAW8_210: [(u16, u8); N_640X400] =
     build(MODE_640X400, &[VTS_REGS_210[0], VTS_REGS_210[1]]);
 const REGS_640X400_RAW8_253: [(u16, u8); N_640X400] =
@@ -609,7 +631,7 @@ const fn raw10(
 }
 
 /// Every mode, all at HTS 728 and 800 Mbit/s per lane. 0..=3: the 120 fps RAW8 modes under test
-/// (VTS 915, 9.1 us per line, 120.10 fps). 4..=11: the Inno-Maker mode list.
+/// (VTS 915, 9.1 us per line, 119.918 fps). 4..=11: the Inno-Maker mode list.
 pub const MODES: [Mode; 12] = [
     raw8("1280x800", 1280, 800, 120, VTS_120FPS, &REGS_1280X800),
     raw8("1280x720 crop", 1280, 720, 120, VTS_120FPS, &REGS_1280X720),
@@ -627,14 +649,18 @@ pub const MODES: [Mode; 12] = [
             &REGS_1280X800_RAW8_144,
         )
     },
-    raw8(
-        "1280x720 crop RAW8 144fps",
-        1280,
-        720,
-        144,
-        VTS_144FPS_720,
-        &REGS_1280X720_RAW8_144,
-    ),
+    Mode {
+        sclk_mhz: 96,
+        default_exposure_lines: DEFAULT_EXPOSURE_LINES_96MHZ,
+        ..raw8(
+            "1280x720 crop RAW8 144fps 96MHz",
+            1280,
+            720,
+            144,
+            VTS_120FPS,
+            &REGS_1280X720_RAW8_144,
+        )
+    },
     raw8(
         "640x400 bin2 RAW8 210fps",
         640,
