@@ -22,6 +22,7 @@ idle-counter = []
 esp32p4-cache = { path = "../esp32p4-cache" }
 esp32p4-csi   = { path = "../esp32p4-csi" }
 esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
+esp32p4-pie   = { path = "../esp32p4-pie" }
 espion-proto  = { path = "../../crates/espion-proto" }
 ov9281        = { path = "../ov9281" }
 

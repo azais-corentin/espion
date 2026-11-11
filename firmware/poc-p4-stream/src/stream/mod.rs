@@ -118,12 +118,13 @@ pub const RAM_BYTES: usize = RX_BYTES
     + (RX_META + TX_META) * core::mem::size_of::<PacketMetadata>()
     + diag::RAM_BYTES;
 
-/// What the service needs besides the stack: PSRAM for the frame buffers and the camera's
-/// peripherals.
+/// What the service needs besides the stack: PSRAM for the frame buffers, the camera's
+/// peripherals, and core 0's PIE token for the chunk copy.
 pub struct Resources {
     pub psram: &'static mut [u8],
     pub i2c0: I2C0<'static>,
     pub vdma: VDMA_CH0<'static>,
+    pub pie: &'static esp32p4_pie::Pie,
 }
 
 /// What the capture task gets.
@@ -315,7 +316,7 @@ pub fn start(spawner: Spawner, stack: Stack<'static>, res: Resources) {
     sock.bind(CAM_PORT).expect("bind the camera port");
     let sock = &*SOCKET.init(RefCell::new(sock));
     let applied = check::applied(&DEFAULT_CAMERA, &mode);
-    spawner.spawn(send::task(sock).unwrap());
+    spawner.spawn(send::task(sock, res.pie).unwrap());
     spawner.spawn(control_task(sock, applied, mode).unwrap());
     spawner.spawn(diag::task(stack).unwrap());
     info!(

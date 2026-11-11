@@ -26,6 +26,7 @@ use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::psram::{Psram, PsramConfig, PsramTimingParams};
 use esp_hal::timer::timg::TimerGroup;
+use esp32p4_pie::Pie;
 use log::{error, info};
 use static_cell::StaticCell;
 
@@ -67,6 +68,12 @@ const RAM_START: usize = 0x4FF2_0000;
 /// Keeps the PSRAM driver (and its peripheral) alive for the whole run.
 static PSRAM_DRIVER: StaticCell<Psram> = StaticCell::new();
 
+/// Core 0's PIE token. The tasks of the thread-mode executor share it: they all run on that
+/// one thread, so they never use PIE at the same time, and no interrupt handler uses it.
+static PIE: StaticCell<Pie> = StaticCell::new();
+/// Cases of each PIE self-test at boot.
+const PIE_TEST_CASES: u32 = 4096;
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
@@ -80,6 +87,7 @@ async fn main(spawner: Spawner) -> ! {
     esp_rtos::start_with_idle_hook(timg0.timer0, p.FROM_CPU_INTR0, cpu::idle_hook);
     irq::install(&[irq::Source::Tick]);
     cpu::name_current("main");
+    let pie = pie_init();
 
     if let Some((old, new)) = baud_divider {
         info!(
@@ -111,6 +119,7 @@ async fn main(spawner: Spawner) -> ! {
                 psram,
                 i2c0: p.I2C0,
                 vdma: p.VDMA_CH0,
+                pie,
             },
         ),
         (Service::Stream, Some(stack), Some(psram)) => stream::start(
@@ -120,6 +129,7 @@ async fn main(spawner: Spawner) -> ! {
                 psram,
                 i2c0: p.I2C0,
                 vdma: p.VDMA_CH0,
+                pie,
             },
         ),
         (Service::Bench | Service::Stream, _, _) => {
@@ -141,6 +151,25 @@ fn log_chip() {
         rev.minor,
         esp_hal::clock::cpu_clock().as_mhz(),
     );
+}
+
+/// Enables PIE on core 0 (this thread runs the executor) and runs the self-tests of the copy
+/// and checksum-sum kernels against their scalar references; panics if a case fails, so no
+/// build runs with a wrong kernel.
+fn pie_init() -> &'static Pie {
+    let pie = PIE.init(Pie::enable().unwrap_or_else(|e| panic!("PIE: {e}")));
+    let c0 = cpu::mcycle();
+    let copy = pie.self_test_copy(1, PIE_TEST_CASES);
+    let c1 = cpu::mcycle();
+    let sum = pie.self_test_sum(1, PIE_TEST_CASES);
+    let c2 = cpu::mcycle();
+    info!(
+        "pie: enabled on core 0; self-tests: copy {copy} of {PIE_TEST_CASES} cases failed ({} kcycles), sum {sum} of {PIE_TEST_CASES} failed ({} kcycles)",
+        c1.wrapping_sub(c0) / 1000,
+        c2.wrapping_sub(c1) / 1000,
+    );
+    assert!(copy == 0 && sum == 0, "PIE self-test failed");
+    pie
 }
 
 /// Brings up PSRAM. `None` (logged) if it is not mapped.

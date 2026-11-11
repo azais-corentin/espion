@@ -705,10 +705,9 @@ impl<'a> Message<'a> {
             Self::Request(r) => encode(kind::CAM_REQUEST, r, buf),
             Self::Response(r) => encode(kind::CAM_RESPONSE, r, buf),
             Self::Chunk(c) => {
-                if c.data.len() > CHUNK_MAX {
-                    return Err(Error::ChunkTooLong);
-                }
-                encode(kind::FRAME_CHUNK, c, buf)
+                let n = c.encode_header(buf)?;
+                buf[n..n + c.data.len()].copy_from_slice(c.data);
+                Ok(&buf[..n + c.data.len()])
             }
         }
     }
@@ -753,4 +752,51 @@ impl FrameChunk<'_> {
     pub fn encode<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], Error> {
         Message::Chunk(*self).encode(buf)
     }
+
+    /// Writes the chunk's datagram into `buf` except its data bytes, and returns `n`, the
+    /// offset of the data: the datagram is `buf[..n + self.data.len()]` once the caller has
+    /// put the data at `buf[n..]`. Only the length of `self.data` is used; its bytes are not
+    /// read. So a sender can copy the data itself (with a faster copy, or a transform such as
+    /// RAW10 to RAW8), or send header and data from two buffers. The bytes are those of
+    /// [`encode`](Self::encode).
+    ///
+    /// Fails like `encode`: [`Error::ChunkTooLong`] above [`CHUNK_MAX`] bytes of data,
+    /// [`Error::BufferFull`] if `buf` cannot hold the header and the data.
+    pub fn encode_header(&self, buf: &mut [u8]) -> Result<usize, Error> {
+        if self.data.len() > CHUNK_MAX {
+            return Err(Error::ChunkTooLong);
+        }
+        // The fields in `FrameChunk`'s order; postcard writes `data` as its length (a varint,
+        // as it writes a `usize`), then the bytes.
+        let head = ChunkHead {
+            frame: self.frame,
+            generation: self.generation,
+            encoding: self.encoding,
+            width: self.width,
+            height: self.height,
+            timestamp_us: self.timestamp_us,
+            frame_len: self.frame_len,
+            offset: self.offset,
+            data_len: self.data.len(),
+        };
+        let n = encode(kind::FRAME_CHUNK, &head, buf)?.len();
+        if buf.len() - n < self.data.len() {
+            return Err(Error::BufferFull);
+        }
+        Ok(n)
+    }
+}
+
+/// What postcard writes of a [`FrameChunk`] before its data bytes.
+#[derive(Serialize)]
+struct ChunkHead {
+    frame: u32,
+    generation: u32,
+    encoding: Encoding,
+    width: u16,
+    height: u16,
+    timestamp_us: u64,
+    frame_len: u32,
+    offset: u32,
+    data_len: usize,
 }

@@ -36,6 +36,7 @@ use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{Duration, Instant};
 use esp_hal::peripherals::{I2C0, VDMA_CH0};
+use esp32p4_pie::Pie;
 use log::{info, warn};
 use static_cell::ConstStaticCell;
 
@@ -100,6 +101,15 @@ static INTERNAL: ConstStaticCell<Internal> = ConstStaticCell::new(Internal([0; I
 static RX_BASE: ConstStaticCell<[u8; DATAGRAM + RX_SHIFT]> =
     ConstStaticCell::new([0; DATAGRAM + RX_SHIFT]);
 
+/// Bytes the misaligned-access probe walks per measurement (in L1 after a first pass).
+const PROBE_BYTES: usize = 2048;
+
+#[repr(C, align(64))]
+struct Probe64([u8; PROBE_BYTES + 64]);
+
+static MISALIGNED_PROBE: ConstStaticCell<Probe64> =
+    ConstStaticCell::new(Probe64([0; PROBE_BYTES + 64]));
+
 // Socket buffers: TX socket (requests in, the stream out), RX socket (checked datagrams in,
 // query replies out).
 static TX_RX_META: ConstStaticCell<[PacketMetadata; 4]> =
@@ -119,6 +129,8 @@ static RX_TX_BUF: ConstStaticCell<[u8; 4 * REPLY_LEN]> = ConstStaticCell::new([0
 
 /// Bytes of internal RAM the service's socket and source buffers take.
 pub const RAM_BYTES: usize = INTERNAL_LEN
+    + PROBE_BYTES
+    + 64
     + DATAGRAM
     + RX_SHIFT
     + 256
@@ -127,11 +139,12 @@ pub const RAM_BYTES: usize = INTERNAL_LEN
     + (4 + TX_META + RX_META + REPLY_META) * core::mem::size_of::<PacketMetadata>();
 
 /// What the TX service needs besides the stack: PSRAM for the camera buffers and the PSRAM
-/// source, and the camera's peripherals.
+/// source, the camera's peripherals, and core 0's PIE token for the datagram copy.
 pub struct Resources {
     pub psram: &'static mut [u8],
     pub i2c0: I2C0<'static>,
     pub vdma: VDMA_CH0<'static>,
+    pub pie: &'static Pie,
 }
 
 /// Spawns the two service tasks.
@@ -244,6 +257,8 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
         *b = pattern(i as u32);
     }
     let mut camera = camera::init(res.i2c0, res.vdma, cam_mem).await;
+    log_misaligned_access(&MISALIGNED_PROBE.take().0);
+    let pie = res.pie;
 
     let mut sock = UdpSocket::new(
         stack,
@@ -291,7 +306,7 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
         match kind {
             Kind::Internal => {
                 let mut frame = 0;
-                while send_frame(&mut sock, ep, &internal[..], frame, deadline, &mut t).await {
+                while send_frame(&mut sock, pie, ep, &internal[..], frame, deadline, &mut t).await {
                     frame += 1;
                 }
             }
@@ -301,7 +316,7 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
                     let c0 = cpu::mcycle();
                     flush_cache(psram_src);
                     t.flush_cycles += u64::from(cpu::mcycle().wrapping_sub(c0));
-                    if !send_frame(&mut sock, ep, psram_src, frame, deadline, &mut t).await {
+                    if !send_frame(&mut sock, pie, ep, psram_src, frame, deadline, &mut t).await {
                         break;
                     }
                     frame += 1;
@@ -316,7 +331,7 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
                         break;
                     };
                     if kind == Kind::Frames
-                        && !send_frame(&mut sock, ep, &f, f.seq(), deadline, &mut t).await
+                        && !send_frame(&mut sock, pie, ep, &f, f.seq(), deadline, &mut t).await
                     {
                         break;
                     }
@@ -351,10 +366,11 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
     }
 }
 
-/// Sends `data` as frame `frame` to `ep`, [`CHUNK`] bytes per datagram. `false` if the
-/// deadline came first.
+/// Sends `data` as frame `frame` to `ep`, [`CHUNK`] bytes per datagram, each copied into the
+/// socket's ring by PIE. `false` if the deadline came first.
 async fn send_frame(
     sock: &mut UdpSocket<'_>,
+    pie: &Pie,
     ep: IpEndpoint,
     data: &[u8],
     frame: u32,
@@ -378,7 +394,7 @@ async fn send_frame(
                 let dst = &mut buf[HEADER..len];
                 let misaligned =
                     !(chunk.as_ptr() as usize ^ dst.as_ptr() as usize).is_multiple_of(4);
-                dst.copy_from_slice(chunk);
+                pie.copy(dst, chunk);
                 (len, (cpu::mcycle().wrapping_sub(c0), misaligned))
             })
             .await
@@ -773,4 +789,110 @@ fn log_ready() {
 #[inline(never)]
 fn log_done() {
     info!("bench: host done");
+}
+
+// ── Misaligned accesses ───────────────────────────────────────────────────────────────────
+
+/// Times 32-bit loads and stores at offsets 0 to 3 from a word boundary, in L1, and logs the
+/// cycles per access. A core that traps misaligned accesses would stop here with a load or
+/// store address-misaligned exception (esp-hal has no emulation handler), and one that splits
+/// them in hardware shows its extra cycles. Measured once at boot, with interrupts masked.
+#[inline(never)]
+fn log_misaligned_access(buf: &[u8; PROBE_BYTES + 64]) {
+    const ITERS: u32 = (PROBE_BYTES / 32) as u32;
+    const ACCESSES: u64 = ITERS as u64 * 8;
+    let mut loads = [0u32; 4];
+    let mut stores = [0u32; 4];
+    critical_section::with(|_| {
+        for off in 0..4 {
+            // SAFETY: each run touches `buf[off..off + PROBE_BYTES]`, inside `buf` (which the
+            // caller owns and nothing else touches); the stores write zeros into it.
+            unsafe {
+                let p = buf.as_ptr().add(off);
+                time_loads(p, ITERS);
+                loads[off] = time_loads(p, ITERS);
+                time_stores(p.cast_mut(), ITERS);
+                stores[off] = time_stores(p.cast_mut(), ITERS);
+            }
+        }
+    });
+    let r = |c: u32| Ratio(u64::from(c), ACCESSES);
+    info!(
+        "bench: 32-bit accesses at +0/+1/+2/+3 from a word, cycles per access ({ACCESSES} each, in L1): loads {} / {} / {} / {}, stores {} / {} / {} / {}",
+        r(loads[0]),
+        r(loads[1]),
+        r(loads[2]),
+        r(loads[3]),
+        r(stores[0]),
+        r(stores[1]),
+        r(stores[2]),
+        r(stores[3]),
+    );
+}
+
+/// Cycles of `iters` passes of eight `lw` 4 bytes apart from `p` (32 bytes per pass, four
+/// destination registers in turn), with the loop's three instructions per pass.
+///
+/// # Safety
+///
+/// `p..p + 32 * iters` is readable.
+#[inline(never)]
+unsafe fn time_loads(p: *const u8, iters: u32) -> u32 {
+    let t0 = cpu::mcycle();
+    // SAFETY: reads `p..p + 32 * iters` (the caller's contract); no stack use.
+    unsafe {
+        core::arch::asm!(
+            "2:",
+            "lw {a}, 0({p})",
+            "lw {b}, 4({p})",
+            "lw {c}, 8({p})",
+            "lw {d}, 12({p})",
+            "lw {a}, 16({p})",
+            "lw {b}, 20({p})",
+            "lw {c}, 24({p})",
+            "lw {d}, 28({p})",
+            "addi {p}, {p}, 32",
+            "addi {n}, {n}, -1",
+            "bnez {n}, 2b",
+            p = inout(reg) p => _,
+            n = inout(reg) iters => _,
+            a = out(reg) _,
+            b = out(reg) _,
+            c = out(reg) _,
+            d = out(reg) _,
+            options(nostack, readonly),
+        );
+    }
+    cpu::mcycle().wrapping_sub(t0)
+}
+
+/// Cycles of `iters` passes of eight `sw zero` 4 bytes apart from `p`.
+///
+/// # Safety
+///
+/// `p..p + 32 * iters` is writable and nothing else reads or writes it meanwhile.
+#[inline(never)]
+unsafe fn time_stores(p: *mut u8, iters: u32) -> u32 {
+    let t0 = cpu::mcycle();
+    // SAFETY: writes zeros to `p..p + 32 * iters` (the caller's contract); no stack use.
+    unsafe {
+        core::arch::asm!(
+            "2:",
+            "sw zero, 0({p})",
+            "sw zero, 4({p})",
+            "sw zero, 8({p})",
+            "sw zero, 12({p})",
+            "sw zero, 16({p})",
+            "sw zero, 20({p})",
+            "sw zero, 24({p})",
+            "sw zero, 28({p})",
+            "addi {p}, {p}, 32",
+            "addi {n}, {n}, -1",
+            "bnez {n}, 2b",
+            p = inout(reg) p => _,
+            n = inout(reg) iters => _,
+            options(nostack),
+        );
+    }
+    cpu::mcycle().wrapping_sub(t0)
 }

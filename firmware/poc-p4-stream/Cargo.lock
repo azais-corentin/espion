@@ -1004,6 +1004,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32p4-pie"
+version = "0.1.0"
+dependencies = [
+ "esp32p4",
+]
+
+[[package]]
 name = "esp32s2"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1404,6 +1411,7 @@ dependencies = [
  "esp32p4-cache",
  "esp32p4-csi",
  "esp32p4-jpeg",
+ "esp32p4-pie",
  "espion-proto",
  "log",
  "ov9281",

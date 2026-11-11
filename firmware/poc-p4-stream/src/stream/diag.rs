@@ -15,6 +15,10 @@
 //!   `accounting=off`. Nothing is logged.
 //! - `I`: per core, each wrapped interrupt handler's calls and mean own cycles per call since
 //!   the mark (a separate reply: the report fills a datagram).
+//! - `N`: the send path since the mark: the chunk encodings (count, cycles each, data bytes,
+//!   copies whose ends differ modulo 4 and 16), and the driver wrapper's per-frame cycles
+//!   (smoltcp's part and the driver's part of TX and RX) and token requests. Zeros without
+//!   `accounting`.
 //! - `F1` / `F2`: the next mode change fails: `1` a sensor bus error (every write of the start
 //!   goes to an address nobody answers), `2` no first frame (stream-on left out); the
 //!   request is answered with the error and the previous mode runs again.
@@ -39,7 +43,7 @@ use esp32p4_csi::Stats;
 use log::info;
 use static_cell::ConstStaticCell;
 
-use super::{BAD_DATAGRAMS, CMDS, Cmd, DIAG_PORT, FAULT, SEND_BUSY_US, jpeg, shared};
+use super::{BAD_DATAGRAMS, CMDS, Cmd, DIAG_PORT, FAULT, SEND_BUSY_US, jpeg, send, shared};
 use crate::{cpu, irq, net};
 
 const RX_BYTES: usize = 256;
@@ -81,6 +85,7 @@ struct Mark {
     cpu: [cpu::Snapshot; cpu::CORES],
     irq: [irq::Snapshot; cpu::CORES],
     net: net::Stats,
+    copies: send::Copies,
     sent: u32,
 }
 
@@ -113,6 +118,7 @@ pub(super) async fn task(stack: Stack<'static>) {
                     }
                     [b'R', ..] => write_report(&mut w),
                     [b'I', ..] => write_irq(&mut w),
+                    [b'N', ..] => write_net(&mut w),
                     [b'F', d @ b'1'..=b'2', ..] => {
                         FAULT.store(d - b'0', Ordering::Relaxed);
                         let _ = w.write_str("fault armed");
@@ -164,6 +170,7 @@ fn set_mark() {
             cpu: [cpu::snapshot_of(0), cpu::snapshot_of(1)],
             irq: [irq::snapshot(0), irq::snapshot(1)],
             net: net::stats(),
+            copies: send::copies(),
             sent: shared(|s| s.counters.datagrams_sent),
         });
     });
@@ -350,6 +357,43 @@ fn write_irq(w: &mut BufWriter<'_>) {
             }
         }
     }
+}
+
+/// The `N` reply: the chunk encodings and the driver wrapper's counts since the mark.
+#[inline(never)]
+fn write_net(w: &mut BufWriter<'_>) {
+    let (at, n, c) = critical_section::with(|cs| {
+        let m = MARK.borrow_ref(cs);
+        let m = m.as_ref().expect("marked at start");
+        (
+            m.at,
+            net::stats().since(&m.net),
+            send::copies().since(&m.copies),
+        )
+    });
+    let per = |a: u64, b: u32| a / u64::from(b.max(1));
+    let _ = write!(
+        w,
+        "window_us={} copies={} copy_cyc={} copy_bytes={} copy_misaligned={} copy_unlike16={}",
+        (Instant::now() - at).as_micros(),
+        c.count,
+        per(c.cycles, c.count),
+        per(c.bytes, c.count),
+        c.unlike4,
+        c.unlike16,
+    );
+    let _ = write!(
+        w,
+        " tx_frames={} tx_stack_cyc={} tx_driver_cyc={} rx_frames={} rx_stack_cyc={} rx_driver_cyc={} token_calls={} token_cyc={}",
+        n.tx_frames,
+        per(n.tx_stack, n.tx_frames),
+        per(n.tx_driver, n.tx_frames),
+        n.rx_frames,
+        per(n.rx_stack, n.rx_frames),
+        per(n.rx_driver, n.rx_frames),
+        n.token_calls,
+        per(n.token_cycles, n.token_calls),
+    );
 }
 
 /// `part` of `whole` in percent, one decimal.

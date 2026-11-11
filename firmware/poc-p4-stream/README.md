@@ -90,7 +90,8 @@ cargo run -p poc-viewer --release                     # the window, [fe80::4553:
 cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 settings
 python3 firmware/poc-p4-stream/tools/streamdiag.py mark     # the board's CPU report: mark,
 python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report,
-python3 firmware/poc-p4-stream/tools/streamdiag.py irq      # and the interrupt handlers
+python3 firmware/poc-p4-stream/tools/streamdiag.py irq      # the interrupt handlers,
+python3 firmware/poc-p4-stream/tools/streamdiag.py net      # and the send path (copies, driver)
 ```
 
 Cargo features: `accounting` (default) builds the CPU accounts; `--no-default-features`
@@ -124,7 +125,10 @@ neighbour discovery).
 
 ## What the firmware does
 
-1. Switches UART0 to 2 Mbaud, prints the chip, brings up PSRAM (250 MHz).
+1. Switches UART0 to 2 Mbaud, prints the chip, enables PIE (the P4's SIMD extension,
+   `esp32p4-pie`) on core 0, where the executor runs, and runs its copy and checksum-sum
+   self-tests against the scalar references (4096 cases each, about 0.4 s; a failure panics),
+   brings up PSRAM (250 MHz).
 2. `net::start`: resets the PHY, creates the EMAC driver (which initialises the PHY over MDIO),
    switches the TX DMA to threshold mode, creates the embassy-net stack with the static
    address, spawns the runner (`net_task`) and the link task, and waits up to 8 s for the
@@ -150,8 +154,9 @@ The test service (`src/bench.rs`, the module docs have the formats):
   counts.
 
 The reports carry the CPU time: `copy_cyc`, cycles per datagram in the application's copy into
-the socket buffer, and `copy_misaligned`, how many of those copies had source and destination
-unlike modulo 4 (the ROM `memcpy` copies them byte by byte, see
+the socket buffer (PIE's copy since 2026-11-11, [step 1](#measured-step-1-the-datagram-copy-through-pie-2026-11-11)),
+and `copy_misaligned`, how many of those copies had source and destination unlike modulo 4
+(the ROM `memcpy` copies them byte by byte, see
 [copy alignment](#measured-baseline-and-copy-alignment-2026-11-11)); from the driver wrapper
 (`net/device.rs`), per frame, the cycles in smoltcp's part of the TX and RX tokens
 (`tx_stack_cyc`: headers, the payload copy into the DMA buffer and the UDP checksum) and in the
@@ -196,8 +201,8 @@ and without `accounting` alike.
 | `src/stream/check.rs` | The `SetCamera` checks in the protocol's order, as the viewer's fake camera makes them |
 | `src/stream/capture.rs` | The capture task: frames, counters, the stream rules, mode changes and recovery |
 | `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
-| `src/stream/send.rs` | The send task: answers and frame chunks, encoded straight into the socket's ring |
-| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
+| `src/stream/send.rs` | The send task: answers and frame chunks, encoded straight into the socket's ring (`espion_proto` writes the chunk header, PIE copies the bytes) |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
 | `dram_dma.x` | Linker section for the Ethernet DMA storage at 0x4FF40000 or above (see below) |
@@ -246,7 +251,9 @@ the reference) does, with the real sensor.
 - **Where it runs.** All on core 0, in the one embassy executor, with the network: control,
   capture, encode, send, diag, the runner and the link task; the EMAC, CSI, JPEG and 2D-DMA
   interrupts are on core 0 too. The send task encodes each chunk straight into the socket's TX
-  ring (`send_to_with`), the one CPU copy of the pixels or of the JPEG file; smoltcp copies the
+  ring (`send_to_with`): `FrameChunk::encode_header` writes the chunk's header and PIE copies
+  the bytes (`Pie::copy`, any alignment), the one CPU copy of the pixels or of the JPEG file
+  (RAW10 sent as RAW8 is reduced to its high bits in that place instead); smoltcp copies the
   datagram into the DMA buffer with its checksum pass. Core 1 stays off (below: the two-core
   attempt hung).
 - **RAM** (boot log): 182 272 B of internal RAM static, of which the service's sockets and
@@ -774,6 +781,80 @@ remain unseen by the accounts (95.0 against 98.5 %) [INFERENCE: the trap entry a
 each handler, and esp-rtos's software interrupt outside the wake and sleep windows]. In the
 stream the executor sleeps rarely (8 000 to 9 000 times in 10 s), and the accounts come within
 0.4 to 0.7 points of the idle counter.
+
+### Measured: step 1, the datagram copy through PIE, 2026-11-11
+
+Plan step 7.1. The application's copy into the socket ring is `Pie::copy` (`esp32p4-pie`: 16
+bytes per aligned load and store, the source shifted into place with `esp.src.q` when it is
+aligned unlike the destination). The bench copies its payload with it; the stream's send task
+lets `FrameChunk::encode_header` (`espion_proto`; the bytes on the wire are unchanged, the
+crate's tests compare them with the derived encoding) write the chunk's header and copies the
+bytes with PIE. PIE is enabled once on core 0, where the thread-mode executor runs, and every
+task of that executor shares the token (one thread; no interrupt handler uses PIE).
+
+Boot self-tests on the board (every build since): `self_test_copy` 0 failed of 4096 cases
+(every pair of source and destination alignment 0..16, lengths 0..=1600, guard bytes around;
+108 M cycles), `self_test_sum` 0 failed of 4096 (41.6 M cycles).
+
+Before and after: the same tree and flags (no frame pointers, `c2a842d`), built twice, the
+"before" build with `copy_from_slice` (the ROM `memcpy`) in place of `Pie::copy`; flashed in
+one session. Logs and ELFs in `/tmp/p4perf-logs/StreamSend/` (`s1-bench-rom.*`,
+`s1-bench-pie.*`, `s1-stream-rom.*`, `s1-stream-pie.*`). Bench: `tools/netbench.py tx`, 20 s
+per source:
+
+| Source, copy | Datagrams | Host MB/s (datagrams/s) | Lost, dup., reordered, bad | CPU busy (`busy_all`) | `copy_cyc` | TX task | Runner | `tx_stack_cyc` | `tx_driver_cyc` | Token requests per datagram x `token_cyc` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Internal, ROM `memcpy` | 163 778 | 11.795 (8187) | 0, 0, 0, 0 | 89.4 % (93.4 %) | 13 041 | 15 452 | 27 117 | 10 142 | 2 086 | 4.84 x 1 161 |
+| Internal, PIE | 163 780 | 11.795 (8187) | 0, 0, 0, 0 | 65.4 % (70.2 %) | 1 349 | 3 794 | 27 134 | 10 139 | 2 063 | 4.95 x 1 153 |
+| PSRAM, ROM `memcpy` | 162 773 | 11.799 (8136) | 0, 0, 0, 0 | 91.2 % (93.5 %) | 16 222 | 18 505 | 25 500 | 10 216 | 2 105 | 3.97 x 1 200 |
+| PSRAM, PIE | 162 775 | 11.799 (8136) | 0, 0, 0, 0 | 71.9 % (76.7 %) | 4 554 | 7 064 | 27 241 | 10 214 | 2 077 | 4.97 x 1 153 |
+| Camera, ROM `memcpy` | 162 705 | 11.801 (8137) | 0, 0, 0, 0 | 92.4 % (94.7 %) | 16 690 | 19 069 | 25 561 | 10 247 | 2 085 | 3.95 x 1 163 |
+| Camera, PIE | 162 707 | 11.801 (8138) | 0, 0, 0, 0 | 73.1 % (77.9 %) | 4 922 | 7 478 | 27 384 | 10 247 | 2 095 | 4.97 x 1 153 |
+
+Every bench copy has its source at 0 and its destination at 2 modulo 16, so PIE takes its
+shifting path: 0.94 cycles per byte from internal RAM (1436 bytes; the spike's aligned loop
+did 0.49), 3.2 from cold PSRAM, where the cache fills set the pace.
+
+Stream: the scratch receiver `jrx` (a copy in `/tmp/p4perf-logs/StreamSend/jrx/` that also
+asks for the `N` report), 10 s windows after 2 s of warm-up; cycles per datagram from the
+test hooks (`R` and `N`); `copy_cyc` here includes the chunk's header:
+
+| Run, copy | Host | Core 0 busy (`busy_all`) | net task | send task | `copy_cyc` | Copies unlike mod 4 / mod 16 | `tx_stack_cyc` | Token requests per datagram x `token_cyc` |
+|---|---|---|---|---|---|---|---|---|
+| Raw 1280x800 RAW8 120 Hz (link), ROM | 89.93 Mbit/s, 10.98 fps | 93.3 % (93.8 %) | 28 046 | 17 806 | 15 350 | 76 % / 96 % | 18 534 | 2.05 x 1 153 |
+| Raw 1280x800 RAW8 120 Hz (link), PIE | 89.93 Mbit/s, 10.98 fps | 84.9 % (87.1 %) | 32 391 | 8 944 | 6 083 | 24 % / 93 % | 18 095 | 3.65 x 1 191 |
+| JPEG q90, gain 15.5x, 153.98 Hz (link), ROM | 92.73 Mbit/s, 78.5 fps | 98.8 % (99.0 %) | 26 549 | 19 578 | 16 745 | 75 % / 95 % | 17 776 | 1.83 x 1 092 |
+| JPEG q90, gain 15.5x, 153.98 Hz (link), PIE | 92.62 Mbit/s, 74.8 fps | 92.0 % (93.6 %) | 31 388 | 10 899 | 7 520 | 75 % / 94 % | 17 400 | 3.55 x 1 203 |
+| JPEG q90, gain 2x, 120 Hz, ROM | 13.55 Mbit/s, 120.05 fps | 14.5 % (15.1 %) | 25 041 | 18 538 | 16 547 | 96 % / 100 % | 15 867 | 1.92 x 1 244 |
+| JPEG q90, gain 2x, 120 Hz, PIE | 13.62 Mbit/s, 120.06 fps | 11.2 % (11.7 %) | 25 054 | 7 515 | 5 505 | 97 % / 100 % | 15 652 | 1.94 x 1 297 |
+
+Every run: 0 incomplete or bad frames at the host, 0 capture errors, 0 EMAC missed frames. The
+frame rate of the noisy JPEG case follows the file sizes of the moment (the link carries the
+same 92.6 Mbit/s).
+
+- **Kept.** Net and send tasks together: 45 852 to 41 335 cycles per datagram in the raw
+  stream (-10 %), 46 127 to 42 287 with link-bound JPEG (-8 %), 43 579 to 32 569 at 13.6 Mbit/s
+  (-25 %). The copy itself costs 9 000 to 11 000 cycles less.
+- **The runner costs more per datagram where the link is the limit** (bench PSRAM and camera,
+  both link-bound streams: +1 700 to +4 800 cycles): the send task refills the socket ring at
+  once now, so the runner wakes for fewer datagrams at a time (token requests per datagram
+  1.8-2.1 to 3.6 in the stream) [INFERENCE: from the token and poll counts]. Step 2 targets
+  that cost.
+- **smoltcp's copy is unchanged** (`tx_stack_cyc` within 2 %): in the stream its source (the
+  slot in the socket ring) and its destination (offset 62 of the DMA buffer) are still unlike
+  modulo 4 in three quarters of the datagrams, where the ROM `memcpy` copies byte by byte.
+
+**Misaligned 32-bit accesses** (the bench service at boot, `log_misaligned_access`: 512 loads,
+then 512 stores, 4 bytes apart in L1, interrupts masked; cycles per access including the loop):
+loads 3.3 at a word boundary, 9.3 at +1, 6.3 at +2, 9.3 at +3; stores the same. The core does
+them in hardware (no trap, no emulation), at 3 to 6 cycles more than an aligned one. A
+`memcpy` for buffers unlike modulo 4 could use them (about 3 cycles per byte, against the ROM's
+9) or shift-and-merge aligned words. Not done, for two reasons: `memcpy` is bound to the ROM by
+a plain assignment in esp-rom-sys's linker script (`memcpy = 0x4fc0026c;` in
+`ld/esp32p4/rom/additional.ld`, not a `PROVIDE`), so a definition in this crate does not
+replace it and only a linker option (`--wrap` or `--defsym` in the build's link arguments)
+could; and step 3 takes the chunk datagrams, nearly all of the stream's bytes, off smoltcp's
+copy. smoltcp then copies only answers, neighbour discovery and ping.
 
 ## The Ethernet driver (esp-hal 1.2.2 `ethernet`, `unstable`)
 

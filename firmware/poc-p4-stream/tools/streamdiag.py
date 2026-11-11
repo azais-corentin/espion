@@ -6,6 +6,7 @@ Python standard library only. The socket is bound to the link-local address of o
   streamdiag.py mark            start a measurement window (CPU accounts, network counters)
   streamdiag.py report          the board's report since the mark, one key=value per line
   streamdiag.py irq             each interrupt handler's calls and cycles since the mark
+  streamdiag.py net             the send path since the mark: chunk copies, driver cycles
   streamdiag.py fault 1|2       the next mode change fails: 1 sensor bus, 2 no first frame
   streamdiag.py stall           sensor stream off behind the receiver's back
   streamdiag.py done            the board logs "stream: host done" (board-run.sh stops on it)
@@ -39,7 +40,18 @@ def main():
     p.add_argument("--board", default="fe80::4553:9281")
     p.add_argument(
         "command",
-        choices=["mark", "report", "irq", "fault", "stall", "done", "garbage", "small", "encodeonly"],
+        choices=[
+            "mark",
+            "report",
+            "irq",
+            "net",
+            "fault",
+            "stall",
+            "done",
+            "garbage",
+            "small",
+            "encodeonly",
+        ],
     )
     p.add_argument("arg", nargs="?", default="")
     args = p.parse_args()
@@ -62,6 +74,7 @@ def main():
         "mark": b"M",
         "report": b"R",
         "irq": b"I",
+        "net": b"N",
         "fault": b"F" + args.arg.encode(),
         "stall": b"S",
         "done": b"D",
@@ -74,7 +87,7 @@ def main():
             reply = s.recv(2048).decode(errors="replace")
         except socket.timeout:
             continue
-        if args.command in ("report", "irq"):
+        if args.command in ("report", "irq", "net"):
             print("\n".join(reply.split()))
         else:
             print(reply)

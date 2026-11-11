@@ -267,6 +267,75 @@ fn chunk_longer_than_the_maximum_is_refused() {
     );
 }
 
+/// The chunk's bytes as serde derives them from `FrameChunk` (the decoder's view), after the
+/// header: `encode`, and `encode_header` with the data put after it, give exactly these.
+#[test]
+fn header_and_data_written_apart_equal_the_derived_encoding() {
+    let data: Vec<u8> = (0..CHUNK_MAX).map(|i| (i * 13 + 5) as u8).collect();
+    let small = FrameChunk {
+        frame: 3,
+        generation: 1,
+        encoding: Encoding::Jpeg,
+        width: 1280,
+        height: 800,
+        timestamp_us: 123_456,
+        frame_len: 50_000,
+        offset: CHUNK_MAX as u32,
+        data: &data,
+    };
+    for len in [0, 1, 2, 3, 4, 127, 128, 129, 1000, CHUNK_MAX] {
+        for chunk in [
+            largest_chunk(&data[..len]),
+            FrameChunk {
+                data: &data[..len],
+                ..small
+            },
+        ] {
+            let mut derived = [0u8; MAX_DATAGRAM];
+            derived[..HEADER_LEN].copy_from_slice(&[
+                MAGIC[0],
+                MAGIC[1],
+                VERSION,
+                kind::FRAME_CHUNK,
+            ]);
+            let body = postcard::to_slice(&chunk, &mut derived[HEADER_LEN..])
+                .unwrap()
+                .len();
+            let derived = &derived[..HEADER_LEN + body];
+
+            let mut whole = [0u8; MAX_DATAGRAM];
+            assert_eq!(
+                chunk.encode(&mut whole).unwrap(),
+                derived,
+                "encode, {len} bytes"
+            );
+
+            let mut apart = [0xA5u8; MAX_DATAGRAM];
+            let n = chunk.encode_header(&mut apart).unwrap();
+            apart[n..n + len].copy_from_slice(chunk.data);
+            assert_eq!(&apart[..n + len], derived, "encode_header, {len} bytes");
+        }
+    }
+}
+
+#[test]
+fn header_without_room_for_the_data_is_refused() {
+    let data = [7u8; 100];
+    let chunk = largest_chunk(&data);
+    let mut buf = [0u8; MAX_DATAGRAM];
+    let n = chunk.encode_header(&mut buf).unwrap();
+    assert_eq!(chunk.encode_header(&mut buf[..n + 100]), Ok(n));
+    assert_eq!(
+        chunk.encode_header(&mut buf[..n + 99]),
+        Err(Error::BufferFull)
+    );
+    let long = [0u8; CHUNK_MAX + 1];
+    assert_eq!(
+        largest_chunk(&long).encode_header(&mut buf),
+        Err(Error::ChunkTooLong)
+    );
+}
+
 #[test]
 fn a_frame_cut_into_chunks_round_trips() {
     // RAW10 1280x800 and RAW8 640x400: whole chunks and a short last one.
