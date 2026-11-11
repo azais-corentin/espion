@@ -35,6 +35,7 @@ use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::psram::{Psram, PsramConfig, PsramTimingParams};
 use esp_hal::time::{Instant, Rate};
 use esp_hal::timer::timg::TimerGroup;
+use espion_core1::SkipChoice;
 use log::{error, info, warn};
 use ov9281::{Address, CHIP_ID, Gain, Ov9281, TestPattern};
 use static_cell::{ConstStaticCell, StaticCell};
@@ -61,13 +62,11 @@ macro_rules! with_skip {
 
 mod bench;
 mod camera;
-mod core1;
 mod core1_soak;
 mod jpeg_bench;
 mod modes;
 mod requests;
 mod soak;
-mod spsc;
 mod strip_soak;
 
 /// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print
@@ -80,15 +79,6 @@ const RUN_CAMERA: bool = true;
 /// The dark skip of the frame soak and the strip soak: [`SkipChoice::Pie`] (PIE on core 0,
 /// `Scalar` if `Pie::enable` refuses) or [`SkipChoice::Scalar`]. The benchmark runs both.
 const SOAK_SKIP: SkipChoice = SkipChoice::Pie;
-/// The choices of [`SOAK_SKIP`].
-#[allow(
-    dead_code,
-    reason = "the variant not selected by `SOAK_SKIP` is the documented alternative"
-)]
-enum SkipChoice {
-    Scalar,
-    Pie,
-}
 /// The dark skip a detector call runs with (`espion_vision::Skip`), passed down to the
 /// benchmark and the soaks. The PIE token is created once, in [`app`]; see the rule there.
 #[derive(Clone, Copy)]
@@ -108,8 +98,8 @@ impl DarkSkip<'_> {
     }
 }
 /// Instead of [`PLAN`]: strip runs on the modes of [`CAMERA_PLAN`] with the blob detector on
-/// the second core, started bare (`core1`, `core1_soak`; plan `core1_soak::PLAN`). Board
-/// results: README, "Blob detector on core 1".
+/// the second core, started bare (crate `espion-core1`, `core1_soak`; plan
+/// `core1_soak::PLAN`). Board results: README, "Detector on core 1".
 const RUN_CORE1: bool = false;
 /// What the camera section runs after capture starts in each mode.
 #[allow(

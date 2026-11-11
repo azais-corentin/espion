@@ -225,17 +225,16 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | `../ov9281` (crate) | The sensor driver: mode builder and solver, the measured limits, the register list, SCCB control (`firmware/ov9281/README.md`) |
 | `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files, and the JPEG dumps into `.jpg` files |
 | `tools/jpeg_check.py` | Checks the board's JPEG files against libjpeg-turbo (decoding, PSNR, size against `cjpeg`) |
-| `src/core1.rs` | `RUN_CORE1`, core 1's side: start through `CpuControl::start_app_core`, its own trap vector, the poll / detect / release loop (`detect_rows` is the one detector call), the result queue, the reader mailbox, heartbeat and trap record |
-| `src/core1_soak.rs` | `RUN_CORE1`, core 0's side: strip receivers split per strip size, sensor and receiver per mode, the monitor loop (`service()` every millisecond, results drained, a log line per second, heartbeat and trap check) |
-| `src/spsc.rs` | Single-producer single-consumer queue on two atomic indices, overwrite-never; host tests with `rustc --edition 2024 --test src/spsc.rs` |
+| `../espion-core1` (crate) | `RUN_CORE1`'s runner, moved there on 2026-11-11 so `poc-p4-stream` runs the same code: core 1's side (start through `CpuControl::start_app_core`, its own trap vector, the poll / detect / release loop, the result queue on atomics, the reader mailbox, heartbeat and trap record) and core 0's handle and monitor (`firmware/espion-core1/README.md`) |
+| `src/core1_soak.rs` | `RUN_CORE1`, core 0's side of the test plans: strip receivers split per strip size, sensor and receiver per mode, the monitor loop on `espion_core1::Monitor` (`service()` every millisecond, results drained, the log lines per second, heartbeat and trap check), the contention load, the fault tests |
 
 ### Detector on core 1 (`RUN_CORE1`)
 
 Run on the board on 2026-11-11 (results below). The plan behind it is performance plan
 step 5: core 1 runs bare, with no scheduler, no interrupts, no critical section and no
-logging. Core 1 enables its own PIE token (`CORE1_SKIP`, Pie by default) and runs each strip
-inside an L1 data-cache autoload section; core 0 never touches the autoload registers in
-this path.
+logging. Core 1 enables its own PIE token (`CORE1_SKIP` in `src/core1_soak.rs`, Pie by
+default) and runs each strip inside an L1 data-cache autoload section; core 0 never touches
+the autoload registers in this path.
 
 Start-up (esp-hal 1.2.2, `system/multi_core.rs`, `soc/esp32p4/cpu_control.rs`):
 - `start_app_core` copies the entry closure to the bottom of a 16 KiB static stack, enables
@@ -255,12 +254,13 @@ counters are per core). esp-hal's default trap path would end in `ExceptionHandl
 below RAM it would move `sp` onto core 0's main stack. `core1_trap` stores `mcause`, `mepc`
 and `mtval` in atomics without a stack and waits for ever; core 0 logs them.
 
-Core 1 to core 0: frame results in a queue of 4 slots (`spsc.rs`): frame number, strips,
-late strips, blob count, the blobs (up to 256), the detector's `Stats`, detector cycles and
-instructions, and the worst strip latency from `queued_at_cycles`. Never overwritten: a full
-queue counts a drop. Also a heartbeat counter, a count of abandoned frames and the trap
-record. Core 0 to core 1: the detector parameters (atomics, written while stopped) and the
-strip reader (a two-slot mailbox; core 1 uses the reader in place).
+Core 1 to core 0: frame results in a queue of 4 slots (`espion-core1`'s `spsc.rs`): frame
+number, strips, late strips, blob count, the blobs (up to 256), the detector's `Stats`,
+detector cycles and instructions, and the worst strip latency from `queued_at_cycles`.
+Never overwritten: a full queue counts a drop. Also a heartbeat counter, a count of
+abandoned frames and the trap record. Core 0 to core 1: the detector parameters (atomics,
+written while stopped) and the strip reader (a two-slot mailbox; core 1 uses the reader in
+place).
 
 Core 0 per mode: parameters, sensor set-up, `StripControl::start`, stream-on, then for 30 s
 every millisecond `service()` and the queue drained, and once a second a line with frames
@@ -269,21 +269,22 @@ per second, detector time per frame (mean and max), instructions per frame, late
 strips, abandoned frames, blobs, detector overflow, dropped results and heartbeat rate. A
 trap record or a heartbeat that did not move for a second ends the runs with a report.
 
-Call graph of the release build with `RUN_CORE1 = true` (walk from `start_core1_run` of the
-final test build, `/tmp/p4perf-logs/TwoCore/g3-long.walk`, 2026-11-11): 20 functions and 4
-panic leaves: the runner (`core1::run::<Pie>` and `<Scalar>`, `check_strip`, `check_rows`,
-`hold_changed`, `record_hold_times`), `StripReader::poll`, `StripRef::release`,
-`Tracker::complete`, the detector (`push_rows_with` for Pie and Scalar, `finish`,
-`Labels::link`, `Labels::end_row`, `first_bright`, `first_bright10`, Pie's `skip_dark`,
-`skip_dark10`) and the ROM's `Cache_Get_L2_Cache_Line_Size`, `Cache_Invalidate_Addr`,
-`Cache_WriteBack_Addr`, `memcpy`, `memset`. No reference to `CRITICAL_SECTION`,
-`SCHEDULER`, `esp_println::LOCK` or `raise`; no indirect call. CSRs: `mcycle`, `minstret`,
-the event counters, `mhartid`, `mtvec`, PIE enable (`0x7f2`) and the cache lock's `MIE`
-clear and restore. 30 panic call sites, none reachable under the invariants: the detector's
-bounds and divisions as before (`free`, `merged`, `runs`, `[..nruns]`, `blocks[i]`, `q5`,
-`div_q16`), and `autoload_configure`'s section-count check (one section per strip).
-`Pie::enable` reads the eFuse and swaps a per-core flag; no lock. Re-run the walk when the
-detector call changes.
+Call graph of the release build with `RUN_CORE1 = true`, after the move into `espion-core1`
+(walk from `start_core1_run::<espion_core1::runner::start::{closure#0}>`,
+`/tmp/p4perf-logs/CoLoad/eth-bringup.walk`, 2026-11-11): 20 functions and 4 panic leaves:
+the runner (`run::<Pie>` and `<Scalar>`, `check_strip`, `check_rows`, `hold_changed`,
+`record_hold_times`), `StripReader::poll`, `StripRef::release`, `Tracker::complete`, the
+detector (`push_rows_with` for Pie and Scalar, `finish`, `Labels::link`, `Labels::end_row`,
+`first_bright`, `first_bright10`, Pie's `skip_dark`, `skip_dark10`) and the ROM's
+`Cache_Get_L2_Cache_Line_Size`, `Cache_Invalidate_Addr`, `Cache_WriteBack_Addr`, `memcpy`,
+`memset`. No reference to `CRITICAL_SECTION`, `SCHEDULER`, `esp_println::LOCK` or `raise`;
+no indirect call. CSRs: `mcycle`, `minstret`, the event counters, `mhartid`, `mtvec`, PIE
+enable (`0x7f2`) and the cache lock's `MIE` clear and restore. 31 panic call sites, none
+reachable under the invariants: the detector's bounds and divisions as before (`free`,
+`merged`, `runs`, `[..nruns]`, `blocks[i]`, `q5`, `div_q16`), and `autoload_configure`'s
+section-count check (one section per strip), now in `run` and in `check_strip` (the check
+takes the autoload too since the move; 30 sites before). `Pie::enable` reads the eFuse and
+swaps a per-core flag; no lock. Re-run the walk when the detector call changes.
 
 With `RUN_CORE1 = false` the runner's large statics are not linked (the set-up runs before
 the first await of a `const`-gated future): 620 bytes more RAM than without it (the trap
@@ -295,7 +296,11 @@ Board checks (2026-11-11, logs in `/tmp/p4perf-logs/TwoCore/`):
 2. Four 120 fps modes, 30 s each (`a-bringup.log`): **pass**. 3600 frames complete per mode,
    results dropped, lapped, abandoned, stalls, length errors and `isr_runs` 0; detector
    mean 849 us (1280x800, live, brighter scene than the core-0 log), 772 (1280x720), 235
-   (640x480), 304 (640x400).
+   (640x480), 304 (640x400). Again after the move into `espion-core1`
+   (`/tmp/p4perf-logs/CoLoad/eth-bringup.log`, same day): **pass**, 3600 frames complete
+   per mode, the same counters 0, heartbeat about 84 500 per second, detector mean / max
+   855 / 865 us and 140 042 instructions per frame (849 / 860 and 138 268 before; the scene
+   is live), 780 (1280x720), 234 (640x480), 303 (640x400).
 3. With core 0 busy (`f3-contention.log`, plan `CONTENTION`): core 0 running cache
    operations without pause (thread mode and a 10 kHz timer interrupt, about 444 000 per
    second). Detector live 2 min, 1280x800: 14 404 frames, dropped and lapped 0, detect mean

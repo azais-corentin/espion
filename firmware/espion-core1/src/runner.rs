@@ -1,5 +1,6 @@
-//! The blob detector alone on the second HP core, started bare (performance plan step 5.3,
-//! shape B of the two-core analysis). Board results: `README.md`, "Detector on core 1".
+//! The runner: core 1's entry, trap vector and loop, and core 0's handle on it ([`Core1`]).
+//! Board results: `firmware/poc-p4-eth/README.md`, "Detector on core 1", and
+//! `firmware/poc-p4-stream/README.md`, "Co-load".
 //!
 //! # How core 1 starts (esp-hal 1.2.2, `system/multi_core.rs`, `soc/esp32p4/cpu_control.rs`)
 //!
@@ -31,12 +32,14 @@
 //!    [`core1_trap`] instead stores `mcause`, `mepc` and `mtval` in [`TRAP`], uses no stack,
 //!    and waits for ever; core 0 reports it.
 //! 3. `esp32p4_perf::init()`: the event counters are per core and count nothing until then.
-//! 4. PIE on core 1 if [`CORE1_SKIP`] asks for it: `Pie::enable` reads the chip revision from
-//!    eFuse (a read-only register, through the PAC), reads `mhartid`, swaps this core's flag
-//!    in the crate's `IN_USE` table and writes this core's PIE status CSR (0x7F2): no lock, no
-//!    logging, no esp-hal call. The token is held for ever, by the loop, the only code that
-//!    runs on core 1 (no interrupt, no other thread), so the PIE rule of one user per core
-//!    holds. If it refuses, core 1 runs the scalar skip; [`skip_used`] tells core 0.
+//! 4. PIE on core 1 if [`start`]'s `skip` asks for it: `Pie::enable` reads the chip revision
+//!    from eFuse (a read-only register, through the PAC), reads `mhartid`, swaps this core's
+//!    flag in the crate's `IN_USE` table and writes this core's PIE status CSR (0x7F2): no
+//!    lock, no logging, no esp-hal call. The token is held for ever, by the loop, the only code
+//!    that runs on core 1 (no interrupt, no other thread), so the PIE rule of one user per
+//!    core holds. Core 0's token is a different one (its own flag and CSR); a `Pie` is neither
+//!    `Send` nor `Sync`, so core 0's cannot reach core 1. If it refuses, core 1 runs the scalar
+//!    skip; [`skip_used`] tells core 0.
 //!
 //! # The loop
 //!
@@ -48,9 +51,10 @@
 //!   call: `push_rows_with` with the skip chosen at the entry), or on a synthetic strip core 0
 //!   prepared, with the L1 data autoload over the strip if the run asks for it; at the end of
 //!   a frame a [`FrameResult`] in the queue.
-//! - [`Job::Check`]: every row's checksum against the reference row checksums core 0 took
-//!   from whole frames of the sensor's random test pattern, the strip sequence, and the test
-//!   holds of the lap and stall tests; counters in [`CHECK`] and [`CHECK_MAX`].
+//! - [`Job::Check`]: every row's checksum ([`row_sum`]) against the reference row checksums
+//!   core 0 took from whole frames of the sensor's random test pattern, the strip sequence,
+//!   and the test holds of the lap and stall tests, with the L1 data autoload over the strip
+//!   if the run asks for it; counters in [`CHECK`] and [`CHECK_MAX`].
 //!
 //! What core 1 may call: atomics, `mcycle`/`minstret`, the strip reader (no critical
 //! section, no esp-hal driver call, see `esp32p4-csi`'s README), `esp32p4-cache` (the reader's
@@ -61,9 +65,9 @@
 //! # L1 data autoload on core 1
 //!
 //! The autoload registers exist once for the chip (the L1 data cache is shared by both
-//! cores), so one context owns them: here core 1, and core 0 never touches them while core 1
-//! runs. The section is the strip being read and nothing else, turned off (waiting until no
-//! fetch is in flight) before the next poll, as on core 0 (`strip_soak`).
+//! cores), so one context owns them: here core 1 while its run has the autoload on, and core
+//! 0 never touches them meanwhile. The section is the strip being read and nothing else,
+//! turned off (waiting until no fetch is in flight) before the strip is released.
 //!
 //! # A trap inside the cache lock
 //!
@@ -87,11 +91,6 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::SkipChoice;
 use crate::spsc::{Consumer, Producer, Spsc};
-use crate::strip_soak::row_sum;
-
-/// The dark skip of the detector on core 1: [`SkipChoice::Pie`] (PIE enabled on core 1 by its
-/// entry; the scalar skip if `Pie::enable` refuses) or [`SkipChoice::Scalar`].
-const CORE1_SKIP: SkipChoice = SkipChoice::Pie;
 
 /// Core 1's stack. The detector state and the result slots are statics, so the loop needs
 /// little: 16 KiB leaves room for the watchpoint's guard word and any detector frame.
@@ -167,10 +166,10 @@ static RESULTS: Spsc<FrameResult, QUEUE_FRAMES> =
     Spsc::new([const { UnsafeCell::new(FrameResult::EMPTY) }; QUEUE_FRAMES]);
 
 /// Writer: core 1, once per turn of its loop. Core 0 reports core 1 stalled when it stops.
-pub static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
+static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
 /// Writer: core 1. Frames begun but not published: a strip released `false` (lapped, or the
 /// run stopped), or a new frame began before the last strip.
-pub static ABANDONED: AtomicU32 = AtomicU32::new(0);
+static ABANDONED: AtomicU32 = AtomicU32::new(0);
 /// Writer: core 1, once, at its entry: which skip the detector runs with ([`SkipUsed`] as
 /// `u32`; 0 until core 1 got there).
 static SKIP_USED: AtomicU32 = AtomicU32::new(0);
@@ -182,7 +181,7 @@ pub enum SkipUsed {
     Unknown,
     Scalar,
     Pie,
-    /// [`CORE1_SKIP`] asked for PIE and `Pie::enable` refused: the scalar skip.
+    /// [`start`] asked for PIE and `Pie::enable` refused: the scalar skip.
     ScalarPieRefused,
 }
 
@@ -192,10 +191,10 @@ const SKIP_REFUSED: u32 = 3;
 
 /// Trap record. Writer: [`core1_trap`] only (words 1 to 3 first, then word 0).
 #[repr(C)]
-pub struct TrapRecord([AtomicU32; 4]);
+struct TrapRecord([AtomicU32; 4]);
 
 /// Word 0: 1 once core 1 trapped; 1: `mcause`; 2: `mepc`; 3: `mtval`.
-pub static TRAP: TrapRecord = TrapRecord([const { AtomicU32::new(0) }; 4]);
+static TRAP: TrapRecord = TrapRecord([const { AtomicU32::new(0) }; 4]);
 
 /// What core 1 does with each strip of a run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -414,7 +413,7 @@ pub struct Run {
     pub threshold: u16,
     /// Cycles after which a strip counts as late (detector).
     pub late_cycles: u32,
-    /// L1 data autoload over each strip (detector).
+    /// L1 data autoload over each strip (detector and check).
     pub autoload: bool,
     /// A synthetic strip read instead of each strip, from where core 0 left it (detector).
     pub synth: Option<&'static [u8]>,
@@ -430,18 +429,21 @@ pub struct Run {
     pub ring: (usize, usize, u32, u32),
 }
 
-/// Starts core 1 with `det` and `scratch` (where a frame's blobs go when the queue is full).
-/// Call once; `None` if core 1 runs already.
+/// Starts core 1 with `det` and `scratch` (where a frame's blobs go when the queue is full),
+/// its detector running the dark skip `skip` ([`SkipChoice::Pie`]: PIE enabled on core 1 by
+/// its entry, the scalar skip if `Pie::enable` refuses). Call once; `None` if core 1 runs
+/// already.
 #[inline(never)]
 pub fn start(
     cpu: CPU_CTRL<'static>,
     det: &'static mut DefaultDetector,
     scratch: &'static mut [Blob; MAX_BLOBS],
+    skip: SkipChoice,
 ) -> Option<&'static mut Core1> {
     let (producer, results) = RESULTS.split()?;
     let stack = STACK.try_take()?;
     let guard = CpuControl::new(cpu)
-        .start_app_core(stack, move || entry(det, scratch, producer))
+        .start_app_core(stack, move || entry(skip, det, scratch, producer))
         .ok()?;
     Some(CORE1.init(Core1 {
         results,
@@ -651,6 +653,7 @@ unsafe extern "C" {
 
 /// Core 1's entry: interrupts off, its own trap vector, the counters, PIE, then the loop.
 fn entry(
+    skip: SkipChoice,
     det: &'static mut DefaultDetector,
     scratch: &'static mut [Blob; MAX_BLOBS],
     out: Producer<FrameResult, QUEUE_FRAMES>,
@@ -666,7 +669,7 @@ fn entry(
         asm!("csrw mtvec, {0}", in(reg) new, options(nomem, nostack));
     }
     esp32p4_perf::init();
-    let pie = match CORE1_SKIP {
+    let pie = match skip {
         SkipChoice::Pie => esp32p4_pie::Pie::enable().ok(),
         SkipChoice::Scalar => None,
     };
@@ -676,7 +679,7 @@ fn entry(
             run(p, det, scratch, out)
         }
         None => {
-            let used = match CORE1_SKIP {
+            let used = match skip {
                 SkipChoice::Pie => SKIP_REFUSED,
                 SkipChoice::Scalar => SKIP_SCALAR,
             };
@@ -930,6 +933,31 @@ fn detect_rows<S: Skip>(skip: &S, det: &mut DefaultDetector, rows: &[u8], first_
     det.push_rows_with(skip, rows, first_row);
 }
 
+/// Checksum of one row, the one [`Job::Check`] compares: two running sums over its
+/// little-endian 32-bit words (Fletcher style, so the order of the words counts), then a tail
+/// of up to 3 bytes. Core 0 computes the reference with it from whole frames. Rows of both
+/// paths start on a word boundary (frame buffers 4 KiB aligned, strip buffers 64 B, rows of a
+/// multiple of 4 bytes); another start takes a slower path with the same result.
+pub fn row_sum(row: &[u8]) -> u32 {
+    let (mut a, mut b) = (0u32, 0u32);
+    let mut add = |w: u32| {
+        a = a.wrapping_add(w);
+        b = b.wrapping_add(a);
+    };
+    // SAFETY: every bit pattern is a valid `u32`.
+    let (pre, words, post) = unsafe { row.align_to::<u32>() };
+    let tail = if pre.is_empty() {
+        words.iter().for_each(|&w| add(u32::from_le(w)));
+        post
+    } else {
+        let (words, tail) = row.as_chunks::<4>();
+        words.iter().for_each(|w| add(u32::from_le_bytes(*w)));
+        tail
+    };
+    tail.iter().for_each(|&x| add(u32::from(x)));
+    a ^ b.rotate_left(16)
+}
+
 /// The number of `data`'s rows of `line_bytes` unlike `want` (row `first` on) and the first
 /// of them.
 #[inline(never)]
@@ -1065,7 +1093,14 @@ fn check_strip(st: &mut Core1State<'_>, s: StripRef<'_>) {
     if s.len() != usize::from(rows) * line_bytes {
         bump(&c.size_errors, 1);
     }
+    let autoload = p.autoload.load(Ordering::Relaxed) != 0;
+    if autoload {
+        autoload_on(&s);
+    }
     let (bad, first_bad) = check_rows(&s, line_bytes, want, usize::from(first));
+    if autoload {
+        prefetch::autoload_disable(Level::L1Data);
+    }
     raise(&CHECK_MAX.check, cycles().wrapping_sub(start));
     let every = p.hold_every.load(Ordering::Relaxed);
     let hold = p.hold.load(Ordering::Relaxed);

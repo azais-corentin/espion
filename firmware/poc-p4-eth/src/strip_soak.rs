@@ -36,6 +36,7 @@
 use embassy_time::{Duration, Instant, with_timeout};
 use esp32p4_cache::prefetch::{self, Autoload, Level, Order, Section, Trigger};
 use esp32p4_csi::{Config, CsiStrips, Strip, StripLink, StripStats};
+use espion_core1::row_sum;
 use espion_vision::{Blob, DefaultDetector, synth};
 use log::info;
 use static_cell::{ConstStaticCell, StaticCell};
@@ -1018,30 +1019,6 @@ pub const CHECK_WORDS: usize = CHECK_MODES * CHECK_ROWS;
 pub const REFERENCE_FRAMES: u32 = 8;
 /// Start value of the frame checksum ([`fold_row`]).
 const FOLD_SEED: u32 = 0x811C_9DC5;
-
-/// Checksum of one row: two running sums over its little-endian 32-bit words (Fletcher
-/// style, so the order of the words counts), then a tail of up to 3 bytes. Rows of both paths
-/// start on a word boundary (frame buffers 4 KiB aligned, strip buffers 64 B, rows of a
-/// multiple of 4 bytes); another start takes a slower path with the same result.
-pub(crate) fn row_sum(row: &[u8]) -> u32 {
-    let (mut a, mut b) = (0u32, 0u32);
-    let mut add = |w: u32| {
-        a = a.wrapping_add(w);
-        b = b.wrapping_add(a);
-    };
-    // SAFETY: every bit pattern is a valid `u32`.
-    let (pre, words, post) = unsafe { row.align_to::<u32>() };
-    let tail = if pre.is_empty() {
-        words.iter().for_each(|&w| add(u32::from_le(w)));
-        post
-    } else {
-        let (words, tail) = row.as_chunks::<4>();
-        words.iter().for_each(|w| add(u32::from_le_bytes(*w)));
-        tail
-    };
-    tail.iter().for_each(|&x| add(u32::from(x)));
-    a ^ b.rotate_left(16)
-}
 
 /// Frame checksum: the row checksums folded in row order.
 fn fold_row(acc: u32, row: u32) -> u32 {

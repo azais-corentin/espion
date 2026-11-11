@@ -7,6 +7,7 @@ firmware/esp32p4-csi/Cargo.lock
 firmware/esp32p4-jpeg/Cargo.lock
 firmware/esp32p4-perf/Cargo.lock
 firmware/esp32p4-pie/Cargo.lock
+firmware/espion-core1/Cargo.lock
 firmware/espion-vision/Cargo.lock
 firmware/ov9281/Cargo.lock
 

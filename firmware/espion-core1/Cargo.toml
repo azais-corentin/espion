@@ -1,0 +1,30 @@
+[package]
+name         = "espion-core1"
+description  = "The blob detector on a bare second core of the ESP32-P4: entry, trap vector, poll/detect/publish loop, result queue, and the core-0 handle that starts and watches it (no_std, no heap)"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+[features]
+# The cross-core cache lock's per-core statistics (operations, longest hold and wait), read by
+# the monitor's lock lines (`esp32p4-cache` feature `stats`).
+stats = ["esp32p4-cache/stats"]
+
+[dependencies]
+# `CpuControl::start_app_core` and its stack, the CPU clock for the log lines.
+esp-hal = { version = "~1.2.2", features = ["esp32p4", "unstable"] }
+esp32p4-cache = { path = "../esp32p4-cache" }
+esp32p4-csi   = { path = "../esp32p4-csi" }
+esp32p4-perf  = { path = "../esp32p4-perf" }
+esp32p4-pie   = { path = "../esp32p4-pie" }
+# `pie`: the PIE dark skip; `ram`: the detector's hot functions and the PIE kernels in internal
+# RAM, so core 1's detector does not compete for the shared L2 cache with core 0's PSRAM reads
+# (firmware/poc-p4-eth/README.md, "Hot code in RAM and Zb/Zcb").
+espion-vision = { path = "../espion-vision", features = ["pie", "ram"] }
+# Core 0 only (the monitor and the mailbox wait): never reached from core 1's entry.
+embassy-futures = "0.1.2"
+embassy-time    = "0.5.1"
+log             = "0.4.34"
+static_cell     = "2.1.1"

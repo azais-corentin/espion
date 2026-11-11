@@ -36,6 +36,7 @@ changes on `main`).
 | `firmware/esp32p4-jpeg/` | no_std hardware JPEG encoder driver for the P4, greyscale (esp-hal lacks one) |
 | `firmware/esp32p4-perf/` | no_std performance counters of the P4: cycles, instructions, branches, mispredictions, stores, cache hits and misses |
 | `firmware/esp32p4-pie/` | no_std PIE (128-bit vector) kernels for the P4 on stable Rust: instruction encoders and the dark-skip scan |
+| `firmware/espion-core1/` | no_std runner of the blob detector on a bare second core of the P4, and core 0's handle that starts and watches it |
 | `firmware/espion-vision/` | no_std blob detector: threshold, 8-connected components, intensity-weighted subpixel centroids, on RAW8 and RAW10 rows; tested on the host |
 | `firmware/poc-p4-stream/` | Proof of concept on the Waveshare ESP32-P4-ETH: streams the OV9281 to the host over Ethernet (raw or JPEG) and takes its settings from there |
 | `firmware/ov9281/` | no_std OV9281 sensor driver: computes a mode (format, size, crop/binning, frame rate) and drives the sensor over SCCB |

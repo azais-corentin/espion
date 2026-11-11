@@ -1,0 +1,4 @@
+# Library only: no runner. Normally built through firmware/poc-p4-eth and
+# firmware/poc-p4-stream, inside a firmware binary.
+[build]
+target = "riscv32imafc-unknown-none-elf"

@@ -8,12 +8,14 @@ license      = "MIT OR Apache-2.0"
 publish      = false
 
 [dependencies]
-# `stats`: the cache lock's hold and wait maxima, logged by the core-1 runs (`core1_soak`).
-esp32p4-cache = { path = "../esp32p4-cache", features = ["stats"] }
+esp32p4-cache = { path = "../esp32p4-cache" }
 esp32p4-csi   = { path = "../esp32p4-csi" }
 esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
 esp32p4-perf  = { path = "../esp32p4-perf" }
 esp32p4-pie   = { path = "../esp32p4-pie" }
+# The detector on a bare core 1 (`RUN_CORE1`). `stats`: the cache lock's hold and wait maxima
+# in its monitor's log lines.
+espion-core1  = { path = "../espion-core1", features = ["stats"] }
 # `ram`: the detector's hot functions and the PIE kernels in internal RAM (README, "Hot code
 # in RAM and Zb/Zcb").
 espion-vision = { path = "../espion-vision", features = ["pie", "ram"] }

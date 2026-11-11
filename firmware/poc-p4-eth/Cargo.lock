@@ -997,6 +997,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "espion-core1"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embassy-time",
+ "esp-hal",
+ "esp32p4-cache",
+ "esp32p4-csi",
+ "esp32p4-perf",
+ "esp32p4-pie",
+ "espion-vision",
+ "log",
+ "static_cell",
+]
+
+[[package]]
 name = "espion-vision"
 version = "0.1.0"
 dependencies = [
@@ -1359,6 +1375,7 @@ dependencies = [
  "esp32p4-jpeg",
  "esp32p4-perf",
  "esp32p4-pie",
+ "espion-core1",
  "espion-vision",
  "log",
  "ov9281",
