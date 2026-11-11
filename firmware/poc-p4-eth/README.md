@@ -174,7 +174,9 @@ At boot, in order:
 4. Starts I2C0 at 100 kHz, scans the bus and identifies the OV9281 (`Ov9281::identify`, chip
    ID at 0x60, then 0x10). This step and the next two run in a task of their own (`app`):
    inside `main`, the sensor futures would push `main`'s future over the stack-frame limit.
-5. If `RUN_BENCH`: runs the detector benchmark on synthetic frames (`bench::run`).
+5. If `RUN_BENCH`: enables PIE on this core (`esp32p4_pie::Pie::enable`), runs the four PIE
+   kernel self-tests (`bench::pie_self_tests`), then the detector benchmark on synthetic
+   frames (`bench::run`).
 6. If `RUN_CAMERA`: the camera section (`camera::run`). It turns on LDO VO3 at 2.5 V (the
    D-PHY supply), then for each mode of the plan:
    1. writes the mode (`Ov9281::configure`: the crate's register list from a software reset
@@ -212,7 +214,7 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | `src/camera.rs` | Camera section: LDO VO3, sensor set-up through `ov9281::Ov9281`, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement against the crate's frame-period prediction, cache check, still dumps, detector check, and the strip path (receiver, mode groups, the random test pattern for the strip check) |
 | `src/soak.rs` | Frame soak: per mode, 30 s on live frames, then 10 s each on synthetic frames with 0, 16 and 64 discs, while capture keeps running; result table |
 | `src/strip_soak.rs` | Strip soak: the same runs on strips in a 320 KiB ring in internal RAM (RAW8: 4 strips of 80 KiB at 1280 wide, 8 of 40 KiB at 640, 64 lines; RAW10: 3 strips of 102 400 B, 64 lines at 1280 and 128 at 640), with per-frame processing and latency, per-strip hold times, and the driver's interrupt and invalidation times. `StripCheck`: row checksums of the reference frames and the strip check against them |
-| `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each, timed with the core's counters (`esp32p4-perf`); then the cost of a dark row at 5 widths and the cost of a blob at 4 disc sizes |
+| `src/bench.rs` | PIE kernel self-tests; detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each, timed with the core's counters (`esp32p4-perf`); then the cost of a dark row at 5 widths, of busy rows (a bright pixel in every row or every 8th row) and the cost of a blob at 4 disc sizes |
 | `../espion-vision/src/lib.rs` (crate `espion-vision`) | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
 | `../espion-vision/src/synth.rs` (crate `espion-vision`) | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
 | `src/jpeg_bench.rs` | `JPEG_PLAN`: test and benchmark of the hardware JPEG encoder (`esp32p4-jpeg`): test picture, camera stills, speed table, capture-and-encode runs, robustness |
@@ -566,6 +568,59 @@ Checked on the board with a temporary `fault_outer` → `fault_inner` call after
     message (`mepc`).
 - Every case printed the panic once and then stayed in esp-backtrace's halt loop with
   interrupts off: no reset, no second fault, through the rest of the 15 s capture.
+
+### PIE self-tests at boot (2026-11-11)
+
+The bench build (`RUN_BENCH = true`) enables PIE on core 0 and runs the self-test of each
+kernel of [`esp32p4-pie`](../esp32p4-pie/README.md) against its scalar reference: 12 288
+randomised cases each (48 rounds of the 256 source and destination alignment pairs that
+`self_test_copy` walks through), seed `0x5EED_0001`. First run on the board, two sessions
+with the same results (logs `/tmp/p4perf-logs/DetectorOneCore/s0-base.log` and, for the
+committed source, `s0b-base.log`; times of the latter):
+
+| Kernel | Failures | Time (whole self-test, cases generated and checked byte by byte) |
+|---|---|---|
+| `first_bright` | 0 of 12 288 | 612 ms |
+| `first_bright10` | 0 of 12 288 | 887 ms |
+| `copy` | 0 of 12 288 | 816 ms |
+| `sum16_be` | 0 of 12 288 | 322 ms |
+
+The times are mostly the case generation and the byte-wise checks, not the kernels.
+
+### Busy rows (2026-11-11)
+
+The all-dark rows of "Row cost" stop showing the cost of rows near blobs once dark rows are
+skipped in whole spans (`espion-vision`, span skip). The bench adds two row cases at 1280
+wide: dark rows (bytes 0..63) with one pixel of 255 in column 643 of every row (`column`:
+one run per row, linked to the run above, one component through all rows) and of every 8th
+row (`every 8th`: a one-pixel blob, entered from dark rows and left again). Warm pushes the
+same 8 rows again and again (1200 rows per pass), cold one 64-row buffer flushed before each
+pass; means over 5 passes after one untimed pass. Same build and log (`s0b-base.log`) as the
+self-tests:
+
+| Rows | Warm cycles | Warm instructions | Warm branches | Warm mispredicts | Warm stores | Cold cycles | Cold instructions | Cold l1d_miss |
+|---|---|---|---|---|---|---|---|---|
+| dark (from the row-cost table) | 2026.9 | 1150.8 | 103.9 | 2.8 | 44.4 | 2142.8 | 1155.5 | 202.0 |
+| column | 2626.8 | 1548.7 | 162.7 | 8.0 | 66.1 | 2754.0 | 1556.8 | 204.9 |
+| every 8th | 2133.7 | 1218.2 | 113.0 | 4.0 | 48.7 | 2257.6 | 1227.0 | 202.4 |
+
+A row with one run linked to the row above costs about 600 cycles and 400 instructions more
+than a dark row. The same build reproduces the frame-pointer table: dark 1280x800 strip
+frame 4235 us, 1 694 165 cycles, 909 557 instructions; 64 blobs 5098 us, 2 039 229 cycles,
+1 130 803 instructions.
+
+### Detector steps (2026-11-11)
+
+The detector restructure of `espion-vision` and the PIE skip, one step at a time, each measured
+with the bench build (`RUN_BENCH = true`, `RUN_CAMERA = false`) in its own board session; logs
+under `/tmp/p4perf-logs/DetectorOneCore/`. Frames: the 1280x800 strip path (dark and 64
+`synth` discs), per-frame means over 50 passes. Rows: the busy-row cases, warm, per row. Per
+blob: the blob-cost section at radius 4 (64 discs, 37 pixels each). Two builds of the same
+source differ by 2 to 3 % in cycles from code layout alone; instructions are the firm part.
+
+| Step | Log | Dark frame us / cycles / instructions | 64-blob frame us / cycles / instructions | Column row cycles / instructions | Every-8th row cycles / instructions | Per blob cycles / instructions | Result |
+|---|---|---|---|---|---|---|---|
+| baseline (`main`, busy-row cases added) | `s0b-base.log` | 4235 / 1 694 165 / 909 557 | 5098 / 2 039 229 / 1 130 803 | 2626.8 / 1548.7 | 2133.7 / 1218.2 | 5445 / 3502 | - |
 
 ### Camera capture (whole frames in PSRAM)
 

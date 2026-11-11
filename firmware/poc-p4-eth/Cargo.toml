@@ -12,6 +12,7 @@ esp32p4-cache = { path = "../esp32p4-cache" }
 esp32p4-csi   = { path = "../esp32p4-csi" }
 esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
 esp32p4-perf  = { path = "../esp32p4-perf" }
+esp32p4-pie   = { path = "../esp32p4-pie" }
 espion-vision = { path = "../espion-vision" }
 ov9281        = { path = "../ov9281" }
 

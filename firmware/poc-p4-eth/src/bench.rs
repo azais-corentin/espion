@@ -11,15 +11,22 @@
 //!   pass.
 //!
 //! Every timed window is also read with the core's counters (`esp32p4-perf`): instructions,
-//! conditional branches, mispredictions, stores and the L1 cache miss events. Two sections
+//! conditional branches, mispredictions, stores and the L1 cache miss events. Three sections
 //! follow the cases:
 //! - row cost: all-dark rows through `begin_frame` + `push_rows` at several widths, warm (a
 //!   few KiB of rows pushed again and again as consecutive rows, so they stay in the L1
 //!   cache) and cold (an 80 KiB buffer flushed before each pass), with a least-squares fit
 //!   `cost = a per row + b per pixel`;
+//! - busy rows: the same at 1280 wide with one bright pixel in the same column of every row
+//!   (one run per row, linked to the row above) and of every 8th row (a one-pixel blob
+//!   between dark rows), so the cost of rows near blobs stays visible once dark rows are
+//!   skipped in whole spans;
 //! - blob cost: the 1280x800 strip path with 64 discs of radius 2, 4, 8 and 12, drawn here
 //!   over the `synth` background (`synth` draws radius 3..5 only), per blob from the
 //!   difference to the same background without discs.
+//!
+//! Before the cases, `pie_self_tests` runs the self-tests of the PIE kernels
+//! (`esp32p4-pie`) against their scalar references.
 //!
 //! No CSI DMA runs at the same time, so the PSRAM bus is idle apart from the CPU: these are
 //! lower bounds for the live case. Nothing is logged inside a timed window.
@@ -27,11 +34,12 @@
 use core::fmt;
 
 use esp32p4_perf::{Delta, Sample};
+use esp32p4_pie::Pie;
 use espion_vision::{Blob, DefaultDetector, synth};
-use log::info;
+use log::{error, info};
 use static_cell::ConstStaticCell;
 
-use crate::flush_cache;
+use crate::{flush_cache, mcycle};
 
 /// Foreground threshold.
 const THRESHOLD: u8 = 128;
@@ -62,6 +70,18 @@ const WARM_ROWS: usize = 1200;
 const COLD_BYTES: usize = STRIP_ROWS * 1280;
 /// Timed passes per row case, after one untimed pass.
 const ROW_PASSES: u32 = 5;
+/// Width of the busy-row section.
+const BUSY_WIDTH: usize = 1280;
+/// Column of the bright pixel in the busy-row section (not on a word boundary).
+const BUSY_COLUMN: usize = BUSY_WIDTH / 2 + 3;
+/// Busy-row cases: name and the row period of the bright pixel. Period 1 makes one run per
+/// row, linked to the run above, so every row goes through the row-wise path; period 8
+/// makes one blob of one pixel every 8 rows, so each blob row is entered from dark rows and
+/// left again.
+const BUSY_CASES: [(&str, usize); 2] = [("column", 1), ("every 8th", 8)];
+/// Warm rows per push in the busy-row section: a whole period of every case.
+const BUSY_PUSH_ROWS: usize = 8;
+const _: () = assert!(WARM_ROWS.is_multiple_of(BUSY_PUSH_ROWS));
 
 /// Disc radii of the blob-cost section; 0 stands for the frame without discs.
 const RADII: [u32; 5] = [0, 2, 4, 8, 12];
@@ -72,6 +92,20 @@ const SIZE_W: u16 = 1280;
 const SIZE_H: u16 = 800;
 /// Placement attempts per disc (as `synth`).
 const ATTEMPTS: u32 = 1000;
+
+/// Cases per PIE self-test at boot: 48 rounds of the 256 source and destination alignment
+/// pairs that `self_test_copy` walks through.
+const PIE_CASES: u32 = 48 * 256;
+/// Seed of the PIE self-tests.
+const PIE_SEED: u32 = 0x5EED_0001;
+/// A PIE self-test: `(seed, cases) -> failures`.
+type PieTest = fn(&Pie, u32, u32) -> u32;
+const PIE_TESTS: [(&str, PieTest); 4] = [
+    ("first_bright", Pie::self_test),
+    ("first_bright10", Pie::self_test10),
+    ("copy", Pie::self_test_copy),
+    ("sum16_be", Pie::self_test_sum),
+];
 
 static DETECTOR: ConstStaticCell<DefaultDetector> = ConstStaticCell::new(DefaultDetector::new());
 static BLOBS: ConstStaticCell<[Blob; 256]> = ConstStaticCell::new(
@@ -254,8 +288,26 @@ pub fn run(psram: &mut [u8]) {
     log_table(cases);
     log_counters(cases);
     row_cost(&mut bench);
+    busy_rows(&mut bench);
     blob_cost(&mut bench, psram, synth);
     info!("detector bench done");
+}
+
+/// Runs the four PIE kernel self-tests (each against its scalar reference, `PIE_CASES`
+/// randomised cases) and logs the failures and the time of each.
+#[inline(never)]
+pub fn pie_self_tests(pie: &Pie) {
+    let mhz = esp_hal::clock::cpu_clock().as_mhz();
+    for (name, test) in PIE_TESTS {
+        let start = mcycle();
+        let failures = test(pie, PIE_SEED, PIE_CASES);
+        let us = mcycle().wrapping_sub(start) / mhz;
+        if failures == 0 {
+            info!("PIE self-test {name}: 0 failures of {PIE_CASES} cases, {us} us");
+        } else {
+            error!("PIE self-test {name}: {failures} failures of {PIE_CASES} cases, {us} us");
+        }
+    }
 }
 
 #[inline(never)]
@@ -461,8 +513,8 @@ fn row_cost(b: &mut Bench) {
     // Per-row means in thousandths, one array per fit, one entry per width.
     let mut points = [[0i64; ROW_WIDTHS.len()]; FITS.len()];
     for (i, &w) in ROW_WIDTHS.iter().enumerate() {
-        let r = row_case(b, w);
-        log_row_case(&r);
+        let r = row_case(b, w, WARM_BYTES / w);
+        log_row_case("dark", &r);
         for (k, &(_, warm, pick)) in FITS.iter().enumerate() {
             let (c, n) = if warm {
                 (&r.warm, r.warm_rows)
@@ -476,6 +528,34 @@ fn row_cost(b: &mut Bench) {
     for (&(name, _, _), p) in FITS.iter().zip(&points) {
         log_fit(name, p);
     }
+}
+
+/// Rows with bright pixels at [`BUSY_WIDTH`], through `begin_frame` + `push_rows`, warm and
+/// cold as the dark rows; logs one line per case of [`BUSY_CASES`].
+#[inline(never)]
+fn busy_rows(b: &mut Bench) {
+    info!(
+        "detector busy rows ({BUSY_WIDTH} wide, dark rows with one pixel of 255 in column \
+         {BUSY_COLUMN} every `period` rows; begin_frame + push_rows, per row, means over \
+         {ROW_PASSES} passes; warm = {BUSY_PUSH_ROWS} rows pushed again and again, cold = \
+         {COLD_BYTES} B flushed before each pass):"
+    );
+    log_row_columns();
+    for (name, period) in BUSY_CASES {
+        let buf = &mut b.internal[..COLD_BYTES];
+        dark_fill(buf);
+        for row in buf
+            .as_chunks_mut::<BUSY_WIDTH>()
+            .0
+            .iter_mut()
+            .step_by(period)
+        {
+            row[BUSY_COLUMN] = 255;
+        }
+        let r = row_case(b, BUSY_WIDTH, BUSY_PUSH_ROWS);
+        log_row_case(name, &r);
+    }
+    dark_fill(&mut b.internal[..COLD_BYTES]);
 }
 
 #[inline(never)]
@@ -501,14 +581,15 @@ fn log_fit(name: &str, per_row: &[i64; ROW_WIDTHS.len()]) {
     );
 }
 
-/// Warm and cold row passes at width `w`, the first pass of each discarded.
+/// Warm and cold row passes at width `w`, the first pass of each discarded. Warm pushes the
+/// first `push_rows` rows of the buffer again and again.
 #[inline(never)]
-fn row_case(b: &mut Bench, w: usize) -> RowCase {
+fn row_case(b: &mut Bench, w: usize, push_rows: usize) -> RowCase {
     let det = &mut *b.det;
     let width = w as u16;
     let mut discard = Counters::default();
     // Warm: the same rows again and again, as consecutive frame rows.
-    let per_push = WARM_BYTES / w;
+    let per_push = push_rows;
     let buf = &b.internal[..per_push * w];
     let mut warm = Counters::default();
     for pass in 0..=ROW_PASSES {
@@ -550,17 +631,22 @@ fn log_row_header() {
          {ROW_PASSES} passes; warm = {WARM_BYTES} B of rows pushed again and again, cold = \
          {COLD_BYTES} B flushed before each pass):"
     );
+    log_row_columns();
+}
+
+#[inline(never)]
+fn log_row_columns() {
     info!(
-        "| width | warm rows | warm cycles | warm instructions | warm branches | warm mispredicts \
-         | warm stores | cold rows | cold cycles | cold instructions | cold l1d_miss |"
+        "| rows | width | warm rows | warm cycles | warm instructions | warm branches | warm \
+         mispredicts | warm stores | cold rows | cold cycles | cold instructions | cold l1d_miss |"
     );
 }
 
 #[inline(never)]
-fn log_row_case(r: &RowCase) {
+fn log_row_case(name: &str, r: &RowCase) {
     let (w, c) = (&r.warm, &r.cold);
     info!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        "| {name} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         r.width,
         r.warm_rows,
         Dec(w.per_row_milli(w.cycles, r.warm_rows), 1),

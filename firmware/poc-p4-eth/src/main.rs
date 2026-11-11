@@ -306,7 +306,7 @@ async fn app(
         return;
     };
     if RUN_BENCH {
-        bench::run(mem);
+        run_bench(mem);
     }
     match address {
         Some(a) if RUN_CAMERA => {
@@ -317,6 +317,17 @@ async fn app(
         None if RUN_CAMERA => error!("camera section skipped: no OV9281"),
         _ => {}
     }
+}
+
+/// The bench build: PIE on this core and its kernel self-tests, then the detector benchmark.
+/// Not inlined, so its locals stay out of the `app` future.
+#[inline(never)]
+fn run_bench(mem: &mut [u8]) {
+    match esp32p4_pie::Pie::enable() {
+        Ok(pie) => bench::pie_self_tests(&pie),
+        Err(e) => error!("PIE: {e}; self-tests skipped"),
+    }
+    bench::run(mem);
 }
 
 fn log_chip() {
