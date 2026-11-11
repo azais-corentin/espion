@@ -12,9 +12,14 @@
 //!   per frame through an overwrite-never single-producer single-consumer queue ([`spsc`]).
 //! - A [`Monitor`] on core 0 calls `service()` and drains the results every millisecond, and
 //!   once a second logs core 1's figures and checks its heartbeat and trap record.
+//! - Feature `markers`: core 1 toggles its dedicated-IO channels [`MARKER_STRIP`] and
+//!   [`MARKER_FRAME`] (a CSR read and write each, no memory access); the module `markers`
+//!   routes them to pads from core 0 and reads every marker pad back at boot.
 
 #![no_std]
 
+#[cfg(feature = "markers")]
+pub mod markers;
 mod monitor;
 mod runner;
 pub mod spsc;
@@ -34,3 +39,10 @@ pub enum SkipChoice {
     /// PIE (`esp32p4_pie::Pie`), enabled by core 1 for itself; the scalar skip if it refuses.
     Pie,
 }
+
+/// Core 1's dedicated-IO channel toggled when the reader has handed out a strip of a detector
+/// run, before the detector reads it (feature `markers`).
+pub const MARKER_STRIP: u8 = 0;
+/// Core 1's dedicated-IO channel toggled when a frame's blobs are final: its result published,
+/// or dropped on a full queue (feature `markers`).
+pub const MARKER_FRAME: u8 = 1;

@@ -30,7 +30,9 @@ Everything reachable from core 1's entry (`runner::entry`, run by esp-hal's
   ROM's cache-sync calls of both cores.
 - **Allowed:** atomics, `mcycle`/`minstret` and the event counters (`esp32p4-perf`), the
   strip reader (`poll`, `release`), `esp32p4-cache` (invalidate, write-back, the L1 data
-  autoload registers), the detector, PIE through core 1's own token.
+  autoload registers), the detector, PIE through core 1's own token, and with feature
+  `markers` core 1's dedicated-IO CSRs (`esp32p4_perf::marker`: `cpu_gpio_oen` 0x803 once at
+  the entry, `cpu_gpio_out` 0x805 per marker).
 - **Traps** go to the crate's own vector (`core1_trap`, in RAM, no stack): it stores
   `mcause`, `mepc` and `mtval` and waits for ever; core 0 reports them. esp-hal's default
   path would `panic!` and print from core 1.
@@ -54,6 +56,9 @@ Everything reachable from core 1's entry (`runner::entry`, run by esp-hal's
 | `FrameResult`, `Core1::pop_with`, `Core1::dropped` | core 0 | One frame's blobs (up to 256), detector counters, cycles and instructions, late strips and latencies; read in place |
 | `row_sum` | both | The row checksum the check compares; core 0 computes the reference with it |
 | `spsc` | both | Single-producer single-consumer queue on two atomic indices, overwrite-never (a full queue counts a drop), items filled and read in place |
+| `markers::Marker::new(name, pin, core, channel)` | core 0, feature `markers` | Routes dedicated-IO channel `channel` of `core` (either core) to `pin` through the GPIO matrix (`OutputSignal::CPU_GPIO_n`, core 0's channels are signals 214 to 221, core 1's 222 to 229), with the pad's input path and its pull-down on. The driving core enables the channel itself (core 1: its entry, for `MARKER_STRIP` and `MARKER_FRAME`) |
+| `markers::self_check(&mut [Marker])` (async) | core 0, feature `markers` | Logs the cost of one toggle, listens on every marker pad (GPIO interrupt on any edge, bound on core 0 only), waits for a run to toggle them (every marker, or 5 s after the first edge), counts each pad's level changes read back from `GPIO_IN` for 1 s, then waits until the markers rest for 20 ms (between runs: its log lines hold core 0 for about 3 ms) to stop listening and log the counts |
+| `MARKER_STRIP`, `MARKER_FRAME` | both | Core 1's channels: toggled when the reader has handed out a strip of a detector run (before the detector) and when a frame's blobs are final (result published, or dropped on a full queue) |
 
 Core 1's loop: take a new reader from the mailbox if core 0 posted one, answer a clock
 request (`Core1::clock_offset`), poll; on a strip run the job and release it; between empty
@@ -64,15 +69,22 @@ run has the autoload on, core 1 owns them and the firmware on core 0 must not wr
 Core 1 sets one section over the strip it reads and turns it off (waiting until no fetch is
 in flight) before it releases the strip.
 
-## Feature
+## Features
 
 `stats`: forwards `esp32p4-cache`'s `stats` (per-core counts and maxima of the cache lock),
 and the monitor logs them.
+
+`markers`: core 1's entry enables its channels `MARKER_STRIP` and `MARKER_FRAME`
+(`esp32p4_perf::marker::enable`) and its loop toggles them (`csrr`, `xor`, `csrw` of 0x805:
+no memory access, no lock); the module `markers` (core 0) routes channels to pads and checks
+them at boot. Without the feature the runner's code is unchanged (`mark` is empty). Pins,
+wiring and capture: the binaries' READMEs, "Marker pins".
 
 ## Build and test
 
 ```sh
 cargo build --release && cargo clippy --release     # in this directory (target in .cargo/config.toml)
+cargo build --release --features markers && cargo clippy --release --features markers
 rustc --edition 2024 --test src/spsc.rs -o /tmp/spsc-test && /tmp/spsc-test   # host tests of the queue
 ```
 
@@ -97,3 +109,14 @@ script of 2026-11-11 is `/tmp/p4perf-logs/TwoCore/walk.py`, not in the repositor
 - Earlier checks of the same code in `poc-p4-eth` (trap, stalled heartbeat, laps, stalls,
   stop/start cycles, cache contention): `firmware/poc-p4-eth/README.md`, "Detector on core
   1"; not repeated after the move.
+- Feature `markers` (2026-11-11, `/tmp/p4perf-logs/Markers/`): the walk of `poc-p4-eth`
+  (`RUN_CORE1`, `eth-core1-on2.walk`) and of `poc-p4-stream` (`Service::BenchVision`,
+  `stream-bv-on2.walk`) with the feature on: 24 reachable functions each, no banned
+  reference, 31 and 36 panic call sites as before; the only new CSR accesses are `csrc 0x803`
+  at the entry and `csrr`/`csrw 0x805` in the two `run` instances. With the feature off, the
+  runner's `run` instances, `start_core1_run`, `core1_trap` and the detector are
+  instruction-for-instruction those of the build before the change (llvm-objdump of both
+  ELFs). On the board, the self-check read back 1561 edges of `MARKER_STRIP` and 120 of
+  `MARKER_FRAME` in 1 s at 1280x800 RAW8 120 fps, none merged (`eth-core1-on2.log`); detect
+  mean 754 us with and without the feature (max 763 and 756 us). Figures in the binaries'
+  READMEs, "Marker pins".

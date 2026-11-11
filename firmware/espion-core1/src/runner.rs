@@ -32,6 +32,9 @@
 //!    [`core1_trap`] instead stores `mcause`, `mepc` and `mtval` in [`TRAP`], uses no stack,
 //!    and waits for ever; core 0 reports it.
 //! 3. `esp32p4_perf::init()`: the event counters are per core and count nothing until then.
+//!    With feature `markers`, this core's marker channels' outputs on (its own
+//!    `cpu_gpio_oen` CSR); the loop toggles channel [`crate::MARKER_STRIP`] as each strip
+//!    of a detector run comes in and [`crate::MARKER_FRAME`] when a frame's blobs are final.
 //! 4. PIE on core 1 if [`start`]'s `skip` asks for it: `Pie::enable` reads the chip revision
 //!    from eFuse (a read-only register, through the PAC), reads `mhartid`, swaps this core's
 //!    flag in the crate's `IN_USE` table and writes this core's PIE status CSR (0x7F2): no
@@ -669,6 +672,10 @@ fn entry(
         asm!("csrw mtvec, {0}", in(reg) new, options(nomem, nostack));
     }
     esp32p4_perf::init();
+    // Feature `markers`: this core's marker channels, enabled by this core (the enable CSR is
+    // per hart; core 0 routed them to pads before starting core 1).
+    #[cfg(feature = "markers")]
+    esp32p4_perf::marker::enable(crate::markers::CORE1_MASK);
     let pie = match skip {
         SkipChoice::Pie => esp32p4_pie::Pie::enable().ok(),
         SkipChoice::Scalar => None,
@@ -817,6 +824,7 @@ fn detector_input(s: &[u8]) -> &[u8] {
 /// One strip of [`Job::Detect`]: begin a frame on row 0, the detector on the rows, the
 /// release check, and the frame result after the last strip.
 fn on_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
+    mark(crate::MARKER_STRIP);
     let det = &mut *st.det;
     if s.first_row() == 0 {
         if st.open.is_some() {
@@ -902,6 +910,16 @@ fn on_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
         // Counted as dropped by the queue; the detector still has to close the frame.
         det.finish(st.scratch);
     }
+    mark(crate::MARKER_FRAME);
+}
+
+/// Toggles core 1's marker channel `channel` (feature `markers`; nothing without it).
+#[inline(always)]
+fn mark(channel: u8) {
+    #[cfg(feature = "markers")]
+    esp32p4_perf::marker::toggle(1 << channel);
+    #[cfg(not(feature = "markers"))]
+    let _ = channel;
 }
 
 /// The L1 data autoload (miss and hit, ascending) over `strip` and nothing else.

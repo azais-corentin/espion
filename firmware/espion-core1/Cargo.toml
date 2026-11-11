@@ -11,6 +11,9 @@ publish      = false
 # The cross-core cache lock's per-core statistics (operations, longest hold and wait), read by
 # the monitor's lock lines (`esp32p4-cache` feature `stats`).
 stats = ["esp32p4-cache/stats"]
+# Marker pins: core 1 toggles two dedicated-IO channels (strip taken, frame done); the module
+# `markers` routes a channel of either core to a pad and reads the marker pads back at boot.
+markers = ["dep:esp32p4"]
 
 [dependencies]
 # `CpuControl::start_app_core` and its stack, the CPU clock for the log lines.
@@ -28,3 +31,6 @@ embassy-futures = "0.1.2"
 embassy-time    = "0.5.1"
 log             = "0.4.34"
 static_cell     = "2.1.1"
+# `markers` only: `GPIO_IN` and `GPIO_STATUS` in the self-check's interrupt handler (core 0).
+# Same major as esp-hal 1.2.2 uses.
+esp32p4 = { version = "0.3.0", optional = true }
