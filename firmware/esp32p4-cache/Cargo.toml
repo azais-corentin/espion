@@ -13,3 +13,9 @@ publish      = false
 [dependencies]
 # Same major as esp-hal 1.2.2 uses.
 esp32p4 = "0.3.0"
+
+[features]
+# Per-core counters of the cache lock: operations, longest hold and longest wait, in cycles
+# of the calling core (`stats` module). Costs two `mcycle` reads and two atomic maxima per
+# operation.
+stats = []

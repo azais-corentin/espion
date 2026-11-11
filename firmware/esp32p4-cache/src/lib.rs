@@ -64,6 +64,8 @@
 #![warn(missing_docs)]
 
 pub mod prefetch;
+#[cfg(feature = "stats")]
+pub mod stats;
 
 use core::arch::asm;
 use core::hint::spin_loop;
@@ -106,6 +108,8 @@ static LOCK: Lock = Lock(AtomicU32::new(0));
 /// masked on this core from before the lock is taken until after it is released.
 #[inline]
 fn locked<R>(f: impl FnOnce() -> R) -> R {
+    #[cfg(feature = "stats")]
+    let tried = stats::now();
     let mstatus = loop {
         let mstatus: usize;
         // SAFETY: clears MIE and returns the old `mstatus` (machine mode). No `nomem`: the
@@ -120,7 +124,11 @@ fn locked<R>(f: impl FnOnce() -> R) -> R {
             spin_loop();
         }
     };
+    #[cfg(feature = "stats")]
+    let taken = stats::now();
     let r = f();
+    #[cfg(feature = "stats")]
+    stats::record(tried, taken, stats::now());
     LOCK.0.store(0, Ordering::Release);
     restore_mie(mstatus);
     r
