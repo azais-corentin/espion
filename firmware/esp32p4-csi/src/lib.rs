@@ -98,7 +98,10 @@ use esp32p4_cache as cache;
 
 pub use dphy::{MAX_MBPS, MIN_MBPS, PhyStatus, hsfreqrange};
 pub use ldo::{LdoChannel, LdoError, LdoSetting, disable_ldo, enable_ldo};
-pub use strips::{CsiStrips, MAX_STRIPS, Strip, StripDebug, StripError, StripLink, StripStats};
+pub use strips::{
+    CsiStrips, MAX_STRIPS, Strip, StripControl, StripDebug, StripError, StripLink, StripReader,
+    StripRef, StripStats,
+};
 
 /// Number of active data lanes. Fixed: the P4 has two and this driver uses both.
 pub const LANES: u8 = 2;

@@ -114,6 +114,13 @@
 //! - **Cache:** [`CsiStrips::wait_strip`] invalidates a strip's lines (`Cache_Invalidate_Addr`)
 //!   before handing it out.
 //!
+//! # Two cores
+//!
+//! [`CsiStrips::split`] divides the driver into a [`StripControl`] (start, stop, errors and
+//! stalls, on the core that created it) and a [`StripReader`] for a bare second core, which
+//! polls the list items itself: no interrupt per strip, no critical section and no waker in
+//! the data path. See the [`split`] module docs. Not run on the board yet.
+//!
 //! # Example: a row-incremental consumer
 //!
 //! ```no_run
@@ -195,6 +202,9 @@ use crate::{
     read_host_errors, reset_link, restart_isp_bridge, snapshot,
 };
 
+pub mod split;
+pub use split::{StripControl, StripReader, StripRef};
+
 /// Most strip buffers in the ring.
 pub const MAX_STRIPS: usize = 16;
 
@@ -261,6 +271,9 @@ pub enum StripError {
     LinksNotInternal,
     /// [`CsiStrips::start`] with strips still held by the application.
     StripsHeld,
+    /// [`StripControl::start`]: the split reader stayed inside one poll for 10 ms, so core 1
+    /// is stopped or stuck. The list items were not touched.
+    ReaderBusy,
 }
 
 impl From<Error> for StripError {
@@ -420,10 +433,201 @@ fn cycles() -> u32 {
     c
 }
 
+/// What classifying a block needs to know about the frame.
+#[derive(Clone, Copy)]
+struct Geom {
+    /// Bytes per line in memory ([`Config::line_bytes`]).
+    line_bytes: u32,
+    height: u16,
+    /// Rows per full strip.
+    lines: u16,
+}
+
+impl Geom {
+    const ZERO: Self = Self {
+        line_bytes: 0,
+        height: 0,
+        lines: 0,
+    };
+
+    /// 64-bit items of a full strip.
+    fn strip_items(&self) -> u32 {
+        (self.line_bytes * self.lines as u32) / 8
+    }
+}
+
+/// Frame alignment and row position of the block stream: the classification described under
+/// "Frame boundaries". The interrupt path and the split reader ([`split`]) both run it on
+/// every finished block, in ring order.
+#[derive(Clone, Copy)]
+struct Tracker {
+    sync: Sync,
+    /// First row of the next block (Probation and Synced).
+    row: u16,
+    /// Frame number of the frame in progress: frame ends seen since `start`.
+    frame: u32,
+    /// The frame being discarded had strips delivered already (counted as truncated).
+    partial: bool,
+}
+
+impl Tracker {
+    /// The state after `start`: seeking the first frame end.
+    const NEW: Self = Self {
+        sync: Sync::Seeking,
+        row: 0,
+        frame: 0,
+        partial: false,
+    };
+
+    /// Classifies one finished block of `reported` items (`LLP_STATUS` completed size).
+    /// `damaged`: data was lost since the previous block. Returns the strip to deliver, or
+    /// `None` when the block is discarded (counted in `strips_discarded`).
+    fn complete(
+        &mut self,
+        g: &Geom,
+        reported: u32,
+        damaged: bool,
+        st: &mut StripStats,
+    ) -> Option<Meta> {
+        st.strips_done = st.strips_done.wrapping_add(1);
+        st.last_block_items = reported;
+        // On the P4 v3.2 the completed size reads one item short (A6); accept both.
+        let items = reported + 1;
+        let full = items >= g.strip_items();
+        if damaged {
+            self.abandon(st);
+        }
+        let meta = if self.sync == Sync::Seeking {
+            if !full {
+                // A frame end, but alignment is unproven: check one whole frame first.
+                self.frame_end_unused(st);
+                self.sync = Sync::Probation;
+            }
+            None
+        } else {
+            // Probation and Synced track rows the same way; only Synced delivers.
+            let deliver = self.sync == Sync::Synced;
+            let rows_left = g.height - self.row;
+            let expect_last = rows_left < g.lines;
+            let expected_items = (rows_left as u32 * g.line_bytes) / 8;
+            if full && !expect_last {
+                let meta = deliver.then(|| Meta {
+                    frame: self.frame,
+                    first_row: self.row,
+                    rows: g.lines,
+                    last: false,
+                    queued_at: cycles(),
+                });
+                self.row += g.lines;
+                meta
+            } else if !full && expect_last && items.abs_diff(expected_items) <= 1 {
+                let meta = if deliver {
+                    let meta = Meta {
+                        frame: self.frame,
+                        first_row: self.row,
+                        rows: rows_left,
+                        last: true,
+                        queued_at: cycles(),
+                    };
+                    st.frames_complete = st.frames_complete.wrapping_add(1);
+                    self.frame_end(st);
+                    Some(meta)
+                } else {
+                    // A whole frame with the expected block sizes: aligned from the next block on.
+                    self.frame_end_unused(st);
+                    None
+                };
+                self.sync = Sync::Synced;
+                meta
+            } else {
+                st.length_errors = st.length_errors.wrapping_add(1);
+                self.abandon(st);
+                if !full {
+                    // A frame end at the wrong place: rows were lost or shifted. Prove the next
+                    // frame before delivering again.
+                    self.frame_end_unused(st);
+                    self.sync = Sync::Probation;
+                }
+                None
+            }
+        };
+        if meta.is_none() {
+            st.strips_discarded = st.strips_discarded.wrapping_add(1);
+        }
+        meta
+    }
+
+    /// Gives up the frame in progress: discard blocks up to the next frame end, then check a
+    /// whole frame before delivering again.
+    fn abandon(&mut self, st: &mut StripStats) {
+        if self.sync == Sync::Synced && self.row > 0 {
+            st.frames_truncated = st.frames_truncated.wrapping_add(1);
+            self.partial = true;
+        }
+        self.sync = Sync::Seeking;
+    }
+
+    /// End of a frame that was not delivered (counted truncated already, or skipped now).
+    fn frame_end_unused(&mut self, st: &mut StripStats) {
+        if self.partial {
+            self.partial = false;
+        } else {
+            st.frames_skipped = st.frames_skipped.wrapping_add(1);
+        }
+        self.frame_end(st);
+    }
+
+    fn frame_end(&mut self, st: &mut StripStats) {
+        self.frame = self.frame.wrapping_add(1);
+        self.row = 0;
+        st.frames_done = st.frames_done.wrapping_add(1);
+    }
+}
+
+/// Non-cacheable pointer to word `word` of the list item at `link` (its cached L2MEM address,
+/// as the DMA sees it).
+fn link_word(link: usize, word: usize) -> *mut u32 {
+    (cache::non_cacheable(link) as *mut u32).wrapping_add(word)
+}
+
+/// Makes the list item at `link` valid again after a write-back (which changes only `CTL` and
+/// the status words): status cleared, then `CTL1` with `VALID`. Only the item's owner calls
+/// it: the interrupt path, or the split reader for items it has taken from the DMA.
+fn rearm_link(link: usize) {
+    // SAFETY: the item belongs to the caller and the DMA does not use it (not valid).
+    unsafe {
+        ptr::write_volatile(link_word(link, LLI_STATUS_LO), 0);
+        ptr::write_volatile(link_word(link, LLI_STATUS_HI), 0);
+        fence(Ordering::SeqCst);
+        ptr::write_volatile(
+            link_word(link, LLI_CTL1),
+            CTL1 | CTL1_IOC_BLKTFR | CTL1_LLI_VALID,
+        );
+    }
+    fence(Ordering::SeqCst);
+}
+
+/// The DMA has written the item at `link` back: its `BLOCK_TFR_DONE` status bit, which it
+/// writes last, is set.
+fn link_done(link: usize) -> bool {
+    // SAFETY: a read of one word of a list item; reading changes nothing.
+    unsafe { ptr::read_volatile(link_word(link, LLI_STATUS_HI)) & STATUS_HI_BLOCK_DONE != 0 }
+}
+
+/// Completed-items field of the item at `link`, as written back. Read it after
+/// [`link_done`] and a fence.
+fn link_items(link: usize) -> u32 {
+    // SAFETY: as in `link_done`.
+    unsafe { ptr::read_volatile(link_word(link, LLI_STATUS_LO)) & 0x3F_FFFF }
+}
+
 struct State {
     /// Bumped by every `CsiStrips::new` so strips of an old instance are not returned to it.
     generation: u32,
     running: bool,
+    /// [`CsiStrips::split`] ran: the split reader takes the finished blocks, the interrupt
+    /// handles errors and stalls only.
+    split: bool,
     channel: u8,
     count: u8,
     /// Strip buffer addresses and lengths.
@@ -431,10 +635,7 @@ struct State {
     lens: [usize; MAX_STRIPS],
     /// List item addresses as the DMA sees them (cached L2MEM addresses).
     links: [usize; MAX_STRIPS],
-    /// Bytes per line in memory ([`Config::line_bytes`]).
-    line_bytes: u32,
-    height: u16,
-    lines: u16,
+    geom: Geom,
     /// Slots whose item is valid (owned by the DMA).
     armed: u16,
     /// Slots handed out.
@@ -446,15 +647,9 @@ struct State {
     meta: [Meta; MAX_STRIPS],
     /// Ring slot whose block finishes next.
     dma_next: u8,
-    sync: Sync,
-    /// First row of the next block (Probation and Synced).
-    row: u16,
-    /// Frame number of the frame in progress: frame ends seen since `start`.
-    frame: u32,
+    track: Tracker,
     /// Loss seen since the last block was processed.
     damaged: bool,
-    /// The frame being discarded had strips queued already (counted as truncated).
-    partial: bool,
     halted: bool,
     stats: StripStats,
     /// What [`restart_isp_bridge`] needs to program the ISP and the bridge again (set by
@@ -469,14 +664,13 @@ impl State {
         Self {
             generation: 0,
             running: false,
+            split: false,
             channel: 0,
             count: 0,
             strips: [0; MAX_STRIPS],
             lens: [0; MAX_STRIPS],
             links: [0; MAX_STRIPS],
-            line_bytes: 0,
-            height: 0,
-            lines: 0,
+            geom: Geom::ZERO,
             armed: 0,
             held: 0,
             queue: [0; MAX_STRIPS],
@@ -484,11 +678,8 @@ impl State {
             q_len: 0,
             meta: [Meta::EMPTY; MAX_STRIPS],
             dma_next: 0,
-            sync: Sync::Seeking,
-            row: 0,
-            frame: 0,
+            track: Tracker::NEW,
             damaged: false,
-            partial: false,
             halted: false,
             stats: StripStats::ZERO,
             config: Config::new(0, 0, 0),
@@ -497,59 +688,36 @@ impl State {
         }
     }
 
-    fn strip_items(&self) -> u32 {
-        (self.line_bytes * self.lines as u32) / 8
-    }
-
-    /// Non-cacheable pointer to word `word` of slot `slot`'s item.
-    fn link_word(&self, slot: u8, word: usize) -> *mut u32 {
-        (cache::non_cacheable(self.links[slot as usize]) as *mut u32).wrapping_add(word)
-    }
-
     /// Writes every field of slot `slot`'s item and makes it valid (`VALID` last).
     fn write_link(&mut self, slot: u8) {
         let next = (slot as usize + 1) % self.count as usize;
+        let link = self.links[slot as usize];
         let fields = [
             (LLI_SAR, CSI_BRG_MEM_BASE),
             (LLI_SAR + 1, 0),
             (LLI_DAR, self.strips[slot as usize] as u32),
             (LLI_DAR + 1, 0),
-            (LLI_BLOCK_TS, self.strip_items() - 1),
+            (LLI_BLOCK_TS, self.geom.strip_items() - 1),
             (LLI_LLP, self.links[next] as u32 | LLP_LMS_MEMORY),
             (LLI_LLP + 1, 0),
             (LLI_CTL0, CTL0),
         ];
         for (word, value) in fields {
             // SAFETY: the item belongs to the driver and the DMA does not use it (not valid).
-            unsafe { ptr::write_volatile(self.link_word(slot, word), value) };
+            unsafe { ptr::write_volatile(link_word(link, word), value) };
         }
         self.rearm(slot);
     }
 
-    /// Makes slot `slot`'s item valid again after a write-back (which changes only `CTL` and
-    /// the status words): status cleared, then `CTL1` with `VALID`.
+    /// Makes slot `slot`'s item valid again ([`rearm_link`]).
     fn rearm(&mut self, slot: u8) {
-        // SAFETY: as in `write_link`.
-        unsafe {
-            ptr::write_volatile(self.link_word(slot, LLI_STATUS_LO), 0);
-            ptr::write_volatile(self.link_word(slot, LLI_STATUS_HI), 0);
-            fence(Ordering::SeqCst);
-            ptr::write_volatile(
-                self.link_word(slot, LLI_CTL1),
-                CTL1 | CTL1_IOC_BLKTFR | CTL1_LLI_VALID,
-            );
-        }
-        fence(Ordering::SeqCst);
+        rearm_link(self.links[slot as usize]);
         self.armed |= 1 << slot;
     }
 
     /// Slot `slot` is armed and the DMA has written its item back.
     fn written_back(&self, slot: u8) -> bool {
-        // SAFETY: read of a driver-owned item; the DMA writes this status word last.
-        self.armed & (1 << slot) != 0
-            && unsafe { ptr::read_volatile(self.link_word(slot, LLI_STATUS_HI)) }
-                & STATUS_HI_BLOCK_DONE
-                != 0
+        self.armed & (1 << slot) != 0 && link_done(self.links[slot as usize])
     }
 
     /// Walks the finished items from `dma_next` in ring order. Returns how many it found.
@@ -561,8 +729,7 @@ impl State {
                 break;
             }
             fence(Ordering::SeqCst);
-            let items =
-                unsafe { ptr::read_volatile(self.link_word(slot, LLI_STATUS_LO)) } & 0x3F_FFFF;
+            let items = link_items(self.links[slot as usize]);
             self.armed &= !(1 << slot);
             self.dma_next = (slot + 1) % self.count;
             found += 1;
@@ -571,110 +738,18 @@ impl State {
         found
     }
 
-    /// Classifies one finished block of `reported` items (`LLP_STATUS` completed size).
+    /// Classifies one finished block of `reported` items: queued for the application, or
+    /// given back to the DMA at once.
     fn complete(&mut self, slot: u8, reported: u32) {
-        let st = &mut self.stats;
-        st.strips_done = st.strips_done.wrapping_add(1);
-        st.last_block_items = reported;
-        // On the P4 v3.2 the completed size reads one item short (A6); accept both.
-        let items = reported + 1;
-        let full = items >= self.strip_items();
-        if self.damaged {
-            self.damaged = false;
-            self.abandon();
+        let damaged = core::mem::take(&mut self.damaged);
+        let geom = self.geom;
+        match self
+            .track
+            .complete(&geom, reported, damaged, &mut self.stats)
+        {
+            Some(meta) => self.push(slot, meta),
+            None => self.rearm(slot),
         }
-        if self.sync == Sync::Seeking {
-            self.discard(slot);
-            if !full {
-                // A frame end, but alignment is unproven: check one whole frame first.
-                self.frame_end_unused();
-                self.sync = Sync::Probation;
-            }
-            return;
-        }
-        // Probation and Synced track rows the same way; only Synced delivers.
-        let deliver = self.sync == Sync::Synced;
-        let rows_left = self.height - self.row;
-        let expect_last = rows_left < self.lines;
-        let expected_items = (rows_left as u32 * self.line_bytes) / 8;
-        if full && !expect_last {
-            if deliver {
-                self.push(
-                    slot,
-                    Meta {
-                        frame: self.frame,
-                        first_row: self.row,
-                        rows: self.lines,
-                        last: false,
-                        queued_at: cycles(),
-                    },
-                );
-            } else {
-                self.discard(slot);
-            }
-            self.row += self.lines;
-        } else if !full && expect_last && items.abs_diff(expected_items) <= 1 {
-            if deliver {
-                self.push(
-                    slot,
-                    Meta {
-                        frame: self.frame,
-                        first_row: self.row,
-                        rows: rows_left,
-                        last: true,
-                        queued_at: cycles(),
-                    },
-                );
-                self.stats.frames_complete = self.stats.frames_complete.wrapping_add(1);
-                self.frame_end();
-            } else {
-                // A whole frame with the expected block sizes: aligned from the next block on.
-                self.discard(slot);
-                self.frame_end_unused();
-            }
-            self.sync = Sync::Synced;
-        } else {
-            self.stats.length_errors = self.stats.length_errors.wrapping_add(1);
-            self.abandon();
-            self.discard(slot);
-            if !full {
-                // A frame end at the wrong place: rows were lost or shifted. Prove the next
-                // frame before delivering again.
-                self.frame_end_unused();
-                self.sync = Sync::Probation;
-            }
-        }
-    }
-
-    /// Gives up the frame in progress: discard blocks up to the next frame end, then check a
-    /// whole frame before delivering again.
-    fn abandon(&mut self) {
-        if self.sync == Sync::Synced && self.row > 0 {
-            self.stats.frames_truncated = self.stats.frames_truncated.wrapping_add(1);
-            self.partial = true;
-        }
-        self.sync = Sync::Seeking;
-    }
-
-    /// End of a frame that was not delivered (counted truncated already, or skipped now).
-    fn frame_end_unused(&mut self) {
-        if self.partial {
-            self.partial = false;
-        } else {
-            self.stats.frames_skipped = self.stats.frames_skipped.wrapping_add(1);
-        }
-        self.frame_end();
-    }
-
-    fn frame_end(&mut self) {
-        self.frame = self.frame.wrapping_add(1);
-        self.row = 0;
-        self.stats.frames_done = self.stats.frames_done.wrapping_add(1);
-    }
-
-    fn discard(&mut self, slot: u8) {
-        self.stats.strips_discarded = self.stats.strips_discarded.wrapping_add(1);
-        self.rearm(slot);
     }
 
     fn push(&mut self, slot: u8, meta: Meta) {
@@ -703,6 +778,11 @@ impl State {
         if !self.halted || !self.running || self.armed & (1 << slot) == 0 {
             return;
         }
+        self.restart_channel(slot);
+    }
+
+    /// The restart of [`State::kick`], at slot `slot` if the channel stopped on an error.
+    fn restart_channel(&mut self, slot: u8) {
         let ch = self.channel;
         let c = dma().ch(ch as usize);
         // The channel waits between blocks, so no bridge transfer is in flight.
@@ -743,38 +823,44 @@ fn dma_isr() {
         if !s.running {
             return;
         }
-        // Loss the bridge reported before these blocks finished (its own handler may not
-        // have run yet).
-        if bridge().int_raw().read().bits() & BRIDGE_ERR_MASK != 0 {
-            s.damaged = true;
-        }
-        let queued = s.q_len;
-        let mut found = s.collect();
-        if st & BLOCK_TFR_DONE != 0 && found == 0 {
-            // The interrupt may beat the item's write-back (order not documented): give the
-            // write-back a bounded moment instead of leaving the strip until the next block.
-            for _ in 0..WRITEBACK_SPINS {
-                if s.written_back(s.dma_next) {
-                    break;
+        if s.split {
+            // The split reader takes the finished blocks; this handler sees errors and stalls
+            // only (`BLOCK_TFR_DONE` no longer signals).
+            s.split_event(st);
+        } else {
+            // Loss the bridge reported before these blocks finished (its own handler may not
+            // have run yet).
+            if bridge().int_raw().read().bits() & BRIDGE_ERR_MASK != 0 {
+                s.damaged = true;
+            }
+            let queued = s.q_len;
+            let mut found = s.collect();
+            if st & BLOCK_TFR_DONE != 0 && found == 0 {
+                // The interrupt may beat the item's write-back (order not documented): give the
+                // write-back a bounded moment instead of leaving the strip until the next block.
+                for _ in 0..WRITEBACK_SPINS {
+                    if s.written_back(s.dma_next) {
+                        break;
+                    }
+                }
+                found = s.collect();
+                if found == 0 {
+                    s.stats.writeback_missing = s.stats.writeback_missing.wrapping_add(1);
                 }
             }
-            found = s.collect();
-            if found == 0 {
-                s.stats.writeback_missing = s.stats.writeback_missing.wrapping_add(1);
+            if st & LLI_INVALID != 0 {
+                s.stats.dma_stalls = s.stats.dma_stalls.wrapping_add(1);
+                s.damaged = true;
+                s.halted = true;
+            } else if st & (DMA_ERR_MASK | DMA_TFR_DONE) != 0 && !channel_enabled(ch) {
+                // Stopped on an error (or ran off the list): restart at the expected item.
+                s.damaged = true;
+                s.halted = true;
             }
-        }
-        if st & LLI_INVALID != 0 {
-            s.stats.dma_stalls = s.stats.dma_stalls.wrapping_add(1);
-            s.damaged = true;
-            s.halted = true;
-        } else if st & (DMA_ERR_MASK | DMA_TFR_DONE) != 0 && !channel_enabled(ch) {
-            // Stopped on an error (or ran off the list): restart at the expected item.
-            s.damaged = true;
-            s.halted = true;
-        }
-        s.kick();
-        if s.q_len != queued {
-            WAKER.wake();
+            s.kick();
+            if s.q_len != queued {
+                WAKER.wake();
+            }
         }
         let dt = cycles().wrapping_sub(t0);
         s.stats.isr_runs = s.stats.isr_runs.wrapping_add(1);
@@ -788,6 +874,9 @@ fn dma_isr() {
 #[esp_hal::handler(priority = Priority::Priority3)]
 fn host_isr() {
     let (main, detail) = read_host_errors();
+    if main & HOST_LOSS_MASK != 0 {
+        split::note_loss();
+    }
     critical_section::with(|cs| {
         let mut s = STATE.borrow_ref_mut(cs);
         s.stats.host_errors = s.stats.host_errors.wrapping_add(1);
@@ -806,6 +895,9 @@ fn host_isr() {
 fn bridge_isr() {
     let b = bridge();
     let st = b.int_st().read().bits();
+    // Before the clear: the split reader reads the raw status and then the loss count, so a
+    // loss it misses in one it sees in the other.
+    split::note_loss();
     b.int_clr().write(|w| unsafe { w.bits(st) });
     critical_section::with(|cs| {
         let mut s = STATE.borrow_ref_mut(cs);
@@ -898,6 +990,8 @@ pub struct CsiStrips<'d> {
     channel: u8,
     generation: u32,
     running: bool,
+    /// [`CsiStrips::split`] ran: `self` lives on inside a [`StripControl`].
+    split: bool,
     chip_rev: u16,
     _vdma: PhantomData<&'d mut ()>,
 }
@@ -995,9 +1089,11 @@ impl<'d> CsiStrips<'d> {
                 (s.strips[i], s.lens[i]) = entry;
                 s.links[i] = links_addr + i * core::mem::size_of::<StripLink>();
             }
-            s.line_bytes = config.line_bytes() as u32;
-            s.height = config.height;
-            s.lines = lines;
+            s.geom = Geom {
+                line_bytes: config.line_bytes() as u32,
+                height: config.height,
+                lines,
+            };
             generation
         });
 
@@ -1018,6 +1114,7 @@ impl<'d> CsiStrips<'d> {
             channel,
             generation,
             running: false,
+            split: false,
             chip_rev,
             _vdma: PhantomData,
         })
@@ -1049,9 +1146,11 @@ impl<'d> CsiStrips<'d> {
                 *t = (s.strips[i], s.lens[i]);
             }
             check_lengths(&table[..n], &config, lines)?;
-            s.line_bytes = config.line_bytes() as u32;
-            s.height = config.height;
-            s.lines = lines;
+            s.geom = Geom {
+                line_bytes: config.line_bytes() as u32,
+                height: config.height,
+                lines,
+            };
             Ok::<(), StripError>(())
         })?;
         self.config = config;
@@ -1068,10 +1167,19 @@ impl<'d> CsiStrips<'d> {
         if self.running {
             return Err(Error::Running.into());
         }
-        let held = critical_section::with(|cs| STATE.borrow_ref(cs).held);
-        if held != 0 {
-            return Err(StripError::StripsHeld);
+        if self.split {
+            // A poll the reader began before the last stop may still write a list item; the
+            // items are written below only after it has left.
+            if !split::wait_reader() {
+                return Err(StripError::ReaderBusy);
+            }
+        } else {
+            let held = critical_section::with(|cs| STATE.borrow_ref(cs).held);
+            if held != 0 {
+                return Err(StripError::StripsHeld);
+            }
         }
+        let split = self.split;
         let cfg = self.config;
         let ch = self.channel;
         let bursts = (Self::strip_bytes(&cfg, self.lines) / BURST_BYTES) as u16;
@@ -1086,16 +1194,17 @@ impl<'d> CsiStrips<'d> {
                 s.write_link(slot);
             }
             s.dma_next = 0;
-            s.sync = Sync::Seeking;
-            s.partial = false;
-            s.row = 0;
-            s.frame = 0;
+            s.track = Tracker::NEW;
             s.damaged = false;
             s.halted = false;
             s.running = true;
             s.config = cfg;
             s.chip_rev = self.chip_rev;
             s.bursts = bursts;
+            if split {
+                // Before the channel runs: the reader takes the new geometry with this run.
+                split::publish_start(&s);
+            }
             let c = dma().ch(ch as usize);
             c.intclear0().write(|w| unsafe { w.bits(u32::MAX) });
             c.llp0()
@@ -1113,6 +1222,11 @@ impl<'d> CsiStrips<'d> {
     /// `NotRunning`.
     pub fn stop(&mut self) {
         let ch = self.channel;
+        if self.split {
+            // First of all: from here on the reader writes no list item and reports every
+            // strip it handed out as not intact.
+            split::publish_stop();
+        }
         bridge().csi_en().modify(|_, w| w.csi_brig_en().clear_bit());
         critical_section::with(|cs| {
             let mut s = STATE.borrow_ref_mut(cs);
@@ -1172,14 +1286,23 @@ impl<'d> CsiStrips<'d> {
         })
     }
 
-    /// Event counters.
+    /// Event counters. After [`CsiStrips::split`] the block and frame counters come from the
+    /// reader, as it last published them (at the end of each of its polls).
     pub fn stats(&self) -> StripStats {
-        critical_section::with(|cs| STATE.borrow_ref(cs).stats)
+        let mut st = critical_section::with(|cs| STATE.borrow_ref(cs).stats);
+        if self.split {
+            split::reader_stats(&mut st);
+        }
+        st
     }
 
-    /// Zeroes the counters.
+    /// Zeroes the counters. After [`CsiStrips::split`] the reader zeroes its own at its next
+    /// poll.
     pub fn reset_stats(&mut self) {
         critical_section::with(|cs| STATE.borrow_ref_mut(cs).stats = StripStats::ZERO);
+        if self.split {
+            split::request_stats_reset();
+        }
     }
 
     /// D-PHY lane state.
@@ -1193,16 +1316,20 @@ impl<'d> CsiStrips<'d> {
         let dma_llp = dma().ch(self.channel as usize).llp0().read().bits();
         critical_section::with(|cs| {
             let s = STATE.borrow_ref(cs);
-            StripDebug {
+            let mut d = StripDebug {
                 link,
                 dma_llp,
                 dma_next: s.dma_next,
                 armed: s.armed,
                 held: s.held,
                 queued: s.q_len,
-                synced: s.sync == Sync::Synced,
+                synced: s.track.sync == Sync::Synced,
                 halted: s.halted,
+            };
+            if s.split {
+                split::debug(&s, &mut d);
             }
+            d
         })
     }
 
@@ -1216,6 +1343,9 @@ impl Drop for CsiStrips<'_> {
     fn drop(&mut self) {
         if self.running {
             self.stop();
+        }
+        if self.split {
+            split::detach();
         }
         let cpu = Cpu::current();
         interrupt::disable(cpu, Interrupt::DMA);
