@@ -12,3 +12,8 @@ target = "riscv32imafc-unknown-none-elf"
 # and location, then a stack dump that `espflash monitor --elf` decodes into a backtrace (not
 # with `--no-addresses`). For esp-backtrace's frame-pointer walk instead, build with
 #   cargo build --release --config .cargo/backtrace.toml
+#
+# Zba, Zbb, Zbs and Zcb: 2 to 4.5 % fewer detector instructions and 3 to 4.7 % fewer cycles
+# with blobs (README, "Hot code in RAM and Zb/Zcb"). `+zcmp` stays off (silicon erratum, see
+# ESP-IDF's components/riscv check_zcmp_workaround) and `+zicond` too (not on the chip).
+rustflags = ["-C", "target-feature=+zba,+zbb,+zbs,+zcb"]

@@ -688,6 +688,51 @@ from code layout alone; instructions are the firm part. All figures with the `Sc
   has far fewer runs per row than 4 on most rows: the 64-blob frame is 42 % faster with PIE
   and the radius-12 blob frame 22 %, so `Pie` stays the skip for RAW8.
 
+### Hot code in RAM and Zb/Zcb (2026-11-11)
+
+Two build switches, measured in the four combinations with the bench of `aedcd8e` (both
+skips in every build; logs `a-density.log` (neither), `b-ram.log`, `b-zb.log`,
+`b-ramzb.log`):
+
+- **RAM:** cargo feature `ram` of `espion-vision` (and through it of `esp32p4-pie`) puts the
+  hot functions in `.rwtext`, which esp-hal's linker script places in internal RAM:
+  `push_rows_with` (one instance per skip, the strip loop inlined into it), `Scalar`'s
+  `first_bright` and `first_bright10`, `link`, `end_row` (with `emit` inlined), `finish`,
+  and the PIE kernels `skip_dark`, `skip_dark10`, `Pie::first_bright10` (`Pie::first_bright`
+  is inlined into its `push_rows_with`). Checked with `nm` in the linked ELF: all of them
+  between `_rwtext_start` and `_rwtext_end`.
+- **Zb/Zcb:** `-C target-feature=+zba,+zbb,+zbs,+zcb` in `.cargo/config.toml`.
+
+1280x800 strip frames, mean / max us, cycles, instructions:
+
+| Build | Scalar dark | Scalar 64 blobs | Pie dark | Pie 64 blobs |
+|---|---|---|---|---|
+| neither | 3148 / 3310, 1 259 253, 628 881 | 4707 / 5023, 1 882 956, 969 048 | 987 / 1058, 394 801, 117 154 | 2653 / 3069, 1 061 582, 518 910 |
+| RAM | 3145 / 3174, 1 258 191, 628 881 | 4613 / 4629, 1 845 371, 969 048 | 985 / 1006, 394 387, 117 154 | 2645 / 2664, 1 058 279, 518 910 |
+| Zb/Zcb | 3147 / 3297, 1 258 989, 628 771 | 4518 / 4933, 1 807 435, 947 777 | 987 / 1097, 395 028, 117 070 | 2575 / 2820, 1 030 212, 500 336 |
+| both | 3144 / 3169, 1 257 900, 628 771 | 4513 / 4533, 1 805 336, 947 777 | 989 / 1003, 395 863, 117 070 | 2586 / 2603, 1 034 404, 500 336 |
+
+- **Zb/Zcb** take 2.2 % (Scalar) and 3.6 % (Pie) of the instructions off the 64-blob frame
+  and 4.5 % off the radius-12 blob frames; cycles fall by 4.0 % and 3.0 % (64 blobs) and
+  4.7 % and 4.0 % (radius 12). The dark frames, which are the skip loops, do not change.
+  From flash this time they were not slower (the spike saw them cost cycles there).
+- **RAM** leaves the instructions and the means nearly unchanged (at most -2 % cycles) but
+  removes the worst passes: the 64-blob frame's max minus mean falls from 316 to 16 us
+  (Scalar) and from 416 to 19 us (Pie), the dark Scalar frame's from 162 to 29 us. The L1
+  instruction miss events of the 64-blob Scalar frame fall from 40 435 to 6130.
+- **Both** are kept: Scalar 64 blobs 1 882 956 → 1 805 336 cycles (-4.1 %), max 5023 →
+  4533 us; Pie 64 blobs 1 061 582 → 1 034 404 (-2.6 %), max 3069 → 2603 us. With both, the
+  Pie 64-blob frame is 0.4 % slower than with Zb/Zcb alone (inside the noise floor) and
+  its max 217 us lower.
+- **RAM cost:** `.rwtext` grows from 12 984 to 32 972 B (+19 988 B) in this bench build,
+  which links both skips: shared part (`link`, `end_row`, `finish`) 2022 B, the `Scalar`
+  instance and skip 10 650 B, the `Pie` instance and kernels 7318 B. The hot set of one
+  skip is 9.3 KB (Pie) or 12.7 KB (Scalar), inside the 16 KiB L1 instruction cache; both
+  together (20 KB) are not. The attribute sits on generic functions, so every instance
+  that is linked goes to RAM: a firmware that runs only the Pie skip pays about 9.3 KB,
+  and placing only the Pie instance would need a non-generic wrapper, which is not worth
+  it while the PoC links both (its detector check uses `Scalar`).
+
 ### Camera capture (whole frames in PSRAM)
 
 Set-up: three frame buffers at the start of PSRAM (0x4800_0000), filled with the sentinel
