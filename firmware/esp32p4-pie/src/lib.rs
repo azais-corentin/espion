@@ -23,7 +23,11 @@
 //! - [`Pie::first_bright`]: finds the first 64-byte block of a row that holds a byte at or
 //!   above a threshold (the detector's dark skip). [`first_bright_scalar`] is the reference
 //!   with the same contract; it builds on any target.
-//! - [`Pie::self_test`] compares the kernel with the reference on generated rows, on the chip.
+//! - [`Pie::first_bright10`]: the same over CSI-2 RAW10 data (four pixels in five bytes),
+//!   80 bytes (64 pixels) per step, ignoring the low-bit byte of each group.
+//!   [`first_bright10_scalar`] is the reference.
+//! - [`Pie::self_test`] and [`Pie::self_test10`] compare the kernels with the references on
+//!   generated rows, on the chip.
 //!
 //! Everything that executes PIE or CSR instructions exists for `target_arch = "riscv32"`
 //! only; the encoders and the scalar reference build and test on the host.
@@ -35,6 +39,8 @@ mod check;
 pub mod encode;
 #[cfg(target_arch = "riscv32")]
 mod pie;
+#[cfg(any(target_arch = "riscv32", test))]
+mod split;
 
 use core::fmt;
 
@@ -92,4 +98,29 @@ pub fn first_bright_scalar(bytes: &[u8], threshold: u8) -> usize {
         .chunks(64)
         .position(|c| c.iter().any(|&b| b >= threshold))
         .map_or(bytes.len(), |i| i * 64)
+}
+
+/// Scalar reference of [`Pie::first_bright10`] at 80-byte granularity from the start of
+/// `bytes`.
+///
+/// `bytes` is CSI-2 RAW10 data from a group boundary: in each 5-byte group, bytes 0..=3 are
+/// the top 8 bits of four pixels and byte 4 holds their low bits, which is not a pixel and
+/// never counts. Returns the offset of the first 80-byte chunk (16 groups, 64 pixels; the
+/// last chunk may be shorter) that holds a pixel byte `>= threshold_top8`, or `bytes.len()`
+/// if there is none. The offset is a multiple of 5, so it starts a group. If the length is
+/// not a multiple of 5, the bytes of the trailing partial group count as pixel bytes.
+pub fn first_bright10_scalar(bytes: &[u8], threshold_top8: u8) -> usize {
+    bytes
+        .chunks(80)
+        .position(|c| first_bright_group(c, threshold_top8).is_some())
+        .map_or(bytes.len(), |i| i * 80)
+}
+
+/// Offset of the first 5-byte RAW10 group of `bytes` with a pixel byte (bytes 0..=3 of the
+/// group) `>= threshold_top8`. A trailing partial group has only pixel bytes.
+fn first_bright_group(bytes: &[u8], threshold_top8: u8) -> Option<usize> {
+    bytes
+        .chunks(5)
+        .position(|g| g.iter().take(4).any(|&b| b >= threshold_top8))
+        .map(|i| i * 5)
 }

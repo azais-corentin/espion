@@ -133,6 +133,11 @@ pub const fn vmax_u8_ld_incp(qu: Q, rs1: Ar, qz: Q, qx: Q, qy: Q) -> u32 {
         | ((qx as u32) << 29)
 }
 
+/// `esp.andq qz, qx, qy`: bitwise AND of two vectors.
+pub const fn andq(qz: Q, qx: Q, qy: Q) -> u32 {
+    0x0180_001F | ((qz as u32) << 7) | ((qy as u32) << 26) | ((qx as u32) << 29)
+}
+
 /// `esp.max.u8.a qw, rd`: `rd` = the largest of the 16 unsigned bytes of `qw`.
 pub const fn max_u8_a(qw: Q, rd: Ar) -> u32 {
     let q = qw as u32;
@@ -251,6 +256,31 @@ mod tests {
             vmax_u8_ld_incp(Q::Q3, Ar::S9, Q::Q6, Q::Q7, Q::Q1),
             0xe404_8f5f,
             "esp.vmax.u8.ld.incp q3, s9, q6, q7, q1",
+        ),
+        (
+            andq(Q::Q0, Q::Q0, Q::Q3),
+            0x0d80_001f,
+            "esp.andq q0, q0, q3",
+        ),
+        (
+            andq(Q::Q1, Q::Q1, Q::Q4),
+            0x3180_009f,
+            "esp.andq q1, q1, q4",
+        ),
+        (
+            andq(Q::Q2, Q::Q2, Q::Q5),
+            0x5580_011f,
+            "esp.andq q2, q2, q5",
+        ),
+        (
+            andq(Q::Q7, Q::Q6, Q::Q5),
+            0xd580_039f,
+            "esp.andq q7, q6, q5",
+        ),
+        (
+            andq(Q::Q5, Q::Q7, Q::Q1),
+            0xe580_029f,
+            "esp.andq q5, q7, q1",
         ),
         (max_u8_a(Q::Q4, Ar::A3), 0x0008_229b, "esp.max.u8.a q4, a3"),
         (max_u8_a(Q::Q0, Ar::A0), 0x0000_211b, "esp.max.u8.a q0, a0"),

@@ -7,7 +7,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Error;
 use crate::check::{self, Buffer, Rng};
-use crate::encode::{Ar, Q, max_u8_a, vld_128_ip, vmax_u8, vmax_u8_ld_incp};
+use crate::encode::{Ar, Q, andq, max_u8_a, vld_128_ip, vmax_u8, vmax_u8_ld_incp};
+use crate::split;
 
 /// One flag per HP core: set while a [`Pie`] token exists for that core.
 static IN_USE: [AtomicBool; 2] = [const { AtomicBool::new(false) }; 2];
@@ -88,10 +89,8 @@ impl Pie {
     /// exactly at threshold and in the first and last position. Every byte around the row is
     /// 0xFF, so an over-read shows as a wrong result. The same `seed` gives the same cases.
     pub fn self_test(&self, seed: u32, cases: u32) -> u32 {
-        // SAFETY: only the token of this core touches `CASE_BUFFERS[self.core]`; the token is
-        // unique per core and stays on its thread, and nothing below calls back into user
-        // code, so the reference is exclusive.
-        let buf = unsafe { &mut *CASE_BUFFERS[self.core].0.get() };
+        // SAFETY: taken once; nothing below takes it again.
+        let buf = unsafe { self.case_buffer() };
         let mut rng = Rng::new(seed);
         let mut failures = 0;
         for i in 0..cases {
@@ -101,6 +100,69 @@ impl Pie {
             failures += u32::from(!check::agrees(row, case.threshold, o));
         }
         failures
+    }
+
+    /// RAW10 dark skip: returns an offset `o`, a multiple of 5 or `bytes.len()`, such that no
+    /// pixel byte of `bytes[..o]` is `>= threshold_top8`, and either `o == bytes.len()` or a
+    /// pixel byte of `bytes[o..min(o + 80, len)]` is.
+    ///
+    /// `bytes` is CSI-2 RAW10 data from a group boundary: bytes 0..=3 of each 5-byte group
+    /// are the top 8 bits of four pixels, byte 4 holds their low bits and never counts. If
+    /// the length is not a multiple of 5, the trailing partial group's bytes count as pixel
+    /// bytes. `threshold_top8` compares with the top 8 bits (a 10-bit threshold `t` is
+    /// exact as `t >> 2` only when `t` is a multiple of 4).
+    ///
+    /// Any alignment and length; never reads outside `bytes`. The first 0 to 15 groups
+    /// (up to 75 bytes) are scanned one group at a time until the data reaches a 16-byte
+    /// boundary; from there every 80-byte vector pass starts on a group boundary, so the
+    /// low-bit byte positions are the same five constant masks in every pass, and the
+    /// tail of fewer than 80 bytes is scanned one group at a time. A hit in the head or tail
+    /// gives the offset of the group; a hit in the vector part gives the start of the
+    /// 80-byte pass. Overwrites `q0`-`q7`.
+    pub fn first_bright10(&self, bytes: &[u8], threshold_top8: u8) -> usize {
+        split::first_bright10(bytes, threshold_top8, |mid, t| {
+            // SAFETY: the split passes a 16-byte-aligned `mid` of whole 80-byte passes
+            // starting on a group boundary; `self` proves PIE is enabled on this core and
+            // has no other user.
+            unsafe { skip_dark10(mid.as_ptr(), mid.len(), t) }
+        })
+    }
+
+    /// Runs `cases` randomised comparisons of [`first_bright10`](Self::first_bright10) with
+    /// [`first_bright10_scalar`](crate::first_bright10_scalar) and returns how many failed.
+    ///
+    /// A case fails when the kernel breaks the contract (checked byte by byte) or disagrees
+    /// with the reference on whether the row holds a bright pixel. Rows are 0..=1680 bytes
+    /// (whole groups) at every start alignment 0..16 in turn, with the thresholds of
+    /// [`self_test`](Self::self_test), low-bit bytes mostly 0xFF (they must not count),
+    /// backgrounds at threshold - 1, bright pixels exactly at threshold and in the first and
+    /// last group. Every byte around the row is 0xFF. The same `seed` gives the same cases.
+    pub fn self_test10(&self, seed: u32, cases: u32) -> u32 {
+        // SAFETY: taken once; nothing below takes it again.
+        let buf = unsafe { self.case_buffer() };
+        let mut rng = Rng::new(seed);
+        let mut failures = 0;
+        for i in 0..cases {
+            let case = check::raw10::generate(&mut rng, i, buf);
+            let row = &buf.0[case.start..case.start + case.len];
+            let o = self.first_bright10(row, case.threshold);
+            failures += u32::from(!check::raw10::agrees(row, case.threshold, o));
+        }
+        failures
+    }
+
+    /// This core's self-test case buffer.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds the reference only while it calls no other function that takes it
+    /// (the self-tests call no user code and take it once each).
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn case_buffer(&self) -> &mut Buffer {
+        // SAFETY: only the token of this core touches `CASE_BUFFERS[self.core]`; the token is
+        // unique per core and stays on its thread, and the caller keeps the reference
+        // exclusive (see above).
+        unsafe { &mut *CASE_BUFFERS[self.core].0.get() }
     }
 }
 
@@ -113,7 +175,7 @@ impl Drop for Pie {
     }
 }
 
-/// `self_test` case buffers, one per core.
+/// Self-test case buffers, one per core.
 struct CaseBuffer(UnsafeCell<Buffer>);
 
 // SAFETY: each buffer is only used through the token of its core (see `Pie::self_test`).
@@ -217,6 +279,107 @@ unsafe fn skip_dark(p: *const u8, len: usize, threshold: u8) -> usize {
             end16 = in(reg) end16,
             t = in(reg) u32::from(threshold),
             inout("a0") a0,
+            out("a3") _,
+            options(nostack, readonly),
+        );
+    }
+    a0 - start
+}
+
+/// 16-byte-aligned constant data for the vector loads.
+#[repr(C, align(16))]
+struct Aligned<const N: usize>([u8; N]);
+
+/// The five mask vectors of one 80-byte RAW10 pass from a group boundary: 0xFF on pixel
+/// bytes, 0 on the low-bit byte (offset 4 of each group). ANDing them clears the low-bit
+/// bytes, which then never raise the maximum (0 is below any threshold but 0, and at
+/// threshold 0 every pixel byte is bright anyway).
+static MASKS10: Aligned<{ split::RAW10_BLOCK }> = {
+    let mut m = [0xFF; split::RAW10_BLOCK];
+    let mut i = 4;
+    while i < m.len() {
+        m[i] = 0;
+        i += 5;
+    }
+    Aligned(m)
+};
+
+/// Offset of the first 80-byte pass of `p[..len]` that holds a pixel byte `>= threshold`;
+/// `len` if none.
+///
+/// Per pass: five loads, five ANDs with the masks in `q3`-`q7` (loaded once per call), four
+/// unsigned maxima into `q0`, one horizontal maximum. The loads alternate between `q1` and
+/// `q2` so that no instruction uses a register loaded by the one just before it (a load's
+/// result is ready two stages later). No read-ahead: nothing past `p + len` is read.
+///
+/// Registers: `a0` the pointer and `a1` the mask pointer (PIE address operands, post-
+/// incremented by the loads), `a3` the pass maximum (`esp.max.u8.a` result); all must be
+/// PIE-addressable, so they are named. The end and the threshold are only used by branches.
+///
+/// `asm!` options: `nostack`; `readonly` (reads `p[..len]` and `MASKS10`, writes no memory).
+/// Not `pure`, for the reason given at [`skip_dark`].
+///
+/// # Safety
+///
+/// `p` is 16-byte aligned and starts a RAW10 group, `p[..len]` is readable, `len` is a
+/// multiple of 80, and PIE is enabled on this core with no other user.
+#[inline(never)]
+unsafe fn skip_dark10(p: *const u8, len: usize, threshold: u8) -> usize {
+    let start = p as usize;
+    let end = start + len;
+    let mut a0 = start;
+    // SAFETY: the caller's contract; the loads read `MASKS10` and `[start, end)` only.
+    unsafe {
+        asm!(
+            "bgeu a0, {end}, 3f",
+            ".insn 4, {ld_m3}",      // esp.vld.128.ip q3, a1, 16
+            ".insn 4, {ld_m4}",      // esp.vld.128.ip q4, a1, 16
+            ".insn 4, {ld_m5}",      // esp.vld.128.ip q5, a1, 16
+            ".insn 4, {ld_m6}",      // esp.vld.128.ip q6, a1, 16
+            ".insn 4, {ld_m7}",      // esp.vld.128.ip q7, a1, 16
+            "1:",
+            ".insn 4, {ld_q0}",      // esp.vld.128.ip q0, a0, 16
+            ".insn 4, {ld_q1}",      // esp.vld.128.ip q1, a0, 16
+            ".insn 4, {and_q0}",     // esp.andq q0, q0, q3
+            ".insn 4, {ld_q2}",      // esp.vld.128.ip q2, a0, 16
+            ".insn 4, {and_q1_m4}",  // esp.andq q1, q1, q4
+            ".insn 4, {mx_q1}",      // esp.vmax.u8 q0, q0, q1
+            ".insn 4, {ld_q1}",      // esp.vld.128.ip q1, a0, 16
+            ".insn 4, {and_q2_m5}",  // esp.andq q2, q2, q5
+            ".insn 4, {mx_q2}",      // esp.vmax.u8 q0, q0, q2
+            ".insn 4, {ld_q2}",      // esp.vld.128.ip q2, a0, 16
+            ".insn 4, {and_q1_m6}",  // esp.andq q1, q1, q6
+            ".insn 4, {mx_q1}",      // esp.vmax.u8 q0, q0, q1
+            ".insn 4, {and_q2_m7}",  // esp.andq q2, q2, q7
+            ".insn 4, {mx_q2}",      // esp.vmax.u8 q0, q0, q2
+            ".insn 4, {red_q0}",     // esp.max.u8.a q0, a3
+            "bgeu a3, {t}, 2f",
+            "bltu a0, {end}, 1b",
+            "j 3f",
+            // Hit: a0 is 80 bytes past the start of the pass.
+            "2:",
+            "addi a0, a0, -80",
+            "3:",
+            ld_m3 = const vld_128_ip(Q::Q3, Ar::A1, 16),
+            ld_m4 = const vld_128_ip(Q::Q4, Ar::A1, 16),
+            ld_m5 = const vld_128_ip(Q::Q5, Ar::A1, 16),
+            ld_m6 = const vld_128_ip(Q::Q6, Ar::A1, 16),
+            ld_m7 = const vld_128_ip(Q::Q7, Ar::A1, 16),
+            ld_q0 = const vld_128_ip(Q::Q0, Ar::A0, 16),
+            ld_q1 = const vld_128_ip(Q::Q1, Ar::A0, 16),
+            ld_q2 = const vld_128_ip(Q::Q2, Ar::A0, 16),
+            and_q0 = const andq(Q::Q0, Q::Q0, Q::Q3),
+            and_q1_m4 = const andq(Q::Q1, Q::Q1, Q::Q4),
+            and_q2_m5 = const andq(Q::Q2, Q::Q2, Q::Q5),
+            and_q1_m6 = const andq(Q::Q1, Q::Q1, Q::Q6),
+            and_q2_m7 = const andq(Q::Q2, Q::Q2, Q::Q7),
+            mx_q1 = const vmax_u8(Q::Q0, Q::Q0, Q::Q1),
+            mx_q2 = const vmax_u8(Q::Q0, Q::Q0, Q::Q2),
+            red_q0 = const max_u8_a(Q::Q0, Ar::A3),
+            end = in(reg) end,
+            t = in(reg) u32::from(threshold),
+            inout("a0") a0,
+            inout("a1") MASKS10.0.as_ptr() => _,
             out("a3") _,
             options(nostack, readonly),
         );

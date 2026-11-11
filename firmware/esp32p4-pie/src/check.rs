@@ -1,14 +1,19 @@
 //! Randomised cases for [`first_bright`](crate::Pie::first_bright): the generator shared by
-//! `Pie::self_test` on the chip and the host test, and the byte-wise contract.
+//! `Pie::self_test` on the chip and the host test, and the byte-wise contract. The case
+//! buffer and the random numbers serve the other kernels' generators in the submodules.
+
+pub(crate) mod raw10;
 
 use crate::first_bright_scalar;
 
 /// Longest generated slice (a 1344-byte row is the longest the firmware passes).
 pub(crate) const MAX_LEN: usize = 1344;
-/// 0xFF bytes before the earliest slice start and after the latest slice end.
+/// Longest slice any generator places in a [`Buffer`] (`raw10::MAX_LEN`).
+const SLICE_MAX: usize = 1680;
+/// Bytes before the earliest slice start and after the latest slice end.
 const GUARD: usize = 64;
 /// Bytes in the case buffer: guard, up to 15 bytes of start offset, slice, guard.
-pub(crate) const BUF_LEN: usize = GUARD + 16 + MAX_LEN + GUARD;
+pub(crate) const BUF_LEN: usize = GUARD + 16 + SLICE_MAX + GUARD;
 
 /// Thresholds at the edges of the unsigned byte range and around the sign bit.
 const THRESHOLDS: [u8; 5] = [1, 0x7F, 0x80, 0x81, 0xFF];
@@ -63,24 +68,12 @@ pub(crate) struct Case {
 pub(crate) fn generate(rng: &mut Rng, index: u32, buf: &mut Buffer) -> Case {
     let start = GUARD + (index % 16) as usize;
     let len = length(rng);
-    let threshold = if rng.below(2) == 0 {
-        THRESHOLDS[rng.below(THRESHOLDS.len() as u32) as usize]
-    } else {
-        rng.below(256) as u8
-    };
+    let threshold = threshold(rng);
 
     buf.0.fill(0xFF);
     let slice = &mut buf.0[start..start + len];
-    let t = threshold as u32;
-    // A byte below the threshold; with threshold 0 there is none and every byte is bright.
-    let dark = |rng: &mut Rng| {
-        if t == 0 {
-            rng.below(256) as u8
-        } else {
-            rng.below(t) as u8
-        }
-    };
-    let bright = |rng: &mut Rng| (t + rng.below(256 - t)) as u8;
+    let dark = |rng: &mut Rng| dark(rng, threshold);
+    let bright = |rng: &mut Rng| bright(rng, threshold);
     let kind = rng.below(6);
     if kind == 1 || kind == 5 {
         // Threshold - 1 everywhere: the background a `>` in place of `>=` gets wrong.
@@ -112,6 +105,29 @@ pub(crate) fn generate(rng: &mut Rng, index: u32, buf: &mut Buffer) -> Case {
         len,
         threshold,
     }
+}
+
+/// A threshold: half the time one of [`THRESHOLDS`], else any byte (0 included).
+fn threshold(rng: &mut Rng) -> u8 {
+    if rng.below(2) == 0 {
+        THRESHOLDS[rng.below(THRESHOLDS.len() as u32) as usize]
+    } else {
+        rng.below(256) as u8
+    }
+}
+
+/// A byte below `threshold`; with threshold 0 there is none and any byte is returned.
+fn dark(rng: &mut Rng, threshold: u8) -> u8 {
+    match threshold {
+        0 => rng.below(256) as u8,
+        t => rng.below(u32::from(t)) as u8,
+    }
+}
+
+/// A byte at or above `threshold`.
+fn bright(rng: &mut Rng, threshold: u8) -> u8 {
+    let t = u32::from(threshold);
+    (t + rng.below(256 - t)) as u8
 }
 
 /// Row lengths: uniform, multiples of 64 and 16, and multiples of 64 plus or minus 1..15.
