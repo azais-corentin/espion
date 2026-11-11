@@ -10,6 +10,7 @@ use embassy_time::{Delay, Duration, Instant as EInstant, Timer, with_timeout};
 use esp_hal::i2c::master::{Error as I2cError, I2c};
 use esp_hal::peripherals::VDMA_CH0;
 use esp_println::println;
+use esp32p4_cache as cache;
 use esp32p4_csi::{
     Config, Csi, CsiStrips, Frame, LdoChannel, LdoSetting, PhyStatus, StripError, enable_ldo,
 };
@@ -38,17 +39,10 @@ const BUFFER_LEN: usize = Csi::buffer_len(&Config::raw10(1280, 800, limits::LANE
 const FRAME_TIMEOUT: Duration = Duration::from_millis(500);
 /// Fill value of the frame buffers before the first capture.
 const SENTINEL: u8 = 0x5A;
-/// ROM cache maps L1 data cache and L2 cache (`cache_map_t`).
-const CACHE_MAP_L1_L2: u32 = (1 << 4) | (1 << 5);
 /// MIPI_CTRL00 (0x4800) with the clock lane gated between packets (bit 5; bit 6 is reserved in
 /// the datasheet but set by Espressif), for [`Plan::clock_gated`]. The mode's own value is
 /// 0x00, a continuous clock. Written in standby, after the mode.
 const MIPI_CLOCK_GATED: (u16, u8) = (0x4800, 0x60);
-
-unsafe extern "C" {
-    fn Cache_Invalidate_Addr(map: u32, addr: u32, size: u32) -> i32;
-    fn Cache_WriteBack_Addr(map: u32, addr: u32, size: u32) -> i32;
-}
 
 /// What one run of the camera section does.
 pub struct Plan {
@@ -214,14 +208,7 @@ fn make_receiver(
     }
     // Sentinel so a tail the DMA did not write shows up in the first frames.
     psram[..BUFFERS * BUFFER_LEN].fill(SENTINEL);
-    // SAFETY: ROM cache call on memory this function owns.
-    unsafe {
-        Cache_WriteBack_Addr(
-            CACHE_MAP_L1_L2,
-            psram.as_ptr() as u32,
-            (BUFFERS * BUFFER_LEN) as u32,
-        )
-    };
+    cache::write_back(psram.as_ptr() as usize, BUFFERS * BUFFER_LEN);
     let (b0, rest) = psram.split_at_mut(BUFFER_LEN);
     let (b1, rest) = rest.split_at_mut(BUFFER_LEN);
     let (b2, _) = rest.split_at_mut(BUFFER_LEN);
@@ -656,8 +643,7 @@ fn probe_control(addr: u32, old: u32) -> u32 {
     // SAFETY: read-only peek at a driver-owned buffer for this test.
     let peek = unsafe { core::slice::from_raw_parts(addr as *const u8, PROBE) };
     let cached = byte_sum(peek);
-    // SAFETY: ROM cache call on a driver-owned buffer the CPU only reads.
-    unsafe { Cache_Invalidate_Addr(CACHE_MAP_L1_L2, addr, PROBE as u32) };
+    cache::invalidate(addr as usize, PROBE);
     let memory = byte_sum(peek);
     log_control(addr, old, cached, memory);
     cached
@@ -685,27 +671,24 @@ async fn coherence(csi: &mut Csi<'static>, addr: u32, cached: u32) {
 fn probe_delivered(g: &Frame, cached: u32) {
     let addr = g.as_ptr() as u32;
     let delivered = byte_sum(&g[..PROBE]);
-    // SAFETY: ROM cache call on a delivered frame the CPU only reads.
-    unsafe { Cache_Invalidate_Addr(CACHE_MAP_L1_L2, addr, PROBE as u32) };
+    cache::invalidate(addr as usize, PROBE);
     let fresh = byte_sum(&g[..PROBE]);
     log_coherence(addr, cached, delivered, fresh);
 }
 
 #[inline(never)]
 fn time_invalidation(f: &Frame) {
-    let (addr, len) = (f.as_ptr() as u32, f.len().div_ceil(64) as u32 * 64);
+    let (addr, len) = (f.as_ptr() as usize, f.len().div_ceil(64) * 64);
     let t = esp_hal::time::Instant::now();
-    // SAFETY: ROM cache call on a delivered frame the CPU only reads.
-    let rc_cold = unsafe { Cache_Invalidate_Addr(CACHE_MAP_L1_L2, addr, len) };
+    cache::invalidate(addr, len);
     let cold = t.elapsed().as_micros();
     let sum = line_sum(f);
     core::hint::black_box(sum);
     let t = esp_hal::time::Instant::now();
-    // SAFETY: as above.
-    let rc_warm = unsafe { Cache_Invalidate_Addr(CACHE_MAP_L1_L2, addr, len) };
+    cache::invalidate(addr, len);
     let warm = t.elapsed().as_micros();
     info!(
-        "camera: cache invalidation of {len} B at {addr:#010x}: {cold} us uncached (rc {rc_cold}), {warm} us after reading the frame (rc {rc_warm})"
+        "camera: cache invalidation of {len} B at {addr:#010x}: {cold} us uncached, {warm} us after reading the frame"
     );
 }
 

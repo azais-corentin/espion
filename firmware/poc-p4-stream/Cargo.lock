@@ -977,12 +977,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32p4-cache"
+version = "0.1.0"
+dependencies = [
+ "esp32p4",
+]
+
+[[package]]
 name = "esp32p4-csi"
 version = "0.1.0"
 dependencies = [
  "critical-section",
  "esp-hal",
  "esp32p4",
+ "esp32p4-cache",
 ]
 
 [[package]]
@@ -992,6 +1000,7 @@ dependencies = [
  "critical-section",
  "esp-hal",
  "esp32p4",
+ "esp32p4-cache",
 ]
 
 [[package]]
@@ -1392,6 +1401,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp32p4",
+ "esp32p4-cache",
  "esp32p4-csi",
  "esp32p4-jpeg",
  "espion-proto",

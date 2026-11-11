@@ -2,6 +2,7 @@
 target/
 # Library crates built standalone only for checks and tests; their lockfiles live in the
 # firmware that uses them (cam-p4, poc-p4-eth, poc-p4-stream)
+firmware/esp32p4-cache/Cargo.lock
 firmware/esp32p4-csi/Cargo.lock
 firmware/esp32p4-jpeg/Cargo.lock
 firmware/esp32p4-perf/Cargo.lock

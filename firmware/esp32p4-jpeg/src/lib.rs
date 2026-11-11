@@ -161,7 +161,6 @@
 
 #![no_std]
 
-mod cache;
 pub mod dma2d;
 mod header;
 
@@ -179,6 +178,8 @@ use esp_hal::{
     system::Cpu,
 };
 use esp32p4 as pac;
+// Cache maintenance, behind the lock shared with every other cache operation of the firmware.
+use esp32p4_cache as cache;
 
 use dma2d::{Descriptor, common, in_reg, out_reg};
 pub use header::{HEADER_LEN, quant_table};

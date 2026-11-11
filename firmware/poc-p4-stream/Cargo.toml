@@ -19,10 +19,11 @@ accounting = ["embassy-executor/trace"]
 idle-counter = []
 
 [dependencies]
-esp32p4-csi  = { path = "../esp32p4-csi" }
-esp32p4-jpeg = { path = "../esp32p4-jpeg" }
-espion-proto = { path = "../../crates/espion-proto" }
-ov9281       = { path = "../ov9281" }
+esp32p4-cache = { path = "../esp32p4-cache" }
+esp32p4-csi   = { path = "../esp32p4-csi" }
+esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
+espion-proto  = { path = "../../crates/espion-proto" }
+ov9281        = { path = "../ov9281" }
 
 esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }

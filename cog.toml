@@ -19,6 +19,8 @@ scopes = [
   "proto",
   # firmware/cam-p4.
   "cam-p4",
+  # firmware/esp32p4-cache: cache maintenance behind a cross-core lock, and cache prefetch.
+  "esp32p4-cache",
   # firmware/esp32p4-csi.
   "esp32p4-csi",
   # firmware/esp32p4-jpeg: hardware JPEG encoder (greyscale) and 2D-DMA driver.

@@ -1,0 +1,4 @@
+# Library only: no runner. Normally built through firmware/esp32p4-csi and
+# firmware/esp32p4-jpeg, inside a firmware binary.
+[build]
+target = "riscv32imafc-unknown-none-elf"

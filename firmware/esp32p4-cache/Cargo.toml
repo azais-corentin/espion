@@ -1,0 +1,15 @@
+[package]
+name         = "esp32p4-cache"
+description  = "Cache maintenance behind one cross-core lock, and cache prefetch, for the ESP32-P4 (no_std)"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+# Only the PAC, without features, for the prefetch registers: no esp-hal, esp-rtos or
+# critical-section, so a bare second core can call every function. The ROM cache functions
+# get their addresses from the ROM linker script that esp-hal adds to the firmware binary.
+[dependencies]
+# Same major as esp-hal 1.2.2 uses.
+esp32p4 = "0.3.0"

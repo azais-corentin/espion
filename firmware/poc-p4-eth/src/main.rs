@@ -256,17 +256,6 @@ const PSRAM_TEST_LEN: usize = 4 * 1024 * 1024;
 /// Timed passes per buffer.
 const BENCH_PASSES: u32 = 4;
 
-/// ROM cache maps (`cache_map_t` in ESP-IDF `rom/cache.h`).
-const CACHE_MAP_L1_DCACHE: u32 = 1 << 4;
-const CACHE_MAP_L2_CACHE: u32 = 1 << 5;
-/// Internal L2MEM (cached by L1 only); everything else here is PSRAM (L1 and L2).
-const INTERNAL_RAM: core::ops::Range<usize> = 0x4FF0_0000..0x4FFC_0000;
-
-unsafe extern "C" {
-    /// ROM: write back then invalidate the cache lines covering `addr..addr + size`.
-    fn Cache_WriteBack_Invalidate_Addr(map: u32, addr: u32, size: u32) -> i32;
-}
-
 /// Internal-RAM buffer of the boot read-speed test, then the strip soak's synthetic strip.
 #[repr(C, align(64))]
 struct SramBench([u8; SRAM_BENCH_LEN]);
@@ -421,16 +410,7 @@ fn log_cache_config() {
 /// Writes back and drops every cached line of `buf`, so the next read comes from memory
 /// (as after a DMA write).
 fn flush_cache(buf: &[u8]) {
-    let addr = buf.as_ptr() as usize;
-    let map = if INTERNAL_RAM.contains(&addr) {
-        CACHE_MAP_L1_DCACHE
-    } else {
-        CACHE_MAP_L1_DCACHE | CACHE_MAP_L2_CACHE
-    };
-    // SAFETY: ROM call on a range we own; dirty lines are written back before invalidation.
-    unsafe {
-        Cache_WriteBack_Invalidate_Addr(map, addr as u32, buf.len() as u32);
-    }
+    esp32p4_cache::writeback_invalidate(buf.as_ptr() as usize, buf.len());
 }
 
 fn pattern(addr: usize, seed: u32) -> u32 {

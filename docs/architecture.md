@@ -79,7 +79,9 @@ no heap on the P4: every buffer is static.
 
 - **Cache coherency:** CSI DMA writes PSRAM behind the CPU caches. Frame buffers are aligned
   and sized to whole cache lines, and the CPU invalidates a buffer's lines before reading a
-  new frame from it.
+  new frame from it. Every cache operation of our crates goes through `firmware/esp32p4-cache`,
+  which serialises the ROM calls of both cores with one lock; esp-hal's own cache calls
+  (Ethernet TX, DMA buffer helpers, `enable_direct`) are outside that lock.
 - **Measure first:** how fast one core reads PSRAM sequentially. Reported figures are about
   200 MB/s (unverified), so one pass over a frame costs ≈ 1.3 ms of the 8.3 ms budget,
   against ≈ 0.3 ms from internal memory.
@@ -92,6 +94,7 @@ no heap on the P4: every buffer is static.
 | Crate | Chip / target | Runs |
 |---|---|---|
 | `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo (ETM capture), Ethernet and embassy-net (DHCP, UDP), PTP (statime), the LED gate, and the accelerometer (bump detection, gravity) on a second I2C bus |
+| `firmware/esp32p4-cache` | ESP32-P4 (no_std library) | Cache maintenance (invalidate, write-back) through the ROM, every call behind one cross-core spinlock held with interrupts masked on the calling core, because both cores share one set of cache-sync registers; and the hardware prefetch set-up (L1 data and L2 autoload, manual L1 data preload) on the `esp32p4` PAC. No esp-hal, esp-rtos or critical section, so a bare second core can call it. esp-hal's own cache calls (Ethernet TX buffers and descriptors, DMA buffer helpers, `enable_direct`) are not covered. Used by `esp32p4-csi` and `esp32p4-jpeg` |
 | `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, written in esp-hal style. Used by `cam-p4` |
 | `firmware/esp32p4-jpeg` | ESP32-P4 (no_std library) | Hardware JPEG encoder driver (greyscale, baseline) and the 2D-DMA registers it needs, on the `esp32p4` PAC, in esp-hal style. Tested and measured in `poc-p4-eth` (`JPEG_PLAN`); streams the camera's frames in `poc-p4-stream` |
 | `firmware/esp32p4-perf` | ESP32-P4 (no_std library) | Performance counters of the HP cores: cycles, instructions, conditional branches and their mispredictions, stores (CSRs), and the L1/L2 cache hit and miss counters. No esp dependency and no lock, so a bare second core can call it. Used by the benchmarks of `poc-p4-eth` |

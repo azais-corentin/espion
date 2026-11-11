@@ -144,18 +144,10 @@ pub fn start(spawner: Spawner, stack: Stack<'static>, res: Resources) {
     );
 }
 
-/// Writes back and invalidates `buf`'s cache lines (L1 and L2): the next read comes from
-/// PSRAM, as after a DMA write.
+/// Writes back and invalidates `buf`'s cache lines (L1 and L2 for PSRAM): the next read comes
+/// from PSRAM, as after a DMA write.
 fn flush_cache(buf: &[u8]) {
-    unsafe extern "C" {
-        fn Cache_WriteBack_Invalidate_Addr(map: u32, addr: u32, size: u32) -> i32;
-    }
-    // ROM cache maps (`cache_map_t`): L1 data cache and L2 cache.
-    const L1_L2: u32 = (1 << 4) | (1 << 5);
-    // SAFETY: ROM call on a range the caller owns; dirty lines are written back first.
-    unsafe {
-        Cache_WriteBack_Invalidate_Addr(L1_L2, buf.as_ptr() as u32, buf.len() as u32);
-    }
+    esp32p4_cache::writeback_invalidate(buf.as_ptr() as usize, buf.len());
 }
 
 // ── Board to host ─────────────────────────────────────────────────────────────────────────

@@ -12,3 +12,5 @@ esp-hal = { version = "~1.2.2", features = ["esp32p4", "unstable"] }
 # Same major as esp-hal 1.2.2 uses, so peripheral types match.
 esp32p4 = { version = "0.3.0", features = ["critical-section"] }
 critical-section = "1.2.0"
+# Cache maintenance behind the cross-core lock.
+esp32p4-cache = { path = "../esp32p4-cache" }

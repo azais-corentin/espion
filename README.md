@@ -31,6 +31,7 @@ changes on `main`).
 |---|---|
 | `crates/espion-proto/` | no_std UDP wire format shared by firmware and host; the camera stream (raw and JPEG frames, remote settings) is implemented |
 | `firmware/cam-p4/` | ESP32-P4: camera, blob detection, XVS trigger, LED gating, Ethernet/UDP, PTP sync |
+| `firmware/esp32p4-cache/` | no_std cache maintenance for the P4 behind one lock shared by both cores, and the cache prefetch set-up |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 receiver driver for the P4 (esp-hal lacks one) |
 | `firmware/esp32p4-jpeg/` | no_std hardware JPEG encoder driver for the P4, greyscale (esp-hal lacks one) |
 | `firmware/esp32p4-perf/` | no_std performance counters of the P4: cycles, instructions, branches, mispredictions, stores, cache hits and misses |

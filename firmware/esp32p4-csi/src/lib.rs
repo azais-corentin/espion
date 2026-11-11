@@ -71,7 +71,6 @@
 
 #![no_std]
 
-mod cache;
 mod dphy;
 mod ldo;
 pub mod strips;
@@ -94,6 +93,8 @@ use esp_hal::{
     system::Cpu,
 };
 use esp32p4 as pac;
+// Cache maintenance, behind the lock shared with every other cache operation of the firmware.
+use esp32p4_cache as cache;
 
 pub use dphy::{MAX_MBPS, MIN_MBPS, PhyStatus, hsfreqrange};
 pub use ldo::{LdoChannel, LdoError, LdoSetting, disable_ldo, enable_ldo};
