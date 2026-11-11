@@ -255,7 +255,10 @@ Four passes averaged. MB = 10^6 bytes.
   takes about 6 cycles per byte even from internal RAM.
 - The last column is the cache-fill ceiling. Its internal-RAM figure moved from 1598 to
   1424 MB/s when the buffer moved from 0x4FF2_9F18 to 0x4FF2_A320 between builds
-  [INFERENCE: buffer alignment; the buffers are not cache-line aligned].
+  [INFERENCE: buffer alignment; the buffer was not cache-line aligned then]. It is now
+  (`SRAM_BENCH`, 64-byte aligned): on 2026-11-11 three builds with it at 0x4FF3_1440,
+  0x4FF3_15C0 and 0x4FF3_12C0 read 1598, 1579 and 1598 MB/s (32 849, 32 850 and 32 830 cycles
+  per pass: the same within 0.1 %; logs `/tmp/p4perf-logs/BenchFlags/{A-unaligned,B-aligned,C-nofp}.log`).
 
 ### Detector benchmark (synthetic frames)
 
@@ -341,8 +344,9 @@ Limits of these numbers:
   The strip soak below measures them under live capture.
 - Synthetic frames: a dark background (4..19) and round discs. Real frames with brighter
   backgrounds take the detector's per-pixel path more often [INFERENCE].
-- The buffers are not cache-line aligned. Between builds, with the buffers at other
-  addresses, detector times moved by up to 2 % and the internal-RAM line-load figure by 11 %.
+- Between builds, detector times moved by up to 2 % and the internal-RAM line-load figure by
+  11 %. For the detector, the counters later traced this to code layout, not to the address
+  of its data ("Detector benchmark with counters", alignment).
 
 ### Detector benchmark with counters (2026-11-11)
 
@@ -467,6 +471,31 @@ Counter caveats (from the `esp32p4-perf` README):
 - The branch counters count conditional branches only (not jumps or calls).
 - All counters are 32 bits wide; every window here is far shorter than the 10.7 s wrap of
   `mcycle`.
+
+**Cache-line alignment of the statics: tried, not kept.** The detector state, its blob
+output and the benchmark's 300 KiB buffer (and the frame soak's detector and blob output) were
+put on 64-byte boundaries (`#[repr(C, align(64))]` wrapper), then each layout was rebuilt with
+one unrelated static added to move them. Cycles per frame, with L1 instruction miss events in
+brackets (logs `/tmp/p4perf-logs/BenchFlags/{A-unaligned,A2-unaligned-pad,B-aligned,B2-aligned-pad}.log`,
+frame pointers on):
+
+| Build | 1280x800 0 strip | 1280x800 16 strip | 1280x800 64 strip | 1280x800 0 psram | 1280x800 64 psram | 640x400 64 strip |
+|---|---|---|---|---|---|---|
+| unaligned | 1 728 342 (997) | 1 830 331 (21 501) | 2 104 554 (40 475) | 3 972 087 (9427) | 4 313 903 (9021) | 891 258 (8063) |
+| unaligned + 36 B static | 1 729 010 (1605) | 1 833 263 (24 332) | 2 104 686 (40 480) | 3 972 091 (9425) | 4 313 911 (9037) | 891 278 (8036) |
+| aligned | 1 728 338 (1074) | 1 850 132 (41 358) | 2 143 145 (73 380) | 3 972 232 (9561) | 4 313 846 (9060) | 895 663 (12 455) |
+| aligned + 100 B static | 1 728 312 (1074) | 1 851 266 (42 553) | 2 143 649 (73 971) | 3 972 120 (9470) | 4 313 845 (9055) | 895 653 (12 458) |
+
+Addresses (detector / blob output / buffer): unaligned 0x4FF2_BB08 / 0x4FF5_348C / 0x4FF5_4894,
+moved by 40 / 64 / 64 bytes with the extra static; aligned 0x4FF2_BC00 / 0x4FF5_36C0 /
+0x4FF5_4B40, moved by 64 bytes each.
+
+- Moving the data changed no figure by more than 0.16 %, aligned or not.
+- The aligned build was 1.1 % (16 blobs) and 1.8 % (64 blobs) slower than the unaligned one,
+  with the same instructions and twice the L1 instruction misses: its code sits elsewhere.
+- So the build-to-build movement of up to 2 % comes from code layout, not from the address of
+  the detector's data [INFERENCE on the mechanism; the miss counts are measured]. The change
+  showed no gain and was reverted.
 
 ### Camera capture (whole frames in PSRAM)
 
@@ -612,7 +641,8 @@ Caveats:
 - Live blob counts depend on the bench scene at the time, so the live runs are not
   repeatable workloads (two runs gave 6..256 and 182..256 blobs at 640x400).
 - The frame buffers and the synthetic area are 4 KiB aligned; the detector statics are not
-  cache-line aligned.
+  cache-line aligned (aligning them showed no gain in the benchmark: "Detector benchmark with
+  counters").
 
 ### Strip capture (64-line strips into internal RAM)
 
