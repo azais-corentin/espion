@@ -666,10 +666,27 @@ from code layout alone; instructions are the firm part. All figures with the `Sc
   its per-blob figure is higher only because its dark frame, the reference, is cheaper.
   Boot equivalence check in the same session: `detector skip equivalence (scalar against
   pie, 320 RAW8 and 320 RAW10 random frames, random strip splits): 0 mismatches of 640
-  frames; 51639 blobs, 115 frames with overflow, 6235 ms`. The committed bench adds busy
-  rows with 4, 16 and 64 one-pixel runs per row, to find the run density where PIE's two
-  calls per run stop paying; they have not run on the board yet (the board was taken by
-  another measurement).
+  frames; 51639 blobs, 115 frames with overflow, 6235 ms`.
+- **Run density** (busy rows with 1, 4, 16 and 64 one-pixel runs per row, every row, each
+  run linked to the run above; `a-density.log`, the committed bench of `aedcd8e`, warm
+  cycles / instructions per 1280-pixel row):
+
+  | Runs per row (spacing) | `Scalar` | `Pie` | Pie against Scalar |
+  |---|---|---|---|
+  | 0 (dark, span skip) | 1498.0 / 821.5 | 403.3 / 185.0 | -73.1 % |
+  | 1 | 2694.9 / 1483.9 | 2102.2 / 1222.4 | -22.0 % |
+  | 4 (320 px) | 4720.2 / 2779.8 | 5329.9 / 3385.3 | +12.9 % |
+  | 16 (80 px) | 11 956.2 / 7366.5 | 11 268.2 / 7176.0 | -5.8 % |
+  | 64 (20 px) | 41 582.9 / 26 265.1 | 42 357.5 / 27 053.6 | +1.9 % |
+
+  There is no single break-even density: with 4 runs per row PIE loses 13 % (605 more
+  instructions per row, about 150 per run), with 16 it wins 6 %, with 64 the two are
+  within 2 %. Above a few runs per row the row cost is the labelling (about 650 cycles per
+  run for both skips), not the skip. [INFERENCE] The loss at 4 runs comes from where the
+  runs fall against PIE's 16-byte head and 64-byte blocks (each call scans up to 15 bytes
+  one at a time before its first aligned load), not from the density itself. A real frame
+  has far fewer runs per row than 4 on most rows: the 64-blob frame is 42 % faster with PIE
+  and the radius-12 blob frame 22 %, so `Pie` stays the skip for RAW8.
 
 ### Camera capture (whole frames in PSRAM)
 
