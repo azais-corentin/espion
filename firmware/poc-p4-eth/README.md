@@ -269,9 +269,10 @@ per second, detector time per frame (mean and max), instructions per frame, late
 strips, abandoned frames, blobs, detector overflow, dropped results and heartbeat rate. A
 trap record or a heartbeat that did not move for a second ends the runs with a report.
 
-Call graph of the release build with `RUN_CORE1 = true` (walk from `start_core1_run`,
-2026-11-11): 23 functions: the runner (`core1::run::<Pie>` and `<Scalar>`, `check_strip`,
-`check_rows`, `hold_changed`), `StripReader::poll`, `StripRef::release`,
+Call graph of the release build with `RUN_CORE1 = true` (walk from `start_core1_run` of the
+final test build, `/tmp/p4perf-logs/TwoCore/g3-long.walk`, 2026-11-11): 20 functions and 4
+panic leaves: the runner (`core1::run::<Pie>` and `<Scalar>`, `check_strip`, `check_rows`,
+`hold_changed`, `record_hold_times`), `StripReader::poll`, `StripRef::release`,
 `Tracker::complete`, the detector (`push_rows_with` for Pie and Scalar, `finish`,
 `Labels::link`, `Labels::end_row`, `first_bright`, `first_bright10`, Pie's `skip_dark`,
 `skip_dark10`) and the ROM's `Cache_Get_L2_Cache_Line_Size`, `Cache_Invalidate_Addr`,
@@ -295,11 +296,24 @@ Board checks (2026-11-11, logs in `/tmp/p4perf-logs/TwoCore/`):
    results dropped, lapped, abandoned, stalls, length errors and `isr_runs` 0; detector
    mean 849 us (1280x800, live, brighter scene than the core-0 log), 772 (1280x720), 235
    (640x480), 304 (640x400).
-3. With core 0 busy: deferred to the co-load step (the cache-operation contention plans
-   `CONTENTION` and `LONG` are built, not run).
-4. Trap test, 5. stalled-heartbeat test: **not run** (test builds made, no board session).
+3. With core 0 busy (`f3-contention.log`, plan `CONTENTION`): core 0 running cache
+   operations without pause (thread mode and a 10 kHz timer interrupt, about 444 000 per
+   second). Detector live 2 min, 1280x800: 14 404 frames, dropped and lapped 0, detect mean
+   936 us max 956 us (845 / 858 without), worst strip start latency 17 us after the first
+   second (81 us in it), last strip to result 41 us mean, 48 us max. Pixel check 10 min:
+   57 623 200 rows, 0 bad. **Pass** for cache contention; the network load is left for the
+   co-load step.
+4. Trap test (`e2-trap.log`, a temporary `unimp` in `core1::run::<Pie>` at frame 600):
+   **pass**. Core 0 logged "core 1 trapped: mcause 0x30000002 mepc 0x40010300 mtval 0x0"
+   at its next once-a-second check (exception code 2, illegal instruction; the upper bits
+   are the CLIC's previous-privilege and interrupt-level fields; `mepc` is the `unimp` in
+   the ELF), then stopped the mode, logged its summary and "core 1 runs done".
+5. Stalled-heartbeat test (`e2-hang.log`, a temporary endless loop at frame 600): **pass**.
+   The second it began showed 1 fps and heartbeat 487/s, the next "core 1 stalled:
+   heartbeat stopped for 1 s (no trap recorded)"; core 0 then ended the run as above.
 6. Lap and stall holds: **pass**, see the `esp32p4-csi` README (no changed strip released
-   `true` in 3752 holds; every stall resumed, next good frame within 32.1 ms).
+   `true` in 5433 holds, order errors 0; every stall resumed, next good frame within
+   32.1 ms).
 
 #### Core 1 against core 0, 1280x800 RAW8, 120 fps (2026-11-11)
 

@@ -83,13 +83,18 @@ consumer is done. With N strips in the ring and T the time the DMA takes for one
 
 Lap detection: strip `k` is overwritten only after the DMA finished item `k - 1` once more,
 whose done bit the reader cleared before it took `k`. So `release` reports a lap if `k - 1`
-shows done. [INFERENCE] This assumes the write-back of `k - 1` becomes visible before the
-DMA's first data write into `k`; the TRM does not say. On the board (1280x800, N = 4,
-log `TwoCore/d2-faults.log`), after the take of `k`: item `k + 1` done at 593 us, `k + 2` at
-1180 us, `k + 3` (= `k - 1`) at 1737 to 1767 us, the first row of `k` changed at 1767 us
-(sampled about every 30 us), `k` done again at 2328 us; a hold to about 2330 us stalls the
-DMA. Over 3752 holds no strip whose data changed released `true`; the sampling was too coarse
-to test the order itself.
+shows done. This needs the write-back of `k - 1` to become visible before the DMA's first
+data write into `k`; the TRM does not say, so it was measured. On the board (1280x800, N = 4,
+log `TwoCore/i-faults.log`), times after the reader took `k`, minimum to maximum over the
+holds: item `k + 1` done at 571 to 582 us, `k + 2` at 1153 to 1164 us, `k + 3` (= `k - 1`)
+at 1735 to 1746 us, the first 16 bytes of `k` changed at 1764 to 1775 us, `k` done again at
+2318 to 2328 us. A strip released right after a hold of 1.70 ms released `true`, of 1.75 ms
+`false` with its data unchanged, of 1.80 ms and more `false` with its data changed; from 2.35
+ms each hold also stalled the DMA. In every one of the 1178 holds where the bytes changed,
+the done bit of `k - 1`, read right after the changed bytes, was set (order errors 0; the
+hold loop reads four done bits and 16 bytes per turn, a turn of a few microseconds
+[INFERENCE: not timed]). So the lap check fires about 20 us before the first write into
+`k`; this is a measurement on this chip and these timings, not a guarantee from the TRM.
 
 The consumer must treat what it computed from a frame as valid only if every strip of the
 frame released `true`.
@@ -124,25 +129,38 @@ Reader on core 1 (`poc-p4-eth`, `RUN_CORE1`, plans in `src/core1_soak.rs`), logs
 2. Pixel check with the reader on core 1, all four 120 fps modes, 30 s each (not 10 min;
    `c-check.log`): **pass**. 1280x800: 46 787 strips, 2 879 200 rows, 0 bad, 3599 of 3599
    frames good; 1280x720: 2 591 280 rows, 640x480: 1 728 000, 640x400 bin2: 1 439 600, all
-   0 bad; stalls, length, DMA errors and laps 0. The 10-minute runs with core 0 contention
-   were not run.
+   0 bad; stalls, length, DMA errors and laps 0. 10 minutes at 1280x800: with core 0
+   contention, item 8; without (`g3-long.log`): 936 377 strips,
+   57 623 200 rows, 0 bad, 72 029 of 72 029 frames good, stalls, laps and `isr_runs` 0,
+   strip start latency at most 51 us, `invalidate_cycles_max` 8508 (21 us).
 3. Interrupt count: **pass**. `isr_runs` 0 in every clean run (`a-bringup.log`,
    `c-check.log`); in the fault runs it equals the stall count.
-4. Lap test (`d-faults.log`, `d2-faults.log`): **pass** for the safety property: 3752 holds
-   from 0.5 to 100 ms, changed and released `true` 0. The release came after a re-read of
-   the whole strip through the uncached alias, so holds of 0.8 ms and more released `false`,
-   consistent with item `k - 1` finishing at 1737 us [INFERENCE: re-read time derived, not
-   timed]. Timeline above; delivery resumed with the next frame.
+4. Lap test (`d-faults.log`, `d2-faults.log`, `i-faults.log`): **pass**. 5433 holds from
+   0.5 to 100 ms: changed and released `true` 0. With the release right after the hold
+   (`i-faults.log`, 1681 holds from 1.5 ms): order errors 0, unchanged and released `false`
+   only for the 1.75 ms holds (79), the window between the lap flag and the first write.
+   Timeline above; delivery resumed with the next frame; `dma_stalls` 0 below about 2.33 ms.
 5. Stall test (holds of 1, 5, 30, 100 ms every 20 frames, `d2-faults.log`): **pass**. A stall
    per hold of 5 ms or more (27, 24, 18), `service()` resumed each time, the next good frame
    ended at most 11.2, 32.1, 32.1 and 28.8 ms after the hold, rows bad 0, the guard after
    the ring and the items intact after each case.
-6. 1000 stop/start cycles: **not verified**. Both runs reached the step but the monitor
-   capture (240 s) ended before its summary; no result.
+6. 1000 stop/start cycles while the reader polls (`h3-cycles.log`): **pass**. ReaderBusy 0,
+   other start errors 0, strips of a stopped run released `true` 0 (`false` 772), rows bad
+   0, frames good 1200 of 1200, every run delivered a good frame: 33.55 ms mean, 33.56 ms
+   max after `start` (stream-on 1 ms after it), `start` at most 34 us. Each cycle turns the
+   stream off and stops at once, then waits 20 ms. A restart with the stream left on gives
+   no data at all (`h2-cycles.log`: no block, PHY clock lane neither in stop state nor in
+   HS): `stop` resets the D-PHY and `start` must come before stream-on, as documented.
 7. Drop the control half while the reader polls: **pass** (`c-check.log`): list items
    unchanged over 50 ms, no strip delivered, core 1's heartbeat still moving.
-8. Cache contention with network load: deferred to the co-load step. A core-0 cache-operation
-   loop (`CONTENTION`, `LONG` plans) is built but was not run.
+8. Cache contention (`f3-contention.log`): **pass** for the cache-operation part; the network
+   load is left for the co-load step. Core 0 ran cache operations through `esp32p4-cache` in
+   a tight loop in thread mode and from a 10 kHz timer interrupt (internal 64 B to 4 KiB,
+   PSRAM 64 B to a whole frame), about 444 000 lock operations per second, while core 1
+   polled. Pixel check, 10 min: 936 377 strips, 57 623 200 rows, 0 bad, 72 029 of 72 029
+   frames good, stalls, laps and `isr_runs` 0, `invalidate_cycles_max` 3956 (9.9 us), strip
+   start latency at most 14 us. Detector live, 2 min: 14 404 frames, 0 dropped or lapped,
+   detect mean 936 us (845 without contention). Lock maxima in the `esp32p4-cache` README.
 
 ## Build
 

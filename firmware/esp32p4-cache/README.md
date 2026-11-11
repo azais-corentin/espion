@@ -138,10 +138,28 @@ the stream's Ethernet rings).
 
 With `stats`, each operation that takes the cross-core lock records per core the operation
 count, the longest wait and the longest hold, in `mcycle` cycles (`stats::get(core)`,
-`stats::reset_max()`). Measured on 2026-11-11 with the strip reader and the detector on a
-bare core 1 (`poc-p4-eth`, `RUN_CORE1`, log `/tmp/p4perf-logs/TwoCore/b-measure-pie.log`):
-longest hold on core 1 2224 cycles (5.6 us at 400 MHz), strip invalidate at most 6866 cycles.
-Core 0 under a tight loop of cache operations (plans `CONTENTION`, `LONG`) was not run. On
-the co-load path, esp-hal's own cache maintenance does not take this lock (Ethernet and SPI
-DMA buffers, interrupt vector set-up, PSRAM boot invalidate) [INFERENCE: from reading
-esp-hal 1.2.2, not measured].
+`stats::reset_max()`).
+
+Measured on 2026-11-11 with the strip reader and the detector on a bare core 1
+(`poc-p4-eth`, `RUN_CORE1`, logs in `/tmp/p4perf-logs/TwoCore/`), 400 MHz:
+
+| Run | Core 0 ops/s | Hold max core 0 / core 1 | Wait max core 0 / core 1 |
+|---|---|---|---|
+| detector live, core 0 idle (`b-measure-pie.log`) | 0 | - / 2224 cycles (5.6 us) | - |
+| detector live 2 min, core 0 contention (`f3-contention.log`) | 444 564 | 12 099 (30 us) / 3928 (9.8 us) | 5299 (13 us) / 3693 (9.2 us) |
+| pixel check 10 min, core 0 contention (`f3-contention.log`) | 444 412 | 6460 (16 us) / 1023 (2.6 us) | 20 088 (50 us) / 2933 (7.3 us) |
+| pixel check 10 min, core 0 idle (`g3-long.log`) | 0 | - / 3874 (9.7 us) | - / 2937 (7.3 us) |
+
+Contention: core 0 runs operations in a tight loop in thread mode and from a 10 kHz timer
+interrupt: write-back, invalidate and write-back-invalidate of 64 B to 4 KiB in internal RAM
+and of 64 B to a whole 1280x800 frame in PSRAM. Core 1 invalidates one strip per 0.59 ms. No
+deadlock, trap or corrupt row. Core 0's longest hold (30 us) is a whole-frame operation, as
+expected above. Core 1 waited at most 9.2 us, so a strip on core 1 can start up to about
+that much later. With core 0 idle (no lock operation on core 0) core 1 still recorded a
+7.3 us wait: [INFERENCE] a cold fetch (code from flash, or the lock's line) inside the
+measured span, so about 7 us of each wait maximum is not contention. Core 0's 50 us wait is longer than any hold. The lock restores `MIE`
+while it waits, so the timer interrupt and its own operation can run inside a thread-mode
+wait; [INFERENCE] that is where the extra time comes from (not separated in the figures).
+
+The uncovered esp-hal paths listed under the rule above are still not covered; the
+contention above ran without them, so the co-load step still has to exercise them.
