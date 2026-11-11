@@ -7,10 +7,17 @@ rust-version = "1.99"
 license      = "MIT OR Apache-2.0"
 publish      = false
 
-# No .cargo/config.toml: the crate has no esp dependency, so `cargo test` runs on the host.
-# Build for the P4 with `--target riscv32imafc-unknown-none-elf`.
+# No .cargo/config.toml: the crate has no esp dependency by default, so `cargo test` runs on
+# the host. Build for the P4 with `--target riscv32imafc-unknown-none-elf`.
+
+[features]
+# `impl Skip for esp32p4_pie::Pie`: the PIE dark skip of the ESP32-P4. The impl exists on
+# RISC-V builds only; on the host the feature builds the dependency's encoders and adds
+# nothing.
+pie = ["dep:esp32p4-pie"]
 
 [dependencies]
+esp32p4-pie = { path = "../esp32p4-pie", optional = true }
 
 [lints.rust]
 missing_docs           = "warn"

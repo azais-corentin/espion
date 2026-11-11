@@ -5,7 +5,7 @@ MIPI CSI-2 RAW10 mono frames and returns, per blob, the intensity-weighted centr
 1/32 pixel, the area and the peak value. It also holds `synth`, the deterministic synthetic
 frame generator that the tests and the board benchmark (`firmware/poc-p4-eth`) use.
 
-- `no_std`, no heap, no dependency: it builds and tests on the host.
+- `no_std`, no heap, no dependency by default: it builds and tests on the host.
 - Fixed capacities as const generics: `Detector<RUNS, COMPS, BLOBS>`. `DefaultDetector` is
   `Detector<256, 256, 256>` (256 runs per row, 256 live components, 256 blobs per frame).
 - `Detector::new` is a `const fn`, so the detector can live in a static (`DefaultDetector`
@@ -38,6 +38,12 @@ The dark skip is a trait, `Skip`, passed to each call (`push_rows_with`,
 vector skip can hold a per-core token that is not `Send` while the detector lives in a
 static. `Scalar` is the portable skip and the reference; the calls without `_with` use it.
 Any skip that keeps the contract in `skip.rs` gives the same blobs.
+
+## Cargo features
+
+| Feature | What |
+|---|---|
+| `pie` | `impl Skip for esp32p4_pie::Pie` (crate `firmware/esp32p4-pie`): the PIE dark skip of the ESP32-P4, 16 bytes per load. The impl is compiled for `target_arch = "riscv32"` only; on the host the feature builds the dependency's encoders and adds nothing, so `cargo test --features pie` runs the same tests. The token comes from `Pie::enable()` on the core that runs the detector; pass `&pie` to the `_with` calls |
 
 ## Algorithm
 
@@ -73,6 +79,7 @@ cargo clippy --all-targets
 cargo test
 # For the ESP32-P4:
 cargo build --release --target riscv32imafc-unknown-none-elf
+cargo build --release --target riscv32imafc-unknown-none-elf --features pie
 ```
 
 `cargo test` runs the detector's unit tests, the `synth` tests, the skip's tests against

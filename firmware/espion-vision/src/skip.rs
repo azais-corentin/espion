@@ -1,10 +1,11 @@
 //! The dark skip: where in a row the next bright pixel can be.
 //!
 //! The detector spends most of a frame here, so the skip is a trait: [`Scalar`] is the
-//! portable version (the reference and the host path), a vector version for the chip lives
-//! in another crate. The detector takes the skip as an argument of each call
-//! ([`crate::Detector::push_rows_with`]) instead of storing it, so an implementation can
-//! hold a token that is neither `Send` nor `Sync` while the detector lives in a static.
+//! portable version (the reference and the host path); with the cargo feature `pie`,
+//! `esp32p4_pie::Pie` is the vector version for the ESP32-P4 (16 bytes per load). The
+//! detector takes the skip as an argument of each call ([`crate::Detector::push_rows_with`])
+//! instead of storing it, so an implementation can hold a token that is neither `Send` nor
+//! `Sync` while the detector lives in a static.
 
 use crate::raw10;
 
@@ -59,6 +60,23 @@ impl Skip for Scalar {
         } else {
             first_bright10::<false>(bytes, threshold_top8, add)
         }
+    }
+}
+
+// The PIE kernels keep this contract as they are (`esp32p4-pie` README: `first_bright`
+// answers the start of the 64-byte block holding the bright byte, `first_bright10` the
+// start of the 80-byte pass; both exact in the scalar head and tail), so the impl only
+// forwards. Inlined: each method is then one call of the kernel's split.
+#[cfg(all(feature = "pie", target_arch = "riscv32"))]
+impl Skip for esp32p4_pie::Pie {
+    #[inline]
+    fn first_bright(&self, bytes: &[u8], threshold: u8) -> usize {
+        esp32p4_pie::Pie::first_bright(self, bytes, threshold)
+    }
+
+    #[inline]
+    fn first_bright10(&self, bytes: &[u8], threshold_top8: u8) -> usize {
+        esp32p4_pie::Pie::first_bright10(self, bytes, threshold_top8)
     }
 }
 

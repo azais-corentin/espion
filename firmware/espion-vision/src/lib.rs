@@ -10,10 +10,11 @@
 //! coordinates) in 1/32 pixel (Q11.5), the area in pixels (saturating at `u16::MAX`) and the
 //! peak value.
 //!
-//! The scan asks a [`Skip`] where the next bright pixel can be ([`Scalar`] here, a vector
-//! version on the chip), reads exactly from there until it has passed the skip's window and
-//! no run is open, then asks the skip again. The scalar skip tests 64 bytes at a time with a
-//! SWAR test on the OR of their words, then confirms on each word.
+//! The scan asks a [`Skip`] where the next bright pixel can be ([`Scalar`] here; with the
+//! cargo feature `pie`, `esp32p4_pie::Pie` on the ESP32-P4), reads exactly from there until
+//! it has passed the skip's window and no run is open, then asks the skip again. The scalar
+//! skip tests 64 bytes at a time with a SWAR test on the OR of their words, then confirms on
+//! each word.
 //!
 //! RAW10 frames in the MIPI CSI-2 packing ([`raw10`]) go through the same API
 //! ([`Detector::begin_frame_raw10`]): the threshold is in 10-bit units, the weights are the
@@ -25,7 +26,8 @@
 //! the same blobs in the same order (the order in which their last row was seen).
 //!
 //! [`synth`] generates deterministic synthetic frames for the tests and for the board
-//! benchmark. The crate has no esp dependency: it builds and tests on the host.
+//! benchmark. Without the feature `pie` the crate has no dependency; with or without it,
+//! it builds and tests on the host.
 
 #![no_std]
 
