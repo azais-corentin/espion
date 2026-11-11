@@ -417,8 +417,9 @@ impl App {
                             .color(FAULT),
                     )
                     .on_hover_text(
-                        "Frames dropped for a missing chunk, capture and encoder errors, \
-                         decode failures since start. The counters drawer has each.",
+                        "Frames dropped for a missing chunk and decode failures since the viewer \
+                         started; the board's capture and encoder errors since it booted. The \
+                         counters drawer has each.",
                     );
                 }
                 if s.pending {

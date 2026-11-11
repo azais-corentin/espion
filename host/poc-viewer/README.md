@@ -113,8 +113,9 @@ License 1.1, `OFL.txt`).
 - **Status bar** (top): the link (Connected, or Disconnected after 1.5 s without an answer)
   and the camera's address; frames per second received whole and presented, Mbit/s of UDP
   payload and the latency from the pipeline timing, each with its last minute as a line; the
-  number of faults since start (frames dropped for a missing chunk, capture and encoder errors,
-  decode failures) when there are any; "Waiting for an answer" while a request is unanswered;
+  number of faults when there are any (frames dropped for a missing chunk and decode failures
+  since the viewer started, the board's capture and encoder errors since it booted); "Waiting
+  for an answer" while a request is unanswered;
   **Counters** opens the drawer.
 - **Rail** (left, 340 points, scrolls). At its top, in red, the board's last refusal (`The
   board refused the camera settings: ...`, with its values) until a request of the same kind
@@ -183,6 +184,20 @@ whisker, its slowest sample of the window; computed stages are dashed.
 - **Staircase**: one row per stage, three consecutive frames a period apart, so the overlap of
   the stages of successive frames shows; frame 1's latency under the axis. The axis grows at once
   when the frames no longer fit and shrinks only with a tenth to spare.
+
+Measured 2026-11-11 on this desktop (as below, 119.88 Hz, vsync on) against the board,
+`--selftest 8`, exposure 200 lines; ms, median of the last 2 s, stages in order with the
+waits between them folded into the next start:
+
+| Stream | Exposure | Readout | Encode | Send | Decode | Draw | Exposure to GPU | UI frame time mean / p99 |
+|---|---|---|---|---|---|---|---|---|
+| crop 1280x800 JPEG q90, 120.049 Hz | 1.82 | 7.28 | 5.99 | 1.27 | 0.40 | 0.38 | 26.2 | 0.42 / 0.64 |
+| crop 1280x800 JPEG q90, 153.984 Hz | 1.52 | 6.07 | 5.99 | 1.20 | 0.38 | 0.38 | 26.7 | 0.42 / 0.65 |
+| binned 640x400 RAW8, 250.105 Hz (link-bound, 41.7 fps) | 1.82 | 3.64 | | 22.02 | | 0.25 | 28.4 | 0.27 / 0.48 |
+
+In the JPEG runs about 8 ms of the latency is the decoded picture waiting for the window's next
+pass: the decoding stage decodes the newest frame as soon as the window took the previous
+picture, so a picture is shown one display refresh after it is ready.
 
 ## Measured on the real camera
 
