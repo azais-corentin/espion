@@ -63,6 +63,9 @@ const THRESHOLD_RAW10: u16 = soak::THRESHOLD as u16 * 4;
 const MAILBOX_TIMEOUT: Duration = Duration::from_millis(100);
 /// How long a stop/start cycle waits for its first good frame.
 const CYCLE_TIMEOUT: Duration = Duration::from_millis(300);
+/// Stop-to-start pause of `Work::Cycles`: the rest of the sensor's frame (8.3 ms at 120 fps)
+/// and the lanes back in LP-11, as `stop_mode` waits.
+const CYCLE_LP11: Duration = Duration::from_millis(20);
 /// The strip the lap and stall tests hold: the one starting at this row (mid-frame in every
 /// mode: strips of 64 or 128 rows).
 const HOLD_ROW: u16 = 256;
@@ -167,8 +170,7 @@ const CHECK_PLAN: &[Step] = &[
 ];
 
 /// The fault tests on 1280x800 RAW8: the lap sweep (1.5 to 2.5 ms in 50 us steps, 2 s
-/// each), the stall cases (5 s each, a hold every 20 frames), 1000 stop/start cycles, then a
-/// 10 s check.
+/// each), then the stall cases (5 s each, a hold every 20 frames).
 #[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
 const FAULTS: &[Step] = &[
     step(
@@ -189,9 +191,11 @@ const FAULTS: &[Step] = &[
         },
         5,
     ),
-    step(0, Work::Cycles(1000), 0),
-    step(0, Work::Check, 10),
 ];
+
+/// 1000 stop/start cycles on 1280x800 RAW8, then a 10 s check.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const CYCLES: &[Step] = &[step(0, Work::Cycles(1000), 0), step(0, Work::Check, 10)];
 
 /// A short contention run on 1280x800 RAW8: the detector live for 30 s, then the pixel check
 /// for 60 s, with core 0 running cache operations without pause.
@@ -839,13 +843,21 @@ struct Cycles {
     first_max: u64,
     first_total: u64,
     beat: u32,
+    /// Longest `StripControl::start` call and longest whole cycle, us.
+    start_max: u64,
+    cycle_max: u64,
+    /// Cycles finished.
+    done: u32,
 }
 
 impl Cycles {
     /// Starts the control half for cycle `k`: `false` if it refused (counted).
     #[inline(never)]
     fn start(&mut self, control: &mut StripControl<'_>, k: u32) -> bool {
-        match control.start() {
+        let t0 = Instant::now();
+        let r = control.start();
+        self.start_max = self.start_max.max(t0.elapsed().as_micros());
+        match r {
             Ok(()) => true,
             Err(StripError::ReaderBusy) => {
                 self.busy += 1;
@@ -872,9 +884,27 @@ impl Cycles {
         }
     }
 
-    /// Once a second: core 1's trap record and heartbeat. `false` if it stopped (logged).
+    /// Once a second: a progress line, core 1's trap record and heartbeat. `false` if it
+    /// stopped (logged).
     #[inline(never)]
     fn alive(&mut self) -> bool {
+        let ok = self
+            .done
+            .saturating_sub(self.late + self.busy + self.others);
+        info!(
+            "core 1: cycles {}/{}: ReaderBusy {}, other errors {}, no good frame {}, first good frame mean {} max {} us, start max {} us, cycle max {} us, frames good {}, heartbeat {}",
+            self.done,
+            self.n,
+            self.busy,
+            self.others,
+            self.late,
+            self.first_total / u64::from(ok.max(1)),
+            self.first_max,
+            self.start_max,
+            self.cycle_max,
+            CHECK.snap().frames_good,
+            core1::heartbeat().wrapping_sub(self.beat),
+        );
         if let Some(t) = core1::trap() {
             report_trap(&t);
             return false;
@@ -922,8 +952,11 @@ impl Cycles {
     }
 }
 
-/// `Work::Cycles`: `n` stop/start cycles of the control half while the sensor streams; each
-/// run lasts until its first good frame (at most [`CYCLE_TIMEOUT`]) plus 0 to 9 ms.
+/// `Work::Cycles`: `n` stop/start cycles of the control half while core 1 polls. Each cycle:
+/// `start`, stream on, until the first good frame (at most [`CYCLE_TIMEOUT`]) plus 0 to 9
+/// ms, stream off and at once `stop` (the sensor still sends the rest of its frame), then
+/// [`CYCLE_LP11`] for the lanes to go back to LP-11. `stop` holds the D-PHY in reset, and it
+/// syncs again only from LP-11 (with the stream on during `start`, no data at all).
 async fn cycles_run(
     cam: &mut Cam,
     control: &mut StripControl<'_>,
@@ -939,19 +972,21 @@ async fn cycles_run(
         return true;
     }
     let c0 = CHECK.snap();
-    let Some(c) = cycle_loop(control, ctx.core1, n).await else {
+    let Some(c) = cycle_loop(cam, control, ctx.core1, n).await else {
         return false;
     };
-    // The stream is still on: start once more so that `stop_mode` ends it as usual.
-    let _ = control.start();
-    Timer::after_millis(50).await;
-    stop_mode(cam, control, ctx.core1).await;
     c.log(mode, &CHECK.snap().since(&c0));
     true
 }
 
-/// The `n` cycles; `None` if core 1 stopped (logged).
-async fn cycle_loop(control: &mut StripControl<'_>, core1: &mut Core1, n: u32) -> Option<Cycles> {
+/// The `n` cycles (the first already started by `start_mode`); `None` if core 1 stopped
+/// (logged).
+async fn cycle_loop(
+    cam: &mut Cam,
+    control: &mut StripControl<'_>,
+    core1: &mut Core1,
+    n: u32,
+) -> Option<Cycles> {
     let mut c = Cycles {
         n,
         beat: core1::heartbeat(),
@@ -959,28 +994,88 @@ async fn cycle_loop(control: &mut StripControl<'_>, core1: &mut Core1, n: u32) -
     };
     let mut next_beat = Instant::now() + Duration::from_secs(1);
     for k in 0..n {
-        if k > 0 && !c.start(control, k) {
-            continue;
-        }
-        let t0 = Instant::now();
-        let good0 = CHECK.snap().frames_good;
-        while CHECK.snap().frames_good == good0 && t0.elapsed() < CYCLE_TIMEOUT {
-            Timer::after_millis(1).await;
-            control.service();
-        }
-        let took = t0.elapsed().as_micros();
-        c.first_frame((CHECK.snap().frames_good != good0).then_some(took));
-        Timer::after_millis(u64::from(k.wrapping_mul(7) % 10)).await;
-        control.stop();
+        let beat_due = one_cycle(cam, control, &mut c, k, next_beat).await;
         core1.note_stop();
-        if Instant::now() >= next_beat {
+        if beat_due {
             next_beat += Duration::from_secs(1);
             if !c.alive() {
                 return None;
             }
         }
+        Timer::after(CYCLE_LP11).await;
     }
     Some(c)
+}
+
+/// Cycle `k` of `Work::Cycles` up to and with the stop (the caller notes it to core 1).
+/// Returns whether the once-a-second check is due (the link counters are then logged).
+async fn one_cycle(
+    cam: &mut Cam,
+    control: &mut StripControl<'_>,
+    c: &mut Cycles,
+    k: u32,
+    next_beat: Instant,
+) -> bool {
+    let tc = Instant::now();
+    if k > 0 {
+        if !c.start(control, k) {
+            c.done += 1;
+            return Instant::now() >= next_beat;
+        }
+        Timer::after_millis(1).await;
+        if let Err(e) = cam.start().await {
+            fail("cycle stream on", &(k, e));
+            c.others += 1;
+        }
+    }
+    let t0 = Instant::now();
+    let good0 = frames_good();
+    while frames_good() == good0 && t0.elapsed() < CYCLE_TIMEOUT {
+        Timer::after_millis(1).await;
+        control.service();
+    }
+    let took = t0.elapsed().as_micros();
+    c.first_frame((frames_good() != good0).then_some(took));
+    Timer::after_millis(u64::from(k.wrapping_mul(7) % 10)).await;
+    let beat_due = Instant::now() >= next_beat;
+    if beat_due {
+        log_cycle_link(control);
+    }
+    if let Err(e) = cam.stop().await {
+        fail("cycle stream off", &(k, e));
+    }
+    control.stop();
+    c.done += 1;
+    c.cycle_max = c.cycle_max.max(tc.elapsed().as_micros());
+    beat_due
+}
+
+/// Good frames of the pixel check so far.
+#[inline(never)]
+fn frames_good() -> u32 {
+    CHECK.snap().frames_good
+}
+
+/// The receiver's counters and link state, while running (cycle diagnostics).
+#[inline(never)]
+fn log_cycle_link(control: &StripControl<'_>) {
+    let st = control.stats();
+    info!(
+        "core 1:   link: strips done {} delivered {} discarded {}, frames done {} complete {} truncated {} skipped {}, stalls {} overruns {} length errors {} last block {} DMA errors {} ISR runs {}",
+        st.strips_done,
+        st.strips_delivered,
+        st.strips_discarded,
+        st.frames_done,
+        st.frames_complete,
+        st.frames_truncated,
+        st.frames_skipped,
+        st.dma_stalls,
+        st.bridge_overruns,
+        st.length_errors,
+        st.last_block_items,
+        st.dma_errors,
+        st.isr_runs,
+    );
 }
 
 /// Totals over a stretch of frame results.
