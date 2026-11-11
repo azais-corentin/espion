@@ -41,8 +41,11 @@ spinlock; this crate does the same.
 Hold time, from the board measurements in `firmware/poc-p4-eth/README.md`: a whole-frame
 invalidate over L1 and L2 takes 17 to 31 us whatever the frame size; a strip invalidate
 (80 or 40 KiB in L2MEM, L1 only) 1.9 to 2.3 us on average, 2.6 us at most, 9.7 us the first
-time. Write-back was not measured. So interrupts on the calling core wait up to about 31 us
-behind a whole-frame invalidate and about 3 us behind a strip; the other core keeps its
+time. `poc-p4-stream` measured its receiver's whole-frame invalidate at 1450 to 2200 cycles
+(4 to 5.5 us), and 10 200 cycles (25 us) for a frame the CPU had just read
+(`firmware/poc-p4-stream/README.md`, "Measured: where core 0's time goes per frame",
+2026-11-11). Write-back was not measured. So interrupts on the calling core wait up to about
+31 us behind a whole-frame invalidate and about 3 us behind a strip; the other core keeps its
 interrupts, and a cache operation it starts meanwhile waits up to the same time.
 
 **Rule:** every cache operation in this repository goes through this crate. Not covered are
@@ -51,8 +54,8 @@ buffer and descriptor (`ethernet/dma.rs` through `dma/aligned.rs`), `interrupt::
 (vector table write-back), the DMA buffer helpers (`dma/buffers/`, `dma/aligned.rs`), the SPI
 master's DMA path, the DSI frame buffers, and at boot the PSRAM set-up and the flash
 invalidate. A firmware that runs esp-hal's Ethernet driver on one core and calls this crate
-on the other is still exposed, until that Ethernet ring is replaced by one that calls this
-crate (performance plan step 7.2).
+on the other is still exposed. `poc-p4-stream` keeps esp-hal's driver for the bring-up only
+and runs its own Ethernet DMA rings (`net/eth.rs`, since `64d4b17`), which call this crate.
 
 ## Prefetch
 
@@ -65,8 +68,8 @@ Module `prefetch`, plain register writes in the `CACHE` block (0x3FF1_0000) thro
 | `autoload_suspend` / `autoload_resume` | disable, then re-enable only if it was on |
 | `l1d_preload(addr, len)`, `l1d_preload_done`, `l1d_preload_wait` | `L1_DCACHE_PRELOAD_ADDR/SIZE/CTRL` +0xD8..+0xE0, at most 16 383 B per preload |
 
-Measured on the board on 2026-11-11 without any DMA running (whole 1280x800 RAW8 frames
-scanned by the blob detector, 400 MHz):
+Measured on the board on 2026-11-11 without any DMA running (the performance spike in
+`poc-p4-eth`: whole 1280x800 RAW8 frames scanned by the scalar blob detector, 400 MHz):
 
 | Setting | Frame in PSRAM, dark | PSRAM, 64 blobs | Strips in internal RAM, dark |
 |---|---|---|---|
@@ -82,16 +85,51 @@ Caveats:
 - The hit trigger alone is poor on PSRAM.
 - A section that covers memory a DMA is writing can load lines before the DMA has written
   them, and an invalidate done before that load does not drop them. Limit sections to data
-  already delivered, or suspend autoload around the invalidate. Not yet tested with a DMA
-  running.
+  already delivered, or suspend autoload around the invalidate. Both live uses below do the
+  first.
 - No lock: these registers are not the cache-sync registers [INFERENCE: running prefetch
   beside a cache-sync operation was not tested]. Each set exists once for the chip, so one
-  context on one core owns the autoload set-up and the manual preloads.
+  context on one core owns the autoload set-up and the manual preloads; nothing here guards
+  against a second owner.
 - The ROM's own preload functions suspend autoload while they run; `l1d_preload` does not.
   The preload figures above were taken with autoload off.
+
+### Under live DMA
+
+Run on the board on 2026-11-11 in two places, each limited to a buffer the DMA had finished
+and that was invalidated, with no prefetch in flight at that buffer's next invalidate:
+
+- **Per-strip L1 data autoload** (`poc-p4-eth`, `strip_soak::AUTOLOAD`): miss+hit, ascending,
+  one section over exactly the strip the detector holds, set before `push_rows_with` and
+  disabled right after it (`autoload_disable` waits for `DONE`). Strip check with the sensor's
+  random test pattern in four modes, 30 s each: 10 874 992 rows, 0 bad. Live strip soak,
+  1280x800 RAW8 at 120 fps, 120 s: 14 406 frames, none dropped. In the bench the autoload
+  takes the PIE dark frame from 985 to 753 us (-23.6 %) and the scalar one by 8.9 %
+  (`firmware/poc-p4-eth/README.md`, "L1 data autoload on the strip path", "Live strip soak,
+  final configuration").
+- **Manual L1 data preload of the next chunk** (`poc-p4-stream`, `src/prefetch.rs`, mode
+  `preload_ahead`): once a datagram is queued, the next datagram's bytes of the same PSRAM
+  buffer (camera frame or JPEG file) are preloaded; the reader waits for the preload before
+  it gives the buffer back, and no invalidate runs while a prefetch may be in flight. The
+  body copy from PSRAM falls from 4400-4900 to 1070-1200 cycles per datagram. Rolling-bars
+  check at the wire rate under live capture, 180 s: 1967 frames, 0 failed; `poc-viewer`'s
+  board test: 0 failed checks (`firmware/poc-p4-stream/README.md`, "Measured: plan step 6.2,
+  cache prefetch of the PSRAM reads"). The same bench ran the autoload modes (L1, L2 or both,
+  one section over the bytes read, on for the copy only) over live camera frames too (copy
+  2700-3200 cycles); the content checks ran with `preload_ahead` and with prefetch off only.
+
+Not tested:
+
+- Prefetch on one core while the other core runs cache-sync operations: core 1 was off in
+  both uses.
+- Two owners. The detector's per-strip autoload and the stream's preload use the one set of
+  L1 data cache prefetch registers of the chip. If both ran in one firmware they would share
+  it; nothing in this crate arbitrates, and the combination has not run. Open point.
+- The L1 and L2 autoload over whole frames in PSRAM (the table above) under live capture.
 
 ## Build
 
 `cargo build --release` and `cargo clippy --release` in this directory (the target is set in
-`.cargo/config.toml`). It is linked into `cam-p4`, `poc-p4-eth` and `poc-p4-stream` through
-`esp32p4-csi` and `esp32p4-jpeg`.
+`.cargo/config.toml`). `esp32p4-csi` and `esp32p4-jpeg` depend on it, so it is linked into
+`cam-p4`, `poc-p4-eth` and `poc-p4-stream`; the two PoCs also call it directly (prefetch, and
+the stream's Ethernet rings).

@@ -9,7 +9,7 @@
 //! cache hits or misses"; no field sets how far ahead it fetches.
 //!
 //! Measured on the board on 2026-11-11, without any DMA running (`poc-p4-eth` spike, whole
-//! 1280x800 RAW8 frames scanned by the blob detector):
+//! 1280x800 RAW8 frames scanned by the scalar blob detector):
 //! - frame in PSRAM, L1 data and L2 autoload, miss+hit trigger: 9.9 ms to 4.6 ms dark,
 //!   10.8 ms to 5.4 ms with 64 blobs; either autoload alone 5.6 to 5.8 ms dark;
 //! - frame in internal-RAM strips, L1 data autoload, miss+hit or hit trigger: 4.33 ms to
@@ -25,18 +25,32 @@
 //! DMA has finished writing it holds stale data; if that happens after the invalidate, nothing
 //! drops it before the CPU reads it. So a section must cover only data the DMA has already
 //! delivered (and that has been invalidated since), or autoload must be suspended
-//! ([`autoload_suspend`]) around the invalidate and resumed only over delivered data. Not yet
-//! tested with a DMA running.
+//! ([`autoload_suspend`]) around the invalidate and resumed only over delivered data.
+//!
+//! Run under live DMA on the board on 2026-11-11, each time limited to a buffer the DMA had
+//! finished and that was invalidated, with no prefetch in flight at its next invalidate
+//! (figures in the crate READMEs named):
+//! - `poc-p4-eth`, "L1 data autoload on the strip path": L1 data autoload, miss+hit, over
+//!   the one strip the detector holds, disabled after each strip; the strip check found 0 bad
+//!   rows of 10 874 992 in four modes, and the 120 s live soak at 1280x800 RAW8 120 fps
+//!   dropped no frame.
+//! - `poc-p4-stream`, "Measured: plan step 6.2": manual L1 data preload of the next datagram's
+//!   bytes of a camera frame or JPEG file; a 180 s rolling-pattern check at the wire rate
+//!   found 0 failed frames of 1967.
+//!
+//! Not tested: the L1 and L2 autoload over whole frames in PSRAM under live capture.
 //!
 //! # No lock
 //!
 //! These functions write the autoload and preload registers only, not the cache-sync
 //! registers the ROM maintenance functions program, so they do not take the crate's lock
-//! \[INFERENCE: the PAC lists them as separate registers; running prefetch beside a
-//! cache-sync operation was not tested]. Each register set exists once for the whole chip
-//! (the L1 data cache is shared by both cores), so one context, on one core, owns the
-//! autoload set-up and the manual preloads; these functions do not guard against a second
-//! owner.
+//! \[INFERENCE: the PAC lists them as separate registers; running prefetch on one core while
+//! the other core runs a cache-sync operation was not tested]. Each register set exists once
+//! for the whole chip (the L1 data cache is shared by both cores), so one context, on one
+//! core, owns the autoload set-up and the manual preloads; these functions do not guard
+//! against a second owner. Open point: the detector's per-strip autoload (`poc-p4-eth`) and
+//! the stream's preload (`poc-p4-stream`) would share these registers if both ran in one
+//! firmware; that combination has not run.
 
 use esp32p4::cache::RegisterBlock;
 
