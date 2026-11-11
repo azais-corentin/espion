@@ -80,8 +80,85 @@ pub struct Stats {
 /// 256 blobs per frame.
 pub type DefaultDetector = Detector<256, 256, 256>;
 
-/// Label of a run that has no component.
-const NONE: u16 = u16::MAX;
+/// Component slots and run labels whose values are below the table size by construction,
+/// so the component table is read and written without bounds checks.
+mod slot {
+    use core::ops::{Index, IndexMut};
+
+    use super::Comp;
+
+    /// A slot of a table of `N` components. Invariant: `self.0 < N`. Only this module makes
+    /// slots ([`Slot::FIRST`], [`Slot::all`]; [`Label::slot`] gives back one it was made
+    /// from), so the invariant holds for every value.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub(super) struct Slot<const N: usize>(u16);
+
+    impl<const N: usize> Slot<N> {
+        /// Slot 0, also the value of unused entries. Fails to build unless `0 < N <
+        /// u16::MAX`, which leaves `u16::MAX` free for [`Label::NONE`].
+        pub(super) const FIRST: Self = {
+            assert!(N > 0 && N < u16::MAX as usize);
+            Slot(0)
+        };
+
+        /// Every slot: `0..N`.
+        pub(super) fn all() -> impl DoubleEndedIterator<Item = Self> {
+            let _ = Self::FIRST;
+            (0..N).map(|i| Slot(i as u16))
+        }
+    }
+
+    /// The component of a run: a slot of a table of `N`, or none.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) struct Label<const N: usize>(u16);
+
+    impl<const N: usize> Label<N> {
+        pub(super) const NONE: Self = Label(u16::MAX);
+
+        #[inline(always)]
+        pub(super) fn slot(self) -> Option<Slot<N>> {
+            // A label holds `NONE` or the value of a `Slot<N>` (the only constructors), and
+            // no slot is `u16::MAX` (`Slot::FIRST`).
+            (self != Self::NONE).then_some(Slot(self.0))
+        }
+    }
+
+    impl<const N: usize> From<Slot<N>> for Label<N> {
+        #[inline(always)]
+        fn from(s: Slot<N>) -> Self {
+            Label(s.0)
+        }
+    }
+
+    /// The component table, indexed by slot.
+    pub(super) struct Comps<const N: usize>([Comp<N>; N]);
+
+    impl<const N: usize> Comps<N> {
+        pub(super) const fn new() -> Self {
+            Comps([Comp::ZERO; N])
+        }
+    }
+
+    impl<const N: usize> Index<Slot<N>> for Comps<N> {
+        type Output = Comp<N>;
+
+        #[inline(always)]
+        fn index(&self, s: Slot<N>) -> &Comp<N> {
+            // SAFETY: `s.0 < N` (the invariant of `Slot`), and the table has `N` entries.
+            unsafe { self.0.get_unchecked(usize::from(s.0)) }
+        }
+    }
+
+    impl<const N: usize> IndexMut<Slot<N>> for Comps<N> {
+        #[inline(always)]
+        fn index_mut(&mut self, s: Slot<N>) -> &mut Comp<N> {
+            // SAFETY: as in `index`.
+            unsafe { self.0.get_unchecked_mut(usize::from(s.0)) }
+        }
+    }
+}
+
+use slot::{Comps, Label, Slot};
 
 /// The MIPI CSI-2 RAW10 packing; the only code that knows the byte layout.
 ///
@@ -147,12 +224,13 @@ pub mod raw10 {
     };
 }
 
-/// A horizontal run of foreground pixels `start..end` in one row with its sums.
+/// A horizontal run of foreground pixels `start..end` in one row with its sums, labelled
+/// with a slot of a table of `N` components.
 #[derive(Clone, Copy)]
-struct Run {
+struct Run<const N: usize> {
     start: u16,
     end: u16,
-    label: u16,
+    label: Label<N>,
     /// Brightest value, in the units of the pixel format.
     peak: u16,
     /// Sum of pixel values.
@@ -162,21 +240,21 @@ struct Run {
     swx: u32,
 }
 
-impl Run {
-    const ZERO: Run = Run {
+impl<const N: usize> Run<N> {
+    const ZERO: Self = Run {
         start: 0,
         end: 0,
-        label: NONE,
+        label: Label::NONE,
         peak: 0,
         sw: 0,
         swx: 0,
     };
 }
 
-/// Accumulators of a component; also a union-find node.
+/// Accumulators of a component of a table of `N`; also a union-find node.
 #[derive(Clone, Copy)]
-struct Comp {
-    parent: u16,
+struct Comp<const N: usize> {
+    parent: Slot<N>,
     /// Last row a run was added (also marks a finished root within `end_row`).
     last_row: u16,
     peak: u16,
@@ -186,9 +264,9 @@ struct Comp {
     swy: u64,
 }
 
-impl Comp {
-    const ZERO: Comp = Comp {
-        parent: NONE,
+impl<const N: usize> Comp<N> {
+    const ZERO: Self = Comp {
+        parent: Slot::FIRST,
         last_row: 0,
         peak: 0,
         area: 0,
@@ -200,9 +278,9 @@ impl Comp {
 
 /// Run builder, built once per [`Detector::push_rows_with`] call and kept across the rows of
 /// the strip: a local, so its fields stay in registers in the strip loop.
-struct Scan<'a, const RUNS: usize> {
+struct Scan<'a, const RUNS: usize, const COMPS: usize> {
     /// Runs of the current row.
-    cur: &'a mut [Run; RUNS],
+    cur: &'a mut [Run<COMPS>; RUNS],
     n: usize,
     /// Over the call; folded into `Stats` at its end.
     dropped: u32,
@@ -220,7 +298,7 @@ struct Scan<'a, const RUNS: usize> {
     peak: u32,
 }
 
-impl<const RUNS: usize> Scan<'_, RUNS> {
+impl<const RUNS: usize, const COMPS: usize> Scan<'_, RUNS, COMPS> {
     #[inline(always)]
     fn pixel(&mut self, x: u32, v: u32) {
         let fg = v >= self.t;
@@ -251,7 +329,7 @@ impl<const RUNS: usize> Scan<'_, RUNS> {
             *r = Run {
                 start: self.start as u16,
                 end: x as u16,
-                label: NONE,
+                label: Label::NONE,
                 peak: self.peak as u16,
                 sw: self.sw,
                 swx: self.swx,
@@ -403,7 +481,12 @@ trait Format {
     /// The skip's answer for `bytes` (whole rows), at most `bytes.len()`.
     fn first_bright<S: Skip>(skip: &S, bytes: &[u8], skip_t: u8) -> usize;
     /// The runs of `row` from `x < row.len()`, an answer of the skip.
-    fn scan<S: Skip, const RUNS: usize>(scan: &mut Scan<'_, RUNS>, skip: &S, row: &[u8], x: usize);
+    fn scan<S: Skip, const RUNS: usize, const COMPS: usize>(
+        scan: &mut Scan<'_, RUNS, COMPS>,
+        skip: &S,
+        row: &[u8],
+        x: usize,
+    );
 }
 
 /// RAW8, with the SWAR word test of thresholds above 128 (`HIGH`) or not.
@@ -420,7 +503,12 @@ impl<const HIGH: bool> Format for Raw8<HIGH> {
     }
 
     #[inline(always)]
-    fn scan<S: Skip, const RUNS: usize>(scan: &mut Scan<'_, RUNS>, skip: &S, row: &[u8], x: usize) {
+    fn scan<S: Skip, const RUNS: usize, const COMPS: usize>(
+        scan: &mut Scan<'_, RUNS, COMPS>,
+        skip: &S,
+        row: &[u8],
+        x: usize,
+    ) {
         scan.row8::<S, HIGH>(skip, row, x);
     }
 }
@@ -440,19 +528,29 @@ impl Format for Raw10 {
     }
 
     #[inline(always)]
-    fn scan<S: Skip, const RUNS: usize>(scan: &mut Scan<'_, RUNS>, skip: &S, row: &[u8], x: usize) {
+    fn scan<S: Skip, const RUNS: usize, const COMPS: usize>(
+        scan: &mut Scan<'_, RUNS, COMPS>,
+        skip: &S,
+        row: &[u8],
+        x: usize,
+    ) {
         scan.row10(skip, row, x);
     }
 }
 
 /// Component table, free list and finished blobs.
+///
+/// The table is indexed by [`Slot`], whose values are below `COMPS` by construction: the
+/// free list starts with every slot (`reset`) and only ever holds slots, and labels, parents
+/// and merged entries are copies of them. So `find`, `union`, `alloc`, `link`, `end_row`
+/// and `emit` read and write the table without bounds checks.
 struct Labels<const COMPS: usize, const BLOBS: usize> {
-    comps: [Comp; COMPS],
+    comps: Comps<COMPS>,
     /// Stack of free component slots.
-    free: [u16; COMPS],
+    free: [Slot<COMPS>; COMPS],
     nfree: usize,
     /// Slots merged into another root during the current row, freed at its end.
-    merged: [u16; COMPS],
+    merged: [Slot<COMPS>; COMPS],
     nmerged: usize,
     blobs: [Blob; BLOBS],
     nblobs: usize,
@@ -465,9 +563,9 @@ struct Labels<const COMPS: usize, const BLOBS: usize> {
 
 impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
     fn reset(&mut self) {
-        for (i, f) in self.free.iter_mut().enumerate() {
-            // Pop order 0, 1, 2, ...: keeps the labels and thus the merge order predictable.
-            *f = (COMPS - 1 - i) as u16;
+        // Pop order 0, 1, 2, ...: keeps the labels and thus the merge order predictable.
+        for (f, s) in self.free.iter_mut().zip(Slot::all().rev()) {
+            *f = s;
         }
         self.nfree = COMPS;
         self.nmerged = 0;
@@ -475,21 +573,19 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         self.stats = Stats::default();
     }
 
-    fn alloc(&mut self, y: u16) -> u16 {
-        let Some(n) = self.nfree.checked_sub(1) else {
-            return NONE;
-        };
+    fn alloc(&mut self, y: u16) -> Option<Slot<COMPS>> {
+        let n = self.nfree.checked_sub(1)?;
         self.nfree = n;
         let i = self.free[n];
-        self.comps[i as usize] = Comp {
+        self.comps[i] = Comp {
             parent: i,
             last_row: y,
             ..Comp::ZERO
         };
-        i
+        Some(i)
     }
 
-    fn release(&mut self, i: u16) {
+    fn release(&mut self, i: Slot<COMPS>) {
         // Each slot is released once per allocation, so the stack never overflows.
         if let Some(f) = self.free.get_mut(self.nfree) {
             *f = i;
@@ -497,35 +593,35 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         }
     }
 
-    fn find(&mut self, mut i: u16) -> u16 {
+    fn find(&mut self, mut i: Slot<COMPS>) -> Slot<COMPS> {
         loop {
-            let p = self.comps[i as usize].parent;
+            let p = self.comps[i].parent;
             if p == i {
                 return i;
             }
             // Path halving.
-            let gp = self.comps[p as usize].parent;
-            self.comps[i as usize].parent = gp;
+            let gp = self.comps[p].parent;
+            self.comps[i].parent = gp;
             i = gp;
         }
     }
 
     /// Merges the component of `b` into root `a` (or the other way); returns the root.
-    fn union(&mut self, a: u16, b: u16) -> u16 {
+    fn union(&mut self, a: Slot<COMPS>, b: Slot<COMPS>) -> Slot<COMPS> {
         let b = self.find(b);
         if a == b {
             return a;
         }
         let (root, child) = if a < b { (a, b) } else { (b, a) };
-        let c = self.comps[child as usize];
-        let r = &mut self.comps[root as usize];
+        let c = self.comps[child];
+        let r = &mut self.comps[root];
         r.area += c.area;
         r.sw += c.sw;
         r.swx += c.swx;
         r.swy += c.swy;
         r.peak = r.peak.max(c.peak);
         r.last_row = r.last_row.max(c.last_row);
-        self.comps[child as usize].parent = root;
+        self.comps[child].parent = root;
         if let Some(m) = self.merged.get_mut(self.nmerged) {
             *m = child;
             self.nmerged += 1;
@@ -536,58 +632,54 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
     /// Labels the runs of row `y` from the touching runs of the row above (8-connected:
     /// a run `s..e` touches the runs above that overlap `s-1..e+1`) and adds them to their
     /// components.
-    fn link(&mut self, prev: &[Run], cur: &mut [Run], y: u16) {
+    fn link(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16) {
         let mut j = 0;
         for c in cur.iter_mut() {
             while j < prev.len() && prev[j].end < c.start {
                 j += 1;
             }
-            let mut label = NONE;
+            let mut label = Label::NONE;
             let mut k = j;
             while k < prev.len() && prev[k].start <= c.end {
-                let pl = prev[k].label;
-                if pl != NONE {
-                    label = if label == NONE {
-                        self.find(pl)
-                    } else {
-                        self.union(label, pl)
-                    };
+                if let Some(pl) = prev[k].label.slot() {
+                    label = match label.slot() {
+                        None => self.find(pl),
+                        Some(l) => self.union(l, pl),
+                    }
+                    .into();
                 }
                 k += 1;
             }
-            if label == NONE {
-                label = self.alloc(y);
-                if label == NONE {
-                    self.stats.overflow += 1;
-                    c.label = NONE;
-                    continue;
-                }
-            }
-            let comp = &mut self.comps[label as usize];
+            let Some(label) = label.slot().or_else(|| self.alloc(y)) else {
+                self.stats.overflow += 1;
+                c.label = Label::NONE;
+                continue;
+            };
+            let comp = &mut self.comps[label];
             comp.area += (c.end - c.start) as u32;
             comp.sw += c.sw;
             comp.swx += c.swx as u64;
             comp.swy += c.sw as u64 * y as u64;
             comp.peak = comp.peak.max(c.peak);
             comp.last_row = y;
-            c.label = label;
+            c.label = label.into();
         }
     }
 
     /// After row `y`: points the new runs at their roots, finishes the components of the
     /// row above that got no run in row `y`, and frees the slots merged away.
-    fn end_row(&mut self, prev: &[Run], cur: &mut [Run], y: u16) {
+    fn end_row(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16) {
         for c in cur.iter_mut() {
-            if c.label != NONE {
-                c.label = self.find(c.label);
+            if let Some(l) = c.label.slot() {
+                c.label = self.find(l).into();
             }
         }
         for p in prev {
-            if p.label != NONE {
-                let r = self.find(p.label);
-                if self.comps[r as usize].last_row != y {
+            if let Some(l) = p.label.slot() {
+                let r = self.find(l);
+                if self.comps[r].last_row != y {
                     // Marks it finished for the other runs of the same component.
-                    self.comps[r as usize].last_row = y;
+                    self.comps[r].last_row = y;
                     self.emit(r);
                     self.release(r);
                 }
@@ -600,8 +692,8 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         self.nmerged = 0;
     }
 
-    fn emit(&mut self, r: u16) {
-        let c = self.comps[r as usize];
+    fn emit(&mut self, r: Slot<COMPS>) {
+        let c = self.comps[r];
         if c.area < self.min_area || c.area > self.max_area {
             return;
         }
@@ -690,7 +782,7 @@ pub struct Detector<const RUNS: usize, const COMPS: usize, const BLOBS: usize> {
     high: bool,
     raw10: bool,
     next_row: u16,
-    runs: [[Run; RUNS]; 2],
+    runs: [[Run<COMPS>; RUNS]; 2],
     nruns: [usize; 2],
     /// Index into `runs` of the row above.
     prev: usize,
@@ -706,7 +798,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Default
 }
 
 impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, COMPS, BLOBS> {
-    const CAPACITY_OK: () = assert!(COMPS > 0 && COMPS < NONE as usize);
+    const CAPACITY_OK: () = assert!(COMPS > 0 && COMPS < u16::MAX as usize);
 
     /// A detector with no area filter (every blob of at least one pixel is kept).
     pub const fn new() -> Self {
@@ -722,10 +814,10 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             nruns: [0; 2],
             prev: 0,
             lab: Labels {
-                comps: [Comp::ZERO; COMPS],
-                free: [0; COMPS],
+                comps: Comps::new(),
+                free: [Slot::FIRST; COMPS],
                 nfree: 0,
-                merged: [0; COMPS],
+                merged: [Slot::FIRST; COMPS],
                 nmerged: 0,
                 blobs: [Blob {
                     x: 0,

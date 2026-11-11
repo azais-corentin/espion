@@ -14,7 +14,8 @@ publish      = false
 
 [lints.rust]
 missing_docs           = "warn"
-# Not `unsafe_code = "forbid"`: the row scans reinterpret rows as `u32` words with `align_to`.
+# Not `unsafe_code = "forbid"`: the row scans and the skip reinterpret rows as `u32` words
+# with `align_to`, and the component table is indexed by slots without bounds checks.
 unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
