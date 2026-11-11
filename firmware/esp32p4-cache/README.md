@@ -120,19 +120,15 @@ and that was invalidated, with no prefetch in flight at that buffer's next inval
 
 Not tested:
 
-- Prefetch on one core while the other core runs cache-sync operations: core 1 was off in
-  both uses.
+- Prefetch on one core while the other core runs cache-sync operations, with the data
+  checked. It ran without a hang or trap: `poc-p4-eth`'s detector on core 1 with its
+  per-strip autoload for 2 minutes while core 0 ran about 444 000 cache operations per
+  second (`/tmp/p4perf-logs/TwoCore/f3-contention.log`, 14 404 frames, none dropped), but
+  the pixel check that ran under the same load does not use the autoload.
 - Two owners. The detector's per-strip autoload and the stream's preload use the one set of
   L1 data cache prefetch registers of the chip. If both ran in one firmware they would share
   it; nothing in this crate arbitrates, and the combination has not run. Open point.
 - The L1 and L2 autoload over whole frames in PSRAM (the table above) under live capture.
-
-## Build
-
-`cargo build --release` and `cargo clippy --release` in this directory (the target is set in
-`.cargo/config.toml`). `esp32p4-csi` and `esp32p4-jpeg` depend on it, so it is linked into
-`cam-p4`, `poc-p4-eth` and `poc-p4-stream`; the two PoCs also call it directly (prefetch, and
-the stream's Ethernet rings).
 
 ## Lock statistics (feature `stats`)
 
@@ -157,9 +153,17 @@ deadlock, trap or corrupt row. Core 0's longest hold (30 us) is a whole-frame op
 expected above. Core 1 waited at most 9.2 us, so a strip on core 1 can start up to about
 that much later. With core 0 idle (no lock operation on core 0) core 1 still recorded a
 7.3 us wait: [INFERENCE] a cold fetch (code from flash, or the lock's line) inside the
-measured span, so about 7 us of each wait maximum is not contention. Core 0's 50 us wait is longer than any hold. The lock restores `MIE`
-while it waits, so the timer interrupt and its own operation can run inside a thread-mode
-wait; [INFERENCE] that is where the extra time comes from (not separated in the figures).
+measured span, so about 7 us of each wait maximum is not contention. Core 0's 50 us wait
+is longer than any hold. The lock restores `MIE` while it waits, so the timer interrupt and
+its own operation can run inside a thread-mode wait; [INFERENCE] that is where the extra
+time comes from (not separated in the figures).
 
 The uncovered esp-hal paths listed under the rule above are still not covered; the
 contention above ran without them, so the co-load step still has to exercise them.
+
+## Build
+
+`cargo build --release` and `cargo clippy --release` in this directory (the target is set in
+`.cargo/config.toml`). `esp32p4-csi` and `esp32p4-jpeg` depend on it, so it is linked into
+`cam-p4`, `poc-p4-eth` and `poc-p4-stream`; the two PoCs also call it directly (prefetch, and
+the stream's Ethernet rings).
