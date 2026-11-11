@@ -19,6 +19,7 @@ use poc_viewer::{
     fake::{self, FakeCamera},
     net::{Client, Command, RETRY_INTERVAL, Stats},
     stream::{AUTO_QUALITY_CEILING, StreamEdit},
+    timing::{HostFrame, Sensor, Snapshot, Timing},
 };
 
 use crate::display::{self, ImageCallback, Shown, UploadTiming};
@@ -178,6 +179,13 @@ pub struct App {
     cpu: Vec<f32>,
     meter: Meter,
     selftest: Option<SelfTest>,
+    /// Where a frame's time goes.
+    pipeline: Timing,
+    /// The frame shown last, until its upload is known: its serial and its times so far
+    /// (`drawn` not yet).
+    drawing: Option<(u64, HostFrame)>,
+    /// The board's generation the pipeline's samples are of.
+    generation: u32,
 }
 
 impl App {
@@ -247,6 +255,9 @@ impl App {
                 requested: None,
                 saved: Arc::default(),
             }),
+            pipeline: Timing::new(now),
+            drawing: None,
+            generation: 0,
         })
     }
 
@@ -274,9 +285,18 @@ impl App {
         }
     }
 
-    fn show(&mut self, p: Picture) {
+    fn show(&mut self, p: Picture, now: Instant) {
         self.serial += 1;
         self.presented += 1;
+        self.drawing = Some((
+            self.serial,
+            HostFrame {
+                completed: p.frame.completed,
+                decode: p.decode,
+                taken: now,
+                drawn: now,
+            },
+        ));
         let new = Arc::new(Shown {
             serial: self.serial,
             frame: p.frame,
@@ -288,8 +308,37 @@ impl App {
             self.decoder.recycle(Picture {
                 frame: old.frame,
                 jpeg_len: old.jpeg_len,
+                decode: None,
             });
         }
+    }
+
+    /// Hands the frame shown in an earlier pass to the pipeline timing, now that its upload
+    /// ended. Before the next frame is taken, which starts a new record.
+    fn drawn(&mut self, now: Instant) {
+        let uploaded = self.timing.lock().unwrap_or_else(|e| e.into_inner()).last;
+        if let Some((serial, f)) = self.drawing
+            && let Some((done, drawn)) = uploaded
+            && done == serial
+        {
+            self.pipeline.host(now, HostFrame { drawn, ..f });
+            self.drawing = None;
+        }
+    }
+
+    /// Feeds the pipeline timing the newest frame the board timed and makes a new snapshot
+    /// when one is due.
+    fn time_pipeline(&mut self, now: Instant, s: &Stats) {
+        if let Some(st) = s.state
+            && st.generation != self.generation
+        {
+            self.generation = st.generation;
+            self.pipeline.reset(now);
+        }
+        if let Some(b) = s.board_frame {
+            self.pipeline.board(now, b);
+        }
+        self.pipeline.update(now, s.state.as_ref().map(Sensor::of));
     }
 
     /// One column: what is happening (link, status, the board's last refusal), the settings
@@ -882,6 +931,7 @@ impl App {
             return;
         };
         let timing = *self.timing.lock().unwrap_or_else(|e| e.into_inner());
+        println!("{}", pipeline_report(self.pipeline.snapshot()));
         println!(
             "{}",
             report(
@@ -926,8 +976,9 @@ impl eframe::App for App {
                 self.cpu.push(cpu);
             }
         }
+        self.drawn(now);
         if let Some(p) = self.decoder.take() {
-            self.show(p);
+            self.show(p, now);
         }
         let stats = self.client.stats();
         let dstats = self.decoder.stats();
@@ -950,6 +1001,7 @@ impl eframe::App for App {
             self.adopt = false;
         }
         self.meter.update(now, &stats, &dstats, self.presented);
+        self.time_pipeline(now, &stats);
 
         egui::Panel::left("panel")
             .resizable(false)
@@ -1017,6 +1069,45 @@ fn percentile(sorted: &[f32], p: f64) -> f32 {
         return 0.0;
     }
     sorted[((sorted.len() - 1) as f64 * p).round() as usize]
+}
+
+/// The pipeline timing's latest snapshot as the self-test prints it.
+fn pipeline_report(s: Option<&Snapshot>) -> String {
+    let Some(s) = s else {
+        return "pipeline: no snapshot".to_owned();
+    };
+    let ms = |us: f32| us / 1e3;
+    let steps = s
+        .steps
+        .iter()
+        .map(|p| {
+            format!(
+                "{} {:.2} ms at {:.2}{}",
+                p.stage.name(),
+                ms(p.len_us),
+                ms(p.start_us),
+                if p.measured {
+                    format!(" (slowest {:.2})", ms(p.slowest_us))
+                } else {
+                    " (computed)".to_owned()
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "pipeline: {:.2} ms from the start of the exposure{}, period {:.2} ms, {} board and {} \
+         presented frames in the window\npipeline steps: {steps}",
+        ms(s.total_us),
+        if s.complete {
+            " to the GPU"
+        } else {
+            " (partial)"
+        },
+        ms(s.period_us),
+        s.board_frames,
+        s.host_frames,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

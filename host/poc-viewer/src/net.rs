@@ -19,6 +19,7 @@
 //! come back through [`Client::recycle`], so a steady stream allocates nothing.
 
 use std::{
+    collections::VecDeque,
     io,
     net::{SocketAddr, UdpSocket},
     sync::{
@@ -31,8 +32,8 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CamError, CameraSettings, Encoding, FrameChunk, MAX_DATAGRAM, Message, Op, Reply, Request,
-    Response, State, StreamSettings, chunk_count,
+    CamError, CameraSettings, Encoding, FrameChunk, FrameTiming, MAX_DATAGRAM, Message, Op, Reply,
+    Request, Response, State, StreamSettings, chunk_count,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -97,7 +98,23 @@ pub struct Frame {
     pub timestamp_us: u64,
     /// The frame's bytes.
     pub data: Vec<u8>,
+    /// When its first chunk arrived.
+    pub first_chunk: Instant,
     /// When its last chunk arrived.
+    pub completed: Instant,
+}
+
+/// A frame the board timed ([`State::timing`]) that arrived whole here, with its arrival: the
+/// two ends of one frame's way over the link, each on its own clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardFrame {
+    /// The board's times of the frame, µs after `timestamp_us`.
+    pub timing: FrameTiming,
+    /// The board's capture time of the frame, µs since its boot.
+    pub timestamp_us: u64,
+    /// When its first chunk arrived here.
+    pub first_chunk: Instant,
+    /// When its last chunk arrived here.
     pub completed: Instant,
 }
 
@@ -165,6 +182,8 @@ pub struct Stats {
     pub last_answer: Option<Instant>,
     /// The board's latest state.
     pub state: Option<State>,
+    /// The newest frame the board's state timed that arrived whole here.
+    pub board_frame: Option<BoardFrame>,
     /// The latest refusal, until a request of the same kind succeeds.
     pub refusal: Option<Refusal>,
     /// A request is waiting for its answer.
@@ -240,6 +259,7 @@ impl Client {
             last_sent: None,
             assembly: None,
             last_done: None,
+            recent: VecDeque::with_capacity(RECENT),
             published: Instant::now(),
         };
         let tstop = stop.clone();
@@ -378,12 +398,28 @@ struct Worker {
     /// Frame number and generation of the last frame handed over (or dropped for a mismatched
     /// chunk).
     last_done: Option<(u32, u32)>,
+    /// The newest frames received whole, oldest first, at most [`RECENT`]: where the board's
+    /// timing of a frame finds its arrival.
+    recent: VecDeque<Arrival>,
     published: Instant,
 }
 
 /// Chunks of a frame at most this many frames behind the newest seen are late (stale); a frame
 /// further back means the board restarted its numbering (a reboot), so it starts a new frame.
 pub const LATE_FRAMES: u32 = 1024;
+
+/// Frames whose arrival is remembered for the board's timing. The state times the last frame
+/// the board sent, which is among the newest few here.
+const RECENT: usize = 32;
+
+/// When a frame received whole arrived.
+#[derive(Clone, Copy)]
+struct Arrival {
+    frame: u32,
+    timestamp_us: u64,
+    first_chunk: Instant,
+    completed: Instant,
+}
 
 /// `a` is a late frame against `b`: before it in wrapping frame numbers, by at most
 /// [`LATE_FRAMES`].
@@ -493,6 +529,16 @@ impl Worker {
         match r.reply {
             Reply::State(s) => {
                 self.stats.state = Some(s);
+                if let Some(timing) = s.timing
+                    && let Some(a) = self.recent.iter().rev().find(|a| a.frame == timing.frame)
+                {
+                    self.stats.board_frame = Some(BoardFrame {
+                        timing,
+                        timestamp_us: a.timestamp_us,
+                        first_chunk: a.first_chunk,
+                        completed: a.completed,
+                    });
+                }
                 let same =
                     |a: Op, b: Op| core::mem::discriminant(&a) == core::mem::discriminant(&b);
                 if self.stats.refusal.is_some_and(|e| same(e.op, f.op)) {
@@ -586,6 +632,25 @@ impl Worker {
         a.data[c.offset as usize..][..c.data.len()].copy_from_slice(c.data);
         if a.got == a.chunks {
             let a = self.assembly.take().expect("checked above");
+            let completed = Instant::now();
+            // A board that restarted its numbering (or a long gap): the old arrivals are of
+            // other frames.
+            if self
+                .recent
+                .back()
+                .is_some_and(|l| a.frame.wrapping_sub(l.frame) > LATE_FRAMES)
+            {
+                self.recent.clear();
+            }
+            if self.recent.len() == RECENT {
+                self.recent.pop_front();
+            }
+            self.recent.push_back(Arrival {
+                frame: a.frame,
+                timestamp_us: a.timestamp_us,
+                first_chunk: a.started,
+                completed,
+            });
             self.last_done = Some(key);
             self.stats.frames_whole += 1;
             self.stats.frame_bytes += u64::from(a.frame_len);
@@ -602,7 +667,8 @@ impl Worker {
                 height: a.height,
                 timestamp_us: a.timestamp_us,
                 data: a.data,
-                completed: Instant::now(),
+                first_chunk: a.started,
+                completed,
             }));
         }
     }

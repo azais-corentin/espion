@@ -15,7 +15,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use espion_proto::cam::Encoding;
@@ -33,6 +33,8 @@ pub struct Picture {
     pub frame: Frame,
     /// For a decoded JPEG frame: the file's length, bytes.
     pub jpeg_len: Option<usize>,
+    /// For a decoded JPEG frame: when its decode started and ended.
+    pub decode: Option<(Instant, Instant)>,
 }
 
 /// What the decoding stage did. Counters only grow.
@@ -154,9 +156,10 @@ fn run(shared: &Shared, client: &Client, stop: &AtomicBool, wake: &dyn Fn()) {
         };
         let picture = if f.encoding == Encoding::Jpeg {
             let mut pixels = lock(shared).pool.pop().unwrap_or_default();
-            let t = std::time::Instant::now();
+            let start = Instant::now();
             let r = jpeg::decode(&f.data, f.width, f.height, &mut pixels);
-            let dt = t.elapsed();
+            let end = Instant::now();
+            let dt = end - start;
             let jpeg_len = f.data.len();
             let Frame {
                 number,
@@ -165,6 +168,7 @@ fn run(shared: &Shared, client: &Client, stop: &AtomicBool, wake: &dyn Fn()) {
                 height,
                 timestamp_us,
                 data,
+                first_chunk,
                 completed,
                 ..
             } = f;
@@ -186,9 +190,11 @@ fn run(shared: &Shared, client: &Client, stop: &AtomicBool, wake: &dyn Fn()) {
                             height,
                             timestamp_us,
                             data: pixels,
+                            first_chunk,
                             completed,
                         },
                         jpeg_len: Some(jpeg_len),
+                        decode: Some((start, end)),
                     }
                 }
                 Err(e) => {
@@ -205,6 +211,7 @@ fn run(shared: &Shared, client: &Client, stop: &AtomicBool, wake: &dyn Fn()) {
             Picture {
                 frame: f,
                 jpeg_len: None,
+                decode: None,
             }
         };
         lock(shared).ready = Some(picture);

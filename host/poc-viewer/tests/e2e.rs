@@ -1039,4 +1039,17 @@ fn the_state_times_the_last_frame_sent() {
     assert!(t.frame < state.counters.frames_captured, "{t:?}");
     // The frame was sent before the state was made, on the same clock.
     assert!(u64::from(t.send.end_us) < state.uptime_us, "{t:?}");
+
+    // The network thread joins the board's times of a frame with its arrival here.
+    let s = client
+        .wait_until(WAIT, |s| {
+            s.board_frame.is_some_and(|b| b.timing.encode.is_some())
+        })
+        .expect("a timed frame that arrived whole");
+    let b = s.board_frame.unwrap();
+    assert!(b.first_chunk <= b.completed, "{b:?}");
+    assert!(
+        b.timestamp_us + u64::from(b.timing.send.end_us) < s.state.unwrap().uptime_us,
+        "{b:?}"
+    );
 }

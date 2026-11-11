@@ -82,6 +82,8 @@ pub struct UploadTiming {
     pub total: Duration,
     /// Longest single upload.
     pub max: Duration,
+    /// The last frame uploaded ([`Shown::serial`]) and when its upload ended.
+    pub last: Option<(u64, Instant)>,
 }
 
 /// The GPU objects, kept in the renderer's callback resources.
@@ -264,11 +266,13 @@ impl egui_wgpu::CallbackTrait for ImageCallback {
                 },
                 size,
             );
-            let dt = t.elapsed();
+            let end = Instant::now();
+            let dt = end - t;
             if let Ok(mut timing) = self.timing.lock() {
                 timing.count += 1;
                 timing.total += dt;
                 timing.max = timing.max.max(dt);
+                timing.last = Some((self.shown.serial, end));
             }
             res.uploaded = self.shown.serial;
         }

@@ -14,6 +14,8 @@
 //!   off the UI thread, only what can be shown).
 //! - [`stream`]: the stream settings as the window edits them: the JPEG quality set by hand,
 //!   kept apart from the ceiling sent with automatic quality.
+//! - [`timing`]: where a frame's time goes, from its exposure to the GPU: the board's times
+//!   from the state, this PC's from each frame presented, one typical frame a second.
 //! - [`addr`]: camera addresses with an interface scope, and the local address to bind.
 
 pub mod addr;
@@ -23,3 +25,4 @@ pub mod fake;
 pub mod jpeg;
 pub mod net;
 pub mod stream;
+pub mod timing;
