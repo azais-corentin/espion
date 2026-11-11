@@ -1,0 +1,24 @@
+[package]
+name         = "esp32p4-pie"
+description  = "ESP32-P4 PIE (Xespv 2.2 SIMD) kernels on stable Rust: instruction encoders, enable token, dark-skip kernel (no_std, no heap)"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+# No .cargo/config.toml: the encoders and the scalar reference build and test on the host.
+# Build for the P4 with `--target riscv32imafc-unknown-none-elf`.
+
+# Only the chip-revision check needs a register block, so the PAC (not esp-hal) is enough.
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+# Same version and features as esp-hal 1.2.2 uses (firmware/esp32p4-csi/Cargo.toml).
+esp32p4 = { version = "0.3.0", features = ["critical-section"] }
+
+[lints.rust]
+missing_docs           = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all                       = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"

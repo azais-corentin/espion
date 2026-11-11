@@ -25,6 +25,8 @@ scopes = [
   "esp32p4-jpeg",
   # firmware/esp32p4-perf: cycle, instruction, branch and cache counters of the P4.
   "esp32p4-perf",
+  # firmware/esp32p4-pie: PIE vector instruction encoders and kernels for the P4.
+  "esp32p4-pie",
   # firmware/espion-vision: blob detector (threshold, connected components, centroids).
   "espion-vision",
   # firmware/ov9281: OV9281 sensor driver (mode solver and SCCB control).
