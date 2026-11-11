@@ -19,9 +19,9 @@ flowchart LR
   PWR -- "PWR_SRC" --> MCU
   MCU <-- "MIPI CSI-2, SCCB, CAM_EN, XVS" --> CAM["Camera<br/>J4 FFC, J3, U7"]
   CAM -- "STROBE" --> MCU
-  CAM -- "STROBE" --> LEDD["LED driver<br/>U8, U10, U9, U11, Q1"]
-  MCU -- "LED_PWR_EN, BST_EN, LED_EN" --> LEDD
-  LEDD -- "VLED_SENSE, LED_K_SENSE" --> MCU
+  CAM -- "STROBE" --> LEDD["LED driver<br/>U10, U9, U11, Q1"]
+  MCU -- "BST_EN, LED_EN" --> LEDD
+  LEDD -- "LED_K_SENSE" --> MCU
   LEDD -- "+32V, LED_K" --> RING["LED ring<br/>D4–D15"]
   MCU <-- "I2C, INT1" --> IMU["IMU<br/>U12 MSA3S02"]
 ```
@@ -35,7 +35,7 @@ flowchart LR
 | OV9281 module FFC, CSI-2 links, SCCB, XVS/STROBE | Camera (`camera.kicad_sch`) | [camera.md](camera.md) |
 | IP101G PHY (IP101GRI, industrial grade), HR871150C MagJack, RMII | Ethernet (`ethernet.kicad_sch`) | [ethernet.md](ethernet.md) |
 | MSA3S02 accelerometer | IMU (`imu.kicad_sch`) | [imu.md](imu.md) |
-| LED power switch, boost, current sink, STROBE gate | LED driver (`led_driver.kicad_sch`) | [led.md](led.md) |
+| LED supply straight from `+5V`, boost, current sink, STROBE gate | LED driver (`led_driver.kicad_sch`) | [led.md](led.md) |
 | 12 × Amicc A-SC880IR3C | LED ring (`led_ring.kicad_sch`) | [led.md](led.md#led-ring) |
 | Mounting holes H1–H4 | root (`espion-cam.kicad_sch`) | [Board](#board) |
 | Board, stack-up, rules, routing | — | [layout.md](layout.md) |
@@ -50,17 +50,15 @@ and margins are worked out from the schematic by the formulas in the block docum
 | Rail | Source | Required range (basis) | Loads |
 |---|---|---|---|
 | `POE_VA1`, `POE_VA2`, `POE_VB1`, `POE_VB2` (cable side, isolated) | J1.7–J1.10 centre taps (both pair sets) | 37–57 V at the PD input (IEEE 802.3af; DP1435 p.5). Current per pair at most J1's rating, 350 mA per centre tap (HR871150C p.1); input power at most the 802.3af PD limit, 12.95 W | U2.1–U2.4 only, no capacitors |
-| `+5V_POE` | U2 DP1435-5V output | Within the DP1435's ±5 % regulation term (p.5); the datasheet gives no set-point accuracy. At most 5.5 V, the input limit of U3 and U8 (datasheets) | C11, L1 |
-| `+5V_POE_F` | L1 (π filter) | `+5V_POE` minus the drop across L1 at the module's maximum current | U4 IN1, C13, C14, C15, R18/R19 |
-| `VBUS` | J2 USB-C | 4.40–5.5 V (USB 2.0 Table 7-7 p.178, §7.2.1.3 p.173: low-power port 4.40 V minimum, a conservative floor for this high-power function, which the spec requires to run fully from 4.75 V, §7.2.1.4 p.174; USB Type-C R2.0 §4.4.2 p.141: up to 5.5 V at light load). Port current at most 500 mA | U4 IN2, C16, D2, R24, R27/R28 |
-| `+5V` | U4 TPS2121 OUT (PoE first) | Within the input range of every load (TLV62569, TPS22918, TLV9061 datasheets); steady value is the selected input minus I × RON(U4) (TPS2121 datasheet). During a PoE → USB switchover it must stay above U3's minimum input | U3, U8, U11, R63, C10, C20, C22, C34, C44, TP5 |
-| `+3V3` | U3 TLV62569 | DC set point VOUT = VFB × (1 + R16/R17) (SLVSDG1C Eq. 2 p.9), VFB 0.588–0.612 V (p.4), resistors ±1 %; every calculation uses this set point. Logic-level checks use the generic 3.3 V ± 5 % envelope and name it as such. Stays above the loads' minimums during a PoE → USB switchover | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, R53 → `CAM_3V3`, pull-ups, CP2 divider, TP4 |
+| `+5V_POE` | U2 DP1435-5V output | Within the DP1435's ±5 % regulation term (p.5); the datasheet gives no set-point accuracy. At most 5.5 V, the input limit of U3 and U11 (datasheets) | C11, C13, C15, U4 IN1, R18/R19 |
+| `VBUS` | J2 USB-C | 4.40–5.5 V (USB 2.0 Table 7-7 p.178, §7.2.1.3 p.173: low-power port 4.40 V minimum, a conservative floor for this high-power function, which the spec requires to run fully from 4.75 V, §7.2.1.4 p.174; USB Type-C R2.0 §4.4.2 p.141: up to 5.5 V at light load). Port current at most 500 mA | U4 IN2, C16, D2, R24 |
+| `+5V` | U4 TPS2121 OUT (PoE first) | Within the input range of every load (TLV62569, TLV9061, TPS61170 datasheets); steady value is the selected input minus I × RON(U4) (TPS2121 datasheet). During a PoE → USB switchover it dips by I × tSW / C(`+5V`) (TPS2121 internal-reference mode, 100 µs) | U3, U10 VIN, L3, C36, U11, R63, C10, C20, C22, C44, TP5 |
+| `+3V3` | U3 TLV62569 | DC set point VOUT = VFB × (1 + R16/R17) (SLVSDG1C Eq. 2 p.9), VFB 0.588–0.612 V (p.4), resistors ±1 %; every calculation uses this set point. Logic-level checks use the generic 3.3 V ± 5 % envelope and name it as such. With the LEDs off, stays above every load's minimum supply during a PoE → USB switchover ([power](power.md#priority-and-hysteresis)); with the ceramics derated for DC bias the IP101G's minimum may be missed, an accepted risk ([power](power.md#accepted-risks)) | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, R53 → `CAM_3V3`, pull-ups, TP4 |
 | `CAM_3V3` | `+3V3` through R53 (0 Ω link, also the camera current shunt point) | As `+3V3`. No camera module datasheet, so the load is an estimate | J4.15 (camera module), C32 |
-| `+5V_BST` | U8 TPS22918 load switch (LED_PWR_EN) | `+5V` minus I × RON(U8) (TPS22918 p.5); switched on only on PoE (firmware rule) | U10 VIN, L3, C36 |
-| `+32V` | U10 TPS61170 boost (BST_EN) | Full scale (`BST_EN` steady high): VOUT = VREF × (1 + R65/R66) (TPS61170 SLVS789D p.5), VREF 1.204–1.254 V. In operation the headroom loop sets it by `BST_EN` PWM duty, V_FB = duty × 1.229 V ([led](led.md#headroom-control)). Droop over a pulse follows from the pulse charge and the storage capacitors (formula in led.md) | LED string D4–D15, C43, C45, C46, C47, R65/R66, R71/R72, TP13; R70/R76 through the string |
+| `+32V` | U10 TPS61170 boost (BST_EN) | Full scale (`BST_EN` steady high): VOUT = VREF × (1 + R65/R66) (TPS61170 SLVS789D p.5), VREF 1.204–1.254 V. In operation the headroom loop sets it by `BST_EN` PWM duty, V_FB = duty × 1.229 V ([led](led.md#headroom-control)). Droop over a pulse follows from the pulse charge and the storage capacitors (formula in led.md). With the boost off it idles at `+5V` minus D3's drop ([led](led.md#led-supply)) | LED string D4–D15, C43, C45, C46, C47, R65/R66, TP13; R70/R76 through the string |
 
-Formulas: [power.md](power.md) for the first six rows and `CAM_3V3`, [led.md](led.md#boost-converter)
-for `+5V_BST` and `+32V`. Current budgets: [power.md](power.md), [led.md](led.md).
+Formulas: [power.md](power.md) for the first five rows and `CAM_3V3`, [led.md](led.md#boost-converter)
+for `+32V`. Current budgets: [power.md](power.md), [led.md](led.md).
 
 ## Board
 
@@ -83,7 +81,7 @@ for `+5V_BST` and `+32V`. Current budgets: [power.md](power.md), [led.md](led.md
   | Part | Side | Notes |
   |---|---|---|
   | U6 ESP32-P4-Core | bottom | Hand-soldering footprint without paste; iron only, pad by pad, no hot air (user decision 2026-11-01) — [mcu](mcu.md#module) |
-  | U2 DP1435-5V | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C11, C52 and C14's sleeve (C14's can against U2.4), inspect them after — [layout](layout.md#assembly) |
+  | U2 DP1435-5V | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C11 and C16, inspect them after — [layout](layout.md#assembly) |
   | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over R46 and C3 — [layout](layout.md#assembly) |
 
   J2 (USB-C) is machine-placed with its shell overhanging the top edge by HRO's recommended
@@ -98,15 +96,16 @@ Power:
   rated or tested (user decision 2026-11-02) — [power](power.md#poe-input),
   [layout](layout.md#ethernet-and-poe-isolation).
 - DP1435 output set-point tolerance and maximum capacitive load not specified — [power](power.md#poe-input).
-- Mux reference CP2 taken from `+3V3`, not a precision reference; at the `+5V` peak U3 may drop out before the PoE → USB trip, and only C52's hold on CP2 keeps the XREF trip for a PoE pull, not for a slow sag (design review 2026-11-09) — [power](power.md#power-mux).
+- Mux in internal-reference mode (user decision 2026-11-11): the PoE → USB switchover takes 100 µs; with the LEDs off `+3V3` sags below its set point and, with the ceramics derated, below the IP101G's minimum; with the LEDs running the board may reset — [power](power.md#accepted-risks).
+- No input filter on `+5V_POE` (user decision 2026-11-11): the DP1435's ripple reaches `+5V` — [power](power.md#accepted-risks).
+- No VBUS sense (user decision 2026-11-11): the USB D+ pull-up stays on without VBUS; USB is a bench port only — [power](power.md#usb-vbus).
 - USB current limited by a firmware rule only (user decision 2026-10-31); the USB-alone estimate sits against the 500 mA port limit — [power](power.md#usb-vbus).
-- VBUS_SENSE pin current while `+3V3` is off is an open point: the P4 datasheet gives no injection limit, and the fee-free R27/R28 values raised it (user decision 2026-11-09) — [power](power.md#usb-vbus), [mcu](mcu.md#usb-c).
-- PoE loss with USB attached loads the host port up to the mux limit until firmware drops LED_EN, BST_EN and LED_PWR_EN — [power](power.md#power-mux).
+- PoE loss with USB attached loads the host port up to the mux limit until firmware drops LED_EN and BST_EN; with no switch on the boost input the port also carries the boost for that latency plus the TPS61170's t_REF filter, until its t_off shutdown — [power](power.md#accepted-risks).
 - PoE budget at the `+5V` peak: input power and pair current come from the peak load and the DP1435's 84 % maximum efficiency (p.5); a lower efficiency would reach the 12.95 W 802.3af limit and J1's 350 mA per centre tap (user decision 2026-11-02, "Accept, measure on first boards"; a firmware LED limit on PoE follows if a limit is exceeded) — [power](power.md#poe-input).
 - C15 closer to U4 than JLCPCB's 1.0 mm QFN spacing (`kicad_query distance`) — [power](power.md#accepted-risks).
 - `+3V3` capacitance outside TI's tested cells — [power](power.md#33-v-buck).
-- Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C22 (not stated), C14, C46, C47 (255 °C peak for 5 s, GVZ datasheet p.2), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [power](power.md#accepted-risks), [layout](layout.md#assembly).
-- VBUS, the connector-side USB pair, CAM_EN, SCCB and a short stretch of XVS run on B.Cu right under U2's flyback magnetics; XVS's long run stays west of them (user decision 2026-11-04, "Partial + document"). The +3V3 west-edge loop joined them with C14's larger can (design review 2026-11-09) — [layout](layout.md#bcu-under-u2).
+- Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C22 (not stated), C46, C47 (255 °C peak for 5 s, GVZ datasheet p.2), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [power](power.md#accepted-risks), [layout](layout.md#assembly).
+- VBUS, the connector-side USB pair, CAM_EN, SCCB and a short stretch of XVS run on B.Cu right under U2's flyback magnetics; XVS's long run stays west of them (user decision 2026-11-04, "Partial + document"). The +3V3 west-edge loop joined them (design review 2026-11-09) — [layout](layout.md#bcu-under-u2).
 
 Camera:
 - Camera module I/O level unknown, no sample (user decision 2026-10-31); assembly options kept — [camera](camera.md#xvs-level-options).
@@ -130,6 +129,8 @@ LED:
 - Boost output capacitance outside the TPS61170's recommended 1–10 µF output capacitance range — [led](led.md#boost-converter).
 - PHY_RST_N and LED_K_SENSE run inside the LED ring, close to the pulsed ring copper (PHY_RST_N is static, driven push-pull once the firmware runs and held only by the PHY's internal pull-up before that, with the LEDs off; the LED_K_SENSE divider node is read late in each pulse) — [layout](layout.md#led-driver-and-ring), [ethernet](ethernet.md#reset).
 - Small parts beside big ones: R5/C8 beside C46, U12 beside L2 (courtyards touching or nearly so): possible reflow shadowing, inspected on the first boards — [led](led.md#accepted-risks), [layout](layout.md#assembly).
+- No hardware switch on the LED supply (user decision 2026-11-11): +32V idles at `+5V` minus D3's drop; the LED side is off by `BST_EN` (U10's internal pull-down) and `LED_EN` (R56) only — [led](led.md#led-supply).
+- No independent +32V reading (user decision 2026-11-11): a dead boost and an open LED string both read as `LED_K_SENSE` at zero — [led](led.md#accepted-risks).
 
 MCU:
 - Status LED D1 on `+3V3`: green/blue VF up to 3.2 V at 5 mA (datasheet) against the lowest `+3V3` set point (user decision 2026-11-02, "Accept, check on first boards", taken on the lower minimum of the ± 5 % envelope) — [mcu](mcu.md#status-led).
@@ -160,14 +161,14 @@ IMU and board:
 ## First-board checks
 
 Power ([power](power.md#first-board-checks)):
-1. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V, the input limit of U3 and U8.
-2. PoE cold start into the π filter: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses.
-3. Mux thresholds with a bench supply on `+5V_POE_F`: switches to USB before `+5V_POE_F` falls below U3's minimum input, and back to PoE above it; thresholds from the R18/R19/R75 formulas in power.md, worked out from the schematic; a slow ramp down with the LEDs pulsing keeps `+3V3` at its set point at the `PWR_SRC` edge.
-4. PoE pull with USB attached, idle and during LED pulses: no reset, USB stays enumerated; the `+3V3` minimum; firmware latency `PWR_SRC` → LED_EN, BST_EN, LED_PWR_EN low.
+1. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V, the input limit of U3 and U11.
+2. PoE cold start: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses; the module's ripple on `+5V_POE` and `+5V` (no input filter).
+3. Mux thresholds with a bench supply on `+5V_POE`: to USB and back to PoE inside the bands from the R18/R19/R75 formulas in power.md, worked out from the schematic.
+4. PoE pull with USB attached: with the LEDs off no reset, the Ethernet link and USB stay up, the `+5V` dip and the `+3V3` minimum; during LED pulses whether the board resets, and the firmware latency `PWR_SRC` → LED_EN, BST_EN low.
 5. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W (802.3af) and ≤ 350 mA per pair (J1), else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
-6. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A (USB port limit); camera share through a shunt in place of R53.
+6. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A (USB port limit); camera share through a shunt in place of R53; the VBUS current at attach (soft-start inrush SR × C(`+5V`), the LED bank included, plus the pre-boot load) against the port's 0.5 A.
 7. `+3V3` load step from light load to the estimated maximum load (power.md budget): overshoot ≤ 5 %.
-8. Thermal camera on U4 and its vias, the U8 neck, U3, L1, U2 at the LED design point and during `+32V` start-up.
+8. Thermal camera on U4 and its vias, U3, U2 at the LED design point and during `+32V` start-up.
 9. XVS and SCCB edges at J4 and USB enumeration and transfer at the PoE peak load, against USB power alone (B.Cu under U2's magnetics) — [layout](layout.md#bcu-under-u2).
 
 LED ([led](led.md#first-board-checks)):
@@ -202,7 +203,7 @@ IMU ([imu](imu.md#first-board-checks)):
 - [Camera](camera.md): OV9281 module, FFC, CSI-2, SCCB, XVS and STROBE.
 - [Ethernet](ethernet.md): IP101G PHY, MagJack, RMII, straps.
 - [IMU](imu.md): MSA3S02 accelerometer and its I²C bus.
-- [LED](led.md): LED power switch, boost, current sink, STROBE gating, LED ring, thermal.
+- [LED](led.md): LED supply straight from `+5V`, boost, current sink, STROBE gating, LED ring, thermal.
 - [Layout](layout.md): stack-up, fabrication rules, net classes, custom rules, routing, assembly.
 - [Firmware rules](firmware-rules.md): GPIO map, straps, rules the firmware must follow.
 - [KiCad project](../../hardware/espion-cam/README.md): project files and BOM preset.

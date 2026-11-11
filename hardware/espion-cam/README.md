@@ -19,25 +19,23 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   XVS through the R40/R44 divider, an assembly option; STROBE through U7 Tech Public TP74LV1T34 to the LED
   gate and GPIO12 (ETM capture). A 0 Ω link on each CSI line at the FFC end (R45–R47, R49–R51).
   [camera](../../docs/hardware/camera.md)
-- **LED:** 850 nm ring D4–D15, 12 × A-SC880IR3C in one string around the lens cutout. U8 TPS22918
-  load switch (`LED_PWR_EN`, GPIO20), U10 TPS61170 boost (`BST_EN`, GPIO53; PWM sets the
+- **LED:** 850 nm ring D4–D15, 12 × A-SC880IR3C in one string around the lens cutout. U10
+  TPS61170 boost straight from +5V (`BST_EN`, GPIO53; PWM sets the
   output) into the storage capacitors C46/C47, U11 TLV9061 + Q1 HL2310A (SOT-23) current sink (R69
   sense) gated by `STROBE ∧ LED_EN` in U9 SN74LVC1G97 (`LED_EN`, GPIO11), with a hardware
   timeout per pulse behind the firmware exposure cap. No continuous-on mode. Firmware keeps
   +32V just above the string from a divider on Q1's drain (R70/R76, `LED_K_SENSE`, GPIO23), a
-  required headroom loop: Q1 is not rated for full boost output;
-  a +32V divider (R71/R72, `VLED_SENSE`, GPIO21) watches the rail.
+  required headroom loop: Q1 is not rated for full boost output.
   [led](../../docs/hardware/led.md)
 - **Ethernet:** U1 IP101G PHY on RMII (Y1 crystal; the PHY supplies the REF_CLK), J1 HR871150C
   MagJack (bottom side, hand-soldered) with both centre taps and the spare pairs brought out,
   its LEDs driven by the PHY, PPS and PHY reset test points. `PHY_RST_N` GPIO22.
   [ethernet](../../docs/hardware/ethernet.md)
 - **Power:** U2 DP1435-5V IEEE 802.3af PoE PD module (isolated, bottom side, hand-soldered)
-  through an LC filter (L1, C13, C14), OR-ed with USB-C 5 V by U4 TPS2121 priority mux (source
+  straight to U4 TPS2121 priority mux (internal reference), OR-ed with USB-C 5 V (source
   on `PWR_SRC`, GPIO2); U3 TLV62569 buck to 3.3 V. [power](../../docs/hardware/power.md)
 - **USB-C:** J2 straight to the P4's USB Serial/JTAG (no hub, GPIO24/25), U5 SRV05-4 ESD
-  protection, D2 H7VHD3UA VBUS TVS. VBUS is sensed on GPIO6 (`VBUS_SENSE`, R27/R28 divider):
-  firmware turns the D+ pull-up off while no USB host supplies VBUS.
+  protection, D2 H7VHD3UA VBUS TVS. VBUS is not sensed: the D+ pull-up stays on.
   [mcu](../../docs/hardware/mcu.md#usb-c)
 - **Status and buttons:** D1 YY-0807BRGK26 RGB status LED (`STATUS_LED`, GPIO13); SW1
   RESET and SW2 BOOT.

@@ -327,16 +327,6 @@
 	)
 	(wire
 		(pts
-			(xy 167.64 86.36) (xy 215.9 86.36)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "7a476489-3745-469f-a2e6-e93e4107c851")
-	)
-	(wire
-		(pts
 			(xy 215.9 50.8) (xy 167.64 50.8)
 		)
 		(stroke
@@ -1325,16 +1315,6 @@
 				(justify right)
 			)
 		)
-		(pin "VLED_SENSE" passive
-			(at 167.64 86.36 0)
-			(uuid "f4c81ddd-4d3e-42e9-895c-8541848d4d76")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
 		(pin "LED_K_SENSE" passive
 			(at 167.64 91.44 0)
 			(uuid "cc25a0c8-9f79-48aa-bc4d-6c24a31def11")
@@ -1414,16 +1394,6 @@
 		(pin "{LEDCTL}" bidirectional
 			(at 215.9 81.28 180)
 			(uuid "e053a816-156d-4c47-b384-8601917aeb43")
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(pin "VLED_SENSE" passive
-			(at 215.9 86.36 180)
-			(uuid "41a4e08b-3eb5-45dd-be64-47064edfdf24")
 			(effects
 				(font
 					(size 1.27 1.27)

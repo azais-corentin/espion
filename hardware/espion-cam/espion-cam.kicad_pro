@@ -679,11 +679,7 @@
       },
       {
         "netclass": "PWR_5V",
-        "pattern": "/Power/+5V_POE*"
-      },
-      {
-        "netclass": "PWR_5V",
-        "pattern": "/LED driver/+5V_BST"
+        "pattern": "/Power/+5V_POE"
       },
       {
         "netclass": "PWR_3V3",
@@ -904,7 +900,6 @@
         "IMU_INT1"
       ],
       "LEDCTL": [
-        "LED_PWR_EN",
         "BST_EN",
         "LED_EN"
       ],

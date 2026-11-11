@@ -95,9 +95,7 @@ Vias next to pads: the quote page turns "tented" into "plugged" for free, but JL
 is ≥ 0.35 mm from any pad opening (https://jlcpcb.com/help/article/pcb-via-covering). Signal, power and decoupling vias
 are never placed in pads. Where a via must sit closer than that, its drilled hole stays outside the pad opening by at
 least the mask bridge (`solder_mask_min_width`); the vias that do this (C15.2, C37.2, C40.2/U11.2, U6.55 beside C47.2 and
-C6.2) are GND vias on the same net as the pad. R72.2's GND via is the one exception: its hole is closer to the pad
-opening than the mask bridge. Further out it would meet XVS's via or the VLED_SENSE track, and south the VLED_SENSE
-diagonal blocks it (board review 2026-11-04).
+C6.2) are GND vias on the same net as the pad.
 
 A via beside a pad of its own net, but not touching it, keeps a copper gap of at least 0.1 mm to that pad (user
 decision 2026-11-10). JLCDFM flags a narrower gap under pad spacing and via to pad: it may not etch, and the sliver
@@ -135,7 +133,7 @@ rises; the fit is the more conservative of the two.)
 |---|---|---|
 | Default | Every signal net not listed below | Robust, yet narrow enough to enter 0.4–0.5 mm pitch pins after a short neck |
 | PWR_3V3 | +3V3, CAM_3V3 | Espressif ESP32-P4 Hardware Design Guidelines (HDG) §1.4.1: module supply "at least 25 mil"; temperature rise at the +3V3 load current by the fit above |
-| PWR_5V | +5V, VBUS, +5V_POE, +5V_POE_F, +5V_BST | Sized for the DP1435's 2.6 A maximum output, which the fit above keeps within a reasonable rise ([power](power.md#5v-loads)) |
+| PWR_5V | +5V, VBUS, +5V_POE | Sized for the DP1435's 2.6 A maximum output, which the fit above keeps within a reasonable rise ([power](power.md#5v-loads)) |
 | LED_PWR | +32V, LED_K, ISNS, RING_1–RING_11 | Worst-case LED pulses ([led](led.md#current-sink)); the boost output is high enough that exposed pads need extra spacing (rule "LED_PWR pad spacing") |
 | POE_CABLE | POE_VA1, POE_VA2, POE_VB1, POE_VB2 | Centre-tap current 350 mA (HanRun HR871150C p.1); routed on In1 only (0.5 oz), so the width is chosen for that copper ([PoE isolation](#poe-isolation)); extra spacing from rule "PoE isolation" |
 | MIPI_CSI | CSI_* and CAM_* pairs | 100 Ω differential ([Impedance](#impedance)); spacing from rules "MIPI_CSI spacing" and "MIPI_CSI to clocks and high-speed" |
@@ -161,7 +159,7 @@ source of each. The JLCPCB fabrication rules are described in [Fabrication rules
 | MIPI_CSI to clocks and high-speed | MIPI_CSI against USB, MDI, every /Ethernet/RMII_* and /MCU/RMII_* net, XVS/XVS_CAM and STROBE/STROBE_CAM | Clearance of 3W | Espressif ESP32-P4 HDG, MIPI PCB layout: 3W from other high-speed and fast signals; includes both sides of the sync/strobe series links and all PHY/MAC RMII nets, with no exemptions |
 | PTH hole to copper | Through-hole pads | Hole clearance | JLCPCB inner-layer PTH hole to copper 0.3 mm (PTH to track 0.28 mm minimum) |
 | Pad hole to hole | Pad against pad | Hole to hole | JLCPCB pad hole-to-hole spacing 0.45 mm (vias: 0.2 mm, the board minimum) |
-| Power neck-down at fine-pitch pads | PWR_5V, LED_PWR and +5V_BST tracks touching the courtyard of U4, U8 or U10 | Minimum track width | A class-width track cannot enter U4's fine-pitch pads (0.3 mm gaps, TI TPS2121 land pattern p.39), U8's SOT-23-6 (0.95 mm pitch) or U10's WSON pads (TPS61170 DRV0006A, p.35) at the class clearance; the neck is short enough that its resistance and heat are negligible ([Power](#power)) |
+| Power neck-down at fine-pitch pads | PWR_5V and LED_PWR tracks touching the courtyard of U4 or U10 | Minimum track width | A class-width track cannot enter U4's fine-pitch pads (0.3 mm gaps, TI TPS2121 land pattern p.39) or U10's WSON pads (TPS61170 DRV0006A, p.35) at the class clearance; the neck is short enough that its resistance and heat are negligible ([Power](#power)) |
 | LED_PWR pad spacing (other pads) | An exposed pad of any other net against LED_PWR or BST_SW copper (tracks and vias included) | Pad clearance, mirrored | The mirror of "LED_PWR pad spacing", which only fires when the exposed pad is the LED_PWR item; same IPC-2221A source. Exempt: U10's own pads against BST_SW copper inside U10's courtyard (pin 4's exit keeps TI's DRV0006A land gaps, 0.35 mm to pin 5 and 0.25 mm to the exposed pad) and ISNS_K against ISNS (the Kelvin tap through net tie NT1, same node, small drop) |
 | Silk to silk | Two non-pad items on the same silk layer | Silk clearance of zero | JLCPCB gives no silkscreen-to-silkscreen spacing; see [Fabrication rules](#fabrication-rules) |
 | MDI pair to pair | RD pair (ETH_RD_P/N) against TD pair (ETH_TD_P/N); same U1 exemption as "MDI spacing" (either item touching U1's courtyard or wholly inside "U1 MDI escape") | Clearance of 3W | IP101G §6.2 p.56 "three times space" also between the RX and TX pairs. The closest spot is the RD_P/TD_N diagonals west of R6, right at the limit (`kicad_query distance`); DRC passes |
@@ -173,7 +171,7 @@ source of each. The JLCPCB fabrication rules are described in [Fabrication rules
 | Through vias only | Every via | Micro, blind and buried vias disallowed | JLCPCB: microvias only on boards ≤ 1 mm, blind/buried vias HDI only |
 | Silk line width | Graphic items on F.SilkS / B.SilkS | Line width assertion | JLCPCB "Minimum Line Width ≥0.15mm"; KiCad has no board setting for it |
 | Board silk to pads | Board-level silk (not in a footprint) against pads | Silk clearance | JLCPCB pad to silkscreen; footprint silk exempt by user decision ([Fabrication rules](#fabrication-rules)) |
-| 0402 pour pads thermal | C17.1, R17.2, R21.2 | Zone connection: thermal reliefs | Each is an 0402 with one pad inside a solid-connected local pour and the other on a thin track: a relief lets both pads heat alike in reflow (tombstoning; board review 2026-11-04). The other 0402s of the review are joined without a pour instead ([Ground and return](#ground-and-return)) |
+| 0402 pour pads thermal | C17.1, R17.2 | Zone connection: thermal reliefs | Each is an 0402 with one pad inside a solid-connected local pour and the other on a thin track: a relief lets both pads heat alike in reflow (tombstoning; board review 2026-11-04). The other 0402s of the review are joined without a pour instead ([Ground and return](#ground-and-return)) |
 | Minimum SMD pad | SMD pads | Size X and Y assertion | User decision 2026-11-02, below JLCPCB's note ([Fabrication rules](#fabrication-rules)). Custom-shape pads are checked on their anchor, which is smaller than the whole pad |
 
 ## Impedance
@@ -238,9 +236,9 @@ Joints and stubs:
 Hooks and detours (user instruction 2026-11-02, with example images of CC2 looping round J2's shield pad and XVS_CAM
 hooking into TP8): a track runs from its pad or via toward where it goes, never leaving the other way and looping back,
 and a via that only serves one stub sits on its pad's axis (or radial ray) so the stub is one straight segment. The
-loops that stay are forced, each with its reason: U5.5 → C25.1 (round U5.4), C16.2's GND via (+5V, VBUS and +5V_POE_F
+loops that stay are forced, each with its reason: U5.5 → C25.1 (round U5.4), C16.2's GND via (+5V, VBUS and +5V_POE
 round it), the +5V EN feed into U3.1 (round C18.1),
-+32V from C46.1 (MDC), LED_K_SENSE and VLED_SENSE (round C48.2 / R72.2), PHY_RST_N (round R8.2's former pad: kept as
++32V from C46.1 (MDC), LED_K_SENSE (round C48.2), PHY_RST_N (round R8.2's former pad: kept as
 routed when R8 was removed, user decision 2026-11-11), RMII_REF_CLK on B.Cu
 (+3V3), and the length-matched diff pairs.
 
@@ -249,8 +247,8 @@ its narrowest plane neck at 45° rather than the ideal 58° ([Camera and CSI-2](
 
 ## Power
 
-Parts: U2 SDAPO DP1435-5V PoE PD module (bottom, west edge, hand-soldered), L1/C13/C14 filter on +5V_POE_F, U4 TI
-TPS2121 power mux, U3 TI TLV62569 3.3 V buck with L2, U8 TI TPS22918 LED-supply switch. Circuit: [power](power.md).
+Parts: U2 SDAPO DP1435-5V PoE PD module (bottom, west edge, hand-soldered), C13 bulk on +5V_POE, U4 TI TPS2121 power
+mux, U3 TI TLV62569 3.3 V buck with L2. Circuit: [power](power.md).
 
 ### Placement constraints
 
@@ -264,18 +262,18 @@ TPS2121 (SLVSEA3F §11 p.33 "as close as possible", §12.2 layout example): `nea
 | R22.1–U4.10 | R_ILM beside ILM, as the layout example draws it |
 
 U4's periphery: OUT pins 1 and 8 tied straight across; C20 on the west OUT flare, C16 west, C15 east, C21 (SS) and
-R22 straight north of U4.11/U4.10, the OV/PR1 divider row (R20, R21, R18, R75, R19) south with a GND via between R21 and
-R18.
+R22 straight north of U4.11/U4.10, the PR1 divider row (R18, R75, R19) south, and U4.3 (CP2) tied by a short track to
+the GND of U4.4/U4.5.
 
-C22 is `+5V` bulk, not a U4 bypass, and sits south of L1, well away from U4. There is no top-side
-site for it closer in: L1 and the C13/C14 filter fill the west and north of U4, the OV/PR1 row and the boost stage the
-south, the LED ring the east, and `kicad_query board_free_space` finds no free area for its courtyard on the top side.
-Its feed is a F.Cu track at the PWR_5V width from the pour "C20/U4 +5V": west and down a 45° diagonal, under L1's
-body between its pads, west of L1.1, then into C22.1.
+C22 is `+5V` bulk, not a U4 bypass, and sits at the south of the west column, well away from U4. There was no top-side
+site for it closer in when it was placed: the input filter (removed 2026-11-11) and C13 filled the west and north of U4,
+the PR1 row and the boost stage the south, the LED ring the east. Its feed is a F.Cu track at the PWR_5V width from the
+pour "C20/U4 +5V": west and down a 45° diagonal, through the site of the removed filter inductor, then into C22.1 (kept
+as routed, user decision 2026-11-11: no footprint moves).
 
-The west column runs C14, C13, L1 and C22 from north to south. U2.4's through-hole pad holds C14's courtyard at the
-top, and C14 is turned 180° so its polarity mark stays on the board, which puts its `+5V_POE_F` pad on the east side;
-the filter's `+5V_POE` and `+5V_POE_F` links are tracks at the PWR_5V width.
+The west column runs C13 and C22 from north to south, with the empty sites of the removed filter parts (the π filter's
+inductor and aluminium bulk, user decision 2026-11-11) north of C13 and between C13 and C22. C13's `+5V_POE` link to
+its two vias is a track at the PWR_5V width.
 
 TLV62569 buck loop (SLVSDG1C §10.1 p.13, Fig. 20; U3 is turned 180° against Fig. 20): `near` entries. Each `max` is the
 placed distance rounded up, so the loop shape cannot drift.
@@ -300,11 +298,15 @@ ampere of input and output current):
 
 | Entry | Net | Note |
 |---|---|---|
-| U4 IN1 vias | +5V_POE_F | |
+| U4 IN1 vias | +5V_POE | |
 | U4 IN2 vias | VBUS | |
 | U4 OUT vias | +5V | Larger vias do not fit beside C15.2 or U4.9 at the class clearance |
 
-+5V_POE_F leaves the L1/C13/C14 filter for the B.Cu trunk through two power vias.
+U2.6 (through-hole, so on B.Cu as well) feeds the B.Cu `+5V_POE` trunk directly: a B.Cu track at the PWR_5V width runs
+east past U2.5 and C11's GND via, then north onto the trunk (user decision 2026-11-11: it replaces the removed filter
+inductor's path; a straight bridge across that inductor's pads would have crossed the `+5V` feed to C22 on F.Cu). C11
+sits on U2.6 on F.Cu. C13 hangs off the trunk's west end through two power vias, a spur with no load current through
+it.
 
 ### Track widths
 
@@ -313,26 +315,26 @@ rises use the fit in [Net classes](#net-classes); the currents are in [power](po
 
 | Run | Width | Reason |
 |---|---|---|
-| +5V and +5V_POE trunks, +5V_POE_F on F.Cu | PWR_5V class | Common +5V trunk carries the boost-limited and board-peak current; the DP1435 maximum bounds the class |
-| +5V_POE_F B.Cu leg, from the filter vias to U4's IN1 vias | Narrower than the class | The class width does not pass the VBUS IN2 via at U4 ([Accepted deviations](#accepted-deviations)) |
+| +5V and +5V_POE trunks on F.Cu | PWR_5V class | Common +5V trunk carries the boost-limited and board-peak current; the DP1435 maximum bounds the class |
+| +5V_POE B.Cu leg, from the U2.6 feed to U4's IN1 vias (and west of it the C13 spur to its vias) | Narrower than the class | The class width does not pass the VBUS IN2 via at U4 ([Accepted deviations](#accepted-deviations)) |
 | +5V into U3: the B.Cu trunk ends at a via; the F.Cu pour "C10/U3 +5V" joins it, the via of the U11/R63 branch, C10.1 and U3.4 | Pour | Buck input peak |
 | +5V B.Cu branch to R63/C44/U11 | Narrow | Only U11's supply and the R63 divider |
-| +5V common node at U8.1: the trunk vias, U8.1, C34.1 and TP5.1 in the F.Cu pour "+5V pour 100"; the B.Cu pour "+5V pour 105" brings the common trunk to the via pair | Pours | Boost and buck together, the highest +5V current |
-| From the U8.1 pour east to the buck trunk vias (pours "+5V pour 101"/"+5V pour 104" round them) and the B.Cu trunk toward U3.4 | Class width; narrower between the east via pair and leaving the U8.1 pour | Buck branch peak only |
+| +5V common node where the LED-supply switch was: the trunk vias and TP5.1 in the F.Cu pour "+5V pour 100", joined through a class-width track across the switch's site to the boost-input pour "U10/C36/L3 +5V" (user decision 2026-11-11); the B.Cu pour "+5V pour 105" brings the common trunk to the via pair | Pours | Boost and buck together, the highest +5V current |
+| From "+5V pour 100" east to the buck trunk vias (pours "+5V pour 101"/"+5V pour 104" round them) and the B.Cu trunk toward U3.4 | Class width; narrower between the east via pair and leaving "+5V pour 100" | Buck branch peak only |
 | +3V3 trunks | PWR_3V3 class | |
-| Necks inside the U4, U8 and U10 courtyards | The minimum of rule "Power neck-down at fine-pitch pads" | Short; their resistance and heat are negligible |
+| Necks inside the U4 and U10 courtyards | The minimum of rule "Power neck-down at fine-pitch pads" | Short; their resistance and heat are negligible |
 | Branches carrying no load current (enable pins, dividers, FB sense, op-amp supply, pull-up feeds, short stubs into pins) | Narrow | µA–mA |
 
-The +3V3 feed to the north and west parts (U5, C25, R53 → CAM_3V3/J4, R41/R42, D1/C24, R20) cannot take a shorter
-route: the USB pair, the camera bundle, XVS and +5V_POE_F fence it on B.Cu, the PoE lane and U2 on F.Cu. It is fed from
-the U3/U6 area by a B.Cu feed (narrowed beside a GND via; R20's pull-up branch off its west end also narrow), a loop along
+The +3V3 feed to the north and west parts (U5, C25, R53 → CAM_3V3/J4, R41/R42, D1/C24) cannot take a shorter
+route: the USB pair, the camera bundle, XVS and +5V_POE fence it on B.Cu, the PoE lane and U2 on F.Cu. It is fed from
+the U3/U6 area by a B.Cu feed (narrowed beside a GND via), a loop along
 the west edge and a F.Cu loop round J2's north side, narrow because it carries mA loads only (camera, D1, pull-ups).
 Past H1 the loop drops east of J2's north-west shield pad and runs SW between the two west shield pads, then round the
 south-west shield pad's top in short 45° steps, outside H1's washer clearance, with CC1 parallel on its south-east side.
 There, between H1's washer clearance and that pad, both run as close as their clearances allow and the loop is narrowed
 (the tightest gap on the board's top edge). The R41/R42 branch's B.Cu feed from the +3V3 via is wider
-except beside CAM_IO1's former via (kept as routed when CAM_IO1 was removed, user decision 2026-11-11). The west-edge loop crosses the filter column on B.Cu from a via north of C14 down to
-below C13 (C14's 10 × 10 can leaves no F.Cu way past it), under U2's magnetics ([B.Cu under U2](#bcu-under-u2)). The
+except beside CAM_IO1's former via (kept as routed when CAM_IO1 was removed, user decision 2026-11-11). The west-edge loop crosses the west column on B.Cu from a via north of the removed aluminium bulk's site down to
+below C13 (routed when that 10 × 10 can left no F.Cu way past it; kept as routed when it was removed, user decision 2026-11-11), under U2's magnetics ([B.Cu under U2](#bcu-under-u2)). The
 drop to R53.1 follows from the network resistance (`kicad_query copper`) and those loads.
 
 ### Ground and return
@@ -344,8 +346,8 @@ drop to R53.1 follows from the network resistance (`kicad_query copper`) and tho
   NT1 keeps its Kelvin tap from R69.1, in a lobe of the pour that carries no load current). Each pour: clearance 0 (the
   class and custom rules still set the gap; KiCad fills to the larger), solid pad connection (no thermal reliefs),
   islands removed; names "<parts> <net>" or "<net> pour N". The In1/In2 planes keep their thermal reliefs.
-- 0402 parts get no solid pour pad beside a thin-track pad (tombstoning): rule "0402 pour pads thermal" gives C17.1, R17.2
-  and R21.2 reliefs; C21.2 and R22.2 join their shared GND via by two narrow tracks and C52.2 its via by a narrow track
+- 0402 parts get no solid pour pad beside a thin-track pad (tombstoning): rule "0402 pour pads thermal" gives C17.1 and
+  R17.2 reliefs; C21.2 and R22.2 join their shared GND via by two narrow tracks
   (no pour); R16.1 takes +3V3 from the trunk ending on it and a narrow neck from "C17/R16 +3V3", which stops clear of the
   pad.
 - Where a rule is waived for parts' own pads, the pours are clipped to what the pads keep: "BST_SW pour 120" stays at the
@@ -365,10 +367,13 @@ U2 is a bottom-side module; its flyback magnetics sit over a B.Cu box with no pl
 XVS's west run is kept out of it: B.Cu just west of the box, across on F.Cu behind the In1/In2 planes
 ([Ethernet and PoE isolation](#rmii)). What stays in the box on B.Cu, because the camera module area, the lens cutout
 and the CSI bus leave no other way from J2 and J4 to U6: VBUS (the PWR_5V trunk), USB_C_D_P/N, CAM_EN, SCCB_SDA, a short XVS
-hop, STATUS_LED, STROBE and a stub of SCCB_SCL (user decision 2026-11-04: "Partial + document"). Added with the BOM
+hop, STATUS_LED, STROBE and a stub of SCCB_SCL (user decision 2026-11-04: "Partial + document"). Added on
+2026-11-11 (user decision 2026-11-11): the module's own output, the B.Cu `+5V_POE` feed from U2.6 to the trunk at the
+box's south end, the same net as the trunk already there. Added with the BOM
 change of 2026-11-09 (user decision 2026-11-09: "Accept"): the +3V3 west-edge loop, a decoupled DC rail, runs on
-B.Cu down the filter column just east of XVS's west run. C14's larger can closed its F.Cu way, F.Cu is full of the C14
-and C13 pads beside it, and west of it XVS's run and the board edge leave no B.Cu lane. First-board check
+B.Cu down the west column just east of XVS's west run. The aluminium bulk's larger can then closed its F.Cu way; the
+loop stays as routed after that part was removed (user decision 2026-11-11: no rerouting beyond the removed parts'
+copper), and west of it XVS's run and the board edge leave no B.Cu lane. First-board check
 ([power](power.md#first-board-checks) 9): at the PoE input's peak load (LEDs 0.5 ms / 120 fps, camera streaming,
 Ethernet up), scope XVS and SCCB_SCL/SDA edges at J4 for ringing or extra edges, and run USB enumeration and a bulk
 transfer; repeat on USB power alone as the reference.
@@ -390,7 +395,6 @@ Circuit: [mcu](mcu.md).
 | R33.2–U6.1, C27.1–U6.1 | HDG §1.3.3: RC at CHIP_PU (ESP_EN), short trace |
 | R31.2–U6.38, R32.2–U6.37 | HDG §1.3.12 / §1.4.3: USB series resistors at the chip end (D+ / D−) |
 | C48.1–U6.19 | HDG §1.3.10: filter capacitor at an ADC pin (LED_K_SENSE). Smaller than the HDG's 0.1 µF, so the reading settles within an LED pulse ([led](led.md#led_k-sense)) |
-| C49.1–U6.17 | HDG §1.3.10: 0.1 µF at an ADC pin (VLED_SENSE, GPIO21 / ADC1_CH5) |
 | U5–J2.A6 | TI SLVA680A p.4: protection as near to the connector as design rules allow, short I/O tracks. The limit was raised when J2 moved out to its overhang: U5 cannot follow it north, D2's courtyard abuts it (user decision 2026-11-04: "Raise the limit") |
 | D2.1–J2.A4, D2.1–J2.A9 | TI SLVA680A p.4: "place the TVS as near to the connector as design rules allow"; the limit reaches both VBUS pad pairs |
 | `paths` "BOOT stub": R36.1 → R39.1 | The BOOT strap R39 hangs on the 50 MHz RMII_TXD1_MCU line; its stub stays short, negligible against the edge |
@@ -628,10 +632,10 @@ hand-soldered; Y1 25 MHz crystal; U2 PoE PD module. Circuit: [ethernet](ethernet
   track, via, pad, rule area and edge: REF_CLK (two), TXD0, TXD1 and TX_EN in U1's south-west fan-out, TX_EN_MCU, and two
   STROBE vias (the second has a GND via only beyond the search distance). These are 50 MHz RMII and slow strobe lines without an impedance class; the distant returns remain accepted.
   `via_return` does not check them (Default class). Every XVS layer change has a GND via close by.
-- XVS stays outside the actual L1/L2/L3 courtyard polygons on every layer, including its pads and via annular rings,
+- XVS stays outside the actual L2/L3 courtyard polygons on every layer, including its pads and via annular rings,
   so the boost hot loop is avoided (the +32V branch runs along the bottom edge, clear of U6.9, see
   [+32V and the ring](#32v-and-the-ring)). Check against the library courtyard polygons, not their bounding boxes: L2's
-  courtyard is stepped. The route: U6.9 leaves on B.Cu, changes layer between C34's pads, runs north between the
+  courtyard is stepped. The route: U6.9 leaves on B.Cu, changes layer at the site of the removed LED-supply input capacitor, runs north between the
   inductors and the other boost parts (F.Cu and B.Cu hops), crosses west along F.Cu behind the In1/In2 planes, then goes
   north on B.Cu just west of U2's magnetics outline ([B.Cu under U2](#bcu-under-u2)) and rejoins the north run to J4.
   To open this corridor without moving parts, the B.Cu STATUS_LED/CAM_EN/STROBE/SCCB_SCL/SCCB_SDA fan-outs run further
@@ -781,14 +785,16 @@ net tie NT1; U9 SN74LVC1G97 STROBE gate. Circuit: [led](led.md).
   C43.2.
 - The switch node U10.4 → L3.2/D3.2 is the F.Cu pour "BST_SW pour 120", kept off U10's other pads by the "LED_PWR pad
   spacing" distance, so pin 4 keeps TI's land gaps (0.35 mm to pin 5, 0.25 mm to the exposed pad) and the node stays small (§11.1).
-- +5V_BST: U10.6, C36.1, L3.1 and U8.6 share the F.Cu pour "U10/C36/L3 +5V_BST". The small bypass C38 that sat between C36
+- Boost input: U10.6, C36.1 and L3.1 share the F.Cu pour "U10/C36/L3 +5V", fed from "+5V pour 100" through the former
+  input neck of the removed LED-supply switch and a class-width bridge across its site (user decision 2026-11-11, board
+  simplification). The small bypass C38 that sat between C36
   and U10 (board review 2026-11-04) was removed (user decision 2026-11-11, board simplification).
 
 ### +32V and the ring
 
 - +32V goes from the boost output (D3's cathode) to C47.1, on to C46.1, then north through a corridor east of Q1 to D4.2
   (`kicad_query lengths` paths, via heights counted, pours as straight lines). D3.1, C43.1, C45.1 and TP13.1 share the
-  F.Cu pour "D3/C45/C43 +32V"; C46.1 ends in the pour "+32V pour 107" over D4.2's two pads. The R65/R71/TP13 feeds are
+  F.Cu pour "D3/C45/C43 +32V"; C46.1 ends in the pour "+32V pour 107" over D4.2's two pads. The R65/TP13 feeds are
   narrow.
 - No +32V copper lies under U6's body (user decision 2026-11-03: "Reroute +32V out of U6"; whether the module's
   underside has exposed copper is not known, [mcu](mcu.md#accepted-risks)). The boost-to-C47 leg runs on F.Cu only: from D3.1
@@ -874,11 +880,10 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
     `kicad_query distance`); JLCPCB gives no through-hole-to-SMD figure. Use a conical tip ≤ 1 mm and Kapton over R46
     and C3, then inspect both for bridges and shifted parts. If that fails, open the gaps to ≥ 1.0 mm in the next
     revision.
-  - U2: through-hole from the bottom, soldered from the top. Its pads 5 and 6 are close to reflowed SMD pads (C11 and C52
-    nearest; then C16.2 and R20.1). Pad 4 sits against C14's can (courtyards touching; the sleeve about 1 mm from the
-    land): C14 cannot move away, U2.4 holds the top of the filter column ([Power](#power)). Pads 1–3 have no SMD part
-    nearby. Use a conical tip ≤ 1 mm and Kapton over C11, C52 and C14's sleeve, then inspect C11 and C52 for bridges and
-    shifted parts and C14's sleeve for heat damage.
+  - U2: through-hole from the bottom, soldered from the top. Its pads 5 and 6 are close to reflowed SMD pads (C11
+    nearest, courtyards touching; then C16.2; `kicad_query distance`). Pads 1–4 have no SMD part nearby since the
+    filter's aluminium can beside pad 4 was removed (user decision 2026-11-11). Use a conical tip ≤ 1 mm and Kapton over
+    C11 and C16, then inspect both for bridges and shifted parts.
 - Tooling holes TOOL1–TOOL3: 1.152 mm round NPTH with 0.148 mm mask expansion, far apart in three corners, each with a
   copper/footprint keep-out ring (JLCPCB "How to add tooling holes for PCB assembly order",
   https://jlcpcb.com/help/article/How-to-add-tooling-holes-for-PCB-assembly-order, read 2026-10-31: "For Economic PCBA
@@ -890,22 +895,21 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
   as possible") and R74.2–U12.2 ([IMU](#imu)).
 - Small parts beside big ones (possible reflow shadowing; no source gives a number): R5 and C8 beside C46 (11.0 mm tall),
   courtyards touching; U12 beside L2 ([IMU](#imu)). R34, R37 beside C46/C47:
-  [mcu](mcu.md#accepted-risks). R24 sits along C14's south edge, its pads parallel to the can, so both sit about as far
-  from the can body.
+  [mcu](mcu.md#accepted-risks).
 - Polarity and labels: JLCPCB reads polarity from the silk layer (PCBA FAQ part 2, #10). Marks are held ≥ 0.15 mm (JLCPCB pad to silkscreen) from
   neighbouring pads (rule "Board silk to pads" applies to board-level silk; polarity marks inside footprints are checked on
-  the footprint geometry): U8's pin-1 triangle and C46's "+" are the tight ones. J4 carries "1" and "CONTACTS DOWN". Board
+  the footprint geometry): C46's "+" is the tight one. J4 carries "1" and "CONTACTS DOWN". Board
   texts at the silk minimum name each probe point's signal: +5V, 3V3, 32V, LED_EN, LED_ON, ISNS, PPS, XVS, STB, PRST
   (TP1, the PHY reset; "RST" is the module reset button), plus "BOOT"/"RST" between the buttons, "USB", "TRIG" and
   "POE 57V". Each keeps ≥ 0.15 mm (JLCPCB pad to silkscreen) from pads and mask openings ("PRST" from J1.14 and J1's NPTH
   opening is the tight one).
 
-First-board checks: J1 iron trial and inspection of R46 and C3; U2 iron soldering and inspection of C11, C52 and C14's sleeve; U6 iron
+First-board checks: J1 iron trial and inspection of R46 and C3; U2 iron soldering and inspection of C11 and C16; U6 iron
 soldering; visual/AOI of the joints of R5, C8 (beside C46); USB-C cables in use (charger,
 flashing cable) latch and enumerate ([mcu](mcu.md#first-board-checks)); voids under U1's and U10's exposed pads, where
 the thermal vias are open ([Fabrication rules](#fabrication-rules)): X-ray if available, else check the
 backside fillets in the vias and U1/U10/Q1 temperatures in the thermal runs. U5, U7 and Q1 were checked in JLCPCB's
-placement preview on 2026-11-09 and have their `assembly.corrections` entries. D1 and the can part of C14, C46 and
+placement preview on 2026-11-09 and have their `assembly.corrections` entries. D1 and the can parts C46 and
 C47 have no 3D model in that preview, so it shows neither D1's pin 1 nor the cans' polarity: check them in the
 order's DFM Analysis (Order History, a few hours after ordering) before approving production, then add D1's
 LCSC-keyed entry (`{"rot": 0}` when it needs none). JLCDFM's SMT check (2026-11-10, run on the `kicad_export` BOM and
@@ -927,23 +931,23 @@ Tracks narrower than their net class, by reason:
 |---|---|---|
 | +3V3 | Ethernet branch after R38.1's former pad, the north/west feed loops, the B.Cu feed to them | Light load ([Power](#power), [Ethernet and PoE isolation](#ethernet-and-poe-isolation)) |
 | +3V3 | R41/R42 branch feed from its via | mA loads |
-| +3V3 | Short branches to pull-ups and U9's supply (among them R20's branch beside the VBUS via); the B.Cu feed beside a GND via; the R41/R42 feed beside CAM_IO1's former via; U1's branch at the PHY_REGOUT via; R16.1's neck from "C17/R16 +3V3" | mA loads; the drop at R53.1 for the whole feed is small ([Power](#power)) |
+| +3V3 | Short branches to pull-ups and U9's supply; the B.Cu feed beside a GND via; the R41/R42 feed beside CAM_IO1's former via; U1's branch at the PHY_REGOUT via; R16.1's neck from "C17/R16 +3V3" | mA loads; the drop at R53.1 for the whole feed is small ([Power](#power)) |
 | +3V3 | U12.7's feed, the link under Y1, U5.5 → C25.1 round U5.4 | µA–mA (IMU, R14 pull-up, U5's clamp supply) |
 | +3V3 | R73.1 to its via | Pull-up |
 | +3V3 | U1's +3V3 pin stubs | Pin pitch |
-| +5V | Exit east from the U8.1 pour; between the buck trunk vias | Buck branch peak only; the common node is poured ([Power](#power)) |
+| +5V | Exit east from "+5V pour 100"; between the buck trunk vias | Buck branch peak only; the common node is poured ([Power](#power)) |
 | +5V | Via of the U11/R63 branch → R63/C44/U11 | U11 supply and the R63 divider, < 1 mA |
 | +5V | U3 EN feed from the buck trunk via to U3.1; U11/R63 supply stub | Enable pin and op-amp supply, mA |
-| +5V_POE_F | Filter vias → U4's IN1 vias | The class width does not pass the VBUS IN2 via; sized by the fit in [Net classes](#net-classes) at the board-peak current |
-| +5V_POE_F | Feed to R18 (PR1/OV divider) | µA |
+| +5V_POE | B.Cu trunk from C13's vias and the U2.6 feed to U4's IN1 vias | The class width does not pass the VBUS IN2 via; sized by the fit in [Net classes](#net-classes) at the board-peak current |
+| +5V_POE | Feed to R18 (PR1 divider) | µA |
 | VBUS | J2.A4/B9 stub to the J2 VBUS via | Only exit between J2's pegs and pads; short, so its heating is limited |
 | VBUS | J2.A4 → D2.1 and D2.1's flow-through exit; U4's IN2 pad entry | Short necks; the flow-through exit is no narrower than the existing TVS approach |
-| VBUS | Feeds to R24 and R27 (VBUS_SENSE divider) | µA |
+| VBUS | Feed to R24 | µA |
 | VBUS | Source link from the J2 VBUS pour's via to the second via and the protected return from D2's via to the PWR_5V trunk | The class width does not fit; the return goes around the USB D− escape without bypassing D2.1 |
 | +32V | C47 → C46 → ring | The worst-case LED pulse current at a low duty; ΔT by the fit in [Net classes](#net-classes) ([LED driver and ring](#led-driver-and-ring)) |
 | +32V | Corridor east of Q1 | Pad-spacing rules; heating by the fit at the worst-case LED current as DC |
 | +32V | D3.1 → C47 along the bottom edge, off the copper under U6 | Recharge current only |
-| +32V | Feeds to R65 (boost FB divider), R71 (VLED sense divider) and TP13 | µA |
+| +32V | Feeds to R65 (boost FB divider) and TP13 | µA |
 | RING_1–RING_11 | Ring links | A class-width link breaks the LED pad spacing |
 | LED_K | R70.1 → Q1's drain pour | `LED_K_SENSE` divider, sub-mA |
 | ISNS | The TP14 branch and the tap to NT1 | No load current; Q1.2 → R69.1 is the pour "ISNS pour 122" |
@@ -977,8 +981,6 @@ moved; placement is unchanged.
 | R1.2 → R4.1 | PHY_LED0 | Ends off-centre; R1.2's exit at 45° | Routed while R7.1, R1.1 and the PHY_LED3 track boxed R1.2 in; kept as routed when R7 was removed (user decision 2026-11-11) |
 | R10.1, the two COL/RMII vias | COL/RMII (U1.4) | Ends off-centre, bends inside or close to the vias | U1.4's axis runs between XTAL_X2 (a via there lands too close to it) and RMII_TX_EN, with MDC parallel on B.Cu; R10.1 is boxed in by C5.2, R10.2 and a GND via below |
 | U9.4 | LED_ON | End off-centre | A via on its axis lands too close to R61.2 (GND) or to U9.4 inside its mask opening; R61's pad gap is too narrow |
-| C49.1 | VLED_SENSE | Exit at 45°, end off-centre | Only an exit to the east fits; R71.2's link comes from the west |
-| U6.16 (B.Cu) | LED_PWR_EN | End off-centre | A centre exit passes too close to the VLED_SENSE via, which the USB_C_D_P B.Cu diagonal holds in place |
 | STROBE via, B.Cu | STROBE | Bend inside the via, end off-centre | Its diagonal runs close to the parallel STATUS_LED and CAM_EN diagonals; a via there needs more room |
 | U11.1; MDIO via | SINK_DRV, MDIO | Ends off-centre; MDIO bends inside its via | The MDIO hop over the USB_C_D_P diagonal sits just east of U11.1; moving it brings MDIO too close to USB_C_D_N |
 | U5.3, U5.4 | USB_C_D_N | Ends off-centre | A straight on-axis link passes almost on U5's GND via |
@@ -1010,14 +1012,13 @@ moved; placement is unchanged.
 | C15–U4 and R74–U12 closer than JLCPCB's 1.0 mm QFN spacing | Design review | [Assembly](#assembly) |
 | Small parts beside big ones: R5/C8 at C46, U12 at L2 | Board review 2026-11-04: first-board inspection | [Assembly](#assembly) |
 | J1 lands close to reflowed SMD pads | First-board soldering trial | [Assembly](#assembly) |
-| U2.5/U2.6 close to reflowed C11/C52 pads; U2.4 against C14's can (courtyards touching) | First-board soldering trial | [Assembly](#assembly) |
+| U2.5/U2.6 close to reflowed C11/C16 pads (C11's courtyard touching) | First-board soldering trial | [Assembly](#assembly) |
 | J2 overhangs the top edge, nearer the routed edge than JLCPCB's component-to-edge limit; order note | User decision 2026-11-04 | [MCU and USB](#usb), [Assembly](#assembly) |
 | Buttons on the bottom edge | User decision 2026-11-01 | [MCU and USB](#buttons-and-boot) |
 | B.Cu under U2's flyback magnetics: VBUS, USB_C_D_P/N, CAM_EN, SCCB_SDA/SCL, STROBE, STATUS_LED and a short XVS hop; XVS's long west run kept west of it | User decision 2026-11-04: "Partial + document"; first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
-| B.Cu under U2's flyback magnetics: the +3V3 west-edge loop down the filter column (BOM change 2026-11-09, C14's larger can) | User decision 2026-11-09: "Accept" (no F.Cu way past C14, no B.Cu lane west of XVS; decoupled DC rail); first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
+| B.Cu under U2's flyback magnetics: the +3V3 west-edge loop down the west column (BOM change 2026-11-09; kept as routed when the can that forced it was removed, user decision 2026-11-11) | User decision 2026-11-09: "Accept" (no F.Cu way past the can then, no B.Cu lane west of XVS; decoupled DC rail); first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
 | CAM_CLK_P/N split on F.Cu between J4 and their vias: P detours north of N to take up the length, uncoupled for a stretch | User decision 2026-11-04: "Accept + record" (re-coupling needs trapezoid bumps drawn in pcbnew) | [Lengths and skew](#lengths-and-skew) |
 | C4 (0805 MLCC) pads close to the east edge; order without mouse bites beside it | User decision 2026-11-04: "Note only" | [Assembly](#assembly) |
-| R72.2's GND via hole closer to the pad opening than the mask bridge | Board review 2026-11-04: no site further out | [Fabrication rules](#fabrication-rules) |
 | Vias closer than 0.1 mm to a pad of their own net: C18.2's, the U9.1/U6.27 GND via, C40.2/U11.2's | User decision 2026-11-10: no site that holds the clearances | [Fabrication rules](#fabrication-rules) |
 
 ### JLCDFM
@@ -1037,5 +1038,4 @@ these classes. Each one is a decision above or a check that doesn't apply to thi
 | Plated through-hole to trace | J2's locating pegs beside VBUS tracks | At the board's hole clearance |
 | Missing plated through-hole | Top-side parts over U6's bottom pads | Different parts on opposite sides; no hole intended |
 | Component to board edge, clipped by board outline | J2's overhang; C4 and the cans along the edges | J2 and C4: rows above; the rest stays inside JLCPCB's component-to-edge limit |
-| Component collision | C13 and C14 cans, courtyards touching | Courtyards (body plus margin) don't overlap |
 | Pin edges, lead area overlapping pad, component through-hole | JLCDFM's part models against the land patterns (U10, U1, J2 in its examples) | Manufacturers' land patterns; checked in the placement preview ([Assembly](#assembly)) |

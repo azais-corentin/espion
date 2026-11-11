@@ -112,7 +112,7 @@ Placement:
   the EMAC or MDIO ([firmware-rules](firmware-rules.md#rules)).
 - PHY_RST_N is a long net with several vias. It runs round the lens inside the LED ring, partly close
   to the ring pads. Until the firmware drives it, only the PHY's 222 kΩ pull-up holds it high, while
-  the LEDs are still off (their enables default off, [led](led.md#led-power-switch)). Once driven it
+  the LEDs are still off (their enables default off, [led](led.md#bst_en)). Once driven it
   is a low-impedance push-pull line. A first-board check confirms the LED pulses don't disturb it.
 
 ## MagJack and MDI
@@ -360,8 +360,8 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   and R9, which set them to 0 and 1, were removed (user decision 2026-11-11, board simplification;
   the PHY address stays 1, the LEDs take the PHY's default mode 1). Their internal pull-downs set
   both to 0 (p.17, p.18).
-- VIH ≥ 0.8 × VDDIO at the bottom of the +3V3 ±5 % envelope (p.57). These strap checks use the generic
-  ±5 % envelope, which is wider than the DC set point and the switchover minimum
+- VIH ≥ 0.8 × VDDIO at the bottom of the +3V3 ±5 % envelope (p.57). These strap checks apply at
+  reset and use the generic ±5 % envelope, which is wider than the DC set point
   ([Rails](README.md#rails)).
 - LED0 and LED3 are Hi-Z during reset (p.18), so only R1, LED3's internal pull-down and the LED paths
   set them. Both LED paths pull the same way as their strap.

@@ -73,20 +73,14 @@ flashing, console and JTAG. Power path from VBUS onward: [power.md](power.md#usb
 | U5 R+O SRV05-4 | ESD clamp on D+/D− at J2 | 1.0 pF typical per channel to GND, two channels per line (R+O SRV05-4 datasheet p.1–2), negligible at 12 Mbit/s. Its supply pin 5 (VP) is on +3V3 with decoupling C25, not on VBUS: on VBUS, the P4's D+ pull-up would back-power an unplugged VBUS through U5's upper diode. On +3V3 an unplugged VBUS stays at 0 V, and D2 clamps VBUS |
 | D2 R+O H7VHD3UA | VBUS TVS at J2's VBUS pads | VRWM 7 V ≥ the 5.5 V VBUS maximum the design assumes, IEC 61000-4-2 ±30 kV contact (H7VHD3UA datasheet p.1–2). Close to both VBUS pad pairs (`near` entries D2.1 → J2.A4 and J2.A9) |
 | R31 (D+), R32 (D−) | Series resistors at U6 pins 38/37 | ESP32-P4 HDG (USB section): "22/33 Ω series resistor … close to the chip end"; `near` entries R31.2 → U6.38 and R32.2 → U6.37 |
-| R27 / R28, C26 | `VBUS_SENSE` divider to GPIO6 | Tells the firmware a USB host is supplying VBUS, so it can turn the D+ pull-up off without one ([firmware-rules.md](firmware-rules.md#rules)). Digital level only |
 
 **USB pins.** Module pins 37/38 (USB1P1_N/P) are GPIO24/25, the P4's USB 1.1 full-speed PHY,
 which is USB Serial/JTAG by default (ESP32-P4 datasheet v0.7 p.28 note 1). D+ = J2.A6/B6 →
 U5 → R31 → U6.38, D− = J2.A7/B7 → U5 → R32 → U6.37.
 
-**`VBUS_SENSE` levels.** `VBUS_SENSE` = VBUS × R28 / (R27 + R28), with the tolerance of
-both resistors. Over the VBUS range of the [README](README.md#rails) and the +3V3 set-point
-range the pin must stay between the P4's VIH and VDD + 0.3 V; the derivation is in
-[power.md](power.md#usb-vbus). The Thevenin resistance R27 ∥ R28 limits any current into the
-pad to the highest pin voltage divided by R27 ∥ R28; while +3V3 is still off, VBUS max / R27
-flows into the pad's protection. That current is an open point: the P4 datasheet gives no limit
-for it, and the fee-free R27/R28 values (user decision 2026-11-09) raised it. Filter time
-constant: (R27 ∥ R28) × C26, a slow edge; the firmware debounces it.
+**No VBUS sense** (user decision 2026-11-11, board simplification): the VBUS_SENSE divider to
+GPIO6 was removed, so firmware leaves the D+ pull-up on with or without a host; USB is a bench
+port only ([power.md](power.md#usb-vbus), accepted risk there).
 
 R24 from VBUS to GND belongs to the VBUS supply path ([power.md](power.md#usb-vbus)).
 
@@ -193,7 +187,7 @@ Power sheet) were removed (user decision 2026-11-11, board simplification; it al
 last hand-soldered parts off the top side). Probes ground on the nearest exposed GND pad: a
 capacitor's GND end, or the plated mounting holes H1–H4 (GND) for a ground clip; vias are
 tented ([layout](layout.md#fabrication-rules)). Since TP7 was removed, TP6 (`PPS`) has no exposed
-GND pad within a ground spring's reach, so the PPS check (first-board check 9) uses a short
+GND pad within a ground spring's reach, so the PPS check (first-board check 8) uses a short
 ground lead to C46.2 or C47.2 (a consequence of the 2026-11-11 decision).
 
 **PPS loop-back.** GPIO32 drives the EMAC's PTP PPS output (GPIO-matrix signal
@@ -204,7 +198,7 @@ removing R34 frees GPIO33.
 
 **Other probe points on the top side** (part pads, none under another part; the camera module
 sits behind the board): `ESP_EN` on C27/R33, `BOOT_SW` on R39, `PPS_IN` on R34 (0402), VBUS on
-R24/R27, `VBUS_SENSE` on C26, the accelerometer bus on R73/R74. `MDC` and `IMU_INT1` have no
+R24, the accelerometer bus on R73/R74. `MDC` and `IMU_INT1` have no
 part on them, but U6's hand-soldering pads reach past the module (pads 43 and 69), so
 they can be probed from the bottom. Rail test points: [power.md](power.md).
 
@@ -260,11 +254,9 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
    Ethernet linked, hold BOOT during an iperf run and check for lost or corrupt frames.
 6. **USB-C:** plug in each cable in use (charger, flashing cable): it latches fully and
    enumerates. Check the panel left J2's shell and the board edge in front of it undamaged.
-7. **`VBUS_SENSE`:** measure GPIO6 with a USB host (VBUS × R28 / (R27 + R28) at the measured
-   VBUS) and without (0 V); watch the edge for bounce when plugging.
-8. **D1:** set full red, then green, then blue at +3V3 and judge brightness; confirm the byte
+7. **D1:** set full red, then green, then blue at +3V3 and judge brightness; confirm the byte
    order G, R, B; scope DIN at the chosen 0.95 µs bit timing and check all three colours latch
    correctly.
-9. **PPS:** scope TP6, with a short ground lead to C46.2 or C47.2 ([Test points](#test-points));
+8. **PPS:** scope TP6, with a short ground lead to C46.2 or C47.2 ([Test points](#test-points));
    check the ETM capture on GPIO33.
-10. **AOI/visual:** R37 and R34 joints next to C46/C47.
+9. **AOI/visual:** R37 and R34 joints next to C46/C47.

@@ -1,7 +1,7 @@
 # LED driver and ring
 
 The 850 nm ring lights the markers only while the camera exposes. The chain:
-`LED_PWR_EN` connects +5V to the boost through a load switch, the boost makes +32V, the string of
++5V feeds the boost directly, the boost makes +32V, the string of
 12 LEDs runs from +32V into a linear current sink, and the sink's setpoint is on only while the
 sensor's STROBE and the P4's `LED_EN` are both high and the STROBE pulse is younger than a
 hardware timeout. Firmware runs the boost just above what the string needs, by PWM on `BST_EN`
@@ -13,12 +13,12 @@ decisions, the accepted risks and the checks.
 
 | Block | Parts | Control (U6 pin) | Test point |
 |---|---|---|---|
-| [LED power switch](#led-power-switch) | U8 TPS22918, C34, C35, R57 | `LED_PWR_EN` GPIO20 (U6.16) | – |
+| [LED supply](#led-supply) | – (no switch) | – | – |
 | [Boost converter](#boost-converter) | U10 TPS61170, L3, D3, C36, C39, C41, C43, C45, C46, C47, R62, R65, R66 | `BST_EN` GPIO53 (U6.71), PWM | TP13 `+32V` |
 | [Current sink](#current-sink) | U11 TLV9061, Q1 HL2310A, R69, NT1, R60, R61, R63, R64, R67, R68, C40, C42, C44 | – | TP12 `LED_ON`, TP14 `ISNS` |
 | [STROBE gating and timeout](#strobe-gating-and-timeout) | U9 SN74LVC1G97, C33, R54, R55, R56, R58, C37 | `LED_EN` GPIO11 (U6.13), STROBE GPIO12 (U6.14) | TP11 `LED_EN`, TP9 `STB` |
 | [LED ring](#led-ring) | D4–D15 A-SC880IR3C | – | – |
-| Sense | R71, R72, C49 (`VLED_SENSE`); R70, R76, C48 (`LED_K_SENSE`) | GPIO21 ADC1_CH5 (U6.17), GPIO23 ADC1_CH7 (U6.19) | – |
+| Sense | R70, R76, C48 (`LED_K_SENSE`) | GPIO23 ADC1_CH7 (U6.19) | – |
 
 The product limits that set every number below:
 
@@ -33,25 +33,23 @@ The product limits that set every number below:
 Firmware rules for this block are in [firmware-rules.md](firmware-rules.md#rules). Layout details
 are in [layout.md](layout.md#led-driver-and-ring).
 
-## LED power switch
+## LED supply
 
-U8 (TPS22918, TI SLVSD76C) connects +5V to `+5V_BST`, the boost input. The boost needs this
-switch because a boost converter has a DC path from input to output through L3 and D3 even while
-it is not switching. Without U8, +32V would sit at +5V minus a diode drop whenever the board
-is powered. U8 is the one hardware switch that removes all power from the LED side. The schematic
-places it with KiCad's TPS22917DBV symbol: the Value and Description are the TPS22918, which
-has the same DBV pinout (SLVSD76C p.3).
+The boost input is `+5V` itself, with no switch (user decision 2026-11-11, board simplification:
+the load switch, its input and slew capacitors and its pull-down were removed, and its `LED_PWR_EN`
+GPIO with them). A boost converter has a DC path from input to output through L3 and D3 even while
+it is not switching, so whenever the board is powered +32V idles at `+5V` minus D3's drop and the
+output bank is charged to that through L3 and D3 at plug-in (the inrush is under U4's soft start,
+[power](power.md#current-limit-and-soft-start)). The LED side is off by `BST_EN` (U10's internal
+pull-down, [BST_EN](#bst_en)) and `LED_EN` (R56).
 
-| Item | Requirement / formula | Reason / source |
-|---|---|---|
-| ON | `LED_PWR_EN`, GPIO20 (U6.16), R57 pull-down | ON must not float (SLVSD76C p.3). The pull-down keeps the switch off from reset until firmware drives the pin, below ON VIL 0.5 V (p.4) |
-| CT | C35 sets the slew rate: SR = 0.55 × C35 (pF) + 30 µs/V (SLVSD76C p.14 Eq. 3, Table 2), with C35 at its tolerance and the X7R temperature coefficient (±15 %, FH MLCC datasheet p.5); TI measures Table 2 with an X7R CT (p.14), and CT must be rated ≥ 20 V at VIN 4–5.5 V (Table 3 p.15). `+5V_BST` rise time = SR × VIN. Inrush = C_out × VIN / t_rise (p.19 Eq. 9), with C_out the capacitance behind U8: C36, then C43/C45/C46/C47 through L3 and D3 | The inrush stays well under U8's 2 A rating, so the +5V rail sees no step |
-| QOD | Pin 5 open (no-connect flag) | Quick output discharge disabled, an allowed option (p.3, p.13) |
-| Input | C34 at U8.1, CIN ≥ 1 µF (p.4, p.17) | The +5V bulk (C20, C22) is larger than `+5V_BST`'s C36, as p.17 advises |
-| Load | Boost input current at its current limit: ILIM max (TPS61170, SLVS789D p.5) minus half the inductor ripple, peak = ILIM max | Below U8's 2 A rating at 70 °C (p.4); VIN on PoE stays ≤ U8's 5.5 V maximum |
-
-The `+5V_BST` path leaves U8 at pin 6 on F.Cu to C36 and L3, necked at U10's pins
-([layout](layout.md#led-driver-and-ring)).
+- **The string cannot conduct at idle.** Per LED the idle rail gives (V(`+5V`) − VF(D3)) / 12;
+  the Amicc IF–VF curve (ADE-880-017 p.4 Fig. 3) shows nothing below 1 mA, which it reaches far
+  above that voltage, so the string current there is negligible (an extrapolation of the curve:
+  an inference). The string's 1 A minimum is 12 × VF min (p.3).
+- **Standing current on +32V:** V(+32V) / (R65 + R66) through the feedback divider, plus the
+  `LED_K_SENSE` divider's (V(+32V) − 12 × VF(µA)) / (R70 + R76) through the string, about zero at
+  idle ([LED_K sense](#led_k-sense)).
 
 ### Boost input range
 
@@ -59,12 +57,11 @@ The LEDs run only on PoE (firmware rule), so the boost input range is the one on
 
 | Rail | Formula |
 |---|---|
-| `+5V` on PoE | `+5V_POE_F` range ([Rails](README.md#rails)) minus the TPS2121 drop: RON ≤ 85 mΩ at 85 °C (TPS2121, SLVSEA3F p.7) × the board peak current ([power mux](power.md#power-mux)) |
-| `+5V_BST` | `+5V` minus U8's drop: RON ≤ 79 mΩ (SLVSD76C p.5) × the boost input current at its limit |
+| `+5V` on PoE | `+5V_POE` range ([Rails](README.md#rails)) minus the TPS2121 drop: RON ≤ 85 mΩ at 85 °C (TPS2121, SLVSEA3F p.7) × the board peak current ([power mux](power.md#power-mux)) |
 
-During a PoE → USB switchover `+5V` dips to the power mux's minimum at U4 OUT (a little less at
-U8.1) for a moment ([power mux](power.md#power-mux)). The boost loses regulation then, and
-firmware shuts the LEDs down on the same `PWR_SRC` edge.
+During a PoE → USB switchover `+5V` dips to the power mux's minimum at U4 OUT for a moment
+([power mux](power.md#power-mux)). The boost loses regulation then, and firmware shuts the LEDs
+down on the same `PWR_SRC` edge.
 
 ### Enable order
 
@@ -72,41 +69,38 @@ The enable order is stated once, as **FW-7** in [firmware rules](firmware-rules.
 a summary of it. `PWR_SRC` comes from the [power mux](power.md#power-mux); low means USB.
 
 **Power-up (on PoE only)**
-1. `LED_PWR_EN` high.
-2. Wait a fixed 60 ms for `+5V_BST` (user decision 2026-11-09, with the X7R C35). There is no
-   `+5V_BST` sense; the full swing from the C35 formula above (SLVSD76C Eq. 3 p.14: the 10–90 %
-   rise / 0.8 plus the turn-on delay, C35 at its high tolerance, `+5V` at its top) stays under
-   60 ms with margin, typical figures only.
-3. `BST_EN` high.
-4. Wait for +32V on `VLED_SENSE`.
-5. `LED_EN` pulses.
+1. `BST_EN` steady high.
+2. Wait until the between-pulse `LED_K_SENSE` reading has left the zero band (the ADC error) and
+   then stopped rising, or for the start-up time's upper bound
+   ([Recovery and start-up](#recovery-and-start-up)). There is no +32V sense: the reading follows
+   +32V minus the string's µA forward voltage ([LED_K sense](#led_k-sense)), so it stays at zero
+   until +32V passes about 12 × VF at µA currents. A reading still in the zero band at the
+   timeout is a fault: a dead boost and an open string look the same.
+3. `LED_EN` pulses.
 
 **Normal power-down**
 1. `LED_EN` low.
-2. `BST_EN` low.
-3. Wait ≥ 3 ms. The TPS61170 shuts down only after CTRL has been low for more than 2.5 ms
+2. `BST_EN` low. The TPS61170 shuts down only after CTRL has been low for more than 2.5 ms
    (SLVS789D p.5, §8.3.5 p.10). In PWM mode a shorter low only lowers the reference, through a
    180 µs filter (p.5, §8.4.2 p.11).
-4. `LED_PWR_EN` low.
 
 **`PWR_SRC` falling edge (PoE lost, now on USB), taken as an interrupt**
-- `LED_EN`, `BST_EN` and `LED_PWR_EN` go low back to back, with no wait, because the USB supply
-  must not carry the boost.
-- The boost then stops on its collapsing input (UVLO 2.2–2.5 V, SLVS789D p.5). This is accepted:
-  `LED_EN` is already low, so no LED current flows.
+- `LED_EN` and `BST_EN` go low back to back, with no wait.
+- With no switch on the boost input, `+5V` is VBUS after the switchover and does not collapse:
+  USB carries the boost from the switchover until `BST_EN` drops, plus the 180 µs t_REF filter
+  (§8.4.2 p.11, p.5), and the TPS61170 shuts down once CTRL has been low for t_off, more than
+  2.5 ms (p.5, §8.3.5 p.10). Accepted ([power](power.md#accepted-risks)): `LED_EN` is already
+  low, so no LED current flows.
 
 Why this order (design reasoning, apart from the datasheet timings above):
 
 - **`LED_EN` first:** no LED pulse starts while the supply is going away.
-- **`BST_EN` before `LED_PWR_EN`, with the 3 ms wait:** on a normal shutdown the boost is stopped
-  by its own control pin before its input is removed.
-- **`BST_EN` only after the `+5V_BST` wait on the way up:** U10's soft start ramps its reference
-  in 32 steps of 213 µs (SLVS789D §8.3.1 p.10). Started together with U8, the ramp would be
-  over while `+5V_BST` is still rising.
+- **`LED_EN` only once +32V is up:** a pulse on a rail that is still rising does not have the
+  string's headroom.
 
 ## Boost converter
 
-U10 (TPS61170, TI SLVS789D) boosts `+5V_BST` to +32V for the LED string. It has an integrated
+U10 (TPS61170, TI SLVS789D) boosts `+5V` to +32V for the LED string. It has an integrated
 40 V switch, runs at 1.2 MHz (1.0–1.5 MHz) and limits the switch current to 0.96–1.44 A (p.5).
 
 ### Output voltage
@@ -128,7 +122,7 @@ Everything on +32V must be rated above the maximum output:
 | D3 | Reverse voltage above Vout max |
 | Q1 HL2310A | 60 V VDS (HL2310A p.1) |
 | C43, C45, C46, C47 | Rated voltage above Vout max with margin |
-| R65, R71 (0603) | Working voltage above Vout max (UNI-ROYAL chip-resistor datasheet p.5) |
+| R65 (0603) | Working voltage above Vout max (UNI-ROYAL chip-resistor datasheet p.5) |
 
 Full scale can't go lower: at duty 1 the end of a pulse leaves V(`LED_K`) ≥ Vout min minus the
 [String voltage vs +32V](#string-voltage-vs-32v) terms (without Q1's RDS(on) term), on every unit.
@@ -190,14 +184,14 @@ at the end of the pulse stays in a band, whose edges are set in FW-22:
 |---|---|
 | L3 | Inside TI's 10–22 µH (SLVS789D p.4, p.18). Isat > ILIM max; Irms > the average input at the current limit; DCR from the Changjiang FNR4030S catalogue p.10. Ripple ΔIL / IIN at the nominal input and output inside TI's 30–40 % (SLVS789D p.17 Eq. 3, p.18) |
 | D3 | Schottky; TI asks for a diode rated above the 40 V switch (p.18). Peak current vs IFSM 30 A, loss = VF × average current (R+O SS16 datasheet p.1 IFSM, p.2 VF) |
-| C36 | CI ≥ 1 µF is met by C36 alone (p.4); the small extra bypass C38 was removed (user decision 2026-11-11, board simplification). C36 is above TI's recommended 1–4.7 µF (p.19). That is harmless: more input capacitance only lowers the ripple on `+5V_BST`. Loop stability is set by the output capacitors and the COMP network, not by CI, and U8's slew rate limits C36's inrush. The 0805 X5R part loses capacitance with DC bias at 5 V (estimate) |
+| C36 | CI ≥ 1 µF is met by C36 alone (p.4); the small extra bypass C38 was removed (user decision 2026-11-11, board simplification). C36 is above TI's recommended 1–4.7 µF (p.19). That is harmless: more input capacitance only lowers the input ripple. Loop stability is set by the output capacitors and the COMP network, not by CI, and U4's soft start limits C36's inrush at plug-in. The 0805 X5R part loses capacitance with DC bias at 5 V (estimate) |
 | C43, C45 | High-frequency output capacitors right at D3's cathode |
 
 The duty cycle is D = 1 − Vin × η / Vout, with η ≈ 0.83 (p.7 Fig. 1). It must stay under the 90 %
-minimum Dmax (p.5, p.18) at both corners: nominal, and the `+5V_BST` minimum on PoE with Vout max.
+minimum Dmax (p.5, p.18) at both corners: nominal, and the `+5V` minimum on PoE with Vout max.
 
 With losses (DCR of L3, RDS(on) 0.6 Ω max, the input current at the limit), regulation holds
-down to the input given by the loss model. `+5V_BST` stays above that in steady state on PoE.
+down to the input given by the loss model. `+5V` stays above that in steady state on PoE.
 Only the switchover dip above goes lower.
 
 ### Output capability
@@ -205,7 +199,7 @@ Only the switchover dip above goes lower.
 Worst-case output current is Iout_max = Vin × (ILIM − IP/2) × η / Vout (SLVS789D p.17 Eq. 3/4).
 The lower bound takes:
 
-- Vin = the `+5V_BST` minimum on PoE,
+- Vin = the `+5V` minimum on PoE,
 - ILIM 0.96 A (minimum, specified at D = Dmax, p.5),
 - L3 at its low tolerance,
 - fs 1.0 MHz,
@@ -219,8 +213,8 @@ Typical delivery takes the nominal inputs, 1.2 MHz and η 0.83. Its ILIM is read
 Fig. 4 p.7 (switch current limit vs duty cycle) at the operating duty, not the 1.2 A typical of the
 p.5 table.
 
-Demand at the pulse limit is I_LED max × t_pulse × fps, plus the two dividers' current
-(R65 + R66, R71 + R72), plus the `LED_K_SENSE` divider current through the string
+Demand at the pulse limit is I_LED max × t_pulse × fps, plus the feedback divider's current
+(R65 + R66), plus the `LED_K_SENSE` divider current through the string
 ([LED_K sense](#led_k-sense)). The lower delivery bound must exceed the worst demand; the ratio
 is the margin.
 
@@ -238,7 +232,7 @@ amplifier saturates, and the boost runs at its switch current limit from the sta
 until the charge is back.
 
 That takes t_rec = Q / Iout_max (the lower and upper bounds above) of every frame (1 / fps). During
-that time `+5V_BST` carries the current-limit input, so on PoE this peak recurs every frame
+that time `+5V` carries the current-limit input, so on PoE this peak recurs every frame
 ([power mux](power.md#power-mux)).
 
 Averaged over a frame, energy sets the input: I_in = Vout × I_out,avg / (η × Vin), taken at the
@@ -253,7 +247,7 @@ switch current limit is half the normal value for the first 5 ms (SLVS789D p.10 
 bank needs ½ × C_bank × Vout², far more than the stage delivers during the ramp, so +32V rises at
 the current limit.
 
-Stepping t ≈ ∫ C × V dV / (Vin × (ILIM − IP(V)/2) × η) up from +32V ≈ `+5V_BST` minus D3's drop
+Stepping t ≈ ∫ C × V dV / (Vin × (ILIM − IP(V)/2) × η) up from +32V ≈ `+5V` minus D3's drop
 (with the half limit for 5 ms) gives:
 
 | Case | Inputs |
@@ -265,7 +259,8 @@ The nominal start-up uses the p.5 typical ILIM rather than Fig. 4's lower value.
 rises the duty runs from near 0 up to the operating duty, and Fig. 4 shows a current limit near the
 typical over the middle of that range.
 
-Firmware waits for `VLED_SENSE` instead of a fixed delay.
+Firmware waits on the between-pulse `LED_K_SENSE` reading, with this range's upper bound as the
+timeout (FW-7).
 
 ### Output capacitors C46, C47
 
@@ -289,8 +284,6 @@ Why this part:
 - **Temperature and voltage.** Rated −55…+105 °C (GVZ datasheet p.1), and the rated voltage is above
   Vout max with margin.
 - **Stock.** In stock on 2026-11-09.
-- **One part with C14.** The PoE input filter's C14 uses the same part, so both share one BOM line
-  (user decision 2026-11-09; [power](power.md#output-and-filter)).
 
 The can height is the datasheet length plus tolerance plus seat plate. The can must stay outside
 the cone of the `layout.heightZones` entry "lens view cone" in `.omp/kicad.json`, which takes the
@@ -335,32 +328,19 @@ PWM, the default, or TI's EasyScale. This board uses PWM ([Headroom control](#he
 - **Run:** 50 kHz PWM, duty D_min ([Headroom control](#headroom-control)) … 1, set by the headroom loop. Its low phases last (1 − D) / f_PWM.
 - **Shutdown:** hold it low for ≥ 2.5 ms (p.5).
 
-The enable order with `LED_PWR_EN` and `LED_EN` is under
-[Enable order](#enable-order).
+The enable order with `LED_EN` is under [Enable order](#enable-order).
 
-After `BST_EN` goes low, D3 blocks back-feed and C46/C47 stay charged. They bleed through the two
-dividers, (R65 + R66) ∥ (R71 + R72) (τ = C_bank × R), and through the string into R70/R76
+After `BST_EN` goes low, D3 blocks back-feed and C46/C47 stay charged. They bleed through the
+feedback divider R65 + R66 (τ = C_bank × R), and through the string into R70/R76
 ([LED_K sense](#led_k-sense)), so +32V falls from Vout by t = τ × ln(V0 / V), and the ring can
 still conduct until it falls below the lowest string voltage (12 × VF min). During that time
-`LED_EN` low (with R56, and R68 at Q1's gate) keeps the ring dark apart from the divider bias.
+`LED_EN` low (with R56, and R68 at Q1's gate) keeps the ring dark apart from the divider bias. +32V
+ends at `+5V` minus D3's drop, not at 0 V ([LED supply](#led-supply)).
 
-### Output voltage sense
-
-R71 and R72 divide +32V into `VLED_SENSE`, which goes to GPIO21 = ADC1_CH5 (U6.17). R71 is a 0603
-for its working voltage. C49 sits at the pin (Espressif ESP32-P4 HDG §1.3.10).
-
-| Item | Formula |
-|---|---|
-| Conversion | V(+32V) = V_ADC × (R71 + R72) / R72 |
-| Readings | V(+32V) × R72 / (R71 + R72) over the output range; below the ADC's ATTEN3 range with margin |
-| Source impedance | R71 ∥ R72 with C49: τ = R × C49, longer than an LED pulse, so it reads the DC rail |
-| Error | From the resistor tolerances |
-| Unpowered P4 | As for `LED_K_SENSE` ([LED_K sense](#led_k-sense)): after a power loss C46/C47 may still hold charge, and R71 drives about Vout max / (R71 + R72 ∥ pad) into the unpowered pad. The P4 datasheet gives no injection limit ([Accepted risks](#accepted-risks)) |
-
-Firmware can read it to confirm the boost is up before enabling the LEDs, and to watch the rail.
-
-The two dividers (R65/R66 and R71/R72) draw V(+32V) / (R65 + R66) + V(+32V) / (R71 + R72) from
-+32V; the `LED_K_SENSE` divider adds its current through the string.
+There is no separate +32V reading (user decision 2026-11-11, board simplification: the +32V
+divider to an ADC pin was removed). Firmware sees +32V only through `LED_K_SENSE`
+([Accepted risks](#accepted-risks)). The feedback divider draws V(+32V) / (R65 + R66) from +32V;
+the `LED_K_SENSE` divider adds its current through the string.
 
 ### Layout essentials
 
@@ -372,7 +352,7 @@ p.35; the "U10 exposed pad vias" entry).
 
 The +32V trunk starts at D3's cathode (U10 itself is not on +32V). Find its lengths with
 `kicad_query lengths` paths from D3.1, C45.1, C47.1 and C46.1 to D4.2, with via heights counted.
-The branches to R65, R71 and TP13 carry µA and are thin.
+The branches to R65 and TP13 carry µA and are thin.
 
 The trunk is wide near D3 and necks only where the space forces it. The run from D3 to C47 stays
 on F.Cu along the bottom edge, kept off the board copper under the module U6
@@ -426,7 +406,7 @@ Inputs of the worst case:
 | Input | Range | Source |
 |---|---|---|
 | +3V3 | DC set-point range: VFB 0.588–0.612 V (TI SLVSDG1C p.4) × (1 + R16/R17) at the resistor tolerances | [Rails](README.md#rails), [3.3 V buck](power.md#33-v-buck). `ISET` follows `LED_ON`, which is +3V3 |
-| +5V | `+5V` on PoE, the only source the LEDs run on | [Boost input range](#boost-input-range). U11 and R63 are on `+5V`, not `+5V_BST` |
+| +5V | `+5V` on PoE, the only source the LEDs run on | [Boost input range](#boost-input-range) |
 | Resistors | Tolerance corners of every value-setting resistor | All value-setting resistors are one tolerance class |
 | Op-amp offset Vos | ±1.6 mV | SBOS839N p.13 |
 | R69 temperature coefficient | ±800 ppm/°C (UNI-ROYAL low-ohm chip-resistor datasheet p.6, 0.03 Ω < R < 1 Ω). I_LED ∝ 1 / R69 at R69's own temperature | The worst case takes R69 at 25 °C; an R69 that drops by TCR × ΔT when warm raises the current by the same fraction, out of the same margin |
@@ -778,9 +758,8 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
   ([Q1 protection](#q1-protection)).
 - **C48 is small, not the 0.1 µF HDG §1.3.10 suggests at an ADC pin,** because 0.1 µF would not
   settle within the pulse ([LED_K sense](#led_k-sense)).
-- **`LED_K_SENSE` and `VLED_SENSE` can drive current into unpowered P4 pins** while C46/C47 hold
-  charge after a power loss (bounds in [LED_K sense](#led_k-sense) and
-  [Output voltage sense](#output-voltage-sense)); the P4 datasheet gives no injection limit.
+- **`LED_K_SENSE` can drive current into an unpowered P4 pin** while C46/C47 hold charge after a
+  power loss (bound in [LED_K sense](#led_k-sense)); the P4 datasheet gives no injection limit.
 - **LED current set to the DC curve at 30 °C with a thin margin.** R60/R61 (user decision
   2026-10-31, stay on the DC curve; fee-free values, user decision 2026-11-09). The margin is
   I_max(30 °C) − worst-case I_LED, in degrees of LED heating = margin / the curve's slope
@@ -789,7 +768,14 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
   above any expected board temperature (user decision 2026-11-09). Any LED heating above ambient
   beyond that needs a lower R61 ([first-board checks](#first-board-checks)).
 - **No hardware gate on USB power.** The LEDs stay off on USB alone only because firmware keeps
-  `LED_PWR_EN` low while `PWR_SRC` is low (user decision 2026-10-31).
+  `BST_EN` and `LED_EN` low while `PWR_SRC` is low (user decision 2026-10-31).
+- **No hardware switch on the LED supply** (user decision 2026-11-11, board simplification).
+  +32V idles at `+5V` minus D3's drop whenever the board is powered; the LED side is off only by
+  `BST_EN` (U10's internal pull-down) and `LED_EN` (R56), and the string cannot conduct at that
+  rail ([LED supply](#led-supply)).
+- **No independent +32V reading** (user decision 2026-11-11, board simplification). A dead boost
+  and an open LED string both show as a between-pulse `LED_K_SENSE` reading at zero; firmware
+  treats both as one fault (FW-7) and cannot tell which.
 - **The hardware timeout cuts only within its window.** The ≤ 0.5 ms limit is a firmware rule.
   U9's threshold spread and C33's X7R tolerance set the window, so it can't cut closer. A firmware
   fault could run the LEDs up to the window's upper end per frame, a duty of t_max × fps (user
@@ -847,8 +833,9 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
      Q / Iout_max at duty 1, [Recovery and start-up](#recovery-and-start-up));
    - a start-up time in the range of [Recovery and start-up](#recovery-and-start-up), with no
      EasyScale entry or shutdown when the 50 kHz PWM follows the soft start.
-   Compare the `VLED_SENSE` reading × the R71/R72 ratio with TP13. Scope `+5V_BST` during the
-   recovery to see whether the boost runs at its current limit there, as
+   Log the between-pulse `LED_K_SENSE` reading through the start-up against TP13: it must stop
+   rising when +32V reaches its set point, which FW-7's power-up wait relies on. Scope `+5V` (at
+   C36) during the recovery to see whether the boost runs at its current limit there, as
    [estimated](#recovery-and-start-up).
 5. **Timeout.** With `LED_EN` high:
    - a 0.5 ms STROBE must give a whole 0.5 ms `LED_ON` pulse;
@@ -858,11 +845,11 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
    - STROBE's width must match the configured exposure within 50 µs over the exposure range
      (FW-9's pulse-width limit, the exposure cap plus 50 µs, assumes it), and a longer STROBE, e.g. 0.6 ms, must make firmware
      drop `LED_EN` before the next frame.
-6. **Default-off and USB.** At reset and in download mode, nothing drives the three enables:
-   `LED_PWR_EN` (R57), `BST_EN` (U10's internal pull-down) and `LED_EN` (R56); R68 also holds Q1's
-   gate low. Then +32V must stay unpowered (U8 off) and `LED_ON` low. On USB power alone, firmware
-   must hold `LED_PWR_EN` low: check that +32V stays at 0 V. Pulling PoE must drop `LED_EN`,
-   `BST_EN` and `LED_PWR_EN` in that order.
+6. **Default-off and USB.** At reset and in download mode, nothing drives the two enables:
+   `BST_EN` (U10's internal pull-down) and `LED_EN` (R56); R68 also holds Q1's gate low. Then +32V
+   must sit at `+5V` minus D3's drop (no switching), `LED_ON` low and the ring dark. On USB power
+   alone, firmware must hold `BST_EN` low: check that +32V stays at that idle level. Pulling PoE
+   must drop `LED_EN` and `BST_EN` in that order.
 7. **Headroom loop.** With probes on Q1's drain (R70.1) and on `ISNS` (TP14), on one unit unless
    a step names two:
    - `LED_K_SENSE` × (R70 + R76) / R76 must match the drain at the end of a pulse within the
