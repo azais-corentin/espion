@@ -36,6 +36,10 @@ pub trait Skip {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Scalar;
 
+// Static dispatch, but not forced inline into the detector's strip loop: there the block
+// loop runs short of registers (on the RISC-V build 42 instead of 39 instructions per 64
+// bytes, counted under qemu) and the code grows by 12 KB. The kernels are inlined here, so
+// each method is one call with no call inside.
 impl Skip for Scalar {
     #[inline]
     fn first_bright(&self, bytes: &[u8], threshold: u8) -> usize {
@@ -99,8 +103,14 @@ const BLOCK: usize = WINDOW / 4;
 /// per byte as a plain word loop; the exact test costs only on blocks that pass. The block
 /// loop keeps only the OR, so the words do not hold registers across it (with them live,
 /// the loop spills its end pointer: one more load per block); the test reloads them.
-#[inline(never)]
+///
+/// The words after the last whole block are tested as the block that ends with the last
+/// word when the slice holds one (the words it shares with the last whole block are dark):
+/// one block test instead of one test per word, on the rest of every row after a hit.
+#[inline(always)]
 fn first_bright8<const HIGH: bool>(bytes: &[u8], t: u8, add: u32) -> usize {
+    let or = |b: &[u32; BLOCK]| b.iter().fold(0, |a, &w| a | w);
+    let first_hot = |b: &[u32]| b.iter().position(|&w| hot::<HIGH>(w, add) != 0);
     // SAFETY: every bit pattern is a valid `u32`, and `align_to` only reinterprets the
     // middle part, which it aligns for `u32`; the slices cover `bytes` exactly, in order.
     let (pre, words, post) = unsafe { bytes.align_to::<u32>() };
@@ -112,19 +122,25 @@ fn first_bright8<const HIGH: bool>(bytes: &[u8], t: u8, add: u32) -> usize {
     let mut from = 0;
     while let Some(n) = blocks[from..]
         .iter()
-        .position(|b| hot::<HIGH>(b.iter().fold(0, |a, &w| a | w), add) != 0)
+        .position(|b| hot::<HIGH>(or(b), add) != 0)
     {
         let i = from + n;
-        if let Some(k) = blocks[i].iter().position(|&w| hot::<HIGH>(w, add) != 0) {
+        if let Some(k) = first_hot(&blocks[i]) {
             return lead + (i * BLOCK + k) * 4;
         }
         from = i + 1;
     }
-    let base = lead + blocks.len() * BLOCK * 4;
-    if let Some(k) = rest.iter().position(|&w| hot::<HIGH>(w, add) != 0) {
-        return base + k * 4;
+    let tail = match words.last_chunk::<BLOCK>() {
+        Some(last) if !rest.is_empty() && hot::<HIGH>(or(last), add) != 0 => {
+            first_hot(last).map(|k| words.len() - BLOCK + k)
+        }
+        Some(_) => None,
+        None => first_hot(rest),
+    };
+    if let Some(k) = tail {
+        return lead + k * 4;
     }
-    let base = base + rest.len() * 4;
+    let base = lead + words.len() * 4;
     match post.iter().position(|&b| b >= t) {
         Some(i) => base + i,
         None => bytes.len(),
@@ -141,10 +157,11 @@ const BLOCK10: usize = WINDOW10 / 4;
 /// [`raw10::SKIP_MASKS`], which zeroes the low-bit bytes; zero is below any threshold but 0,
 /// and with threshold 0 every pixel is bright anyway. The rest are top bytes of pixels. A
 /// block passes on the OR of its masked words (as in [`first_bright8`], with the same loop
-/// split), then its words are tested exactly; a hot word answers with the start of the
-/// group holding its first byte, which is at most 4 bytes before it. The bytes outside the
-/// words belong to the first and the last groups, which are tested whole.
-#[inline(never)]
+/// split and the same last block), then its words are tested exactly; a hot word answers
+/// with the start of the group holding its first byte, which is at most 4 bytes before it.
+/// The bytes outside the words belong to the first and the last groups, which are tested
+/// whole.
+#[inline(always)]
 fn first_bright10<const HIGH: bool>(bytes: &[u8], top: u8, add: u32) -> usize {
     let (groups, _) = bytes.as_chunks::<{ raw10::GROUP_BYTES }>();
     // SAFETY: as in `first_bright8`.
@@ -160,28 +177,43 @@ fn first_bright10<const HIGH: bool>(bytes: &[u8], top: u8, add: u32) -> usize {
     let group_start = |word: usize| (lead + word * 4) / raw10::GROUP_BYTES * raw10::GROUP_BYTES;
     let m = &raw10::SKIP_MASKS[lead];
     let (blocks, rest) = words.as_chunks::<BLOCK10>();
-    let or = |b: &[u32; BLOCK10]| {
+    // `m` rotated to start at word `start` of the slice.
+    let masks = |start: usize| -> [u32; 5] { core::array::from_fn(|j| m[(start + j) % 5]) };
+    let or = |b: &[u32; BLOCK10], m: &[u32; 5]| {
         (b[0] | b[5] | b[10] | b[15]) & m[0]
             | (b[1] | b[6] | b[11] | b[16]) & m[1]
             | (b[2] | b[7] | b[12] | b[17]) & m[2]
             | (b[3] | b[8] | b[13] | b[18]) & m[3]
             | (b[4] | b[9] | b[14] | b[19]) & m[4]
     };
+    let first_hot =
+        |b: &[u32], m: &[u32; 5]| (0..b.len()).position(|k| hot::<HIGH>(b[k] & m[k % 5], add) != 0);
     let mut from = 0;
     while let Some(n) = blocks[from..]
         .iter()
-        .position(|b| hot::<HIGH>(or(b), add) != 0)
+        .position(|b| hot::<HIGH>(or(b, m), add) != 0)
     {
         let i = from + n;
-        let b = &blocks[i];
-        if let Some(k) = (0..BLOCK10).position(|k| hot::<HIGH>(b[k] & m[k % 5], add) != 0) {
+        if let Some(k) = first_hot(&blocks[i], m) {
             return group_start(i * BLOCK10 + k);
         }
         from = i + 1;
     }
-    let base = blocks.len() * BLOCK10;
-    if let Some(k) = (0..rest.len()).position(|k| hot::<HIGH>(rest[k] & m[k % 5], add) != 0) {
-        return group_start(base + k);
+    let tail = match words.last_chunk::<BLOCK10>() {
+        Some(last) if !rest.is_empty() => {
+            let start = words.len() - BLOCK10;
+            let m = masks(start);
+            if hot::<HIGH>(or(last, &m), add) != 0 {
+                first_hot(last, &m).map(|k| start + k)
+            } else {
+                None
+            }
+        }
+        Some(_) => None,
+        None => first_hot(rest, m),
+    };
+    if let Some(k) = tail {
+        return group_start(k);
     }
     // The groups holding the bytes after the last word.
     let tail = (lead + words.len() * 4) / raw10::GROUP_BYTES;

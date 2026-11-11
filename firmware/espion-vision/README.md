@@ -59,6 +59,9 @@ Any skip that keeps the contract in `skip.rs` gives the same blobs.
   so the skip runs once over the rest of the strip (the rows of one `push_rows` call are
   contiguous) and row by row work resumes in the row of its answer, from the answer. A
   dark strip costs only the skip; there is no work per dark row.
+- One `push_rows` call runs one strip loop, built per pixel format and threshold class (no
+  format test per row), with the scan state in locals and the two run buffers swapped by
+  reference. A row with no run, under a row with no run, skips the labelling.
 - Blobs come out in the order in which their last row was seen, the same for a whole frame
   and for any split into strips.
 
