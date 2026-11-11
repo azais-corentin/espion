@@ -8,7 +8,7 @@ flowchart LR
   GM["grandmaster board<br/>(elected, BMCA)<br/>EMAC PTP clock"] -- "Sync, Follow_Up, Announce<br/>(UDP multicast)" --> SL["slave board<br/>EMAC PTP clock<br/>disciplined by statime"]
   SL -- "Delay_Req" --> GM
   GM -- "Delay_Resp" --> SL
-  SL -- "PPS (EMAC → GPIO)" --> SV["P4 PPS servo:<br/>network ↔ SYSTIMER<br/>(ETM capture)"]
+  SL -- "PPS (EMAC → GPIO)" --> SV["P4 PPS servo:<br/>network ↔ P4 local time<br/>(ETM capture)"]
   SV -- "XVS (RMT edges at T(k))" --> S[OV9281]
   S -- STROBE --> LED[LED gate]
 ```
@@ -21,7 +21,8 @@ The grandmaster also drives its own XVS through its own PPS servo, like every ot
   ordinary clock. End-to-end delay mechanism, UDP/IPv4 multicast (224.0.1.129, event port 319, general port 320). Domain
   0 by default; configurable so the rig can share a LAN with other PTP gear.
 - **Clock**: each board's PTP clock is the EMAC system time. It advances by a sub-second increment on every
-  tick of its reference clock (40 MHz crystal: 25 ns, the ESP-IDF default; other sources: check the TRM).
+  tick of its reference clock: the 40 MHz crystal (25 ns, the ESP-IDF default) or PLL_F80M (12.5 ns), chosen
+  by `HP_SYS_CLKRST_EMAC_PTP_REF_CLK_SRC_SEL` (TRM chapter 11).
   statime steers its rate through the addend register and steps it when the offset is large.
 - **Timestamps**: the EMAC stamps Sync and Delay_Req in hardware at the MII, on send and receive, so software
   latency never enters the offset.
@@ -64,12 +65,21 @@ board's state. To check in statime: changing clockClass and priority2 at runtime
   wire format), or a 2ⁿ Hz square wave (up to 16 384 Hz), which needs binary rollover.
 - **The P4 captures PPS edges in hardware through ETM**: the GPIO edge event triggers a timer capture, so
   interrupt latency doesn't matter. esp-hal 1.2.2 has no ETM driver on the P4, so `cam-p4` drives ETM at the
-  PAC level. To confirm in the TRM: which timer has the capture task (TIMG/GPTimer or SYSTIMER), and whether
-  the event fires on a pad the EMAC drives as an output. The board loops PPS back into GPIO33 through R34,
-  so either way works ([hardware/mcu.md](hardware/mcu.md)).
-- The P4 fits `network ↔ SYSTIMER` (offset + rate) over a sliding window of edges. Both clocks share the 40 MHz
-  crystal, so their ratio changes only when statime steers the PTP clock. A PTP step shows as a PPS phase
-  jump: the servo drops its window and re-acquires.
+  PAC level. From the TRM (chapters 14, 16, 17 and 59):
+  - SYSTIMER has no capture task; it only emits compare events.
+  - Each timer group's timer 0 has one (`TGn_TASK_CNT_CAP_TIMER0`). esp-rtos uses TG0 timer 0 for its alarm,
+    so **TG1 timer 0** is the free one: 25 ns resolution at most, and one latch, which software reads share.
+    A rising and a falling edge captured on the same timer overwrite each other unless the CPU reads between.
+  - **MCPWM capture** is the alternative: three 32-bit capture registers per unit, 6.25 ns at 160 MHz, fed
+    straight from a pin or by an ETM task. esp-hal has no MCPWM driver for the P4 either.
+  - The TRM gives no ETM latency, and does not say whether a GPIO event fires on a pad the EMAC drives as
+    an output. The board loops PPS back into GPIO33 through R34, so either way works
+    ([hardware/mcu.md](hardware/mcu.md)). Both are first-board measurements.
+- The P4 fits `network ↔ local time` (offset + rate) over a sliding window of edges, where local time is
+  the counter that captured them (TG1 timer 0 or the MCPWM capture timer). The XVS schedule below is in
+  SYSTIMER time, so the servo also needs the fixed relation between that counter and SYSTIMER: to design.
+  All these clocks derive from the 40 MHz crystal, so their ratios change only when statime steers the PTP
+  clock. A PTP step shows as a PPS phase jump: the servo drops its window and re-acquires.
 
 ## 3. Frame trigger (P4 → OV9281 XVS)
 
