@@ -28,9 +28,11 @@
 //!   [`first_bright10_scalar`] is the reference.
 //! - [`Pie::copy`]: `dst.copy_from_slice(src)` at any alignment of both, 16 bytes per
 //!   aligned load and store.
-//! - [`Pie::self_test`], [`Pie::self_test10`] and [`Pie::self_test_copy`] compare the
-//!   kernels with the references (`copy_from_slice` for the copy) on generated cases, on
-//!   the chip.
+//! - [`Pie::sum16_be`]: the Internet checksum's one's-complement sum of big-endian 16-bit
+//!   words, through the 40-bit multiply-accumulator. [`sum16_be_scalar`] is the reference.
+//! - [`Pie::self_test`], [`Pie::self_test10`], [`Pie::self_test_copy`] and
+//!   [`Pie::self_test_sum`] compare the kernels with the references (`copy_from_slice` for
+//!   the copy) on generated cases, on the chip.
 //!
 //! Everything that executes PIE or CSR instructions exists for `target_arch = "riscv32"`
 //! only; the encoders and the scalar reference build and test on the host.
@@ -126,4 +128,35 @@ fn first_bright_group(bytes: &[u8], threshold_top8: u8) -> Option<usize> {
         .chunks(5)
         .position(|g| g.iter().take(4).any(|&b| b >= threshold_top8))
         .map(|i| i * 5)
+}
+
+/// Scalar reference of [`Pie::sum16_be`]: the one's-complement sum of `bytes` taken as
+/// big-endian 16-bit words (an odd last byte is the high byte of a last word with low byte
+/// 0), as the Internet checksum (RFC 1071) adds them, before the final complement.
+///
+/// The result is fully folded: it is in `0..=0xFFFF`, congruent to the plain sum of the
+/// words modulo 0xFFFF, and 0 only when every word is 0 (a nonzero multiple of 0xFFFF
+/// gives 0xFFFF). Any length.
+///
+/// To finish a checksum, add the other partial sums (pseudo-header, other fragments; each
+/// at most 0xFFFF, or a plain sum of words) as `u32`, fold with
+/// `while s > 0xFFFF { s = (s & 0xFFFF) + (s >> 16) }`, and take `!s as u16`. A part that
+/// starts at an odd byte offset of the checksummed data must be byte-swapped
+/// (`(s as u16).swap_bytes()`) before it is added.
+pub fn sum16_be_scalar(bytes: &[u8]) -> u32 {
+    fold16(
+        bytes
+            .chunks(2)
+            .map(|w| u64::from(w[0]) << 8 | u64::from(w.get(1).copied().unwrap_or(0)))
+            .sum(),
+    )
+}
+
+/// Folds a sum of 16-bit words with end-around carries into `0..=0xFFFF`. Each step keeps
+/// the value modulo 0xFFFF (65536 = 1 mod 0xFFFF) and keeps a nonzero value nonzero.
+fn fold16(mut sum: u64) -> u32 {
+    while sum > 0xFFFF {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    sum as u32
 }

@@ -4,6 +4,7 @@
 
 pub(crate) mod copy;
 pub(crate) mod raw10;
+pub(crate) mod sum;
 
 use crate::first_bright_scalar;
 
@@ -38,7 +39,7 @@ impl Rng {
         Self(if seed == 0 { 0x9E37_79B9 } else { seed })
     }
 
-    fn next(&mut self) -> u32 {
+    pub(crate) fn next(&mut self) -> u32 {
         let mut x = self.0;
         x ^= x << 13;
         x ^= x >> 17;

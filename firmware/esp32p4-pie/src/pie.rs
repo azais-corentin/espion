@@ -8,8 +8,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::Error;
 use crate::check::{self, Buffer, Rng};
 use crate::encode::{
-    Ar, Q, andq, max_u8_a, movx_w_sar_bytes, src_q, vld_128_ip, vmax_u8, vmax_u8_ld_incp,
-    vst_128_ip,
+    Ar, Q, andq, max_u8_a, movx_r_xacc_l, movx_w_sar_bytes, src_q, vld_128_ip, vmax_u8,
+    vmax_u8_ld_incp, vmulas_u16_xacc, vmulas_u16_xacc_ld_ip, vst_128_ip, zero_xacc,
 };
 use crate::split;
 
@@ -214,6 +214,52 @@ impl Pie {
                 &src.0[c.src..c.src + c.len],
             );
             failures += u32::from(!check::copy::copied(src, dst, &c));
+        }
+        failures
+    }
+
+    /// The Internet checksum's partial sum of `bytes`: the one's-complement sum of the
+    /// bytes taken as big-endian 16-bit words, an odd last byte being the high byte of a last
+    /// word whose low byte is 0.
+    ///
+    /// Returns the fully folded sum, equal to
+    /// [`sum16_be_scalar`](crate::sum16_be_scalar): in `0..=0xFFFF`, congruent to the
+    /// plain sum of the words modulo 0xFFFF, and 0 only when every byte is 0. To finish a
+    /// checksum, add the other partial sums as `u32`, fold with
+    /// `while s > 0xFFFF { s = (s & 0xFFFF) + (s >> 16) }` and take `!s as u16`.
+    ///
+    /// Any alignment and length; never reads outside `bytes`. The bytes up to the first
+    /// 16-byte boundary and after the last one are summed one at a time. The aligned middle
+    /// goes through `esp.vmulas.u16.xacc` with a vector of ones: the 40-bit accumulator
+    /// `XACC` adds the eight little-endian 16-bit lanes of each 16 bytes. The middle is fed
+    /// in pieces of at most 64 KiB, whose lane sum is below 2^31, so `XACC` never
+    /// saturates and its low 32 bits are the whole piece. The little-endian lane sum gives
+    /// the big-endian word sum with at most one byte swap of the folded result; the proof
+    /// is in `split.rs`. Overwrites `q0`, `q7` and `XACC`.
+    pub fn sum16_be(&self, bytes: &[u8]) -> u32 {
+        split::sum16_be(bytes, |mid| {
+            // SAFETY: the split passes a 16-byte-aligned `mid` of at most 64 KiB, a multiple
+            // of 16; `self` proves PIE is enabled on this core and has no other user.
+            unsafe { sum_le16(mid.as_ptr(), mid.len()) }
+        })
+    }
+
+    /// Runs `cases` randomised comparisons of [`sum16_be`](Self::sum16_be) with
+    /// [`sum16_be_scalar`](crate::sum16_be_scalar) and returns how many differed.
+    ///
+    /// Slices are 0..=1600 bytes, odd and even, at every start alignment 0..16 in turn:
+    /// random bytes, all 0xFF (many carries), all 0, a single nonzero byte, 0xFF with a few
+    /// random bytes. Every byte around the slice is 1, so a kernel that reads past either
+    /// end gets a different sum. The same `seed` gives the same cases.
+    pub fn self_test_sum(&self, seed: u32, cases: u32) -> u32 {
+        // SAFETY: taken once; nothing below takes it again.
+        let [buf, _] = unsafe { self.case_buffers() };
+        let mut rng = Rng::new(seed);
+        let mut failures = 0;
+        for i in 0..cases {
+            let c = check::sum::generate(&mut rng, i, buf);
+            let s = &buf.0[c.start..c.start + c.len];
+            failures += u32::from(!check::sum::agrees(s, self.sum16_be(s)));
         }
         failures
     }
@@ -574,4 +620,61 @@ unsafe fn copy_shifted(dst: *mut u8, src: *const u8, len: usize) {
             options(nostack),
         );
     }
+}
+
+/// Eight 16-bit lanes of 1 (little-endian), the second operand of the accumulate.
+static ONES16: Aligned<16> = Aligned([1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]);
+
+/// The plain sum of the little-endian 16-bit lanes of `p[..len]`.
+///
+/// `XACC` is cleared, then each 16 bytes add their eight lanes times 1 to it
+/// (`esp.vmulas.u16.xacc` against `ONES16` in `q7`); the loop's form fuses the load of the
+/// next 16 bytes into the accumulate of the current ones, as esp-dsp's
+/// `dspi_dotprod_u16_arp4.S` does, and the last 16 bytes are accumulated without a load,
+/// so nothing past `p + len` is read. Bits 31:0 of `XACC` are the result; with
+/// `len <= 65536` the sum is below 2^31 (see `split::SUM_CHUNK`).
+///
+/// Registers: `a0` the pointer and `a1` the ones pointer (PIE address operands, post-
+/// incremented), `a3` the result (`esp.movx.r.xacc.l`). The end is only used by branches.
+///
+/// `asm!` options: `nostack`; `readonly` (reads `p[..len]` and `ONES16`, writes no
+/// memory). Not `pure`, for the reason given at [`skip_dark`].
+///
+/// # Safety
+///
+/// `p` is 16-byte aligned, `p[..len]` is readable, `len` is a multiple of 16 and at most
+/// 65536, and PIE is enabled on this core with no other user.
+#[inline(never)]
+unsafe fn sum_le16(p: *const u8, len: usize) -> u32 {
+    let sum: u32;
+    // SAFETY: the caller's contract; the loads read `ONES16` and `[p, p + len)` only.
+    unsafe {
+        asm!(
+            ".insn 4, {zero}",       // esp.zero.xacc
+            "bgeu a0, {end}, 3f",
+            ".insn 4, {ld_ones}",    // esp.vld.128.ip q7, a1, 16
+            ".insn 4, {ld_q0}",      // esp.vld.128.ip q0, a0, 16
+            "bgeu a0, {end}, 2f",
+            // q0 holds the 16 bytes before a0.
+            "1:",
+            ".insn 4, {mac_ld}",     // esp.vmulas.u16.xacc.ld.ip q0, a0, 16, q0, q7
+            "bltu a0, {end}, 1b",
+            "2:",
+            ".insn 4, {mac}",        // esp.vmulas.u16.xacc q0, q7
+            "3:",
+            ".insn 4, {read}",       // esp.movx.r.xacc.l a3
+            zero = const zero_xacc(),
+            ld_ones = const vld_128_ip(Q::Q7, Ar::A1, 16),
+            ld_q0 = const vld_128_ip(Q::Q0, Ar::A0, 16),
+            mac_ld = const vmulas_u16_xacc_ld_ip(Q::Q0, Ar::A0, 16, Q::Q0, Q::Q7),
+            mac = const vmulas_u16_xacc(Q::Q0, Q::Q7),
+            read = const movx_r_xacc_l(Ar::A3),
+            end = in(reg) p as usize + len,
+            inout("a0") p => _,
+            inout("a1") ONES16.0.as_ptr() => _,
+            out("a3") sum,
+            options(nostack, readonly),
+        );
+    }
+    sum
 }

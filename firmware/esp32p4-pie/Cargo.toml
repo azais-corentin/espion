@@ -1,6 +1,6 @@
 [package]
 name         = "esp32p4-pie"
-description  = "ESP32-P4 PIE (Xespv 2.2 SIMD) kernels on stable Rust: instruction encoders, enable token, dark-skip kernel (no_std, no heap)"
+description  = "ESP32-P4 PIE (Xespv 2.2 SIMD) kernels on stable Rust: instruction encoders, enable token, dark skip (RAW8, RAW10), copy, 16-bit checksum sum (no_std, no heap)"
 version      = "0.1.0"
 edition      = "2024"
 rust-version = "1.99"

@@ -5,7 +5,7 @@
 //! host tests run them with scalar stand-ins for the cores, at real addresses and every
 //! alignment. On the chip the closures are the `asm!` kernels of `pie.rs`.
 
-use crate::first_bright_group;
+use crate::{first_bright_group, fold16};
 
 /// RAW10 bytes per vector pass: lcm(5, 16) = 80, 16 groups, 64 pixels. The low-bit byte
 /// positions repeat with this period, so five fixed mask vectors cover them.
@@ -66,11 +66,67 @@ pub(crate) fn copy(dst: &mut [u8], src: &[u8], mid: impl FnOnce(&mut [u8], &[u8]
     dst_tail.copy_from_slice(src_tail);
 }
 
+/// Most bytes per call of the vector core of `sum16_be`: 4096 vectors of eight 16-bit
+/// lanes, whose sum is at most 4096 * 8 * 0xFFFF = 2 147 450 880 < 2^31. So the 40-bit
+/// accumulator never saturates and its low 32 bits (`esp.movx.r.xacc.l`) are the whole sum.
+pub(crate) const SUM_CHUNK: usize = 65536;
+
+/// [`Pie::sum16_be`](crate::Pie::sum16_be) around a vector core: the same value as
+/// [`sum16_be_scalar`](crate::sum16_be_scalar), for any alignment and length.
+///
+/// `le_lanes(mid)` gets a 16-byte-aligned `mid` of at most [`SUM_CHUNK`] bytes, a multiple
+/// of 16, and returns the plain sum of its little-endian 16-bit lanes (lane `j` is
+/// `mid[2j] + 256 * mid[2j + 1]`). Head (0 to 15 bytes, up to the first 16-byte boundary)
+/// and tail (0 to 15 bytes) are summed one byte at a time.
+///
+/// Why the lanes give the big-endian sum. Write the whole sum as a weighted byte sum: byte
+/// `i` of `bytes` weighs 256 when `i` is even (high byte of its word) and 1 when odd. In the
+/// middle, which starts at offset `h` (the head length), a lane holds bytes `h + 2j` (weight
+/// 1 in the lane) and `h + 2j + 1` (weight 256).
+/// - `h` odd: the lane weights are the big-endian weights, so the lane sum `L` is exactly
+///   the middle's share of the sum.
+/// - `h` even: the weights are swapped; each lane is the byte swap of the word the
+///   checksum takes. For a 16-bit `x = 256 a + b`, `swap(x) = 256 b + a`, and
+///   `256 x = 65536 a + 256 b = a + 256 b = swap(x) (mod 0xFFFF)`. So the middle's share
+///   is `256 L (mod 0xFFFF)`, which is `swap(fold16(L)) (mod 0xFFFF)` because
+///   `fold16(L) = L (mod 0xFFFF)`. Zero is kept too: `fold16(L)` is 0 only when `L` is,
+///   that is when every middle byte is 0, and `swap` maps 0 to 0 and nonzero to nonzero.
+///
+/// The final `fold16` of head share + middle share + tail share then equals
+/// `sum16_be_scalar`: both are in `0..=0xFFFF`, agree modulo 0xFFFF and are 0 exactly when
+/// all bytes are 0; those three facts determine the value (0xFFFF is the only nonzero
+/// value in the zero class).
+pub(crate) fn sum16_be(bytes: &[u8], mut le_lanes: impl FnMut(&[u8]) -> u32) -> u32 {
+    let head = ((bytes.as_ptr() as usize).wrapping_neg() & 15).min(bytes.len());
+    let (head_bytes, rest) = bytes.split_at(head);
+    let (mid, tail) = rest.split_at(rest.len() & !15);
+    let lanes: u64 = mid
+        .chunks(SUM_CHUNK)
+        .map(|chunk| u64::from(le_lanes(chunk)))
+        .sum();
+    let mut mid_share = fold16(lanes);
+    if head.is_multiple_of(2) {
+        mid_share = u32::from((mid_share as u16).swap_bytes());
+    }
+    fold16(weighted(head_bytes, 0) + u64::from(mid_share) + weighted(tail, head + mid.len()))
+}
+
+/// The big-endian word sum share of `bytes` lying at offset `start` of the checksummed data:
+/// a byte at an even offset weighs 256, at an odd offset 1.
+fn weighted(bytes: &[u8], start: usize) -> u64 {
+    bytes
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| u64::from(b) << if (start + i).is_multiple_of(2) { 8 } else { 0 })
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::check::raw10::{contract_holds, generate, scalar_blocks};
-    use crate::check::{Buffer, Rng, copy as copy_case};
+    use crate::check::{Buffer, Rng, copy as copy_case, sum as sum_case};
+    use crate::sum16_be_scalar;
 
     #[test]
     fn first_bright10_split_keeps_the_contract() {
@@ -115,5 +171,74 @@ mod tests {
     #[should_panic(expected = "does not match destination slice length")]
     fn copy_split_refuses_different_lengths() {
         copy(&mut [0; 4], &[0; 5], |_, _| {});
+    }
+
+    #[test]
+    fn sum16_split_equals_reference() {
+        let mut buf = Buffer::new();
+        let mut rng = Rng::new(0x1357_9bdf);
+        for i in 0..20_000 {
+            let c = sum_case::generate(&mut rng, i, &mut buf);
+            let s = &buf.0[c.start..c.start + c.len];
+            assert_eq!(
+                sum16_be(s, sum_case::scalar_lanes),
+                sum16_be_scalar(s),
+                "case {i}: {c:?}"
+            );
+        }
+    }
+
+    /// Several chunks for the core, every start alignment, both head parities.
+    #[test]
+    fn sum16_split_long_slices() {
+        #[repr(C, align(16))]
+        struct Big([u8; 3 * SUM_CHUNK + 64]);
+        let mut big = Big([0xFF; 3 * SUM_CHUNK + 64]);
+        // All 0xFF over 64 KiB: the largest lane sum one call returns (the core asserts
+        // it stays below 2^31), and the folded result 0xFFFF.
+        for start in 0..16 {
+            let s = &big.0[start..start + SUM_CHUNK];
+            assert_eq!(sum16_be(s, sum_case::scalar_lanes), 0xFFFF);
+        }
+        let mut rng = Rng::new(7);
+        big.0.iter_mut().for_each(|b| *b = rng.next() as u8);
+        for start in 0..16 {
+            for len in [
+                SUM_CHUNK - 1,
+                SUM_CHUNK + 17,
+                2 * SUM_CHUNK + 32,
+                3 * SUM_CHUNK + 1,
+            ] {
+                let s = &big.0[start..start + len];
+                assert_eq!(
+                    sum16_be(s, sum_case::scalar_lanes),
+                    sum16_be_scalar(s),
+                    "start {start}, len {len}"
+                );
+            }
+        }
+    }
+
+    /// The step `sum16_be` rests on: the folded sum of byte-swapped words is the byte swap
+    /// of the folded sum of the words.
+    #[test]
+    fn swapped_words_swap_the_folded_sum() {
+        let mut rng = Rng::new(99);
+        for n in 0..2000 {
+            let words: [u16; 64] = core::array::from_fn(|_| match n % 4 {
+                0 => 0xFFFF,
+                1 => 0,
+                _ => rng.next() as u16,
+            });
+            let words = &words[..n % 65];
+            let sum = |f: fn(u16) -> u16| fold16(words.iter().map(|&w| u64::from(f(w))).sum());
+            let swapped = sum(u16::swap_bytes);
+            let plain = sum(|w| w);
+            assert_eq!(
+                swapped,
+                u32::from((plain as u16).swap_bytes()),
+                "{words:x?}"
+            );
+        }
     }
 }

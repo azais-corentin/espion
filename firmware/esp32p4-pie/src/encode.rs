@@ -97,6 +97,18 @@ const fn ip_offset(imm: i32) -> u32 {
     ((off & 7) << 7) | ((off >> 3) << 26)
 }
 
+/// Post-increment of the multiply-accumulate `.ld.ip` forms: imm / 16 as 4 bits, split into
+/// bits 9:8 (low 2) and 20:19 (high 2).
+const fn mac_ip_offset(imm: i32) -> u32 {
+    assert!(imm % 16 == 0, "PIE MAC .ip offset must be a multiple of 16");
+    assert!(
+        imm >= -128 && imm <= 112,
+        "PIE MAC .ip offset must be in -128..=112"
+    );
+    let off = ((imm / 16) as u32) & 0xf;
+    ((off & 3) << 8) | ((off >> 2) << 19)
+}
+
 /// `esp.vld.128.ip qu, rs1, imm`: `qu` = 16 bytes at `rs1` (16-byte aligned), then
 /// `rs1 += imm`.
 pub const fn vld_128_ip(qu: Q, rs1: Ar, imm: i32) -> u32 {
@@ -166,6 +178,39 @@ pub const fn zero_q(qz: Q) -> u32 {
 /// `esp.movx.r.cfg rd`: `rd` = the PIE `CFG` register.
 pub const fn movx_r_cfg(rd: Ar) -> u32 {
     0x1B | rd_field(rd) | (1 << 13) | (1 << 23) | (1 << 31)
+}
+
+/// `esp.zero.xacc`: the 40-bit accumulator `XACC` = 0.
+pub const fn zero_xacc() -> u32 {
+    0x1B
+}
+
+/// `esp.vmulas.u16.xacc qx, qy`: `XACC` += the sum of the eight products of the unsigned
+/// 16-bit lanes of `qx` and `qy`, saturated to 40 bits.
+///
+/// Bit 15 is the `sat` operand; Espressif's assembler sets it whether `sat` is written or
+/// not and accepts no other value, so the encoder sets it too.
+pub const fn vmulas_u16_xacc(qx: Q, qy: Q) -> u32 {
+    0x02A2_A01B | ((qy as u32) << 26) | ((qx as u32) << 29)
+}
+
+/// `esp.vmulas.u16.xacc.ld.ip qu, rs1, imm, qx, qy`: as [`vmulas_u16_xacc`], and in the same
+/// instruction `qu` = 16 bytes at `rs1` (16-byte aligned), then `rs1 += imm`
+/// (-128..=112, a multiple of 16). `qu` may be `qx`: the product uses the old value.
+///
+/// Bit 21 is the `sat` operand, set as in [`vmulas_u16_xacc`].
+pub const fn vmulas_u16_xacc_ld_ip(qu: Q, rs1: Ar, imm: i32, qx: Q, qy: Q) -> u32 {
+    0x00A0_601F
+        | ((qu as u32) << 10)
+        | rs1_field(rs1)
+        | mac_ip_offset(imm)
+        | ((qy as u32) << 26)
+        | ((qx as u32) << 29)
+}
+
+/// `esp.movx.r.xacc.l rd`: `rd` = bits 31:0 of `XACC`.
+pub const fn movx_r_xacc_l(rd: Ar) -> u32 {
+    0x84C0_201B | rd_field(rd)
 }
 
 #[cfg(test)]
@@ -366,6 +411,61 @@ mod tests {
         (movx_r_cfg(Ar::A0), 0x8080_211b, "esp.movx.r.cfg a0"),
         (movx_r_cfg(Ar::T5), 0x8080_271b, "esp.movx.r.cfg t5"),
         (movx_r_cfg(Ar::S8), 0x8080_241b, "esp.movx.r.cfg s8"),
+        (zero_xacc(), 0x0000_001b, "esp.zero.xacc"),
+        (
+            vmulas_u16_xacc(Q::Q0, Q::Q7),
+            0x1ea2_a01b,
+            "esp.vmulas.u16.xacc q0, q7",
+        ),
+        (
+            vmulas_u16_xacc(Q::Q1, Q::Q7),
+            0x3ea2_a01b,
+            "esp.vmulas.u16.xacc q1, q7",
+        ),
+        (
+            vmulas_u16_xacc(Q::Q5, Q::Q2),
+            0xaaa2_a01b,
+            "esp.vmulas.u16.xacc q5, q2",
+        ),
+        (
+            vmulas_u16_xacc(Q::Q7, Q::Q0),
+            0xe2a2_a01b,
+            "esp.vmulas.u16.xacc q7, q0",
+        ),
+        (
+            vmulas_u16_xacc_ld_ip(Q::Q0, Ar::A0, 16, Q::Q0, Q::Q7),
+            0x1ca1_611f,
+            "esp.vmulas.u16.xacc.ld.ip q0, a0, 16, q0, q7",
+        ),
+        (
+            vmulas_u16_xacc_ld_ip(Q::Q1, Ar::A0, 16, Q::Q1, Q::Q7),
+            0x3ca1_651f,
+            "esp.vmulas.u16.xacc.ld.ip q1, a0, 16, q1, q7",
+        ),
+        (
+            vmulas_u16_xacc_ld_ip(Q::Q3, Ar::T6, -128, Q::Q5, Q::Q2),
+            0xa8b7_ec1f,
+            "esp.vmulas.u16.xacc.ld.ip q3, t6, -128, q5, q2",
+        ),
+        (
+            vmulas_u16_xacc_ld_ip(Q::Q6, Ar::S9, 112, Q::Q7, Q::Q1),
+            0xe4ac_fb1f,
+            "esp.vmulas.u16.xacc.ld.ip q6, s9, 112, q7, q1",
+        ),
+        (
+            vmulas_u16_xacc_ld_ip(Q::Q2, Ar::A5, 0, Q::Q2, Q::Q3),
+            0x4ca3_e81f,
+            "esp.vmulas.u16.xacc.ld.ip q2, a5, 0, q2, q3",
+        ),
+        (
+            vmulas_u16_xacc_ld_ip(Q::Q4, Ar::A2, -16, Q::Q0, Q::Q4),
+            0x10ba_731f,
+            "esp.vmulas.u16.xacc.ld.ip q4, a2, -16, q0, q4",
+        ),
+        (movx_r_xacc_l(Ar::A3), 0x84c0_229b, "esp.movx.r.xacc.l a3"),
+        (movx_r_xacc_l(Ar::A0), 0x84c0_211b, "esp.movx.r.xacc.l a0"),
+        (movx_r_xacc_l(Ar::T6), 0x84c0_279b, "esp.movx.r.xacc.l t6"),
+        (movx_r_xacc_l(Ar::S8), 0x84c0_241b, "esp.movx.r.xacc.l s8"),
     ];
 
     #[test]
