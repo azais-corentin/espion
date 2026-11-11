@@ -89,8 +89,13 @@ stream service is ready once the log shows `stream: ready` and
 cargo run -p poc-viewer --release                     # the window, [fe80::4553:9281%eth0]:5009
 cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 settings
 python3 firmware/poc-p4-stream/tools/streamdiag.py mark     # the board's CPU report: mark,
-python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report
+python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report,
+python3 firmware/poc-p4-stream/tools/streamdiag.py irq      # and the interrupt handlers
 ```
+
+Cargo features: `accounting` (default) builds the CPU accounts; `--no-default-features`
+leaves them out; `--features idle-counter` adds the idle counter (see
+[What the firmware does](#what-the-firmware-does)).
 
 With `SERVICE = Service::Bench` the board runs the network test service instead (ready at
 `bench: ready`); on the host, with the board on the interface `eth0` (default; `--iface`
@@ -145,27 +150,54 @@ The test service (`src/bench.rs`, the module docs have the formats):
   counts.
 
 The reports carry the CPU time: `copy_cyc`, cycles per datagram in the application's copy into
-the socket buffer; from the driver wrapper (`net/device.rs`), per frame, the cycles in smoltcp's
-part of the TX and RX tokens (`tx_stack_cyc`: headers, the payload copy into the DMA buffer and
-the UDP checksum) and in the driver's part (`tx_driver_cyc`: descriptor, cache write-back, poll
-demand), and the token requests (`token_cyc` each); from the executor's trace hooks
-(`src/cpu.rs`), the share of time the executor was busy and each task's cycles per datagram;
-and the EMAC's DMA status, missed-frame counter and MAC debug register.
+the socket buffer, and `copy_misaligned`, how many of those copies had source and destination
+unlike modulo 4 (the ROM `memcpy` copies them byte by byte, see
+[copy alignment](#measured-baseline-and-copy-alignment-2026-11-11)); from the driver wrapper
+(`net/device.rs`), per frame, the cycles in smoltcp's part of the TX and RX tokens
+(`tx_stack_cyc`: headers, the payload copy into the DMA buffer and the UDP checksum) and in the
+driver's part (`tx_driver_cyc`: descriptor, cache write-back, poll demand), and the token
+requests (`token_cyc` each); from the executor's trace hooks (`src/cpu.rs`), the share of time
+the executor was busy (`busy_pct`) and each task's cycles per datagram and polls; from the
+interrupt-handler wrappers (`src/irq.rs`), the handlers' share (`irq pct`), the part of it that
+fell outside executor passes (`outside_pct`, counted as idle before), the wake path
+(`wake_pct`, `wakes`, `wake_cyc`: from the end of such a handler to the next executor pass:
+esp-rtos's scheduler interrupt, the context switch, the executor's wake-up), each handler's
+calls and mean own cycles (`eth`, `tick`, `csi_dma`, `csi_host`, `csi_bridge`, `jpeg`,
+`dma2d_rx`, `dma2d_tx`), and `busy_all_pct`, the executor's busy share plus the handlers outside
+it and the wake path; and the EMAC's DMA status, missed-frame counter and MAC debug register.
+
+**Interrupt handlers.** The drivers bind their handlers (`esp32p4-csi`, `esp32p4-jpeg`,
+esp-hal's EMAC handler, esp-rtos's timer tick); `irq::install` then puts a trampoline in the
+vector table entry that times the handler it replaced and calls it (the source's mapping and
+priority stay the driver's). A handler's own time leaves out the handlers that nested in it.
+Not counted: the trap entry and exit around the handlers, and the time from the executor going
+idle to the core's idle loop (the sleep path; measured only with `idle-counter`, below).
+
+**The `accounting` feature** (on by default) builds the trace hooks, the handler wrappers and
+the driver wrapper's statistics. `cargo build --release --no-default-features` leaves them out
+(the driver wrapper then only sets the checksum capabilities); the reports then say
+`accounting=off`. **The `idle-counter` feature** (off by default) replaces esp-rtos's idle hook
+by a loop that counts idle cycles (steps of `mcycle` shorter than 256 cycles; it spins
+instead of `wfi`): the reports get `idle_pct`, `busy_idle_pct` and
+`busy_idle_cyc_per_datagram` (bench) or `core0_idle_pct` (stream), with `accounting` also the
+sleep path (`sleep_pct`, `sleeps`, `sleep_cyc`; `core0_sleep_pct`). It measures builds with
+and without `accounting` alike.
 
 | File | What |
 |---|---|
 | `src/main.rs` | Boot: log baud, chip, PSRAM, the network, the service selected by `SERVICE`, the RAM report |
 | `src/net/mod.rs` | The network module: pins and their sources, PHY reset, EMAC driver, TX threshold mode, the DMA storage in its linker section, embassy-net with the static IPv6 address, the runner and link tasks, EMAC register snapshot |
 | `src/net/ip101.rs` | IP101 PHY driver (`Phy` trait): link polled every 500 ms, speed and duplex from ANAR and ANLPAR, the last report for the log |
-| `src/net/device.rs` | `embassy-net-driver` wrapper around esp-hal's driver: per-frame cycle counts, and the checksum capabilities (UDP and ICMPv6 computed by smoltcp) |
-| `src/cpu.rs` | Cycle counter and per-task CPU time from the executor's `trace` hooks |
+| `src/net/device.rs` | `embassy-net-driver` wrapper around esp-hal's driver: per-frame cycle counts (feature `accounting`), and the checksum capabilities (UDP and ICMPv6 computed by smoltcp) |
+| `src/cpu.rs` | Cycle counter, per-task CPU time and polls from the executor's `trace` hooks (feature `accounting`), the idle counter (feature `idle-counter`) |
+| `src/irq.rs` | Interrupt-handler wrappers: calls and own cycles per handler and core, the time outside executor passes, the wake and sleep paths (feature `accounting`) |
 | `src/camera.rs` | OV9281 and CSI receiver: set-up, any mode's start (lanes checked in their stop state before stream-on), controls, stop, the newest frame, the fault switch of the stream's error-path test |
 | `src/stream/mod.rs` | The camera stream service: the shared stream state, the control task (requests, all-or-nothing `SetCamera`, repeats), the hand-off to the capture, encode and send tasks |
 | `src/stream/check.rs` | The `SetCamera` checks in the protocol's order, as the viewer's fake camera makes them |
 | `src/stream/capture.rs` | The capture task: frames, counters, the stream rules, mode changes and recovery |
 | `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
 | `src/stream/send.rs` | The send task: answers and frame chunks, encoded straight into the socket's ring |
-| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU and encoder report, fault injection, stall, log marker, too-small encoder outputs, encode-only |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
 | `dram_dma.x` | Linker section for the Ethernet DMA storage at 0x4FF40000 or above (see below) |
@@ -601,7 +633,11 @@ loop. The PSRAM source costs 3.95 ms of cache write-back and invalidation over 2
 **What limits the rate: the wire.** Every source reaches 100 Mbit/s on the wire with no loss,
 and the executor is idle 8–11 % of the time, so the CPU is not the limit; the app task waits
 for space in the socket buffer, which drains at the wire's pace. The CPU margin is thin,
-though: about 45 000 cycles per datagram on one core. The copies were not the limit, so none
+though: about 45 000 cycles per datagram on one core. (2026-11-11: the executor's idle time
+held interrupt handlers and the wake and sleep paths; the idle counter finds the core 1.4 to
+4.8 % idle in these runs, 46 500 to 48 500 cycles per datagram: see
+[CPU accounting](#measured-cpu-accounting-with-and-without-the-accounting-feature-2026-11-11).)
+The copies were not the limit, so none
 was removed; a word-by-word copy measured the same as the ROM `memcpy` esp-rom-sys links
 (13 080 against 13 043 cycles in the same test; dropped). `GenericPhy` instead of the IP101 driver (same build
 otherwise, internal RAM, 10 s): the same 11.795 MB/s, but the executor busy 99.8 % (never idle)
@@ -694,6 +730,50 @@ the chunk's postcard header.
   the payload's place in the slot (slot plus header length) matches the source modulo 4. In the
   stream that is about 21 000 cycles per datagram to win, more than the plan's estimate for the
   application copy alone.
+
+### Measured: CPU accounting with and without the `accounting` feature, 2026-11-11
+
+This tree, this board and link. Each build with `--features idle-counter`: accounting on, or
+`--no-default-features --features idle-counter` off. The busy share is `100 % - idle` from the
+idle counter, which runs in both; cycles per datagram are the busy cycles of the window (at
+400 MHz) over the datagrams sent. Bench: `netbench.py tx`, 20 s each (`accidle2-bench.*`,
+`noaccidle2-bench.*`); stream: 10 s windows with `jrx` and the test hooks' report
+(`accidle3-stream.*`, `noaccidle2-stream.*`); logs in `/tmp/p4perf-logs/StreamBase/`.
+
+| Run | Host rate, both builds | Idle, on / off | Busy, on / off | Cycles per datagram, on / off | Cost of the accounts |
+|---|---|---|---|---|---|
+| Bench, internal RAM, run 1 | 11.795 / 11.796 MB/s | 1.4 / 4.8 % | 98.5 / 95.1 % | 48 130 / 46 501 | 1 629 cycles per datagram, 3.4 points |
+| Bench, internal RAM, run 2 | 11.795 / 11.796 MB/s | 1.4 / 4.8 % | 98.5 / 95.1 % | 48 128 / 46 488 | 1 640, 3.4 points |
+| Bench, camera frames | 11.801 MB/s | 1.4 / 1.6 % | 98.5 / 98.3 % | 48 460 / 48 346 | not visible: the core is nearly full in both |
+| Stream, raw 1280x800 RAW8, link-bound | 90.01 / 89.93 Mbit/s | 5.5 / 6.2 % | 94.5 / 93.8 % | 47 620 / 47 268 | 352, 0.7 points |
+| Stream, JPEG q90, gain 2x, 120 Hz | 14.96 / 14.90 Mbit/s | 82.6 / 83.3 % | 17.4 / 16.7 % | 49 571 / 47 970 | 1 601, 0.7 points |
+
+So the trace hooks, the handler wrappers and the driver wrapper's statistics cost about 1 600
+cycles per datagram (3.4 % of the 46 500), where the core has room. Near a full core (the
+camera bench, the raw stream at the wire rate) the difference shrinks: the executor then sleeps
+less often, and each sleep and wake avoided saves about 3 300 cycles (below), which hides the
+accounts' cost [INFERENCE: from the wake and sleep counts, not measured apart]. The default
+stays `accounting` on; the cost is the price of the figures in every report.
+
+**What the accounts now see** (accounting and idle counter on; same runs):
+
+| Run | Executor busy | Handlers (outside the executor) | Wake path: count, cycles each | Sleep path: count, cycles each | Busy with them (`busy_all`) | Busy by the idle counter |
+|---|---|---|---|---|---|---|
+| Bench, internal RAM | 90.4 % | 1.6 % (1.3 %) | 113 450, 1 462 | 52 088, 1 862 | 95.0 % | 98.5 % |
+| Bench, camera frames | 92.8 % | 1.4 % (0.9 %) | 75 994, 1 546 | 73 228, 1 872 | 96.9 % | 98.5 % |
+| Stream, raw RAW8, link-bound | 93.0 % | 0.9 % (0.2 %) | 7 819, 1 643 | (0.3 %) | 93.8 % | 94.5 % |
+| Stream, JPEG q90, gain 2x | 16.1 % | 0.3 % (0.2 %) | 9 269, 1 509 | (0.3 %) | 17.0 % | 17.4 % |
+
+Handlers per call (own cycles): the EMAC handler 785 in the bench (one call per datagram:
+163 759 for 163 778 datagrams), 426 to 608 in the stream; the CSI DMA handler 886 to 1 345 per
+frame; the JPEG codec's 948 and the 2D-DMA RX channel's 329 per frame; esp-rtos's timer tick 48
+to 152 calls in 10 s, 2 500 to 3 000 cycles each, about 26 000 while camera frames go out. In the
+bench the executor's busy share left out 4.6 points of real work (95.0 against 90.4 %): the
+wake path 2.0, the handlers outside the executor 1.3 and the sleep path 1.2. Another 3.5 points
+remain unseen by the accounts (95.0 against 98.5 %) [INFERENCE: the trap entry and exit around
+each handler, and esp-rtos's software interrupt outside the wake and sleep windows]. In the
+stream the executor sleeps rarely (8 000 to 9 000 times in 10 s), and the accounts come within
+0.4 to 0.7 points of the idle counter.
 
 ## The Ethernet driver (esp-hal 1.2.2 `ethernet`, `unstable`)
 

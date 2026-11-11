@@ -40,7 +40,7 @@ use log::{info, warn};
 use static_cell::ConstStaticCell;
 
 use crate::camera::{self, Camera};
-use crate::{cpu, net};
+use crate::{cpu, irq, net};
 
 /// Port of the board-to-host service.
 pub const TX_PORT: u16 = 5010;
@@ -194,6 +194,7 @@ impl Kind {
 struct Probe {
     at: Instant,
     cpu: cpu::Snapshot,
+    irq: irq::Snapshot,
     net: net::Stats,
 }
 
@@ -208,6 +209,7 @@ fn mark(i: usize) -> Instant {
     let p = Probe {
         at: Instant::now(),
         cpu: cpu::snapshot(),
+        irq: irq::snapshot(cpu::core()),
         net: net::stats(),
     };
     critical_section::with(|cs| PROBES.borrow_ref_mut(cs)[i] = Some(p));
@@ -224,6 +226,9 @@ struct Tally {
     frames: u32,
     /// Cycles in the copy into the socket buffer (header and payload).
     copy_cycles: u64,
+    /// Copies whose source and destination differ in alignment modulo 4 (the ROM `memcpy`
+    /// copies those byte by byte).
+    copy_misaligned: u32,
     /// Cycles of the cache write-back + invalidation of the PSRAM source.
     flush_cycles: u64,
 }
@@ -378,13 +383,17 @@ async fn send_frame(
                 for (d, v) in words.iter_mut().zip(header) {
                     *d = v.to_le_bytes();
                 }
-                buf[HEADER..len].copy_from_slice(chunk);
-                (len, cpu::mcycle().wrapping_sub(c0))
+                let dst = &mut buf[HEADER..len];
+                let misaligned =
+                    !(chunk.as_ptr() as usize ^ dst.as_ptr() as usize).is_multiple_of(4);
+                dst.copy_from_slice(chunk);
+                (len, (cpu::mcycle().wrapping_sub(c0), misaligned))
             })
             .await
         {
-            Ok(c) => {
+            Ok((c, misaligned)) => {
                 t.copy_cycles += u64::from(c);
+                t.copy_misaligned += u32::from(misaligned);
                 t.datagrams += 1;
                 t.bytes += len as u64;
             }
@@ -399,7 +408,7 @@ async fn send_frame(
 /// Returns its length.
 #[allow(
     clippy::large_stack_frames,
-    reason = "once per run, after it, on the main stack (the two probes are 544 B)"
+    reason = "once per run, after it, on the main stack (the two probes are about 800 B)"
 )]
 #[inline(never)]
 fn write_report(buf: &mut [u8], kind: Kind, t: &Tally, cam: Option<&esp32p4_csi::Stats>) -> usize {
@@ -414,7 +423,10 @@ fn write_report(buf: &mut [u8], kind: Kind, t: &Tally, cam: Option<&esp32p4_csi:
     let mut w = BufWriter::new(&mut buf[HEADER..]);
     write_tally(&mut w, kind, t, us);
     write_net(&mut w, &after.net.since(&before.net));
-    write_cpu(&mut w, &after.cpu.since(&before.cpu), t.datagrams);
+    let c = after.cpu.since(&before.cpu);
+    let i = after.irq.since(&before.irq);
+    write_cpu(&mut w, &c, &i, t.datagrams, us);
+    write_irq(&mut w, &i, c.at, t.datagrams);
     if let Some(s) = cam {
         write_cam(&mut w, s, us);
     }
@@ -444,7 +456,7 @@ fn write_tally(w: &mut BufWriter<'_>, kind: Kind, t: &Tally, us: u64) {
     let n = u64::from(t.datagrams.max(1));
     let _ = write!(
         w,
-        "tx source={} us={us} datagrams={} bytes={} frames={} errors={} rate_kBps={} copy_cyc={} flush_us={}",
+        "tx source={} us={us} datagrams={} bytes={} frames={} errors={} rate_kBps={} copy_cyc={} copy_misaligned={} flush_us={}",
         kind.name(),
         t.datagrams,
         t.bytes,
@@ -452,12 +464,16 @@ fn write_tally(w: &mut BufWriter<'_>, kind: Kind, t: &Tally, us: u64) {
         t.errors,
         t.bytes * 1000 / us,
         Ratio(t.copy_cycles, n),
+        t.copy_misaligned,
         t.flush_cycles / 400,
     );
 }
 
 #[inline(never)]
 fn write_net(w: &mut BufWriter<'_>, s: &net::Stats) {
+    if !cfg!(feature = "accounting") {
+        return;
+    }
     let tx = u64::from(s.tx_frames.max(1));
     let rx = u64::from(s.rx_frames.max(1));
     let _ = write!(
@@ -478,16 +494,84 @@ fn write_net(w: &mut BufWriter<'_>, s: &net::Stats) {
     );
 }
 
+/// The run's CPU accounts: the executor's busy share and the share with the interrupt
+/// handlers outside its passes and the wake path (`busy_all_pct`), each task's cycles per
+/// datagram and polls; with `idle-counter` the idle share and the busy cycles per datagram it
+/// gives; without `accounting` only `accounting=off` and that.
 #[inline(never)]
-fn write_cpu(w: &mut BufWriter<'_>, c: &cpu::Snapshot, datagrams: u32) {
+fn write_cpu(w: &mut BufWriter<'_>, c: &cpu::Snapshot, i: &irq::Snapshot, datagrams: u32, us: u64) {
     let n = u64::from(datagrams.max(1));
+    if cfg!(feature = "accounting") {
+        let at = c.at.max(1);
+        let _ = write!(
+            w,
+            " | cpu busy_pct={} busy_all_pct={} cyc_per_datagram:",
+            Ratio(c.busy * 100, at),
+            Ratio(i.busy_all(c.busy) * 100, at),
+        );
+        for a in c.tasks.iter().filter(|a| a.id != 0) {
+            let _ = write!(w, " {}={}/{}polls", a.name, Ratio(a.cycles, n), a.polls);
+        }
+    } else {
+        let _ = w.write_str(" | cpu accounting=off");
+    }
+    if cfg!(feature = "idle-counter") {
+        let window = us * u64::from(esp_hal::clock::cpu_clock().as_mhz());
+        let busy = window.saturating_sub(c.idle);
+        let _ = write!(
+            w,
+            " idle_pct={} busy_idle_pct={} busy_idle_cyc_per_datagram={}",
+            Ratio(c.idle * 100, window),
+            Ratio(busy * 100, window),
+            Ratio(busy, n),
+        );
+    }
+}
+
+/// The interrupt handlers of the run (`crate::irq`): their share of the window (`at` cycles),
+/// the part outside executor passes, own cycles per datagram, the wake paths, and each
+/// handler's calls and mean own cycles. Nothing without `accounting`.
+#[inline(never)]
+fn write_irq(w: &mut BufWriter<'_>, i: &irq::Snapshot, at: u64, datagrams: u32) {
+    if !cfg!(feature = "accounting") {
+        return;
+    }
+    let at = at.max(1);
     let _ = write!(
         w,
-        " | cpu busy_pct={} cyc_per_datagram:",
-        Ratio(c.busy * 100, c.at.max(1))
+        " | irq pct={} outside_pct={} cyc_per_datagram={} wake_pct={} wakes={} wake_cyc={}",
+        Ratio(i.total() * 100, at),
+        Ratio(i.outside * 100, at),
+        Ratio(i.total(), u64::from(datagrams.max(1))),
+        Ratio(i.wake_cycles * 100, at),
+        i.wakes,
+        Ratio(i.wake_cycles, u64::from(i.wakes.max(1))),
     );
-    for a in c.tasks.iter().filter(|a| a.id != 0) {
-        let _ = write!(w, " {}={}/{}polls", a.name, Ratio(a.cycles, n), a.polls);
+    if cfg!(feature = "idle-counter") {
+        let _ = write!(
+            w,
+            " sleep_pct={} sleeps={} sleep_cyc={}",
+            Ratio(i.sleep_cycles * 100, at),
+            i.sleeps,
+            Ratio(i.sleep_cycles, u64::from(i.sleeps.max(1))),
+        );
+    }
+    write_handlers(w, i);
+}
+
+/// Each wrapped handler with calls: ` calls/cyc: <name>=<calls>/<mean own cycles>`.
+#[inline(never)]
+fn write_handlers(w: &mut BufWriter<'_>, i: &irq::Snapshot) {
+    let _ = w.write_str(" calls/cyc:");
+    for (k, name) in irq::NAMES.iter().enumerate() {
+        if i.calls[k] > 0 {
+            let _ = write!(
+                w,
+                " {name}={}/{}",
+                i.calls[k],
+                Ratio(i.cycles[k], u64::from(i.calls[k]))
+            );
+        }
     }
 }
 

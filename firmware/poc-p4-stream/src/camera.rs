@@ -208,6 +208,11 @@ fn make_camera(
             return None;
         }
     };
+    crate::irq::install(&[
+        crate::irq::Source::CsiDma,
+        crate::irq::Source::CsiHost,
+        crate::irq::Source::CsiBridge,
+    ]);
     log_ready(address);
     Some(CAMERA.init(Camera {
         sensor: Ov9281::new(Bus { i2c }, address),

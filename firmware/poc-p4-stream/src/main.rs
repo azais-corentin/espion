@@ -34,6 +34,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 mod bench;
 mod camera;
 mod cpu;
+mod irq;
 mod net;
 mod stream;
 
@@ -73,7 +74,11 @@ async fn main(spawner: Spawner) -> ! {
     let baud_divider = LOG_BAUD.map(set_log_baud);
 
     let timg0 = TimerGroup::new(p.TIMG0);
+    #[cfg(not(feature = "idle-counter"))]
     esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
+    #[cfg(feature = "idle-counter")]
+    esp_rtos::start_with_idle_hook(timg0.timer0, p.FROM_CPU_INTR0, cpu::idle_hook);
+    irq::install(&[irq::Source::Tick]);
     cpu::name_current("main");
 
     if let Some((old, new)) = baud_divider {

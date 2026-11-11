@@ -3,10 +3,18 @@
 //! datagram to its sender:
 //!
 //! - `M`: mark: the start of a measurement window (CPU accounts, network counters, time).
-//! - `R`: report since the mark: per core, the executor's busy share and each task's share and
-//!   cycles per sent datagram (shares of the wall-clock window at the CPU clock), the stream
-//!   counters, bad datagrams on the camera port, the
-//!   receiver's counters and the EMAC's missed-frame count. Nothing is logged.
+//! - `R`: report since the mark: per core, the executor's busy share and each task's share,
+//!   cycles per sent datagram and polls (shares of the wall-clock window at the CPU clock);
+//!   the interrupt handlers' share, the part of it outside executor passes, the wake path and
+//!   the busy share with them (`crate::irq`); with the `idle-counter` feature the idle share
+//!   and the sleep path;
+//!   the stream counters, bad datagrams on the camera port, the receiver's counters and the
+//!   EMAC's missed-frame count. A core whose executor did not run in the window gets only its
+//!   busy share.
+//!   Without the `accounting` feature the CPU and network fields are replaced by
+//!   `accounting=off`. Nothing is logged.
+//! - `I`: per core, each wrapped interrupt handler's calls and mean own cycles per call since
+//!   the mark (a separate reply: the report fills a datagram).
 //! - `F1` / `F2`: the next mode change fails: `1` a sensor bus error (every write of the start
 //!   goes to an address nobody answers), `2` no first frame (stream-on left out); the
 //!   request is answered with the error and the previous mode runs again.
@@ -32,7 +40,7 @@ use log::info;
 use static_cell::ConstStaticCell;
 
 use super::{BAD_DATAGRAMS, CMDS, Cmd, DIAG_PORT, FAULT, SEND_BUSY_US, jpeg, shared};
-use crate::{cpu, net};
+use crate::{cpu, irq, net};
 
 const RX_BYTES: usize = 256;
 /// Twice [`REPLY_MAX`]: smoltcp asks for `REPLY_MAX` contiguous bytes, and with less than
@@ -67,10 +75,11 @@ pub(super) static CSI_STATS: Mutex<Cell<Stats>> = Mutex::new(Cell::new(Stats {
     bridge_error_bits: 0,
 }));
 
-/// The start of the measurement window (in a static: two CPU snapshots are about 600 B).
+/// The start of the measurement window (in a static: two CPU snapshots are about 800 B).
 struct Mark {
     at: Instant,
     cpu: [cpu::Snapshot; cpu::CORES],
+    irq: [irq::Snapshot; cpu::CORES],
     net: net::Stats,
     sent: u32,
 }
@@ -103,6 +112,7 @@ pub(super) async fn task(stack: Stack<'static>) {
                         let _ = w.write_str("mark");
                     }
                     [b'R', ..] => write_report(&mut w),
+                    [b'I', ..] => write_irq(&mut w),
                     [b'F', d @ b'1'..=b'2', ..] => {
                         FAULT.store(d - b'0', Ordering::Relaxed);
                         let _ = w.write_str("fault armed");
@@ -152,6 +162,7 @@ fn set_mark() {
         *MARK.borrow_ref_mut(cs) = Some(Mark {
             at: Instant::now(),
             cpu: [cpu::snapshot_of(0), cpu::snapshot_of(1)],
+            irq: [irq::snapshot(0), irq::snapshot(1)],
             net: net::stats(),
             sent: shared(|s| s.counters.datagrams_sent),
         });
@@ -180,17 +191,23 @@ fn write_report(w: &mut BufWriter<'_>) {
     let csi = critical_section::with(|cs| CSI_STATS.borrow(cs).get());
     let window = us * u64::from(esp_hal::clock::cpu_clock().as_mhz());
     let _ = write!(w, "window_us={us} uptime_us={}", now.as_micros());
+    if !cfg!(feature = "accounting") {
+        let _ = w.write_str(" accounting=off");
+    }
     for core in 0..cpu::CORES {
         write_core(w, core, window, sent);
     }
-    let _ = write!(
-        w,
-        " datagrams={sent} net_tx_frames={} net_rx_frames={} tx_stack_cyc={} tx_driver_cyc={}",
-        n.tx_frames,
-        n.rx_frames,
-        n.tx_stack / u64::from(n.tx_frames.max(1)),
-        n.tx_driver / u64::from(n.tx_frames.max(1)),
-    );
+    let _ = write!(w, " datagrams={sent}");
+    if cfg!(feature = "accounting") {
+        let _ = write!(
+            w,
+            " net_tx_frames={} net_rx_frames={} tx_stack_cyc={} tx_driver_cyc={}",
+            n.tx_frames,
+            n.rx_frames,
+            n.tx_stack / u64::from(n.tx_frames.max(1)),
+            n.tx_driver / u64::from(n.tx_frames.max(1)),
+        );
+    }
     let _ = write!(
         w,
         " captured={} sent={} skipped={} capture_errors={} datagrams_sent={} bad_requests={}",
@@ -232,28 +249,106 @@ fn write_report(w: &mut BufWriter<'_>) {
     );
 }
 
-/// One core's busy share and its tasks' shares since the mark.
+/// One core's busy shares and its tasks' shares and polls since the mark.
 #[allow(
     clippy::large_stack_frames,
-    reason = "on demand, outside the frame path; two CPU snapshots of about 300 B"
+    reason = "on demand, outside the frame path; two CPU snapshots of about 400 B"
 )]
 #[inline(never)]
 fn write_core(w: &mut BufWriter<'_>, core: usize, window: u64, sent: u32) {
-    let now = cpu::snapshot_of(core);
-    let c = critical_section::with(|cs| {
-        let m = MARK.borrow_ref(cs);
-        now.since(&m.as_ref().expect("marked at start").cpu[core])
-    });
+    let c = core_since_mark(core);
+    if cfg!(feature = "idle-counter") {
+        let _ = write!(w, " core{core}_idle_pct={}", Pct(c.idle, window));
+    }
+    if !cfg!(feature = "accounting") {
+        return;
+    }
     let _ = write!(w, " core{core}_busy_pct={}", Pct(c.busy, window));
+    let mut ran = false;
     for t in c.tasks.iter().filter(|t| t.id != 0 && t.polls > 0) {
+        ran = true;
         let _ = write!(
             w,
-            " core{core}_{}_pct={} core{core}_{}_cyc_per_dgram={}",
+            " core{core}_{}_pct={} core{core}_{}_cyc_per_dgram={} core{core}_{}_polls={}",
             t.name,
             Pct(t.cycles, window),
             t.name,
-            t.cycles / u64::from(sent.max(1))
+            t.cycles / u64::from(sent.max(1)),
+            t.name,
+            t.polls,
         );
+    }
+    if !ran {
+        return;
+    }
+    let i = irq_since_mark(core);
+    let _ = write!(
+        w,
+        " core{core}_busy_all_pct={} core{core}_irq_pct={} core{core}_irq_outside_pct={} core{core}_wake_pct={} core{core}_wakes={} core{core}_wake_cyc={}",
+        Pct(i.busy_all(c.busy), window),
+        Pct(i.total(), window),
+        Pct(i.outside, window),
+        Pct(i.wake_cycles, window),
+        i.wakes,
+        i.wake_cycles / u64::from(i.wakes.max(1)),
+    );
+    if cfg!(feature = "idle-counter") {
+        let _ = write!(w, " core{core}_sleep_pct={}", Pct(i.sleep_cycles, window));
+    }
+}
+
+/// Core `core`'s accounts since the mark.
+#[allow(
+    clippy::large_stack_frames,
+    reason = "on demand, outside the frame path; two CPU snapshots of about 270 B"
+)]
+#[inline(never)]
+fn core_since_mark(core: usize) -> cpu::Snapshot {
+    let now = cpu::snapshot_of(core);
+    critical_section::with(|cs| {
+        let m = MARK.borrow_ref(cs);
+        now.since(&m.as_ref().expect("marked at start").cpu[core])
+    })
+}
+
+/// Core `core`'s interrupt-handler accounts since the mark.
+#[inline(never)]
+fn irq_since_mark(core: usize) -> irq::Snapshot {
+    let now = irq::snapshot(core);
+    critical_section::with(|cs| {
+        let m = MARK.borrow_ref(cs);
+        now.since(&m.as_ref().expect("marked at start").irq[core])
+    })
+}
+
+/// The `I` reply: per core, each wrapped handler's calls and mean own cycles since the mark.
+#[allow(
+    clippy::large_stack_frames,
+    reason = "on demand, outside the frame path; two handler snapshots of about 130 B"
+)]
+#[inline(never)]
+fn write_irq(w: &mut BufWriter<'_>) {
+    let us = critical_section::with(|cs| {
+        let m = MARK.borrow_ref(cs);
+        (Instant::now() - m.as_ref().expect("marked at start").at).as_micros()
+    });
+    let _ = write!(w, "window_us={us}");
+    if !cfg!(feature = "accounting") {
+        let _ = w.write_str(" accounting=off");
+        return;
+    }
+    for core in 0..cpu::CORES {
+        let i = irq_since_mark(core);
+        for (k, name) in irq::NAMES.iter().enumerate() {
+            if i.calls[k] > 0 {
+                let _ = write!(
+                    w,
+                    " core{core}_irq_{name}_calls={} core{core}_irq_{name}_cyc={}",
+                    i.calls[k],
+                    i.cycles[k] / u64::from(i.calls[k]),
+                );
+            }
+        }
     }
 }
 

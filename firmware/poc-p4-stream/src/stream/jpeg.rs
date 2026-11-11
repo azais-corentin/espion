@@ -186,6 +186,11 @@ pub(super) async fn task(out_mem: &'static mut [u8]) {
             return;
         }
     };
+    crate::irq::install(&[
+        crate::irq::Source::Jpeg,
+        crate::irq::Source::Dma2dRx,
+        crate::irq::Source::Dma2dTx,
+    ]);
     log_ready(base);
     let mut auto = Auto::new();
     loop {

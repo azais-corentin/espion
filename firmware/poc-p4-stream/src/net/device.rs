@@ -6,16 +6,19 @@
 //! frame and copy the payload into the socket buffer); the rest of `consume` is the driver's
 //! (descriptor ownership, cache write-back or invalidation, poll demand). The `receive` and
 //! `transmit` calls (descriptor checks, one cache invalidation each) count as the driver's too.
+//!
+//! With the cargo feature `accounting` off, the wrapper keeps only the checksum capabilities:
+//! no timing, no critical section per frame, [`stats`] returns zeros.
 
+#[cfg(feature = "accounting")]
 use core::cell::Cell;
 use core::task::Context;
 
+#[cfg(feature = "accounting")]
 use critical_section::Mutex;
 use embassy_net_driver::{
     Capabilities, Checksum, Driver, HardwareAddress, LinkState, RxToken, TxToken,
 };
-
-use crate::cpu::mcycle;
 
 /// Frame counts and cycles since boot.
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,6 +57,7 @@ impl Stats {
     }
 }
 
+#[cfg(feature = "accounting")]
 static STATS: Mutex<Cell<Stats>> = Mutex::new(Cell::new(Stats {
     tx_frames: 0,
     tx_stack: 0,
@@ -65,11 +69,15 @@ static STATS: Mutex<Cell<Stats>> = Mutex::new(Cell::new(Stats {
     token_cycles: 0,
 }));
 
-/// The counters now.
+/// The counters now (zeros without `accounting`).
 pub fn stats() -> Stats {
-    critical_section::with(|cs| STATS.borrow(cs).get())
+    #[cfg(feature = "accounting")]
+    return critical_section::with(|cs| STATS.borrow(cs).get());
+    #[cfg(not(feature = "accounting"))]
+    Stats::default()
 }
 
+#[cfg(feature = "accounting")]
 fn update(f: impl FnOnce(&mut Stats)) {
     critical_section::with(|cs| {
         let cell = STATS.borrow(cs);
@@ -77,6 +85,20 @@ fn update(f: impl FnOnce(&mut Stats)) {
         f(&mut s);
         cell.set(s);
     });
+}
+
+#[cfg(not(feature = "accounting"))]
+#[inline(always)]
+fn update(_: impl FnOnce(&mut Stats)) {}
+
+/// The cycle counter with `accounting`, else 0 (nothing is timed).
+#[inline(always)]
+fn mcycle() -> u32 {
+    if cfg!(feature = "accounting") {
+        crate::cpu::mcycle()
+    } else {
+        0
+    }
 }
 
 /// The wrapped driver.

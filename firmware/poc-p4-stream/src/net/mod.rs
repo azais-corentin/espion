@@ -128,6 +128,7 @@ pub async fn start(
     reset.set_high();
     Timer::after_millis(PHY_RESET_MS).await;
     let (stack, runner) = bring_up(pins)?;
+    crate::irq::install(&[crate::irq::Source::Eth]);
     spawner.spawn(net_task(runner).unwrap());
     spawner.spawn(link_task().unwrap());
     if with_timeout(LINK_TIMEOUT, stack.wait_link_up())

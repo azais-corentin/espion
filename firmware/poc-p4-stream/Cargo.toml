@@ -7,6 +7,17 @@ rust-version = "1.99"
 license      = "MIT OR Apache-2.0"
 publish      = false
 
+[features]
+default = ["accounting"]
+# CPU accounts: the executor's `trace` hooks (cycles and polls per task, busy share), the
+# interrupt-handler wrappers and the wake path (src/irq.rs) and the network driver's per-frame
+# statistics (src/net/device.rs). Without it: `cargo build --release --no-default-features`.
+accounting = ["embassy-executor/trace"]
+# Idle cycles counted by esp-rtos's idle hook, which then spins instead of waiting for an
+# interrupt (src/cpu.rs): the busy share of builds with and without `accounting`. Off by
+# default (no `wfi`: more power).
+idle-counter = []
+
 [dependencies]
 esp32p4-csi  = { path = "../esp32p4-csi" }
 esp32p4-jpeg = { path = "../esp32p4-jpeg" }
@@ -29,8 +40,9 @@ esp-println = { version = "0.18.0", default-features = false, features = [
 esp32p4 = { version = "0.3.0", features = ["critical-section"] }
 
 critical-section = "1.2.0"
-# `trace`: the executor's poll hooks, for the CPU time per task (src/cpu.rs).
-embassy-executor = { version = "0.10.0", features = ["log", "trace"] }
+# `trace` (feature `accounting`): the executor's poll hooks, for the CPU time per task
+# (src/cpu.rs).
+embassy-executor = { version = "0.10.0", features = ["log"] }
 # IPv6 only (no IPv4, no DHCP), UDP sockets, smoltcp's automatic ICMPv6 echo reply (ping).
 embassy-net = { version = "0.9.1", features = [
   "auto-icmp-echo-reply",
