@@ -1,22 +1,65 @@
 //! Randomised equivalence of the detector with the flood-fill reference ([`reference`]):
 //! frame widths and heights, blob counts, sizes and positions (borders included),
-//! backgrounds, thresholds, both pixel formats, buffer alignments and strip splits. The
-//! seeds are fixed, so a failure repeats.
+//! backgrounds, thresholds, both pixel formats, buffer alignments, strip splits and the
+//! answers a [`Skip`] may give. The seeds are fixed, so a failure repeats.
 
 use std::vec::Vec;
 use std::{format, vec};
 
-use crate::{Blob, Detector, raw10, reference};
+use crate::{Blob, Detector, Scalar, Skip, raw10, reference};
 
-const WIDTHS: [usize; 4] = [64, 320, 640, 1280];
+/// Below, at and above one 64-byte window, not multiples of 64 (72, 1288) and the sizes of
+/// the board's modes.
+const WIDTHS: [usize; 8] = [4, 36, 64, 72, 320, 640, 1280, 1288];
 const MAX_HEIGHT: u32 = 24;
-/// Frames per width and format (both formats together: about 2 s in a debug build).
+/// Frames per width and format.
 const CASES: u32 = 1000;
 const MAX_BLOBS: u32 = 64;
 const MAX_RADIUS: u32 = 12;
 /// Thresholds drawn half of the time; the rest are uniform in `1..=max`.
 const SPECIAL_RAW8: [u32; 7] = [1, 2, 127, 128, 129, 254, 255];
 const SPECIAL_RAW10: [u32; 10] = [1, 3, 4, 508, 511, 512, 513, 516, 1020, 1023];
+
+/// Skips with other answers than [`Scalar`] that keep the [`Skip`] contract: the detector
+/// must find the same blobs whichever the contract allows.
+#[derive(Clone, Copy, Debug)]
+enum Model {
+    Scalar,
+    /// The start of the window-sized block, counted from the slice start, that holds the
+    /// first bright pixel, as a vector skip answers.
+    Block,
+    /// As early as the contract allows: the bright pixel at the end of the window.
+    Early,
+}
+
+impl Skip for Model {
+    fn first_bright(&self, bytes: &[u8], threshold: u8) -> usize {
+        let len = bytes.len();
+        let first = bytes.iter().position(|&b| b >= threshold).unwrap_or(len);
+        match self {
+            Model::Scalar => Scalar.first_bright(bytes, threshold),
+            _ if first == len => len,
+            Model::Block => first / 64 * 64,
+            Model::Early => first.saturating_sub(63),
+        }
+    }
+
+    fn first_bright10(&self, bytes: &[u8], threshold_top8: u8) -> usize {
+        let len = bytes.len();
+        let (groups, _) = bytes.as_chunks::<{ raw10::GROUP_BYTES }>();
+        let first = groups
+            .iter()
+            .position(|g| g[..4].iter().any(|&b| b >= threshold_top8))
+            .map_or(len, |g| g * raw10::GROUP_BYTES);
+        match self {
+            Model::Scalar => Scalar.first_bright10(bytes, threshold_top8),
+            _ if first == len => len,
+            Model::Block => first / 80 * 80,
+            // The top byte of the group's last pixel is 3 bytes after the group start.
+            Model::Early => first.saturating_sub(75),
+        }
+    }
+}
 
 /// xorshift32.
 struct Rng(u32);
@@ -119,18 +162,20 @@ fn run(raw10: bool, seed: u32) {
                 }
                 det.begin_frame(w as u16, t as u8);
             }
+            let model = [Model::Scalar, Model::Block, Model::Early][rng.below(3) as usize];
             let mut splits = Vec::new();
             let mut y = 0;
             while y < h {
                 let n = 1 + rng.below((h - y) as u32) as usize;
-                det.push_rows(&f[y * stride..(y + n) * stride], y as u16);
+                det.push_rows_with(&model, &f[y * stride..(y + n) * stride], y as u16);
                 splits.push(n);
                 y += n;
             }
             let n = det.finish(&mut got);
 
             let ctx = format!(
-                "raw10 {raw10} w {w} case {case} h {h} t {t} offset {offset} strips {splits:?}"
+                "raw10 {raw10} w {w} case {case} h {h} t {t} offset {offset} {model:?} \
+                 strips {splits:?}"
             );
             let s = det.stats();
             assert_eq!(s.overflow, 0, "{ctx}");

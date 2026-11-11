@@ -33,6 +33,12 @@ fn detect(det: &mut DefaultDetector, frame: &[u8], width: u16) -> usize {
 RAW10 frames use `begin_frame_raw10` / `process_frame_raw10` with a 10-bit threshold;
 `raw10` holds the packing.
 
+The dark skip is a trait, `Skip`, passed to each call (`push_rows_with`,
+`process_frame_with`, `process_frame_raw10_with`) rather than stored in the detector, so a
+vector skip can hold a per-core token that is not `Send` while the detector lives in a
+static. `Scalar` is the portable skip and the reference; the calls without `_with` use it.
+Any skip that keeps the contract in `skip.rs` gives the same blobs.
+
 ## Algorithm
 
 - A pixel is foreground when its value is `>= threshold`. Foreground pixels are grouped into
@@ -40,11 +46,15 @@ RAW10 frames use `begin_frame_raw10` / `process_frame_raw10` with a 10-bit thres
   linked to the runs it touches in the row above, and touching components are merged with
   union-find. A component whose runs stop is finished at once and its slot reused, so only
   the components crossing the current row are held.
-- The scan skips dark pixels 32 at a time: a SWAR test tells whether any byte of a `u32` is
-  `>= threshold`; it runs on the OR of eight aligned words, then on each word of a chunk that
-  passes, and only words that pass are looked at pixel by pixel. RAW10 runs the same test on
-  the top 8 bits of 32 pixels (ten words, low-bit bytes masked out), then exactly on each
-  group of four pixels.
+- With no run open, the scan asks the skip where the next bright pixel can be: an offset
+  with no bright pixel before it and one within the next 64 bytes (RAW10: 80 bytes, 64
+  pixels), unless the row ends. From there it reads exactly (a SWAR test on aligned words
+  that tells whether any byte of a `u32` is `>= threshold`, then pixel by pixel in the
+  words that pass) until a dark word with no run open once a bright pixel or the window
+  was passed, then asks the skip again. `Scalar` tests 64 bytes at a time on the OR of
+  their 16 words, then each word of a block that passes (the OR of dark bytes can pass).
+  RAW10 runs the same test on the top 8 bits (low-bit bytes masked out), 80 bytes at a
+  time, and the scan tests each group of four pixels exactly.
 - Blobs come out in the order in which their last row was seen, the same for a whole frame
   and for any split into strips.
 
@@ -58,11 +68,14 @@ cargo test
 cargo build --release --target riscv32imafc-unknown-none-elf
 ```
 
-`cargo test` runs the detector's unit tests, the `synth` tests and a randomised equivalence
-test (`src/equivalence.rs`): fixed seeds, widths 64, 320, 640 and 1280, heights 1 to 24, 0 to
-64 blobs of radius 1 to 12 anywhere in the frame, thresholds over the whole range, RAW8 and
-RAW10, random buffer alignments and random strip splits, each frame compared with an
-8-connected flood fill (`src/reference.rs`) blob for blob and in order.
+`cargo test` runs the detector's unit tests, the `synth` tests, the skip's tests against
+a byte-wise statement of its contract, and a randomised equivalence test
+(`src/equivalence.rs`): fixed seeds, widths 4, 36, 64, 72, 320, 640, 1280 and 1288,
+heights 1 to 24, 0 to 64 blobs of radius 1 to 12 anywhere in the frame, thresholds over
+the whole range, RAW8 and RAW10, random buffer alignments and random strip splits, and
+skips that answer as `Scalar` does, at the start of the window-sized block holding the
+bright pixel (as a vector skip does) or as early as the contract allows; each frame is
+compared with an 8-connected flood fill (`src/reference.rs`) blob for blob and in order.
 
 ## Measured
 

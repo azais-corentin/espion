@@ -10,15 +10,16 @@
 //! coordinates) in 1/32 pixel (Q11.5), the area in pixels (saturating at `u16::MAX`) and the
 //! peak value.
 //!
-//! The scan skips dark pixels 32 at a time: a SWAR test tells whether any byte of a `u32`
-//! is `>= threshold`; it is run on the OR of eight aligned words, then on each word of a
-//! chunk that passes, and only words that pass are looked at pixel by pixel.
+//! The scan asks a [`Skip`] where the next bright pixel can be ([`Scalar`] here, a vector
+//! version on the chip), reads exactly from there until it has passed the skip's window and
+//! no run is open, then asks the skip again. The scalar skip tests 64 bytes at a time with a
+//! SWAR test on the OR of their words, then confirms on each word.
 //!
 //! RAW10 frames in the MIPI CSI-2 packing ([`raw10`]) go through the same API
 //! ([`Detector::begin_frame_raw10`]): the threshold is in 10-bit units, the weights are the
-//! 10-bit values, `Blob::peak` is the top 8 bits. Their skip runs the same test on the top
-//! 8 bits of 32 pixels at a time (ten words, low-bit bytes masked out), then exactly on each
-//! group of four pixels.
+//! 10-bit values, `Blob::peak` is the top 8 bits. Their skip tests the top 8 bits of 64
+//! pixels at a time (80 bytes, low-bit bytes masked out); the scan then tests each group of
+//! four pixels exactly.
 //!
 //! Rows can be pushed as a whole frame or in strips of whole rows as they arrive; both give
 //! the same blobs in the same order (the order in which their last row was seen).
@@ -32,7 +33,11 @@
 #[cfg(test)]
 extern crate std;
 
+pub mod skip;
 pub mod synth;
+
+pub use skip::{Scalar, Skip};
+use skip::{WINDOW, WINDOW10, hot, swar_params};
 
 #[cfg(test)]
 mod equivalence;
@@ -76,58 +81,6 @@ pub type DefaultDetector = Detector<256, 256, 256>;
 /// Label of a run that has no component.
 const NONE: u16 = u16::MAX;
 
-const L7: u32 = 0x7f7f_7f7f;
-const HI: u32 = 0x8080_8080;
-const LO: u32 = 0x0101_0101;
-
-/// Non-zero when any byte of `w` is `>= t`, with `add` and `HIGH` from [`swar_params`].
-///
-/// Adding `add` to the low 7 bits of each byte never carries into the next byte (both are
-/// at most 127), and sets bit 7 exactly when the low 7 bits reach the threshold's.
-#[inline(always)]
-fn hot<const HIGH: bool>(w: u32, add: u32) -> u32 {
-    let s = (w & L7) + add;
-    if HIGH {
-        // t > 128: the byte needs bit 7 and low bits >= t - 128.
-        s & w & HI
-    } else {
-        // t <= 128: bit 7 alone is enough, else low bits >= t.
-        (s | w) & HI
-    }
-}
-
-/// `(add, HIGH)` for [`hot`] for a threshold in `0..=255` (0: every word is hot).
-const fn swar_params(t: u8) -> (u32, bool) {
-    if t <= 128 {
-        ((128 - t as u32) * LO, false)
-    } else {
-        ((256 - t as u32) * LO, true)
-    }
-}
-
-/// Words per chunk of the dark skip: 32 pixels.
-const CHUNK: usize = 8;
-
-#[inline(always)]
-fn or_words(chunk: &[u32; CHUNK]) -> u32 {
-    chunk.iter().fold(0, |a, &w| a | w)
-}
-
-/// Number of leading chunks with no pixel `>= threshold`.
-///
-/// Tests the bitwise OR of the chunk's words: a byte of the OR is at least each of the
-/// bytes it combines, so a chunk with a bright pixel always stops the skip. A dark chunk can
-/// stop it too (OR of dark bytes reaching the threshold, e.g. 0x40 | 0x24 at threshold
-/// 100); the caller then tests its words exactly. That never happens while the dark
-/// pixels stay below the highest power of two `<=` threshold.
-#[inline(never)]
-fn skip_dark<const HIGH: bool>(chunks: &[[u32; CHUNK]], add: u32) -> usize {
-    chunks
-        .iter()
-        .position(|c| hot::<HIGH>(or_words(c), add) != 0)
-        .unwrap_or(chunks.len())
-}
-
 /// The MIPI CSI-2 RAW10 packing; the only code that knows the byte layout.
 ///
 /// Four pixels take five bytes: bytes 0..=3 hold bits 9..2 of pixels 0..=3, byte 4 holds
@@ -166,9 +119,9 @@ pub mod raw10 {
         g
     }
 
-    /// For each phase `o` (the position in its group of the first byte of a chunk), the
-    /// masks of the chunk's first five words: 0x00 on the `LOW` bytes, 0xff elsewhere.
-    /// Words 5..=9 of a chunk repeat them (20 bytes are four whole groups).
+    /// For each phase `o` (the position in its group of the first byte of an aligned word
+    /// run), the masks of the run's first five words: 0x00 on the `LOW` bytes, 0xff
+    /// elsewhere. The next five words repeat them (20 bytes are four whole groups).
     pub(super) const SKIP_MASKS: [[u32; 5]; GROUP_BYTES] = {
         let mut m = [[0u32; 5]; GROUP_BYTES];
         let mut o = 0;
@@ -190,29 +143,6 @@ pub mod raw10 {
         }
         m
     };
-}
-
-/// Words per RAW10 skip chunk: 40 bytes, 32 pixels, 8 whole groups.
-const CHUNK10: usize = 10;
-
-/// OR of a RAW10 chunk's words with the low-bit bytes masked out.
-#[inline(always)]
-fn or_masked10(c: &[u32; CHUNK10], m: &[u32; 5]) -> u32 {
-    (c[0] | c[5]) & m[0]
-        | (c[1] | c[6]) & m[1]
-        | (c[2] | c[7]) & m[2]
-        | (c[3] | c[8]) & m[3]
-        | (c[4] | c[9]) & m[4]
-}
-
-/// [`skip_dark`] for RAW10 chunks, testing the top 8 bits of the pixels against
-/// `threshold >> 2`.
-#[inline(never)]
-fn skip_dark10<const HIGH: bool>(chunks: &[[u32; CHUNK10]], m: &[u32; 5], add: u32) -> usize {
-    chunks
-        .iter()
-        .position(|c| hot::<HIGH>(or_masked10(c, m), add) != 0)
-        .unwrap_or(chunks.len())
 }
 
 /// A horizontal run of foreground pixels `start..end` in one row with its sums.
@@ -323,138 +253,123 @@ impl Scan<'_> {
         }
     }
 
-    /// Four pixels starting at column `x`, from a word read in memory order.
-    #[inline(always)]
-    fn word<const HIGH: bool>(&mut self, x: u32, w: u32, add: u32) {
-        if hot::<HIGH>(w, add) == 0 {
-            if self.open {
-                self.close(x);
-            }
-        } else {
-            let [a, b, c, d] = w.to_ne_bytes();
-            self.pixel(x, a as u32);
-            self.pixel(x + 1, b as u32);
-            self.pixel(x + 2, c as u32);
-            self.pixel(x + 3, d as u32);
-        }
-    }
-
-    fn row<const HIGH: bool>(&mut self, row: &[u8], add: u32) {
+    /// One RAW8 row.
+    ///
+    /// With no run open, the skip says where the next bright pixel can be; from there the
+    /// row is read exactly: pixel by pixel up to the next aligned word, then word by word (a
+    /// SWAR test, then pixel by pixel in the words that pass). That goes on until a dark
+    /// word with no run open, once a bright word was read or the skip's window (which holds
+    /// a bright pixel unless the row ended) was passed; then the skip takes over again, from
+    /// a later place each time. The skip's answer is clamped to the row, so a wrong one
+    /// gives wrong blobs, never a read outside the row.
+    fn row<S: Skip, const HIGH: bool>(&mut self, skip: &S, row: &[u8], add: u32) {
+        let t = self.t as u8;
         // SAFETY: every bit pattern is a valid `u32`, and `align_to` only reinterprets the
         // middle part, which it aligns for `u32`; the slices cover `row` exactly, in order.
-        let (pre, mid, post) = unsafe { row.align_to::<u32>() };
-        let mut x = 0u32;
-        for &v in pre {
-            self.pixel(x, v as u32);
-            x += 1;
-        }
-        let (chunks, rest) = mid.as_chunks::<CHUNK>();
-        let mut i = 0;
-        while i < chunks.len() {
-            if !self.open {
-                let n = skip_dark::<HIGH>(&chunks[i..], add);
-                i += n;
-                x += (n * CHUNK * 4) as u32;
-                if i == chunks.len() {
-                    break;
-                }
+        let (pre, words, _) = unsafe { row.align_to::<u32>() };
+        let lead = pre.len();
+        let body_end = lead + words.len() * 4;
+        let len = row.len();
+        let mut x = 0;
+        loop {
+            // No run is open and no pixel before `x` is bright.
+            x += skip.first_bright(&row[x..], t).min(len - x);
+            if x == len {
+                break;
             }
-            let chunk = &chunks[i];
-            if hot::<HIGH>(or_words(chunk), add) == 0 {
-                // Open run, dark chunk: the run ended at the chunk start.
-                self.close(x);
+            let end = x + WINDOW;
+            let mut seen = false;
+            let to = if x < lead {
+                lead
+            } else if x < body_end {
+                lead + (x - lead).next_multiple_of(4)
             } else {
-                for (k, &w) in chunk.iter().enumerate() {
-                    self.word::<HIGH>(x + 4 * k as u32, w, add);
-                }
+                len
+            };
+            while x < to {
+                self.pixel(x as u32, row[x] as u32);
+                x += 1;
             }
-            i += 1;
-            x += (CHUNK * 4) as u32;
-        }
-        for &w in rest {
-            self.word::<HIGH>(x, w, add);
-            x += 4;
-        }
-        for &v in post {
-            self.pixel(x, v as u32);
-            x += 1;
+            while x < body_end {
+                let w = words[(x - lead) / 4];
+                if hot::<HIGH>(w, add) == 0 {
+                    if self.open {
+                        self.close(x as u32);
+                    } else if seen || x >= end {
+                        break;
+                    }
+                } else {
+                    seen = true;
+                    let [a, b, c, d] = w.to_ne_bytes();
+                    let x = x as u32;
+                    self.pixel(x, a as u32);
+                    self.pixel(x + 1, b as u32);
+                    self.pixel(x + 2, c as u32);
+                    self.pixel(x + 3, d as u32);
+                }
+                x += 4;
+            }
+            if x >= body_end {
+                // The bytes after the last word.
+                while x < len {
+                    self.pixel(x as u32, row[x] as u32);
+                    x += 1;
+                }
+                break;
+            }
         }
         if self.open {
-            self.close(x);
-        }
-    }
-
-    /// The exact path of RAW10: pixel groups `from..to` of `row`.
-    #[inline(always)]
-    fn groups10(&mut self, row: &[u8], from: usize, to: usize) {
-        let (groups, _) = row[from * raw10::GROUP_BYTES..to * raw10::GROUP_BYTES]
-            .as_chunks::<{ raw10::GROUP_BYTES }>();
-        let t = self.t;
-        // A pixel with top 8 bits `< t >> 2` is `< t` whatever its low bits.
-        let top = (t >> 2) as u8;
-        let mut x = (from * 4) as u32;
-        for g in groups {
-            if raw10::top_below(g, top) {
-                if self.open {
-                    self.close(x);
-                }
-            } else {
-                let [a, b, c, d] = raw10::unpack(g);
-                if (a >= t) | (b >= t) | (c >= t) | (d >= t) {
-                    self.pixel(x, a);
-                    self.pixel(x + 1, b);
-                    self.pixel(x + 2, c);
-                    self.pixel(x + 3, d);
-                } else if self.open {
-                    self.close(x);
-                }
-            }
-            x += 4;
+            self.close(len as u32);
         }
     }
 
     /// One RAW10 row (`width / 4` groups of [`raw10::GROUP_BYTES`] bytes).
     ///
-    /// The skip works on aligned chunks of [`CHUNK10`] words (40 bytes, 32 pixels, 8
-    /// groups, so every chunk of a row has the same phase against the groups). The words'
-    /// low-bit bytes are masked to 0, which is below any skip threshold, and the rest are
-    /// the top 8 bits of a pixel: if they are all `< t >> 2`, every pixel whose top bits
-    /// lie in the chunk is `< t`. A chunk that passes is processed group by group, from the
-    /// first group not yet processed up to the group holding its last byte.
-    fn row10<const HIGH: bool>(&mut self, row: &[u8], add: u32) {
-        let ngroups = row.len() / raw10::GROUP_BYTES;
+    /// As [`Self::row`], group by group: the skip answers with a group start (its test is
+    /// on the top 8 bits against `t >> 2`: a pixel with top 8 bits `< t >> 2` is `< t`
+    /// whatever its low bits), then the groups are tested exactly until a dark group with
+    /// no run open, once a group with top bits at or above `t >> 2` was read (the skip
+    /// stops on those, bright or not) or the skip's window was passed.
+    fn row10<S: Skip>(&mut self, skip: &S, row: &[u8]) {
+        let (groups, _) = row.as_chunks::<{ raw10::GROUP_BYTES }>();
+        let ngroups = groups.len();
         let row = &row[..ngroups * raw10::GROUP_BYTES];
-        // SAFETY: as in `row`.
-        let (pre, mid, _) = unsafe { row.align_to::<u32>() };
-        let lead = pre.len();
-        let (chunks, _) = mid.as_chunks::<CHUNK10>();
-        let masks = &raw10::SKIP_MASKS[lead % raw10::GROUP_BYTES];
-        // Groups with a byte before the first chunk.
-        let mut next = lead.div_ceil(raw10::GROUP_BYTES).min(ngroups);
-        self.groups10(row, 0, next);
-        let mut i = 0;
-        while i < chunks.len() {
-            if !self.open {
-                i += skip_dark10::<HIGH>(&chunks[i..], masks, add);
-                if i == chunks.len() {
-                    break;
+        let t = self.t;
+        let top = (t >> 2) as u8;
+        let mut g = 0;
+        loop {
+            // No run is open and no pixel before group `g` is bright.
+            let rest = &row[g * raw10::GROUP_BYTES..];
+            g += skip.first_bright10(rest, top).min(rest.len()) / raw10::GROUP_BYTES;
+            if g == ngroups {
+                break;
+            }
+            let end = g + WINDOW10 / raw10::GROUP_BYTES;
+            let mut seen = false;
+            while g < ngroups {
+                let group = &groups[g];
+                let x = (g * 4) as u32;
+                if raw10::top_below(group, top) {
+                    if self.open {
+                        self.close(x);
+                    } else if seen || g >= end {
+                        break;
+                    }
+                } else {
+                    seen = true;
+                    let [a, b, c, d] = raw10::unpack(group);
+                    if (a >= t) | (b >= t) | (c >= t) | (d >= t) {
+                        self.pixel(x, a);
+                        self.pixel(x + 1, b);
+                        self.pixel(x + 2, c);
+                        self.pixel(x + 3, d);
+                    } else if self.open {
+                        self.close(x);
+                    }
                 }
+                g += 1;
             }
-            let first = lead + i * CHUNK10 * 4;
-            if hot::<HIGH>(or_masked10(&chunks[i], masks), add) == 0 {
-                // Open run, dark chunk: group `next` starts in this chunk, so its first
-                // pixel is dark and the run ended there.
-                self.close((next * 4) as u32);
-            } else {
-                let last = (first + CHUNK10 * 4 - 1) / raw10::GROUP_BYTES;
-                self.groups10(row, next.max(first / raw10::GROUP_BYTES), last + 1);
-                next = last + 1;
-            }
-            i += 1;
         }
-        // The bytes after the last chunk; groups before them that were skipped are dark.
-        let tail = (lead + chunks.len() * CHUNK10 * 4) / raw10::GROUP_BYTES;
-        self.groups10(row, next.max(tail), ngroups);
         if self.open {
             self.close((ngroups * 4) as u32);
         }
@@ -646,7 +561,7 @@ pub struct Detector<const RUNS: usize, const COMPS: usize, const BLOBS: usize> {
     stride: usize,
     /// In the units of the pixel format.
     threshold: u16,
-    /// SWAR parameters of the skip (for RAW10, on the top 8 bits).
+    /// SWAR parameters of the exact word test of RAW8 rows.
     add: u32,
     high: bool,
     raw10: bool,
@@ -739,8 +654,15 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     /// RAW8, `width / 4 * 5` for RAW10; a partial last row is ignored), the first being row
     /// `first_row`, in the format the frame was begun with. Strips normally follow each
     /// other; if `first_row` is not the row after the last one pushed, the blobs crossing
-    /// the last row are finished first, as if a dark row lay between.
+    /// the last row are finished first, as if a dark row lay between. Uses the [`Scalar`]
+    /// skip.
     pub fn push_rows(&mut self, rows: &[u8], first_row: u16) {
+        self.push_rows_with(&Scalar, rows, first_row);
+    }
+
+    /// [`Self::push_rows`] with the dark skip `skip`. Every skip that keeps the [`Skip`]
+    /// contract gives the same blobs and `Stats`.
+    pub fn push_rows_with<S: Skip>(&mut self, skip: &S, rows: &[u8], first_row: u16) {
         if self.stride == 0 {
             return;
         }
@@ -749,7 +671,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         }
         let mut y = first_row;
         for row in rows.chunks_exact(self.stride) {
-            self.row(row, y);
+            self.row(skip, row, y);
             y = y.wrapping_add(1);
         }
     }
@@ -775,8 +697,20 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         threshold: u8,
         out: &mut [Blob],
     ) -> usize {
+        self.process_frame_with(&Scalar, frame, width, threshold, out)
+    }
+
+    /// [`Self::process_frame`] with the dark skip `skip`.
+    pub fn process_frame_with<S: Skip>(
+        &mut self,
+        skip: &S,
+        frame: &[u8],
+        width: u16,
+        threshold: u8,
+        out: &mut [Blob],
+    ) -> usize {
         self.begin_frame(width, threshold);
-        self.push_rows(frame, 0);
+        self.push_rows_with(skip, frame, 0);
         self.finish(out)
     }
 
@@ -788,11 +722,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     /// `Blob::peak` holds the top 8 bits of the brightest pixel.
     pub fn begin_frame_raw10(&mut self, width: u16, threshold: u16) {
         let t = threshold.clamp(1, 1023);
-        // The skip tests the top 8 bits: a pixel `>= t` has them `>= t >> 2`.
-        let (add, high) = swar_params((t >> 2) as u8);
         self.begin(width as usize / 4 * raw10::GROUP_BYTES, t);
-        self.add = add;
-        self.high = high;
         self.raw10 = true;
         self.lab.peak_shift = 2;
     }
@@ -806,8 +736,20 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         threshold: u16,
         out: &mut [Blob],
     ) -> usize {
+        self.process_frame_raw10_with(&Scalar, frame, width, threshold, out)
+    }
+
+    /// [`Self::process_frame_raw10`] with the dark skip `skip`.
+    pub fn process_frame_raw10_with<S: Skip>(
+        &mut self,
+        skip: &S,
+        frame: &[u8],
+        width: u16,
+        threshold: u16,
+        out: &mut [Blob],
+    ) -> usize {
         self.begin_frame_raw10(width, threshold);
-        self.push_rows(frame, 0);
+        self.push_rows_with(skip, frame, 0);
         self.finish(out)
     }
 
@@ -816,7 +758,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         self.lab.stats
     }
 
-    fn row(&mut self, row: &[u8], y: u16) {
+    fn row<S: Skip>(&mut self, skip: &S, row: &[u8], y: u16) {
         let [a, b] = &mut self.runs;
         let (prev, cur) = if self.prev == 0 { (a, b) } else { (b, a) };
         let mut scan = Scan {
@@ -832,10 +774,9 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             peak: 0,
         };
         match (self.raw10, self.high) {
-            (false, true) => scan.row::<true>(row, self.add),
-            (false, false) => scan.row::<false>(row, self.add),
-            (true, true) => scan.row10::<true>(row, self.add),
-            (true, false) => scan.row10::<false>(row, self.add),
+            (false, true) => scan.row::<S, true>(skip, row, self.add),
+            (false, false) => scan.row::<S, false>(skip, row, self.add),
+            (true, _) => scan.row10(skip, row),
         }
         let nc = scan.n;
         let stats = &mut self.lab.stats;
@@ -876,34 +817,6 @@ mod tests {
 
     fn detect(f: &[u8], t: u8, out: &mut [Blob]) -> usize {
         DefaultDetector::new().process_frame(f, W as u16, t, out)
-    }
-
-    #[test]
-    fn swar_matches_bytewise() {
-        let mut s = 0x1234_5678u32;
-        for t in 1..=255u8 {
-            let (add, high) = swar_params(t);
-            for i in 0..2000u32 {
-                s ^= s << 13;
-                s ^= s >> 17;
-                s ^= s << 5;
-                // Mix random words with words of bytes close to the threshold.
-                let w = if i % 2 == 0 {
-                    s
-                } else {
-                    u32::from_ne_bytes(
-                        (s.to_ne_bytes()).map(|b| t.wrapping_add(b % 5).wrapping_sub(2)),
-                    )
-                };
-                let want = w.to_ne_bytes().iter().any(|&b| b >= t);
-                let got = if high {
-                    hot::<true>(w, add)
-                } else {
-                    hot::<false>(w, add)
-                } != 0;
-                assert_eq!(got, want, "t={t} w={w:#010x}");
-            }
-        }
     }
 
     #[test]
@@ -1309,19 +1222,11 @@ mod tests {
         // Pixels 3 everywhere (low-bit bytes 0xff): at every alignment the skip must go
         // through the whole row, else the low bytes defeat it.
         let f = frame10(&[], 3);
-        let mut buf = [0u8; S10 + 4];
-        for offset in 0..4 {
+        let mut buf = [0u8; S10 + 8];
+        for offset in 0..8 {
             buf[offset..offset + S10].copy_from_slice(&f[..S10]);
             let row = &buf[offset..offset + S10];
-            // SAFETY: as in `Scan::row`.
-            let (pre, mid, _) = unsafe { row.align_to::<u32>() };
-            let (chunks, _) = mid.as_chunks::<CHUNK10>();
-            assert!(!chunks.is_empty());
-            let masks = &raw10::SKIP_MASKS[pre.len() % raw10::GROUP_BYTES];
-            let (add, high) = swar_params(1);
-            assert!(!high);
-            let n = skip_dark10::<false>(chunks, masks, add);
-            assert_eq!(n, chunks.len(), "offset {offset}");
+            assert_eq!(Scalar.first_bright10(row, 1), S10, "offset {offset}");
         }
     }
 
