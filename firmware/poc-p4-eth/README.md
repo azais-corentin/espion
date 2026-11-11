@@ -215,7 +215,7 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | `src/camera.rs` | Camera section: LDO VO3, sensor set-up through `ov9281::Ov9281`, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement against the crate's frame-period prediction, cache check, still dumps, detector check, and the strip path (receiver, mode groups, the random test pattern for the strip check) |
 | `src/soak.rs` | Frame soak: per mode, 30 s on live frames, then 10 s each on synthetic frames with 0, 16 and 64 discs, while capture keeps running; result table |
 | `src/strip_soak.rs` | Strip soak: the same runs on strips in a 320 KiB ring in internal RAM (RAW8: 4 strips of 80 KiB at 1280 wide, 8 of 40 KiB at 640, 64 lines; RAW10: 3 strips of 102 400 B, 64 lines at 1280 and 128 at 640), with per-frame processing and latency, per-strip hold times, and the driver's interrupt and invalidation times. `StripCheck`: row checksums of the reference frames and the strip check against them |
-| `src/bench.rs` | PIE kernel self-tests; detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each, timed with the core's counters (`esp32p4-perf`); then the cost of a dark row at 5 widths, of busy rows (a bright pixel in every row or every 8th row) and the cost of a blob at 4 disc sizes |
+| `src/bench.rs` | PIE kernel self-tests; the boot equivalence check of the two skips; detector benchmark on synthetic frames, every case with `Scalar` and `Pie`: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each, timed with the core's counters (`esp32p4-perf`); then the cost of a dark row at 5 widths, of busy rows (1 to 64 runs per row, or a run every 8th row), of a blob at 4 disc sizes, RAW10 strip frames and dark or false-hit RAW10 rows, and the strip path with the L1 data autoload |
 | `../espion-vision/src/lib.rs` (crate `espion-vision`) | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
 | `../espion-vision/src/synth.rs` (crate `espion-vision`) | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
 | `src/jpeg_bench.rs` | `JPEG_PLAN`: test and benchmark of the hardware JPEG encoder (`esp32p4-jpeg`): test picture, camera stills, speed table, capture-and-encode runs, robustness |
@@ -813,6 +813,40 @@ DMA and the driver's invalidate would run with it). Means over 50 passes, cycles
   would only be dropped if the fill finished before that strip's invalidate, which this
   set-up does not need to rely on. The strip check reads its rows through the same
   per-strip autoload, so a stale line would show as a bad row.
+- **Live check** with the autoload on (`STRIP_CHECK_PLAN` with 30 s windows, the sensor's
+  random test pattern against 8 reference frames per mode, log `d-check.log`): 1280x800
+  RAW8, 1280x800 RAW10, 1280x720 RAW10 and 640x400 RAW10 at 210 fps, 30 s each;
+  2 881 184 + 2 881 184 + 2 593 040 + 2 519 584 = 10 874 992 rows checked, 0 bad, every
+  frame matching the reference (3601, 3601, 3601, 6298), no stall, overrun, truncated or
+  skipped frame, every mode PASS. (The commit that added the autoload gives the sum as
+  10 874 848; 10 874 992 is right.)
+
+### Live strip soak, final configuration (2026-11-11)
+
+`SOAK = Soak::Strips` on mode 0 (1280x800 RAW8, 120 fps) with the committed build of
+`0f6a093` (RAM placement, Zb/Zcb, autoload miss+hit over each strip): a live run of 120 s,
+then synthetic runs of 10 s with 0 and 64 blobs per frame, once with `SOAK_SKIP = Scalar`
+(log `e-scalar.log`) and once with `Pie` (`e-pie.log`); the plan edits (mode 0 only, 120 s,
+two synthetic runs) were not committed. Exposure 800 lines, gain 2x, no IR ring. No pixel
+reached the threshold in any live frame (0 blobs; the 2026-11-10 run saw 3 to 4), and the
+live detect time equals the synthetic dark one: the scene was darker than on 2026-11-10 or
+the lens was covered. The log records no image statistics, so which one was not checked.
+
+| Run | Skip | Frames complete | Dropped (truncated / skipped / discarded) | Stalls / overruns / errors | Detect per frame min / mean / max us | Frame end to centroids mean / max us | Hold max us | fps | Blobs per frame | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| live 120 s | Scalar | 14 406 | 0 / 0 / 0 | 0 / 0 / 0 | 2872 / 2873 / 2916 | 127 / 128 | 334 | 120.052 | 0 | PASS |
+| live 120 s | Pie | 14 406 | 0 / 0 / 0 | 0 / 0 / 0 | 761 / 762 / 806 | 43 / 50 | 159 | 120.052 | 0 | PASS |
+| synth 0 | Scalar | 1200 | 0 / 0 / 0 | 0 / 0 / 0 | 2872 / 2873 / 2881 | 132 / 132 | 249 | 120.052 | 0 | PASS |
+| synth 0 | Pie | 1200 | 0 / 0 / 0 | 0 / 0 / 0 | 761 / 762 / 770 | 47 / 48 | 79 | 120.052 | 0 | PASS |
+| synth 64 | Scalar | 1200 | 0 / 0 / 0 | 0 / 0 / 0 | 4111 / 4112 / 4121 | 259 / 259 | 346 | 120.052 | 64 | PASS |
+| synth 64 | Pie | 1200 | 0 / 0 / 0 | 0 / 0 / 0 | 2227 / 2228 / 2237 | 134 / 134 | 195 | 120.052 | 64 | PASS |
+
+Against the last live figures ("120 fps soak, 64-line strips in internal RAM", 2026-11-10,
+1280x800): live 4351 / 4889 us mean / max → 2873 / 2916 (Scalar) and 762 / 806 (Pie);
+synthetic dark 4323 → 2873 and 762 us; synthetic 64 blobs 5185 → 4112 and 2228 us. With
+`Pie` the detector takes 9.1 % of the 8333 us frame period on a dark frame and 26.7 % with
+64 blobs (52 % and 62 % before); the centroids are ready 43 us after the last strip of a
+dark frame arrives (252 us before). No strip was late, dropped or discarded in any run.
 
 ### Camera capture (whole frames in PSRAM)
 
