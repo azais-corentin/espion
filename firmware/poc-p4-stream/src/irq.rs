@@ -150,6 +150,19 @@ pub fn snapshot(c: usize) -> Snapshot {
     }
 }
 
+/// The cycle counter at the end of `source`'s last handler call, on any core (0 before the
+/// first, and always without the `accounting` feature): the start of the wake-up the handler
+/// asked for.
+pub fn last_end(source: Source) -> u32 {
+    #[cfg(feature = "accounting")]
+    return imp::LAST_END[source as usize].load(Relaxed);
+    #[cfg(not(feature = "accounting"))]
+    {
+        let _ = source;
+        0
+    }
+}
+
 #[cfg(feature = "accounting")]
 mod imp {
     use super::*;
@@ -203,6 +216,8 @@ mod imp {
     #[allow(clippy::declare_interior_mutable_const, reason = "array initialiser")]
     const NONE: AtomicUsize = AtomicUsize::new(0);
     static ORIGINAL: [AtomicUsize; SOURCES] = [NONE; SOURCES];
+    /// The cycle counter at the end of each source's last call.
+    pub(super) static LAST_END: [AtomicU32; SOURCES] = [ZERO; SOURCES];
 
     /// Vector table index of each source. The 2D-DMA ones are not in the PAC's `Interrupt`:
     /// ESP-IDF's `soc/esp32p4/include/soc/interrupts.h` numbers, as `esp32p4-jpeg` binds them
@@ -261,6 +276,7 @@ mod imp {
         let nested = a.nested.fetch_add(own, Relaxed).wrapping_add(own);
         a.calls[k].fetch_add(1, Relaxed);
         a.cycles[k].add(own);
+        LAST_END[k].store(t1, Relaxed);
         if !a.in_pass.load(Relaxed) {
             a.outside.add(own);
             a.exit_at.store(t1, Relaxed);

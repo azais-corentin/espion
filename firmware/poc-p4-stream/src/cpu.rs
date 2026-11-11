@@ -130,6 +130,75 @@ impl Counter64 {
     }
 }
 
+/// Count, cycles and longest of one timed event (an invalidate, a wake-up), booked on one
+/// core (feature `accounting`; a no-op without it). The longest is since the last
+/// [`Timed::take`].
+pub struct Timed {
+    n: AtomicU32,
+    cycles: Counter64,
+    max: AtomicU32,
+}
+
+/// What a [`Timed`] counted.
+#[derive(Clone, Copy, Default)]
+pub struct TimedCounts {
+    pub n: u32,
+    pub cycles: u64,
+    pub max: u32,
+}
+
+impl TimedCounts {
+    /// Counts gained since `earlier` (the longest stays this one's).
+    pub fn since(&self, earlier: &TimedCounts) -> TimedCounts {
+        TimedCounts {
+            n: self.n.wrapping_sub(earlier.n),
+            cycles: self.cycles - earlier.cycles,
+            max: self.max,
+        }
+    }
+
+    /// Mean cycles per event.
+    pub fn mean(&self) -> u64 {
+        self.cycles / u64::from(self.n.max(1))
+    }
+}
+
+impl Timed {
+    pub const fn new() -> Self {
+        Self {
+            n: AtomicU32::new(0),
+            cycles: Counter64::new(),
+            max: AtomicU32::new(0),
+        }
+    }
+
+    /// Books one event of `cycles`.
+    #[inline(always)]
+    pub fn add(&self, cycles: u32) {
+        #[cfg(feature = "accounting")]
+        {
+            self.n.fetch_add(1, Relaxed);
+            self.cycles.add(cycles);
+            self.max.fetch_max(cycles, Relaxed);
+        }
+        #[cfg(not(feature = "accounting"))]
+        let _ = cycles;
+    }
+
+    /// The counts now; `reset_max` starts a new longest.
+    pub fn take(&self, reset_max: bool) -> TimedCounts {
+        TimedCounts {
+            n: self.n.load(Relaxed),
+            cycles: self.cycles.load(),
+            max: if reset_max {
+                self.max.swap(0, Relaxed)
+            } else {
+                self.max.load(Relaxed)
+            },
+        }
+    }
+}
+
 #[allow(clippy::declare_interior_mutable_const, reason = "array initialiser")]
 const IDLE_ZERO: Counter64 = Counter64::new();
 /// Idle cycles per core (the idle counter).

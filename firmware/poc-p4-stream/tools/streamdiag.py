@@ -7,6 +7,7 @@ Python standard library only. The socket is bound to the link-local address of o
   streamdiag.py report          the board's report since the mark, one key=value per line
   streamdiag.py irq             each interrupt handler's calls and cycles since the mark
   streamdiag.py net             the send path since the mark: chunk copies, driver cycles
+  streamdiag.py path            the frame path since the mark: encode set-up, wake-up, end
   streamdiag.py fault 1|2       the next mode change fails: 1 sensor bus, 2 no first frame
   streamdiag.py stall           sensor stream off behind the receiver's back
   streamdiag.py done            the board logs "stream: host done" (board-run.sh stops on it)
@@ -45,6 +46,7 @@ def main():
             "report",
             "irq",
             "net",
+            "path",
             "fault",
             "stall",
             "done",
@@ -75,6 +77,7 @@ def main():
         "report": b"R",
         "irq": b"I",
         "net": b"N",
+        "path": b"P",
         "fault": b"F" + args.arg.encode(),
         "stall": b"S",
         "done": b"D",
@@ -87,7 +90,7 @@ def main():
             reply = s.recv(2048).decode(errors="replace")
         except socket.timeout:
             continue
-        if args.command in ("report", "irq", "net"):
+        if args.command in ("report", "irq", "net", "path"):
             print("\n".join(reply.split()))
         else:
             print(reply)

@@ -77,6 +77,8 @@ pub struct Stats {
     pub cycles: u64,
     /// Of those, the cycles in the headers and the checksum (the sum of the copied payload).
     pub header_cycles: u64,
+    /// And the cycles of the body's copy alone.
+    pub copy_cycles: u64,
     /// Datagrams that had to wait for room on the ring.
     pub waits: u32,
 }
@@ -88,6 +90,7 @@ impl Stats {
             datagrams: self.datagrams.wrapping_sub(earlier.datagrams),
             cycles: self.cycles - earlier.cycles,
             header_cycles: self.header_cycles - earlier.header_cycles,
+            copy_cycles: self.copy_cycles - earlier.copy_cycles,
             waits: self.waits.wrapping_sub(earlier.waits),
         }
     }
@@ -96,6 +99,7 @@ impl Stats {
 static DATAGRAMS: AtomicU32 = AtomicU32::new(0);
 static CYCLES: Counter64 = Counter64::new();
 static HEADER_CYCLES: Counter64 = Counter64::new();
+static COPY_CYCLES: Counter64 = Counter64::new();
 static WAITS: AtomicU32 = AtomicU32::new(0);
 
 /// The counts now.
@@ -104,21 +108,23 @@ pub fn stats() -> Stats {
         datagrams: DATAGRAMS.load(Ordering::Relaxed),
         cycles: CYCLES.load(),
         header_cycles: HEADER_CYCLES.load(),
+        copy_cycles: COPY_CYCLES.load(),
         waits: WAITS.load(Ordering::Relaxed),
     }
 }
 
 /// Books one datagram.
 #[inline(always)]
-fn count(cycles: u32, header_cycles: u32) {
+fn count(cycles: u32, header_cycles: u32, copy_cycles: u32) {
     #[cfg(feature = "accounting")]
     {
         DATAGRAMS.fetch_add(1, Ordering::Relaxed);
         CYCLES.add(cycles);
         HEADER_CYCLES.add(header_cycles);
+        COPY_CYCLES.add(copy_cycles);
     }
     #[cfg(not(feature = "accounting"))]
-    let _ = (cycles, header_cycles);
+    let _ = (cycles, header_cycles, copy_cycles);
 }
 
 /// An IPv6 address and its MAC.
@@ -215,13 +221,18 @@ pub async fn send(
     let buf = unsafe { core::slice::from_raw_parts_mut(addr as *mut u8, eth::BUF_LEN) };
     let n = head(&mut buf[HEADERS..]).min(HEAD_MAX);
     let payload = n + body.len();
+    let cc = cpu::mcycle();
     pie.copy(&mut buf[HEADERS + n..HEADERS + payload], body);
     let c1 = cpu::mcycle();
     let len = write_headers(pie, buf, &ends, payload, &[]);
     let c2 = cpu::mcycle();
     esp32p4_cache::write_back(addr, len);
     eth::tx_queue(i, addr, len, ic);
-    count(cpu::mcycle().wrapping_sub(c0), c2.wrapping_sub(c1));
+    count(
+        cpu::mcycle().wrapping_sub(c0),
+        c2.wrapping_sub(c1),
+        c1.wrapping_sub(cc),
+    );
     Ok(())
 }
 

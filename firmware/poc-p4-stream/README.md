@@ -91,7 +91,8 @@ cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-
 python3 firmware/poc-p4-stream/tools/streamdiag.py mark     # the board's CPU report: mark,
 python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report,
 python3 firmware/poc-p4-stream/tools/streamdiag.py irq      # the interrupt handlers,
-python3 firmware/poc-p4-stream/tools/streamdiag.py net      # and the send path (copies, driver)
+python3 firmware/poc-p4-stream/tools/streamdiag.py net      # the send path (copies, driver)
+python3 firmware/poc-p4-stream/tools/streamdiag.py path     # and the frame path (encode)
 ```
 
 Cargo features: `accounting` (default) builds the CPU accounts; `--no-default-features`
@@ -206,7 +207,7 @@ and without `accounting` alike.
 | `src/net/eth.rs` | The EMAC's DMA rings and the `embassy-net-driver` driver: descriptors through the non-cacheable alias, one cache call per frame, TX threshold mode, TX completion interrupt every 8th frame, the RX checks, the `ETH_MAC` handler |
 | `src/net/ip101.rs` | IP101 PHY driver (`Phy` trait): link polled every 500 ms, speed and duplex from ANAR and ANLPAR, the last report for the log |
 | `src/net/device.rs` | `embassy-net-driver` wrapper around the driver: per-frame cycle counts (feature `accounting`) |
-| `src/cpu.rs` | Cycle counter, per-task CPU time and polls from the executor's `trace` hooks (feature `accounting`), the idle counter (feature `idle-counter`) |
+| `src/cpu.rs` | Cycle counter, per-task CPU time and polls from the executor's `trace` hooks (feature `accounting`), the idle counter (feature `idle-counter`), timed events (count, cycles, longest) |
 | `src/irq.rs` | Interrupt-handler wrappers: calls and own cycles per handler and core, the time outside executor passes, the wake and sleep paths (feature `accounting`) |
 | `src/camera.rs` | OV9281 and CSI receiver: set-up, any mode's start (lanes checked in their stop state before stream-on), controls, stop, the newest frame, the fault switch of the stream's error-path test |
 | `src/stream/mod.rs` | The camera stream service: the shared stream state, the control task (requests, all-or-nothing `SetCamera`, repeats), the hand-off to the capture, encode and send tasks |
@@ -215,7 +216,7 @@ and without `accounting` alike.
 | `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
 | `src/stream/send.rs` | The send task: answers through the socket; frame chunks beside smoltcp (`net/chunk.rs`: `espion_proto` writes the chunk header, PIE copies the bytes), through the socket until the host's MAC is known |
 | `src/net/chunk.rs` | UDP datagrams sent beside smoltcp, straight onto the TX ring: the peer's MAC learned from received frames, the headers, a PIE copy of the payload into the descriptor's buffer, the UDP checksum (PIE), the checksum self-test |
-| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
 | `dram_dma.x` | Linker section for esp-hal's Ethernet DMA storage at 0x4FF40000 or above (see below) |
@@ -1036,6 +1037,109 @@ right (`s3-bench.psramdma.txt`). It was not kept:
   longest exposure: 1 incomplete frames`, `s4-stream.board.txt`). A 256-byte TX threshold
   (code 3 instead of 64 bytes) to ride it out: the host received no stream at all
   (`s5-ttc256-stream.*`, `jrx`: `no window` in all four runs); not pursued.
+
+### Measured: where core 0's time goes per frame, 2026-11-11
+
+The start of plan steps 7.5, 7.6 and 6.2. The step 3 tree (`d157059`) with counters added
+(feature `accounting`): the test hooks' `P` reply has the JPEG encode's first poll (the
+driver's set-up: header, write-back, invalidate of the output, descriptors, start), its
+wake-up after the end (from the end of the 2D-DMA RX handler that saw the file's end to the
+start of the encode future's last poll) and that last poll (the driver's end work: descriptor
+read, invalidate of the file); `N` has the PIE copy of a datagram's body alone
+(`direct_copy_cyc`). This measurement build also timed the capture task's whole-frame
+invalidate (the driver's `wait_frame` split in two, the invalidate made and timed in the
+capture task; not kept, see below). Logs `s1-b0.*` in `/tmp/p4perf-logs/StreamFrames/`; `jrx`
+(its copy there also asks for `I` and `P`), 10 s windows after 2 s of warm-up. Per frame:
+over the CSI DMA handler's calls.
+
+| Run | Host | Core 0 busy (`busy_all`) | Capture task per frame (of it: invalidate), share | CSI DMA handler per frame | Encode task per frame (driver set-up / end work), share | Encode wake-up, mean (longest) | JPEG + 2D-DMA RX handlers per frame | Send task per datagram (body copy) |
+|---|---|---|---|---|---|---|---|---|
+| Raw 1280x800 RAW8 120 Hz (link) | 89.93 Mbit/s, 10.98 fps | 25.8 % | 33 552 (2 192), 1.0 % | 1 190 | — | — | — | 11 253 (4 883) |
+| JPEG q90, 15.5x, 153.98 Hz (link) | 92.50 Mbit/s, 76.6 fps | 30.3 % | 26 346 (1 765), 1.0 % | 1 166 | 35 182 (5 824 / 4 939), 1.3 % | 21 255 = 53 µs (2.6 ms) | 768 + 282 | 12 310 (5 684) |
+| JPEG q90, 2x, binned 320x200 at 120 Hz | 1.15 Mbit/s, 120.03 fps | 1.1 % | 6 207 (1 456), 0.1 % | 1 266 | 10 211 (4 003 / 1 262), 0.3 % | 2 016 = 5 µs (20 µs) | 848 + 290 | 11 551 (2 984) |
+| JPEG q90, 2x, binned 320x200 at 557.9 Hz | 5.20 Mbit/s, 557.71 fps | 5.0 % | 6 198 (1 457), 0.8 % | 1 263 | 10 015 (4 033 / 1 256), 1.3 % | 2 011 = 5 µs (5 µs) | 860 + 288 | 11 627 (2 948) |
+
+Every run: 0 incomplete or bad frames at the host, 0 capture errors, 0 frames the encoder
+could not take.
+
+- **The send task is the cost**: 22-25 % of core 0 at the wire rate, of which the body copy
+  from PSRAM is 4 900-5 700 cycles a datagram. That is plan step 6.2's target.
+- **The whole-frame invalidate costs 1 450-2 200 cycles (4-5.5 µs)**, not the 17-31 µs of
+  `poc-p4-eth`'s measurement: 0.03 % of core 0 at 154 fps, 0.2 % at 558 fps. A frame the
+  CPU has just read costs more: 10 200 cycles (25 µs) for a raw frame after it was sent
+  (`s1-b1.case1`).
+- **The CSI DMA handler** (the buffer swap and the re-arm) costs 1 170-1 270 cycles a frame:
+  0.05 % of core 0 at 154 fps, 0.18 % at 558 fps.
+- **The capture and encode tasks cost 4 to 6 times more per frame while the link is busy**
+  (26 000-34 000 and 35 000 cycles against 6 200 and 10 000 at 1 to 5 Mbit/s), though they do
+  the same work [INFERENCE: their code runs from flash through the L2 cache, which the body
+  copies' 11 MB/s of PSRAM reads keep evicting; not measured]. Still 1.0-1.3 % of core 0
+  each.
+- **The encode wake-up** waits behind the send task's polls when the link is busy: 53 µs on
+  average against 5 µs, the longest 2.6 ms [INFERENCE: the longest fell while `jrx` read the
+  reports at the window's end; no frame was lost to it, `enc_skipped` 0].
+
+### Plan step 7.5: whole-frame invalidate and circular capture list, 2026-11-11, not kept
+
+**(a) No invalidate for frames only the encoder reads: tried, dropped.** The receiver's
+`wait_frame` was split into a wait that returns the frame without the invalidate and an
+`into_frame` that invalidates it; the capture task invalidated only the raw frames it gave
+to the send task (the CPU's PIE copy reads them), not JPEG frames (the encoder's DMA reads
+memory, not the caches, and the CPU writes no frame buffer, so no dirty line can reach the
+pixels) or frames it dropped. Lines an earlier raw frame left in the caches stay stale and
+unread until the next raw frame of that buffer, whose invalidate comes after its DMA write
+ended and before the first read, also after a switch from JPEG. Same session as the
+baseline above (`s1-b1.*`):
+
+| Run, build | Host | Core 0 busy (`busy_all`) | Capture task per frame, share | Invalidates in 10 s (cycles each) | Encode task per frame |
+|---|---|---|---|---|---|
+| Raw 1280x800 RAW8 (link), every frame | 89.93 Mbit/s | 25.8 % | 33 552, 1.0 % | 1 203 (2 192) | — |
+| Raw 1280x800 RAW8 (link), sent frames only | 89.91 Mbit/s | 26.0 % | 38 976, 1.1 % | 110 (10 192) | — |
+| JPEG q90, 15.5x, 153.98 Hz (link), every frame | 92.50 Mbit/s | 30.3 % | 26 346, 1.0 % | 1 543 (1 765) | 35 182 |
+| JPEG q90, 15.5x, 153.98 Hz (link), none | 92.50 Mbit/s | 30.9 % | 32 994, 1.2 % | 0 | 37 814 |
+| JPEG 320x200 at 120 Hz, every frame | 1.15 Mbit/s | 1.1 % | 6 207, 0.1 % | 1 195 (1 456) | 10 211 |
+| JPEG 320x200 at 120 Hz, none | 1.15 Mbit/s | 1.1 % | 4 776, 0.1 % | 0 | 10 369 |
+| JPEG 320x200 at 557.9 Hz, every frame | 5.20 Mbit/s | 5.0 % | 6 198, 0.8 % | 5 602 (1 457) | 10 015 |
+| JPEG 320x200 at 557.9 Hz, none | 5.22 Mbit/s | 4.8 % | 4 730, 0.6 % | 0 | 10 131 |
+
+It removes 1 450 cycles a frame where the system is quiet (-24 % of the capture task), and
+nothing that shows while the link is busy, where the capture task's own cost varies by more
+than that. At most 0.2 % of core 0 (558 fps), below the 1 % this phase set as the threshold
+of a visible cost, so the driver keeps one invalidating `wait_frame`.
+
+**(b) A circular DMA list over the frame buffers: not done.** The driver re-arms the channel
+in the DMA handler at every frame end (one block per frame, `arm`: 8 register writes); the
+handler costs 1 170-1 270 cycles a frame, 0.05 % of core 0 at 154 fps and 0.18 % at 558 fps.
+A circular list would keep one interrupt per frame (the driver must know which buffer
+completed) and save part of those cycles, below the same threshold. It would also fix the
+order of the buffers: the stream holds a raw frame for the 90 ms its datagrams take (about 11
+frame periods) and the encoder holds one while it works, which the driver's swap handles by
+choosing a free buffer each time, and a fixed ring would write into the held one. No short
+frame was seen (0 capture errors in every run of this phase).
+
+### Plan step 7.6: the encode task's wake-up, 2026-11-11, not done
+
+The JPEG driver's 2D-DMA RX handler records the end of the file and wakes the encode task
+through its waker; the task then runs in the one thread-mode executor of core 0, after the
+task being polled. The `P` reply times that wake-up (above) and the encode's polls. Sessions
+1 and 3 (`s1-b0.*`, `s3-stream.case6`, `case7`), 1280x800 at 153.98 Hz, encode-only (`X1`)
+for the case without the link:
+
+| Run | Host | Encode µs (mean) | Encoder busy | Wake-up, mean (longest) | Driver set-up / end work, cycles | Frames the encoder could not take |
+|---|---|---|---|---|---|---|
+| JPEG q90, 15.5x (link), 151 kB files | 92.50 Mbit/s, 76.6 fps | 6 086 | 93.7 % | 21 255 = 53 µs (2.6 ms) | 5 824 / 4 939 | 0 |
+| JPEG q100, 2x (link), 362 kB files | 92.43 Mbit/s, 31.9 fps | 6 410 | 98.6 % | 21 174 = 53 µs (1.6 ms) | 6 291 / 6 439 | 0 |
+| The same, encode-only | — | 6 284 | 96.8 % | 1 865 = 4.7 µs (5 µs) | 3 997 / 1 789 | 0 |
+| JPEG q90, 2x, 320x200 at 557.9 Hz | 5.20 Mbit/s | 401 | 22.4 % | 2 011 = 5 µs (5 µs) | 4 033 / 1 256 | 0 |
+
+While the link is full the encode takes 126 µs (2 %) longer than without it; the wake-up
+accounts for 48 µs of that and the slower driver set-up and end work (cache misses beside
+the send task's PSRAM reads) for 22 µs [INFERENCE: the rest is the encoder's DMA sharing
+PSRAM with the copies; the driver has no hardware timestamp]. Even at 98.6 % encoder busy no
+frame was lost to it (0 in every run), and the wake-up costs no CPU cycles: it is time the
+core spends on the send task's poll. A handler that starts the next encode would move the
+driver's set-up (4 000-6 300 cycles: header copy, two cache calls, descriptors) into an
+interrupt and change the encoder's ownership for at most 48 µs a frame. Not done.
 
 ## The Ethernet driver (esp-hal 1.2.2 `ethernet` for the bring-up, this crate's DMA rings)
 

@@ -32,7 +32,9 @@
 //! [`AUTO_QUALITY_PERIOD_MS`] while JPEG frames go out with `auto_quality` on.
 
 use core::cell::Cell;
+use core::future::{Future, poll_fn};
 use core::ops::Deref;
+use core::pin::pin;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use critical_section::Mutex;
@@ -45,7 +47,8 @@ use espion_proto::cam::{AUTO_QUALITY_PERIOD_MS, Encoding, JPEG_FRAME_MAX};
 use log::{error, info};
 
 use super::{JOB, Job, Payload, SEND_BUSY_US, shared};
-use crate::cpu;
+use crate::cpu::{self, Timed};
+use crate::irq;
 
 /// Output buffers: one being sent, one waiting for the send task, one being encoded into.
 pub const OUT_BUFFERS: usize = 3;
@@ -162,6 +165,16 @@ pub(super) static ENCODED_BYTES: AtomicU32 = AtomicU32::new(0);
 /// encode's start to the error, µs.
 pub(super) static LAST_ERROR: Mutex<Cell<&'static str>> = Mutex::new(Cell::new(""));
 pub(super) static LAST_ERROR_US: AtomicU32 = AtomicU32::new(0);
+/// The encode task's wake-up after a finished encode: from the end of the 2D-DMA RX handler
+/// that saw the file's end (`SUC_EOF`) to the start of the encode future's last poll. Includes
+/// the wait behind other tasks' polls (one executor on core 0). Feature `accounting`.
+pub(super) static WAKE: Timed = Timed::new();
+/// The encode future's first poll: the driver's set-up (the header and its write-back, the
+/// invalidate of the output, the descriptors, the start).
+pub(super) static SETUP: Timed = Timed::new();
+/// Its last poll: the driver's work after the end (descriptor read, the invalidate of the
+/// file's lines).
+pub(super) static END: Timed = Timed::new();
 
 /// Test hooks (set by diag): the next this many encodes get a [`SMALL_OUTPUT`]-byte output (a
 /// file that does not fit), and encode-only (files are dropped, not sent: the encode time
@@ -208,16 +221,33 @@ async fn encode(enc: &mut Encoder, input: Input) {
         return;
     };
     let start = Instant::now();
-    let r = match with_timeout(
-        ENCODE_TIMEOUT,
-        enc.encode(&input.frame, &mut blank.mem[..cap]),
-    )
-    .await
-    {
+    let mut polled_at = 0;
+    let r = {
+        let mut fut = pin!(with_timeout(
+            ENCODE_TIMEOUT,
+            enc.encode(&input.frame, &mut blank.mem[..cap]),
+        ));
+        let mut first = true;
+        poll_fn(|cx| {
+            polled_at = cpu::mcycle();
+            let p = fut.as_mut().poll(cx);
+            if first && p.is_pending() {
+                SETUP.add(cpu::mcycle().wrapping_sub(polled_at));
+            }
+            first = false;
+            p
+        })
+        .await
+    };
+    let r = match r {
         Ok(Ok(len)) => Ok(len),
         Ok(Err(e)) => Err(Some(e)),
         Err(_) => Err(None),
     };
+    if r.is_ok() {
+        WAKE.add(polled_at.wrapping_sub(irq::last_end(irq::Source::Dma2dRx)));
+        END.add(cpu::mcycle().wrapping_sub(polled_at));
+    }
     let us = start.elapsed().as_micros() as u32;
     finish(input, blank, r, us);
 }

@@ -529,10 +529,11 @@ fn write_direct(w: &mut BufWriter<'_>, d: &net::chunk::Stats) {
     let n = u64::from(d.datagrams.max(1));
     let _ = write!(
         w,
-        " | direct datagrams={} direct_cyc={} direct_hdr_cyc={} direct_waits={}",
+        " | direct datagrams={} direct_cyc={} direct_hdr_cyc={} direct_copy_cyc={} direct_waits={}",
         d.datagrams,
         Ratio(d.cycles, n),
         Ratio(d.header_cycles, n),
+        Ratio(d.copy_cycles, n),
         d.waits,
     );
 }

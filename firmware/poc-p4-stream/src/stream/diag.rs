@@ -20,6 +20,9 @@
 //!   copies whose ends differ modulo 4 and 16), and the driver wrapper's per-frame cycles
 //!   (smoltcp's part and the driver's part of TX and RX) and token requests. Zeros without
 //!   `accounting`.
+//! - `P`: the frame path since the mark: the encode's driver set-up (first poll), wake-up after
+//!   the end (from the end of the 2D-DMA RX handler to the last poll) and end work (last poll):
+//!   count, mean and longest cycles. Zeros without `accounting`.
 //! - `F1` / `F2`: the next mode change fails: `1` a sensor bus error (every write of the start
 //!   goes to an address nobody answers), `2` no first frame (stream-on left out); the
 //!   request is answered with the error and the previous mode runs again.
@@ -89,6 +92,20 @@ struct Mark {
     copies: send::Copies,
     chunk: net::chunk::Stats,
     sent: u32,
+    path: [cpu::TimedCounts; PATH],
+}
+
+/// The timed events of the `P` reply, and their names.
+const PATH: usize = 3;
+const PATH_NAMES: [&str; PATH] = ["enc_setup", "enc_wake", "enc_end"];
+
+/// The timed events of the `P` reply now; `reset_max` starts new longest ones.
+fn path(reset_max: bool) -> [cpu::TimedCounts; PATH] {
+    [
+        jpeg::SETUP.take(reset_max),
+        jpeg::WAKE.take(reset_max),
+        jpeg::END.take(reset_max),
+    ]
 }
 
 static MARK: Mutex<RefCell<Option<Mark>>> = Mutex::new(RefCell::new(None));
@@ -121,6 +138,7 @@ pub(super) async fn task(stack: Stack<'static>) {
                     [b'R', ..] => write_report(&mut w),
                     [b'I', ..] => write_irq(&mut w),
                     [b'N', ..] => write_net(&mut w),
+                    [b'P', ..] => write_path(&mut w),
                     [b'F', d @ b'1'..=b'2', ..] => {
                         FAULT.store(d - b'0', Ordering::Relaxed);
                         let _ = w.write_str("fault armed");
@@ -175,6 +193,7 @@ fn set_mark() {
             copies: send::copies(),
             chunk: net::chunk::stats(),
             sent: shared(|s| s.counters.datagrams_sent),
+            path: path(true),
         });
     });
 }
@@ -397,10 +416,11 @@ fn write_net(w: &mut BufWriter<'_>) {
     );
     let _ = write!(
         w,
-        " direct={} direct_cyc={} direct_hdr_cyc={} direct_waits={}",
+        " direct={} direct_cyc={} direct_hdr_cyc={} direct_copy_cyc={} direct_waits={}",
         d.datagrams,
         per(d.cycles, d.datagrams),
         per(d.header_cycles, d.datagrams),
+        per(d.copy_cycles, d.datagrams),
         d.waits,
     );
     let _ = write!(
@@ -415,6 +435,32 @@ fn write_net(w: &mut BufWriter<'_>) {
         n.token_calls,
         per(n.token_cycles, n.token_calls),
     );
+}
+
+/// The `P` reply: the frame path's timed events since the mark.
+#[allow(
+    clippy::large_stack_frames,
+    reason = "on demand, outside the frame path, on the main stack: the formatting of nine counts"
+)]
+#[inline(never)]
+fn write_path(w: &mut BufWriter<'_>) {
+    let now = path(false);
+    let (at, before) = critical_section::with(|cs| {
+        let m = MARK.borrow_ref(cs);
+        let m = m.as_ref().expect("marked at start");
+        (m.at, m.path)
+    });
+    let _ = write!(w, "window_us={}", (Instant::now() - at).as_micros());
+    for ((name, n), b) in PATH_NAMES.iter().zip(now).zip(before) {
+        let d = n.since(&b);
+        let _ = write!(
+            w,
+            " {name}_n={} {name}_cyc={} {name}_max={}",
+            d.n,
+            d.mean(),
+            d.max
+        );
+    }
 }
 
 /// `part` of `whole` in percent, one decimal.
