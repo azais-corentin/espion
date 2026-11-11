@@ -639,6 +639,62 @@ frame takes 714 datagrams, 87.9 ms of wire time, hence 11.35 fps. The host wrote
 frame (number 2381) as a PGM; it shows the bench scene (ceiling and lamp) with straight,
 continuous edges: no torn or shifted rows.
 
+### Measured: baseline and copy alignment, 2026-11-11
+
+The baseline of the stream phase of the performance plan: the committed tree (`b47fe4c`) built
+with `SERVICE = Service::Bench`, this board, the link to the host's ASIX AX88179 (`eth0`) at
+100 Mbit/s full duplex (ping 5 of 5, 1.36/1.91/3.99 ms). `tools/netbench.py tx`, 20 s per
+source; logs in `/tmp/p4perf-logs/StreamBase/` (`base.*`). Cycles per datagram:
+
+| Source | Datagrams | Host MB/s (datagrams/s) | Lost, dup., reordered, bad | CPU busy | `copy_cyc` | TX task | Runner | `tx_stack_cyc` | `tx_driver_cyc` | Token requests per datagram x `token_cyc` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Internal | 163 778 | 11.796 (8188) | 0, 0, 0, 0 | 89.5 % | 13 076 | 15 521 | 27 302 | 10 165 | 2 063 | 4.84 x 1 193 |
+| PSRAM | 162 773 | 11.800 (8137) | 0, 0, 0, 0 | 91.4 % | 16 276 | 18 630 | 25 604 | 10 276 | 2 059 | 3.96 x 1 275 |
+| Camera | 162 706 | 11.801 (8137) | 0, 0, 0, 0 | 92.6 % | 16 738 | 19 167 | 25 629 | 10 302 | 2 071 | 3.94 x 1 194 |
+
+The camera ran at 120.0 fps with 0 dropped frames; the host got 227 whole frames. Against the
+2026-11-10 figures ([Board to host](#board-to-host-20-s-each)): the same host rates and
+datagram counts, the busy share 0.6 to 0.8 points higher, the cycle counts within 1 % and
+`token_cyc` within 4 %: inside the 2 to 3 % by which two builds of one source differ.
+
+**Copy alignment.** A temporary build (not kept) recorded for every datagram the source and
+destination address modulo 4 and the length of the application's copy into the socket ring
+(the bench's closure; `FrameChunk::encode` in `stream/send.rs`) with its cycles, and for
+smoltcp's copy from the ring into the EMAC buffer the ring slot's address modulo 4 (taken in
+the application's closure) paired, in sending order, with the payload's address modulo 4 in
+the EMAC buffer and the frame's `tx_stack` cycles (taken in `net/device.rs`). The bench ran 20 s
+per source (`align-bench.*`), the stream 10 s windows with the scratch receiver `jrx`
+(`align2-stream.case1` to `case3`). Full-size datagrams only; the stream's copy cycles include
+the chunk's postcard header.
+
+| Run | App copy, source and destination alike mod 4: share, cycles | App copy, unlike | smoltcp copy, slot and EMAC payload alike: share, `tx_stack` | smoltcp copy, unlike |
+|---|---|---|---|---|
+| Bench, internal RAM (1436 B) | 0 % | 100 % (source 0, destination 2), 13 183 | 100 % (both 2), 10 233 | 0 % |
+| Bench, PSRAM | 0 % | 100 %, 16 302 | 100 %, 10 266 | 0 % |
+| Bench, camera frames | 0 % | 100 %, 16 760 | 100 %, 10 269 | 0 % |
+| Stream, raw 1280x800 RAW8, 120 Hz, link-bound (1409 B chunks) | 27.1 %, 7 303 | 72.9 %, 17 907 | 23.7 %, 10 305 | 76.3 %, 21 019 |
+| Stream, JPEG q90, gain 15.5x, 153.98 Hz, link-bound | 24.3 %, 9 277 | 75.7 %, 19 401 | 28.7 %, 10 353 | 71.3 %, 21 145 |
+| Stream, JPEG q90, gain 2x, 120 Hz (14 kB files, 13.6 Mbit/s) | 0 % | 100 %, 17 336 | 39.6 %, 10 070 | 60.4 %, 21 266 |
+
+- **The application's copy: the inference holds.** In the bench the socket's TX ring
+  (`TX_TX_BUF`, a byte array, alignment 1) starts at an address that is 2 modulo 4, and every
+  datagram is 1452 bytes, so every slot is too; the 16-byte header puts the payload at 2
+  modulo 4, while the source (a 64-byte aligned buffer read in 1436-byte steps) is at 0. Every
+  bench copy takes the ROM `memcpy`'s byte loop. In the stream a copy whose ends are alike
+  costs 10 100 to 10 600 cycles less than one whose ends are not, and three quarters of the
+  copies are unlike: the chunk offsets step by 1409 (1 modulo 4), the header length varies, and
+  the slots move by datagram lengths that are not multiples of 4. With small, regular JPEG files
+  the pattern repeats from frame to frame: at gain 2x every full chunk's copy was unlike.
+- **smoltcp's copy: alike in the bench, unlike in three quarters of the stream.** The UDP
+  payload sits at offset 62 of the 64-byte aligned EMAC buffer (14 + 40 + 8 bytes of headers),
+  2 modulo 4. The bench's slots are 2 modulo 4 too, so its `tx_stack` of about 10 200 cycles is
+  the fast case. In the stream an unlike slot adds about 10 800 cycles to `tx_stack`: this is
+  why the stream's `tx_stack_cyc` is 18 000 to 18 500 and the bench's 10 200.
+- **For the fix (plan step 7.1):** both copies are alike only when the slot is 2 modulo 4 and
+  the payload's place in the slot (slot plus header length) matches the source modulo 4. In the
+  stream that is about 21 000 cycles per datagram to win, more than the plan's estimate for the
+  application copy alone.
+
 ## The Ethernet driver (esp-hal 1.2.2 `ethernet`, `unstable`)
 
 Read in the registry source and measured here. The first three needed workarounds in this
