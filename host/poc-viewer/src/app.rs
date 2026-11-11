@@ -11,13 +11,14 @@ use anyhow::{Context, Result, anyhow};
 use eframe::egui::{self, Color32, RichText};
 use espion_proto::cam::{
     CameraSettings, Encoding, Format, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, Op, Origin, Readout,
-    StreamSettings, TestPattern,
+    TestPattern,
 };
 use poc_viewer::{
     camera,
     decode::{DecodeStats, Decoder, Picture},
     fake::{self, FakeCamera},
     net::{Client, Command, RETRY_INTERVAL, Stats},
+    stream::{AUTO_QUALITY_CEILING, StreamEdit},
 };
 
 use crate::display::{self, ImageCallback, Shown, UploadTiming};
@@ -27,7 +28,7 @@ pub struct Setup {
     pub camera: SocketAddr,
     pub fake: Option<FakeCamera>,
     pub init_camera: Option<CameraSettings>,
-    pub init_stream: Option<StreamSettings>,
+    pub init_stream: Option<StreamEdit>,
     pub selftest: Option<SelfTestConfig>,
     /// Start at 1:1 instead of fit-to-window.
     pub one_to_one: bool,
@@ -159,9 +160,14 @@ pub struct App {
     /// The editor's origin is "centred" (sent as `None`).
     centred: bool,
     origin: Origin,
-    stream: StreamSettings,
-    /// Take the board's settings into the editors at its first state.
+    stream: StreamEdit,
+    /// Take the board's settings into the editors at its next state: its first, and the first
+    /// after the link was lost or the board restarted.
     adopt: bool,
+    /// The link was lost since the board's last state.
+    lost: bool,
+    /// The board's uptime in its last state, µs (it goes back when the board restarts).
+    uptime_us: u64,
     fit: bool,
     display_gain: f32,
     shown: Option<Arc<Shown>>,
@@ -206,7 +212,7 @@ impl App {
             client.send(Command::SetCamera(c));
         }
         if let Some(s) = setup.init_stream {
-            client.send(Command::SetStream(s));
+            client.send(Command::SetStream(s.settings()));
         }
         client.send(Command::GetState);
         let edit = setup.init_camera.unwrap_or_else(fake::default_camera);
@@ -218,8 +224,12 @@ impl App {
             centred: edit.origin.is_none(),
             origin: edit.origin.unwrap_or(Origin { x: 0, y: 0 }),
             edit,
-            stream: setup.init_stream.unwrap_or_else(fake::default_stream),
+            stream: setup
+                .init_stream
+                .unwrap_or(StreamEdit::new(fake::default_stream())),
             adopt,
+            lost: false,
+            uptime_us: 0,
             fit: !setup.one_to_one,
             display_gain: setup.display_gain,
             shown: None,
@@ -248,16 +258,16 @@ impl App {
         }
     }
 
-    /// The stream settings to use with the mode `req`: the stream's, or RAW8 when its
+    /// The stream controls to use with the mode `req`: the stream's, or RAW8 when its
     /// encoding cannot be made of that mode (RAW8 can be sent from every mode).
-    fn stream_for(&self, req: &CameraSettings) -> StreamSettings {
+    fn stream_for(&self, req: &CameraSettings) -> StreamEdit {
         match self
             .stream
             .encoding
             .check(req.format, req.width, req.height)
         {
             Ok(()) => self.stream,
-            Err(_) => StreamSettings {
+            Err(_) => StreamEdit {
                 encoding: Encoding::Raw8,
                 ..self.stream
             },
@@ -551,7 +561,7 @@ impl App {
             self.edit.exposure_lines = self.edit.exposure_lines.clamp(1, m.max_exposure_lines());
             if stream != self.stream {
                 self.stream = stream;
-                self.client.send(Command::SetStream(self.stream));
+                self.client.send(Command::SetStream(self.stream.settings()));
             }
             self.client.send(Command::SetCamera(self.request()));
         }
@@ -648,19 +658,35 @@ impl App {
         if let Err(e) = Encoding::Jpeg.check(mode.format, mode.width, mode.height) {
             ui.colored_label(ORANGE, format!("JPEG not available: {e}"));
         }
-        changed |= ui
-            .add(
-                egui::Slider::new(&mut st.jpeg_quality, JPEG_QUALITY_MIN..=JPEG_QUALITY_MAX)
+        if st.auto_quality {
+            // The board chooses: the slider shows the quality it has in use.
+            let mut in_use = s.state.map_or(AUTO_QUALITY_CEILING, |b| b.encoder.quality);
+            ui.add_enabled(
+                false,
+                egui::Slider::new(&mut in_use, JPEG_QUALITY_MIN..=JPEG_QUALITY_MAX)
                     .text("JPEG quality"),
-            )
-            .changed();
+            );
+        } else {
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut st.manual_quality, JPEG_QUALITY_MIN..=JPEG_QUALITY_MAX)
+                        .text("JPEG quality"),
+                )
+                .changed();
+        }
         changed |= ui
             .checkbox(&mut st.auto_quality, "automatic JPEG quality")
-            .on_hover_text(
-                "The board lowers the quality while frames are skipped because the link is \
-                 busy and raises it back to the set quality when there is room",
-            )
+            .on_hover_text(format!(
+                "The board chooses the quality, up to {AUTO_QUALITY_CEILING}: it lowers it while \
+                 frames are skipped because the link is busy and raises it back when there is \
+                 room. The quality set on the slider applies with this off."
+            ))
             .changed();
+        if st.auto_quality {
+            ui.label(format!(
+                "The board chooses the JPEG quality, up to {AUTO_QUALITY_CEILING}"
+            ));
+        }
         changed |= labelled(
             ui,
             "Frames per second at most (0: no limit)",
@@ -668,7 +694,7 @@ impl App {
         )
         .changed();
         if changed {
-            self.client.send(Command::SetStream(*st));
+            self.client.send(Command::SetStream(st.settings()));
         }
     }
 
@@ -905,13 +931,22 @@ impl eframe::App for App {
         }
         let stats = self.client.stats();
         let dstats = self.decoder.stats();
+        if let Some(st) = stats.state
+            && st.uptime_us != self.uptime_us
+        {
+            // A new state. After the link was lost or the board restarted, the board's
+            // settings may not be the editors' any more.
+            self.adopt |= self.lost || st.uptime_us < self.uptime_us;
+            (self.lost, self.uptime_us) = (false, st.uptime_us);
+        }
+        self.lost |= stats.state.is_some() && !stats.connected(now);
         if self.adopt
             && let Some(st) = stats.state
         {
             self.edit = st.camera;
             self.centred = st.camera.origin.is_none();
             self.origin = st.camera.origin.unwrap_or(Origin { x: 0, y: 0 });
-            self.stream = st.stream;
+            self.stream.adopt(st.stream);
             self.adopt = false;
         }
         self.meter.update(now, &stats, &dstats, self.presented);

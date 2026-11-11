@@ -12,6 +12,8 @@
 //! - [`jpeg`]: JPEG frames: the header check and decoding to RAW8.
 //! - [`decode`]: the decoding stage between the network thread and the window (JPEG decoded
 //!   off the UI thread, only what can be shown).
+//! - [`stream`]: the stream settings as the window edits them: the JPEG quality set by hand,
+//!   kept apart from the ceiling sent with automatic quality.
 //! - [`addr`]: camera addresses with an interface scope, and the local address to bind.
 
 pub mod addr;
@@ -20,3 +22,4 @@ pub mod decode;
 pub mod fake;
 pub mod jpeg;
 pub mod net;
+pub mod stream;

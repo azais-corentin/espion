@@ -14,6 +14,8 @@ frame-rate limit). Not part of the product.
 - `src/camera.rs`: the board's checks of a `SetCamera`, run here as the user edits, so the
   window shows the driver's verdict (and the HTS, VTS, clock and longest exposure it chose)
   before anything is sent. The board's answer stays authoritative.
+- `src/stream.rs`: the stream settings as the window edits them: the JPEG quality set by hand,
+  kept apart from the ceiling sent with automatic quality.
 - `src/jpeg.rs`: JPEG frames: the header check (one baseline, 8-bit, greyscale file of the
   frame's size, SOI to EOI) and decoding to RAW8 with `zune-jpeg`.
 - `src/decode.rs`: the decoding stage between the network thread and the window, on its own
@@ -37,9 +39,11 @@ cargo run -p poc-viewer --release -- '[fe80::4553:9281%eth0]:5009'   # the same,
 
 The board needs nothing from this computer's network set-up: the viewer binds its own
 link-local address on the camera's interface and talks first, so the board's answers and frames
-come back as replies. The viewer adopts the board's settings at its first answer. Settings can
-also be sent at start, for example `--size 640x400 --binned --rate 250`, `--format raw10
---encoding raw10` or `--encoding jpeg --quality 75 --auto-quality false` (`--help` lists them).
+come back as replies. The viewer adopts the board's settings at its first answer, and again
+after the link was lost or the board restarted. Settings can also be sent at start, for example
+`--size 640x400 --binned --rate 250`, `--format raw10 --encoding raw10` or `--encoding jpeg
+--quality 75 --auto-quality false` (`--help` lists them; `--quality` applies with automatic
+quality off).
 
 Against the fake camera (on loopback, no board):
 
@@ -119,8 +123,11 @@ rest:
   pattern. Sent on every change; the board changes them without restarting the stream.
 - **Stream (applied at once)**: send frames; **send JPEG**, **send RAW8** or **send RAW10
   packed** (only what the board's mode allows is enabled; "JPEG not available: ..." says why
-  not); **JPEG quality** (1..=100; the ceiling with automatic quality); **automatic JPEG
-  quality**; frames per second at most.
+  not); **JPEG quality** (1..=100); **automatic JPEG quality**; frames per second at most. With
+  automatic quality on, the board chooses the quality, up to 90 (sent as the ceiling); the
+  slider is disabled and shows the quality the board has in use. With it off, the slider sets
+  the quality; the viewer keeps that value while automatic quality is on and sends it again
+  when it is turned off. The board's state never replaces it with the ceiling.
 - **Display**: fit to window or 1:1 pixels, display gain (brightness on screen only).
 - **Board: as applied** (collapsed): the board's state in full: settings, HTS / VTS / PSV,
   rate and its error, line time, longest exposure, generation, counters, uptime.

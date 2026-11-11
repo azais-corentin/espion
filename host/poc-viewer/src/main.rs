@@ -12,12 +12,11 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, ValueEnum};
 use eframe::{egui, egui_wgpu::wgpu};
-use espion_proto::cam::{
-    CameraSettings, Encoding, Format, Origin, Readout, StreamSettings, TestPattern,
-};
+use espion_proto::cam::{CameraSettings, Encoding, Format, Origin, Readout, TestPattern};
 use poc_viewer::{
     addr,
     fake::{self, FakeCamera, FakeConfig},
+    stream::StreamEdit,
 };
 
 /// Live view and control of the OV9281 camera stream (espion-proto, camera stream kinds).
@@ -103,10 +102,12 @@ struct InitArgs {
     /// Most frames sent per second (0: no limit).
     #[arg(long)]
     max_fps: Option<u16>,
-    /// JPEG quality, 1..=100 (with automatic quality: the ceiling).
+    /// JPEG quality, 1..=100, with automatic quality off. With it on, the board chooses the
+    /// quality, up to 90, and this one applies when automatic quality is turned off.
     #[arg(long)]
     quality: Option<u8>,
-    /// Automatic JPEG quality.
+    /// Automatic JPEG quality: the board chooses the quality, up to 90 (sent as the ceiling,
+    /// whatever `--quality`).
     #[arg(long)]
     auto_quality: Option<bool>,
 }
@@ -200,7 +201,8 @@ impl InitArgs {
         })
     }
 
-    fn stream(&self) -> Option<StreamSettings> {
+    /// The stream controls at start; `--quality` is the manual quality.
+    fn stream(&self) -> Option<StreamEdit> {
         if self.encoding.is_none()
             && self.max_fps.is_none()
             && self.quality.is_none()
@@ -208,8 +210,8 @@ impl InitArgs {
         {
             return None;
         }
-        let d = fake::default_stream();
-        Some(StreamSettings {
+        let d = StreamEdit::new(fake::default_stream());
+        Some(StreamEdit {
             enabled: true,
             encoding: match self.encoding {
                 Some(EncodingArg::Raw8) => Encoding::Raw8,
@@ -218,7 +220,7 @@ impl InitArgs {
                 None => d.encoding,
             },
             max_fps: self.max_fps.unwrap_or(d.max_fps),
-            jpeg_quality: self.quality.unwrap_or(d.jpeg_quality),
+            manual_quality: self.quality.unwrap_or(d.manual_quality),
             auto_quality: self.auto_quality.unwrap_or(d.auto_quality),
         })
     }
@@ -235,7 +237,7 @@ fn main() -> Result<()> {
         // Start the fake in the requested settings when they go together (the viewer sends
         // them right after anyway), so a RAW10 stream request finds a RAW10 sensor. A mode JPEG
         // cannot be made of, without a stream given, starts the fake in RAW8.
-        let stream = args.init.stream();
+        let stream = args.init.stream().map(|e| e.settings());
         if let Some(s) = stream {
             cfg.stream = s;
         }
