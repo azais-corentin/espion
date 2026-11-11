@@ -37,6 +37,7 @@ mod camera;
 mod cpu;
 mod irq;
 mod net;
+mod prefetch;
 mod stream;
 
 /// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print

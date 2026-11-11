@@ -92,7 +92,7 @@ python3 firmware/poc-p4-stream/tools/streamdiag.py mark     # the board's CPU re
 python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report,
 python3 firmware/poc-p4-stream/tools/streamdiag.py irq      # the interrupt handlers,
 python3 firmware/poc-p4-stream/tools/streamdiag.py net      # the send path (copies, driver)
-python3 firmware/poc-p4-stream/tools/streamdiag.py path     # and the frame path (encode)
+python3 firmware/poc-p4-stream/tools/streamdiag.py path     # and the frame path (encode, prefetch)
 ```
 
 Cargo features: `accounting` (default) builds the CPU accounts; `--no-default-features`
@@ -143,7 +143,9 @@ neighbour discovery).
 
 The test service (`src/bench.rs`, the module docs have the formats):
 
-- **UDP 5010, board to host**: a 4-byte request `[kind, 0, seconds u16 LE]`; the board sends
+- **UDP 5010, board to host**: a 4-byte request `[kind, prefetch, seconds u16 LE]` (`prefetch`
+  0 leaves the cache prefetch of `src/prefetch.rs` as it is, `1 + n` selects mode `n`:
+  `netbench.py tx --prefetch n`); the board sends
   1452-byte datagrams to the requester as fast as the stack takes them, then one report
   datagram. Each datagram has a 16-byte header (sequence number, frame number, offset in the
   frame, frame length) and 1436 bytes of the frame. Kinds: `I` a 64 KiB buffer in internal RAM;
@@ -208,6 +210,7 @@ and without `accounting` alike.
 | `src/net/ip101.rs` | IP101 PHY driver (`Phy` trait): link polled every 500 ms, speed and duplex from ANAR and ANLPAR, the last report for the log |
 | `src/net/device.rs` | `embassy-net-driver` wrapper around the driver: per-frame cycle counts (feature `accounting`) |
 | `src/cpu.rs` | Cycle counter, per-task CPU time and polls from the executor's `trace` hooks (feature `accounting`), the idle counter (feature `idle-counter`), timed events (count, cycles, longest) |
+| `src/prefetch.rs` | The cache prefetch around the CPU's reads of PSRAM (the datagram body copies, the RAW10-to-RAW8 selection): the modes, why no stale line reaches the CPU |
 | `src/irq.rs` | Interrupt-handler wrappers: calls and own cycles per handler and core, the time outside executor passes, the wake and sleep paths (feature `accounting`) |
 | `src/camera.rs` | OV9281 and CSI receiver: set-up, any mode's start (lanes checked in their stop state before stream-on), controls, stop, the newest frame, the fault switch of the stream's error-path test |
 | `src/stream/mod.rs` | The camera stream service: the shared stream state, the control task (requests, all-or-nothing `SetCamera`, repeats), the hand-off to the capture, encode and send tasks |
@@ -216,7 +219,7 @@ and without `accounting` alike.
 | `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
 | `src/stream/send.rs` | The send task: answers through the socket; frame chunks beside smoltcp (`net/chunk.rs`: `espion_proto` writes the chunk header, PIE copies the bytes), through the socket until the host's MAC is known |
 | `src/net/chunk.rs` | UDP datagrams sent beside smoltcp, straight onto the TX ring: the peer's MAC learned from received frames, the headers, a PIE copy of the payload into the descriptor's buffer, the UDP checksum (PIE), the checksum self-test |
-| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only, prefetch mode |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
 | `dram_dma.x` | Linker section for esp-hal's Ethernet DMA storage at 0x4FF40000 or above (see below) |
@@ -1141,6 +1144,109 @@ core spends on the send task's poll. A handler that starts the next encode would
 driver's set-up (4 000-6 300 cycles: header copy, two cache calls, descriptors) into an
 interrupt and change the encoder's ownership for at most 48 µs a frame. Not done.
 
+### Measured: plan step 6.2, cache prefetch of the PSRAM reads, 2026-11-11
+
+The CPU reads PSRAM in one place: the PIE copy of each datagram's body into a TX buffer
+(`net/chunk.rs`), from a camera frame, a JPEG file or the bench's PSRAM buffer, and the
+RAW10-to-RAW8 selection (`stream/send.rs`). `src/prefetch.rs` wraps those reads
+(`prefetch::reading`) with one of these modes (the test hooks' `A<n>`, `netbench.py tx
+--prefetch n`), through `esp32p4-cache`'s `prefetch` module:
+
+| Mode | What |
+|---|---|
+| 0 `off` | none (the build before) |
+| 1 `l1l2` | L1 data and L2 autoload, miss+hit trigger, ascending, one section over the bytes read (the spike's best setting), on for the copy only |
+| 2 `l1`, 3 `l2` | either autoload alone, miss+hit |
+| 4 `l1l2_hit` | both, hit trigger |
+| 5 `preload` | manual L1 data preload of the bytes read, started just before the copy |
+| 6 `preload_ahead` (kept, the default) | manual L1 data preload of the next chunk's bytes (`prefetch::ahead`), started as soon as a datagram is queued, so it loads while the task waits for room on the ring and builds the next head; the copy finds the lines in L1 |
+
+**Why no stale line reaches the CPU** (the `prefetch` module docs have the full argument).
+Every PSRAM buffer the CPU reads is invalidated after the DMA's last write to it (the
+receiver's `wait_frame`, the encoder's end of file, the bench's flush before each pass), and
+no DMA writes it again until the reader gives it back. Prefetch runs only over the buffer
+being read: autoload is on only inside `reading` (off again, `DONE` waited for, before it
+returns), and the preload ahead covers the next chunk of the same buffer; the reader calls
+`prefetch::settle` (waits for the preload) before it gives the buffer back, and no
+invalidate runs inside `reading` (all of them are made by tasks outside it, none by an
+interrupt handler). So a prefetched line is always loaded after the DMA finished the buffer,
+and dropped by the buffer's next invalidate before the CPU reads it again.
+
+Bench, same build, the modes in turn, 10 s each (`s2-bench.*`, `s3-bench.*`); cycles per
+datagram:
+
+| Source | Mode | Datagrams | Lost, dup., reordered, bad | Busy (`busy_all`) | TX task | `direct_cyc` (body copy) |
+|---|---|---|---|---|---|---|
+| PSRAM | off | 81 381 | 0, 0, 0, 0 | 20.8 % | 9 520 | 7 234 (4 383) |
+| PSRAM | l1l2 | 81 383 | 0, 0, 0, 0 | 17.4 % | 7 871 | 5 608 (2 722) |
+| PSRAM | l1 | 81 383 | 0, 0, 0, 0 | 17.4 % | 7 866 | 5 598 (2 715) |
+| PSRAM | l2 | 81 383 | 0, 0, 0, 0 | 17.5 % | 7 884 | 5 620 (2 744) |
+| PSRAM | l1l2_hit | 81 374 | 0, 0, 0, 0 | 20.1 % | 9 159 | 6 887 (4 009) |
+| PSRAM | preload | 81 383 | 0, 0, 0, 0 | 17.0 % | 7 643 | 5 377 (2 530) |
+| PSRAM | preload_ahead (`s3`) | 81 383 | 0, 0, 0, 0 | 15.0 % | 6 691 | 4 382 (1 186) |
+| Camera | off | 81 318 | 0, 0, 0, 0 | 22.2 % | 10 141 | 7 711 (4 845) |
+| Camera | l1l2 | 81 316 | 0, 0, 0, 0 | 18.8 % | 8 476 | 6 051 (3 163) |
+| Camera | l1 | 81 315 | 0, 0, 0, 0 | 18.9 % | 8 509 | 6 066 (3 171) |
+| Camera | l2 | 81 310 | 0, 0, 0, 0 | 18.9 % | 8 527 | 6 102 (3 207) |
+| Camera | l1l2_hit | 81 319 | 0, 0, 0, 0 | 21.5 % | 9 824 | 7 398 (4 507) |
+| Camera | preload | 81 319 | 0, 0, 0, 0 | 18.4 % | 8 263 | 5 835 (2 969) |
+| Camera | preload_ahead (`s3`) | 81 310 | 0, 0, 0, 0 | 16.2 % | 7 166 | 4 701 (1 200) |
+
+- Autoload, either cache or both, takes the copy from 4 400-4 800 to 2 700-3 200 cycles: on
+  a 1 409-byte chunk the two levels do not add up as they did over the spike's whole frame,
+  and the hit trigger alone gains little, as in the spike.
+- Preloading the chunk being copied gains about as much; preloading the next one while the
+  task waits makes the copy from PSRAM as fast as from internal RAM (1 070-1 200 cycles
+  against 1 156 for the internal source, `s4-bench.internal.p6`).
+
+The kept build (`preload_ahead` the default, the preload started after the datagram is
+queued), against `off` in the same session, 20 s each (`s4-bench.*`):
+
+| Source, mode | Datagrams | Host MB/s | Lost, dup., reordered, bad | Busy (`busy_all`) | TX task | `direct_cyc` (body copy) |
+|---|---|---|---|---|---|---|
+| PSRAM, off | 162 757 | 11.801 | 0, 0, 0, 0 | 20.9 % | 9 570 | 7 266 (4 411) |
+| PSRAM, preload_ahead | 162 759 | 11.801 | 0, 0, 0, 0 | 14.9 % | 6 642 | 3 934 (1 071) |
+| Camera, off | 162 693 | 11.801 | 0, 0, 0, 0 | 22.3 % | 10 192 | 7 752 (4 878) |
+| Camera, preload_ahead | 162 695 | 11.801 | 0, 0, 0, 0 | 15.8 % | 7 016 | 4 075 (1 182) |
+| Internal, preload_ahead (no prefetch: internal RAM) | 163 770 | 11.796 | 0, 0, 0, 0 | 14.1 % | 6 261 | 3 965 (1 156) |
+
+Stream (`jrx`, 10 s windows, `s5-stream.case1` to `case6`; send and net tasks per datagram;
+the raw rate's 10.98 against 10.88 fps is one frame in the window, the datagrams are the
+same, 79 436 and 79 469):
+
+| Run, mode | Host | Core 0 busy (`busy_all`) | Send task | Net task | `direct_cyc` (body copy) |
+|---|---|---|---|---|---|
+| Raw 1280x800 RAW8 120 Hz (link), off | 89.94 Mbit/s | 26.2 % | 11 322 | 557 | 8 270 (4 890) |
+| Raw 1280x800 RAW8 120 Hz (link), preload_ahead | 89.11 Mbit/s | 19.7 % | 8 013 | 543 | 4 507 (1 088) |
+| JPEG q90, 15.5x, 153.98 Hz (link), off | 92.65 Mbit/s, 39.8 fps | 31.6 % | 12 327 | 537 | 9 267 (6 034) |
+| JPEG q90, 15.5x, 153.98 Hz (link), preload_ahead | 92.67 Mbit/s, 39.7 fps | 24.4 % | 8 851 | 526 | 4 869 (1 410) |
+| RAW10 sent as RAW8 (link), off | 89.88 Mbit/s | 48.5 % | 21 359 | 756 | 18 101 (selection 14 238) |
+| RAW10 sent as RAW8 (link), preload_ahead | 89.13 Mbit/s | 41.9 % | 18 169 | 741 | 14 898 (selection 10 999) |
+
+(RAW10 as RAW8 preloads the packed bytes of the chunk being reduced, not the next one: the
+selection's reads are not the copy's.)
+
+Every stream run: 0 incomplete or bad frames, 0 capture errors, 0 EMAC TX errors or
+underflows.
+
+**Content under live DMA** (`s5-stream.case7`, `case8`). The sensor's rolling-bars pattern
+(crop 1280x800 RAW8 at 120 Hz) changes in every frame: a band of 8 rows moves down by 8 rows a
+frame over two bars rows. `jrx check=rolling` checks every whole frame: each row equals one of
+the 4 distinct rows of the first frame, at most 8 band rows, so a line of an older frame of the
+same buffer shows as a wrong row. With `preload_ahead`, 180 s at the wire rate: 1 967 frames,
+0 failed (1 910 with the band whole, 57 with it in the blanking), 0 incomplete, 1 429 365
+datagrams; with `off`, 20 s: 219 frames, 0 failed. Then `poc-viewer`'s whole board test
+against this build (`preload_ahead` on; the sections `patterns`, `raw10`, `switching`,
+`agreement` check pixels of raw and JPEG frames and the switch between them): 0 failed
+checks, 325 s (`s5-stream.board.txt`).
+
+- **Kept.** At the wire rate core 0 goes from 26.2 to 19.7 % with raw frames and from 31.6 to
+  24.4 % with link-bound JPEG (send task 11 300-12 300 to 8 000-8 900 cycles a datagram); the
+  bench's camera source from 22.3 to 15.8 %. The copy from PSRAM costs what a copy from
+  internal RAM costs.
+- Not measured: the preload beside a second core's cache operations (core 1 is off), and
+  the detector's whole-frame reads of plan 6.2 (they are in `poc-p4-eth`).
+
 ## The Ethernet driver (esp-hal 1.2.2 `ethernet` for the bring-up, this crate's DMA rings)
 
 Read in the registry source and measured here. The first three needed workarounds in this
@@ -1212,9 +1318,10 @@ multicast, the EMAC's PTP clock and timestamps.
   frame period and cost an occasional frame (counted in `encoder.frames_skipped`). Running the
   encode task in an interrupt-priority executor would remove the wake-up wait behind the
   network's polls [INFERENCE: not tried; that the wait is the cause is not measured].
-- **CPU**: at the wire rate core 0 is 24-31 % busy (raw, link-bound JPEG), 11 500-12 800
-  cycles a datagram: mostly the send task's PIE copy from PSRAM, the headers and the checksum
-  ([step 3](#measured-step-3-chunk-datagrams-beside-smoltcp-2026-11-11)). Core 1 is off
+- **CPU**: at the wire rate core 0 is 20-24 % busy (raw, link-bound JPEG), 8 500-9 400
+  cycles a datagram since the preload of the next chunk
+  ([plan step 6.2](#measured-plan-step-62-cache-prefetch-of-the-psram-reads-2026-11-11)):
+  the copy (1 100-1 400), the headers and the checksum (1 200), the descriptor and the waits. Core 1 is off
   ([the two-core attempt](#the-two-core-attempt)). Sending the bytes from PSRAM without the
   copy failed on TX underflows (step 3).
 - Not verified: an encoder timeout (never seen; the path is the same as the driver's errors),

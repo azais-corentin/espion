@@ -7,7 +7,8 @@ Python standard library only. The socket is bound to the link-local address of o
   streamdiag.py report          the board's report since the mark, one key=value per line
   streamdiag.py irq             each interrupt handler's calls and cycles since the mark
   streamdiag.py net             the send path since the mark: chunk copies, driver cycles
-  streamdiag.py path            the frame path since the mark: encode set-up, wake-up, end
+  streamdiag.py path            the frame path since the mark: prefetch, encode set-up, wake, end
+  streamdiag.py prefetch N      cache prefetch mode N for the PSRAM reads (src/prefetch.rs)
   streamdiag.py fault 1|2       the next mode change fails: 1 sensor bus, 2 no first frame
   streamdiag.py stall           sensor stream off behind the receiver's back
   streamdiag.py done            the board logs "stream: host done" (board-run.sh stops on it)
@@ -47,6 +48,7 @@ def main():
             "irq",
             "net",
             "path",
+            "prefetch",
             "fault",
             "stall",
             "done",
@@ -78,6 +80,7 @@ def main():
         "irq": b"I",
         "net": b"N",
         "path": b"P",
+        "prefetch": b"A" + args.arg.encode(),
         "fault": b"F" + args.arg.encode(),
         "stall": b"S",
         "done": b"D",

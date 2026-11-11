@@ -94,7 +94,8 @@ def cmd_tx(args):
     whole = []
     report = None
     udp0, if0 = udp6_counters(), iface_counters(args.iface)
-    s.sendto(kind + b"\0" + struct.pack("<H", args.seconds), (board, TX_PORT, 0, scope))
+    prefetch = 0 if args.prefetch is None else args.prefetch + 1
+    s.sendto(kind + bytes([prefetch]) + struct.pack("<H", args.seconds), (board, TX_PORT, 0, scope))
     # Until the first datagram (or, for a capture run, the report): the whole run plus the
     # board's camera start; then a gap of 2 s ends it.
     s.settimeout(args.seconds + 5.0)
@@ -232,6 +233,10 @@ def main():
     t.add_argument("--pgm")
     t.add_argument("--width", type=int, default=1280)
     t.add_argument("--height", type=int, default=800)
+    t.add_argument("--prefetch", type=int, choices=range(7),
+                   help="cache prefetch mode for this and later runs (src/prefetch.rs: 0 off, "
+                   "1 L1+L2 autoload, 2 L1, 3 L2, 4 L1+L2 on a hit, 5 L1 preload, "
+                   "6 L1 preload ahead); default: unchanged")
     r = sub.add_parser("rx")
     r.add_argument("--rate", type=float, default=1000.0, help="datagrams/s, 0 = unpaced")
     r.add_argument("--size", type=int, default=DATAGRAM)

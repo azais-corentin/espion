@@ -1,8 +1,10 @@
 //! The network test service, driven by `tools/netbench.py` on the host.
 //!
-//! **Board to host** (UDP [`TX_PORT`]): the host sends a 4-byte request `[kind, 0, seconds
-//! (u16 LE)]`; the board then sends datagrams of [`DATAGRAM`] bytes to the address and port the
-//! request came from, as fast as the stack takes them, for that many seconds, and ends with one
+//! **Board to host** (UDP [`TX_PORT`]): the host sends a 4-byte request `[kind, prefetch,
+//! seconds (u16 LE)]` (`prefetch`: 0 leaves the cache prefetch as it is, `1 + n` selects
+//! [`crate::prefetch::Mode`] `n` for this and later runs); the board then sends datagrams of
+//! [`DATAGRAM`] bytes to the address and port the request came from, as fast as the stack
+//! takes them, for that many seconds, and ends with one
 //! report datagram. Every datagram starts with a [`HEADER`]-byte header, four u32 LE: the
 //! datagram sequence number (from 0 per request), the frame number, the byte offset of the
 //! payload in the frame, and the frame length; the report has frame number [`REPORT_FRAME`]
@@ -310,6 +312,10 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
             continue;
         };
         let secs = u16::from_le_bytes([req[2], req[3]]).clamp(1, MAX_SECONDS);
+        if req[1] > 0 && !crate::prefetch::set_mode(req[1] - 1) {
+            warn!("bench: unknown prefetch mode {}", req[1] - 1);
+            continue;
+        }
         let ep = meta.endpoint;
         let needs_camera = matches!(kind, Kind::Frames | Kind::Capture);
         let cam = match camera.as_deref_mut() {
@@ -395,7 +401,8 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
 
 /// Sends `data` as frame `frame` to `ep`, [`CHUNK`] bytes per datagram, each copied by PIE into
 /// a TX descriptor's buffer beside smoltcp, or into the socket's ring while the host's MAC is
-/// not known. `false` if the deadline came first.
+/// not known. `false` if the deadline came first. No preload of `data` runs once it returns
+/// (`crate::prefetch::settle`), so the caller may give the buffer back or flush it.
 async fn send_frame(
     sock: &mut UdpSocket<'_>,
     pie: &Pie,
@@ -408,6 +415,7 @@ async fn send_frame(
     let total = data.len() as u32;
     for (i, chunk) in data.chunks(CHUNK).enumerate() {
         if Instant::now() >= deadline {
+            crate::prefetch::settle();
             return false;
         }
         let header = [t.datagrams, frame, (i * CHUNK) as u32, total];
@@ -425,6 +433,9 @@ async fn send_frame(
         {
             t.datagrams += 1;
             t.bytes += len as u64;
+            // The next chunk's bytes load while this task waits for room on the ring.
+            let next = data.get((i + 1) * CHUNK..).unwrap_or(&[]);
+            crate::prefetch::ahead(&next[..next.len().min(CHUNK)]);
             continue;
         }
         match sock
@@ -449,6 +460,7 @@ async fn send_frame(
             Err(_) => t.errors += 1,
         }
     }
+    crate::prefetch::settle();
     t.frames += 1;
     true
 }
@@ -505,8 +517,9 @@ impl fmt::Display for Ratio {
 fn write_tally(w: &mut BufWriter<'_>, kind: Kind, t: &Tally, us: u64) {
     let _ = write!(
         w,
-        "tx source={} us={us} datagrams={} bytes={} frames={} errors={} rate_kBps={} copies={} copy_cyc={} copy_misaligned={} flush_us={}",
+        "tx source={} prefetch={} us={us} datagrams={} bytes={} frames={} errors={} rate_kBps={} copies={} copy_cyc={} copy_misaligned={} flush_us={}",
         kind.name(),
+        crate::prefetch::mode_name(),
         t.datagrams,
         t.bytes,
         t.frames,

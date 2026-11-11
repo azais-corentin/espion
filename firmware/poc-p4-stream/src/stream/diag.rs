@@ -20,9 +20,10 @@
 //!   copies whose ends differ modulo 4 and 16), and the driver wrapper's per-frame cycles
 //!   (smoltcp's part and the driver's part of TX and RX) and token requests. Zeros without
 //!   `accounting`.
-//! - `P`: the frame path since the mark: the encode's driver set-up (first poll), wake-up after
-//!   the end (from the end of the 2D-DMA RX handler to the last poll) and end work (last poll):
-//!   count, mean and longest cycles. Zeros without `accounting`.
+//! - `P`: the frame path since the mark: the cache prefetch in use, and the encode's driver
+//!   set-up (first poll), wake-up after the end (from the end of the 2D-DMA RX handler to the
+//!   last poll) and end work (last poll): count, mean and longest cycles. Zeros without
+//!   `accounting`.
 //! - `F1` / `F2`: the next mode change fails: `1` a sensor bus error (every write of the start
 //!   goes to an address nobody answers), `2` no first frame (stream-on left out); the
 //!   request is answered with the error and the previous mode runs again.
@@ -34,6 +35,9 @@
 //!   as an encoder error; the report has the time to the error).
 //! - `X1` / `X0`: encode-only on / off: JPEG files are made and dropped, not sent (the encode
 //!   time without the network's traffic on the bus).
+//! - `A<d>` (one digit): the cache prefetch around the CPU's reads of PSRAM
+//!   ([`crate::prefetch::Mode`]: 0 off, 1 L1 and L2 autoload, 2 L1, 3 L2, 4 L1 and L2 on a hit
+//!   only, 5 L1 preload, 6 L1 preload of the next chunk); the `P` reply names the one in use.
 
 use core::cell::{Cell, RefCell};
 use core::fmt::{self, Write};
@@ -165,6 +169,13 @@ pub(super) async fn task(stack: Stack<'static>) {
                     [b'X', d @ b'0'..=b'1', ..] => {
                         jpeg::ENCODE_ONLY.store(d == b'1', Ordering::Relaxed);
                         let _ = w.write_str(if d == b'1' { "encode only" } else { "send" });
+                    }
+                    [b'A', d @ b'0'..=b'9', ..] => {
+                        let _ = if crate::prefetch::set_mode(d - b'0') {
+                            write!(w, "prefetch {}", crate::prefetch::mode_name())
+                        } else {
+                            w.write_str("unknown prefetch mode")
+                        };
                     }
                     _ => {
                         let _ = w.write_str("unknown command");
@@ -450,7 +461,12 @@ fn write_path(w: &mut BufWriter<'_>) {
         let m = m.as_ref().expect("marked at start");
         (m.at, m.path)
     });
-    let _ = write!(w, "window_us={}", (Instant::now() - at).as_micros());
+    let _ = write!(
+        w,
+        "window_us={} prefetch={}",
+        (Instant::now() - at).as_micros(),
+        crate::prefetch::mode_name()
+    );
     for ((name, n), b) in PATH_NAMES.iter().zip(now).zip(before) {
         let d = n.since(&b);
         let _ = write!(

@@ -117,6 +117,8 @@ async fn respond(sock: &RefCell<UdpSocket<'static>>, r: &Outgoing) {
 async fn send_frame(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: Job) {
     let start = Instant::now();
     send_chunks(sock, pie, &job).await;
+    // No preload of the buffer may run once it goes back (`prefetch` module docs).
+    crate::prefetch::settle();
     drop(job);
     let us = start.elapsed().as_micros() as u32;
     SEND_BUSY_US.fetch_add(us, Ordering::Relaxed);
@@ -161,6 +163,11 @@ async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job) {
         }
         shared(|s| s.counters.datagrams_sent = s.counters.datagrams_sent.wrapping_add(1));
         offset += n as u32;
+        if !job.high_bits {
+            // The next chunk's bytes load while this task waits for room on the ring.
+            let rest = &job.data[offset as usize..len as usize];
+            crate::prefetch::ahead(&rest[..rest.len().min(CHUNK_MAX)]);
+        }
     }
     shared(|s| {
         if s.epoch == job.epoch {
@@ -199,7 +206,11 @@ fn head(job: &Job, frame_len: u32, offset: u32, n: usize, buf: &mut [u8]) -> usi
         return h;
     }
     let c0 = cpu::mcycle();
-    high_bits(&job.data, offset as usize, &mut buf[h..h + n]);
+    let packed = &job.data[offset as usize / 4 * 5..];
+    let packed = &packed[..(n.div_ceil(4) + 1).saturating_mul(5).min(packed.len())];
+    crate::prefetch::reading(packed, || {
+        high_bits(&job.data, offset as usize, &mut buf[h..h + n]);
+    });
     if cfg!(feature = "accounting") {
         count_copy(cpu::mcycle().wrapping_sub(c0), n, 0);
     }

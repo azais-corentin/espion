@@ -204,7 +204,8 @@ fn ends(to: IpEndpoint, from: u16) -> Result<Ends, NoPeer> {
 
 /// Sends one UDP datagram from port `from` to `to`: the head written by `head` (into a
 /// buffer of [`HEAD_MAX`] bytes; it returns the length), then a copy of `body` (at most
-/// `HEAD_MAX` bytes with the head). Waits for room on the TX ring.
+/// `HEAD_MAX` bytes with the head), under the cache prefetch of [`crate::prefetch::reading`].
+/// Waits for room on the TX ring.
 pub async fn send(
     pie: &Pie,
     to: IpEndpoint,
@@ -222,7 +223,8 @@ pub async fn send(
     let n = head(&mut buf[HEADERS..]).min(HEAD_MAX);
     let payload = n + body.len();
     let cc = cpu::mcycle();
-    pie.copy(&mut buf[HEADERS + n..HEADERS + payload], body);
+    let dst = &mut buf[HEADERS + n..HEADERS + payload];
+    crate::prefetch::reading(body, || pie.copy(dst, body));
     let c1 = cpu::mcycle();
     let len = write_headers(pie, buf, &ends, payload, &[]);
     let c2 = cpu::mcycle();
