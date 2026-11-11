@@ -4,6 +4,7 @@
  */
 import * as fs from "node:fs";
 import {
+	type Board,
 	COPPER_FINISHES,
 	courtyardBox,
 	extentBox,
@@ -26,12 +27,13 @@ import {
 	setProperty,
 } from "../board";
 import * as cli from "../cli";
+import { netReader } from "../copper";
 import { boardOutline, checkCutouts, type EdgeShape, encodeEdge, isEdgeItem, normalShape, shapeIn, shapePolygon } from "../edges";
 import { mm } from "../fpgfx";
 import { type Box, bbox, type Pt } from "../geom";
 import type { Project } from "../project";
 import { newUuid } from "../sch";
-import { child, children, clone, head, isList, L, type List, parse, setChild, str, text } from "../sexpr";
+import { child, children, clone, head, isList, L, type List, parse, removeChild, setChild, str, text } from "../sexpr";
 import { type Fields, validate } from "../spec";
 import type { OpDef } from "../types";
 
@@ -253,6 +255,107 @@ function syncFootprint(fp: List, c: cli.Component, pins: PinNets, font: { size: 
 	return changed;
 }
 
+/** A footprint pad's net: its footprint, number and occurrence of that number (shield tabs share one). */
+interface PadNet {
+	fp: List;
+	key: string;
+	net: string;
+}
+
+function padNets(fps: List[], netOf: (l: List) => string): PadNet[] {
+	return fps.flatMap(fp => {
+		const seen = new Map<string, number>();
+		return children(fp, "pad").map(pad => {
+			const n = text(pad, 1) ?? "";
+			const nth = seen.get(n) ?? 0;
+			seen.set(n, nth + 1);
+			return { fp, key: `${n}\u0000${nth}`, net: netOf(pad) };
+		});
+	});
+}
+
+const COPPER_KINDS: Record<string, "tracks" | "vias" | "zones"> = { segment: "tracks", arc: "tracks", via: "vias", zone: "zones" };
+
+/**
+ * Let the board's copper follow its pads after their nets changed (`before`: every pad's net
+ * before the sync; `replacedBy`: footprints replaced in place). A net A whose surviving pads are
+ * all on one real net B, with no pad staying on A (a pad that was on A before, or a new pad), has
+ * its tracks, arcs, vias and zones (and tuning patterns' net) moved to B: a rename or a merge.
+ * Every net is judged on the copper as it was, so chains (A → B, B → C) and swaps move each
+ * net's copper once. A split (pads on several nets, or some staying on A) and orphaned copper (no
+ * surviving pad on a real net) stay and are noted. Returns the nets and layers of the moved copper.
+ */
+function followNets(board: Board, before: PadNet[], replacedBy: Map<List, List>, notes: string[]): { nets: string[]; layers: string[] } {
+	const netOf = netReader(board.tree);
+	const was = new Map<List, Map<string, string>>();
+	for (const p of before) {
+		const fp = replacedBy.get(p.fp) ?? p.fp;
+		const m = was.get(fp);
+		if (m) m.set(p.key, p.net);
+		else was.set(fp, new Map([[p.key, p.net]]));
+	}
+	const now = new Map<List, Map<string, string>>();
+	// nets that keep a pad: one that was on that net before the sync, or a new pad
+	const staying = new Set<string>();
+	for (const p of padNets(board.footprints(), netOf)) {
+		const m = now.get(p.fp);
+		if (m) m.set(p.key, p.net);
+		else now.set(p.fp, new Map([[p.key, p.net]]));
+		const prev = was.get(p.fp)?.get(p.key);
+		if (prev === undefined || prev === p.net) staying.add(p.net);
+	}
+	// copper and tuning patterns by their net before any move
+	const copper = new Map<string, List[]>();
+	const patterns = new Map<string, List[]>();
+	for (const it of board.tree) {
+		if (!isList(it)) continue;
+		const kind = head(it) ?? "";
+		const n = COPPER_KINDS[kind] ? netOf(it) : kind === "generated" ? (text(child(it, "last_netname")) ?? "") : "";
+		if (!n) continue;
+		const byNet = kind === "generated" ? patterns : copper;
+		const l = byNet.get(n);
+		if (l) l.push(it);
+		else byNet.set(n, [it]);
+	}
+	// per old net, the nets its pads are on now (undefined: the pad or its footprint is gone)
+	const survivors = new Map<string, (string | undefined)[]>();
+	for (const p of before) {
+		if (!p.net) continue;
+		const n = now.get(replacedBy.get(p.fp) ?? p.fp)?.get(p.key);
+		const l = survivors.get(p.net);
+		if (l) l.push(n);
+		else survivors.set(p.net, [n]);
+	}
+	const moved = { nets: new Set<string>(), layers: new Set<string>() };
+	for (const [a, after] of [...survivors].sort((x, y) => x[0].localeCompare(y[0], undefined, { numeric: true }))) {
+		const items = copper.get(a);
+		if (!items) continue;
+		const live = after.filter((n): n is string => n !== undefined);
+		const targets = [...new Set(live)].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+		if (live.length ? targets.every(n => n === a) : staying.has(a)) continue;
+		const count = { tracks: 0, vias: 0, zones: 0 };
+		for (const it of items) count[COPPER_KINDS[head(it)!]!]++;
+		const counts = `${count.tracks} tracks, ${count.vias} vias, ${count.zones} zones`;
+		if (!staying.has(a) && targets.every(n => !n || n.startsWith("unconnected-("))) {
+			notes.push(`copper of ${a} orphaned (no pad of it left on a net; remove_copper and remove_zone delete it): ${counts}`);
+		} else if (staying.has(a) || targets.length > 1) {
+			const why = staying.has(a) ? `some pads still on ${a}` : "split";
+			notes.push(`copper of ${a} not moved (${why}): its pads are now on ${targets.map(n => n || "no net").join(", ")}; ${counts}`);
+		} else {
+			const b = targets[0]!;
+			for (const it of items) {
+				setChild(it, L("net", str(b)));
+				removeChild(it, "net_name");
+				for (const l of [child(it, "layer"), child(it, "layers")]) for (const x of l?.slice(1) ?? []) if (!isList(x)) moved.layers.add(x.v);
+			}
+			for (const g of patterns.get(a) ?? []) setChild(g, L("last_netname", str(b)));
+			moved.nets.add(b);
+			notes.push(`copper of ${a} now on ${b}: ${counts}`);
+		}
+	}
+	return { nets: [...moved.nets], layers: [...moved.layers] };
+}
+
 const GAP = 1;
 const GROUP_GAP = 5;
 
@@ -303,6 +406,7 @@ const updateFromSchematic: OpDef = {
 	group: "board",
 	doc:
 		"KiCad's Update PCB from Schematic for every symbol on the board (DNP ones too): adds each missing footprint from the libraries with its symbol link, fields (hidden on the fab layer), attributes (dnp, exclude_from_bom), pad nets and 3D models; refreshes existing footprints (fields, attributes, nets); a changed Footprint field replaces the footprint in place (position, rotation, side and lock kept). " +
+		"Copper follows a renamed or merged net: when every surviving pad of a net is on one other net and none is left on the old name, its tracks, arcs, vias and zones move to that net; a split net's copper and copper whose pads are all gone or unconnected stay where they are and are noted. " +
 		"New footprints go outside the outline, to its right (right of x = 0 without one), one block per sheet, courtyards apart. Footprints without a symbol are listed, removed only with remove_extra. Run it in its own kicad_edit call after schematic changes are applied.",
 	fields: {
 		remove_extra: { t: "boolean", doc: "remove footprints whose symbol is gone or not on the board (default false; board-only footprints stay)" },
@@ -316,6 +420,8 @@ const updateFromSchematic: OpDef = {
 		}
 		const nl = await cli.netlist(project.rootFile, { cwd: project.dir, repoRoot: project.repoRoot });
 		const board = project.board();
+		const before = padNets(board.footprints(), netReader(board.tree));
+		const replacedBy = new Map<List, List>();
 		const { fabFont } = boardDefaults(project);
 		const pins: PinNets = new Map();
 		for (const net of nl.nets) {
@@ -364,6 +470,7 @@ const updateFromSchematic: OpDef = {
 				setLocked(fp, pl.locked);
 				syncFootprint(fp, c, pins, fabFont, missingPads);
 				board.tree[board.tree.indexOf(existing)] = fp;
+				replacedBy.set(existing, fp);
 				matched.add(fp);
 				replaced.push(c.ref);
 				replacedHow.push(`${c.ref} (${fpId(existing)} → ${c.footprint})`);
@@ -379,6 +486,8 @@ const updateFromSchematic: OpDef = {
 		}
 		const extra = board.footprints().filter(fp => !matched.has(fp) && !added.some(a => a.fp === fp) && !fpAttrs(fp).includes("board_only"));
 		if (args.remove_extra) for (const fp of extra) board.remove(fp);
+		const copperNotes: string[] = [];
+		const moved = followNets(board, before, replacedBy, copperNotes);
 
 		if (added.length) {
 			// right of the outline, of every footprint already there, and of x = 0
@@ -400,10 +509,11 @@ const updateFromSchematic: OpDef = {
 			...(extraRefs.length ? [`${args.remove_extra ? "removed" : "kept (no symbol; remove_extra removes them)"}: ${refs(extraRefs)}`] : []),
 			...(noFootprint.length ? [`no Footprint field, not on the board: ${refs(noFootprint)}`] : []),
 			...(missingPads.length ? [`symbol pins without a pad of that number: ${refs(missingPads)}`] : []),
+			...copperNotes,
 		);
-		if (added.length || updated.length || replaced.length || (args.remove_extra && extra.length)) {
+		if (added.length || updated.length || replaced.length || (args.remove_extra && extra.length) || moved.nets.length) {
 			project.touchBoard();
-			ctx.touchBoard(touchedBoxes.length ? bbox(touchedBoxes.flatMap(b => [[b[0], b[1]] as Pt, [b[2], b[3]] as Pt])) : undefined, [...addedRefs, ...replaced]);
+			ctx.touchBoard(touchedBoxes.length ? bbox(touchedBoxes.flatMap(b => [[b[0], b[1]] as Pt, [b[2], b[3]] as Pt])) : undefined, [...addedRefs, ...replaced], moved.nets.length ? moved : undefined);
 		}
 	},
 };

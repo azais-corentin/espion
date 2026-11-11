@@ -1,16 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Board, flipToBack, placement, r6, setFieldPose, setPlacement, toBoard } from "../src/board";
+import { Board, flipToBack, fpRef, placement, r6, setFieldPose, setPlacement, toBoard } from "../src/board";
 import { drcFindings } from "../src/checks/board";
 import { type DrcReport, netlist, pcbDrc, run } from "../src/cli";
+import { Copper } from "../src/copper";
 import { boardOutline, checkCutouts, decodeEdges, type EdgeShape, encodeEdge, shapeIn } from "../src/edges";
 import type { Pt } from "../src/geom";
+import { Project } from "../src/project";
+import { OPS } from "../src/registry";
 import type { Rasterize } from "../src/render";
 import { children, L, type List, parse, print, str, text } from "../src/sexpr";
+import { validate } from "../src/spec";
 import { runChecks, runQuery, runRender } from "../src/tools";
 import { type EditRequest, runEdit } from "../src/txn";
-import { BOARD_PROJECT, cleanup, HAS_KICAD, stageBoardFixture } from "./helpers";
+import type { OpContext } from "../src/types";
+import { BOARD_FIXTURE, BOARD_PROJECT, cleanup, HAS_KICAD, stageBoardFixture } from "./helpers";
 
 /** A board outline 60 × 40 mm with a 10 × 5 mm notch in the top edge: R2 outer corners, R0.5 mill radius in the notch's concave corners. In normal form. */
 const NOTCHED: EdgeShape = {
@@ -648,4 +653,135 @@ describe.skipIf(!HAS_KICAD)("board ops, queries, check and render on the fixture
 		fs.writeFileSync(path.join(dir, "~board.kicad_pcb.lck"), JSON.stringify({ hostname: "tan-gnu", username: "tan" }));
 		await expect(edit([{ op: "set_board_rules", rules: { min_clearance: 0.1 } }])).rejects.toThrow("KiCad has the project open (board/~board.kicad_pcb.lck: locked by tan@tan-gnu)");
 	});
+});
+
+describe.skipIf(!HAS_KICAD)("update_from_schematic on the copper fixture: copper follows its pads' nets", () => {
+	let root: string;
+	let dir: string;
+	let boardFile: string;
+	const o = () => ({ cwd: dir, repoRoot: root });
+	const edit = (ops: Record<string, unknown>[], more: Partial<EditRequest> = {}) => runEdit({ project: BOARD_PROJECT, ops, ...more }, root, undefined, undefined, () => []);
+	/** A schematic edit applied with the connectivity change its dry run reports. */
+	const schematic = async (ops: Record<string, unknown>[]) => {
+		const dry = await edit(ops, { dry_run: true });
+		const r = await edit(ops, { expect: JSON.parse(dry.report.slice(dry.report.indexOf("{", dry.report.indexOf("Actual connectivity change as `expect`")))) });
+		if (!r.applied) throw new Error(r.report);
+	};
+	/** Tracks (arcs included), vias and zones on a net. */
+	const copperOn = (net: string, board = Board.load(boardFile)) => {
+		const c = Copper.of(board);
+		return [c.tracks.filter(t => t.net === net).length, c.vias.filter(v => v.net === net).length, c.zones.filter(z => z.net === net).length];
+	};
+	/** update_from_schematic on the board in memory, without the transaction (so without KiCad's re-save). */
+	const inMemory = async (args: Record<string, unknown> = {}) => {
+		const project = Project.open(BOARD_PROJECT, root);
+		const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {}, touchBoard() {} };
+		const def = OPS.get("update_from_schematic")!;
+		await def.apply(ctx, validate("update_from_schematic", args, def.fields));
+		return ctx;
+	};
+
+	beforeEach(() => {
+		root = stageBoardFixture();
+		dir = path.join(root, BOARD_PROJECT);
+		boardFile = path.join(dir, "board.kicad_pcb");
+		fs.copyFileSync(path.join(BOARD_FIXTURE, "copper.kicad_pcb"), boardFile);
+	});
+	afterEach(() => cleanup(root));
+
+	test("a renamed net: its tracks, arc, vias and zone end on the new name, in the dry run too; KiCad finds no parity issue", async () => {
+		const zone = await edit([{ op: "add_zone", net: "LED_A", layers: ["F.Cu"], outline: { rect: { x: 19, y: 12, width: 6, height: 2 } }, name: "LED_A_F" }]);
+		if (!zone.applied) throw new Error(zone.report);
+		expect(copperOn("LED_A")).toEqual([6, 2, 1]);
+		await schematic([{ op: "rename_net", from: "LED_A", to: "LED_B" }]);
+
+		const dry = await edit([{ op: "update_from_schematic" }], { dry_run: true });
+		expect(dry.report).toContain("copper of LED_A now on LED_B: 6 tracks, 2 vias, 1 zones");
+		expect(copperOn("LED_A")).toEqual([6, 2, 1]);
+		const r = await edit([{ op: "update_from_schematic" }]);
+		if (!r.applied) throw new Error(r.report);
+		expect(r.report).toContain("copper of LED_A now on LED_B: 6 tracks, 2 vias, 1 zones");
+		expect(copperOn("LED_A")).toEqual([0, 0, 0]);
+		expect(copperOn("LED_B")).toEqual([6, 2, 1]);
+		expect((await pcbDrc(boardFile, o(), true)).parity).toEqual([]);
+		expect((await edit([{ op: "update_from_schematic" }])).report).toStartWith("No file changes.");
+	}, 180_000);
+
+	test("two routed nets merged by deleting the series part between them: all copper on the surviving name, the part's footprint removed", async () => {
+		const vin = copperOn("/VIN");
+		const led = copperOn("LED_A");
+		expect(vin[0]).toBeGreaterThan(0);
+		// R1 out, its two ends wired together and on to C1.1; the global label LED_A names the net
+		await schematic([
+			{ op: "remove_symbol", ref: "R1" },
+			{ op: "remove_label", sheet: "root", name: "VIN", at: [101.6, 97.79] },
+			{ op: "remove_label", sheet: "root", name: "VIN", at: [121.92, 97.79] },
+			{ op: "add_wire", sheet: "root", points: [[101.6, 105.41], [101.6, 95.25], [121.92, 95.25], [121.92, 97.79]] },
+		]);
+		// the op itself, before KiCad's re-save (which gives a pad's net to tracks touching only that pad)
+		const ctx = await inMemory({ remove_extra: true });
+		const board = ctx.project.board();
+		expect(ctx.notes).toContain(`copper of /VIN now on LED_A: ${vin[0]} tracks, ${vin[1]} vias, ${vin[2]} zones`);
+		expect([copperOn("/VIN", board), copperOn("LED_A", board)]).toEqual([[0, 0, 0], led.map((n, i) => n + vin[i]!)]);
+		const r = await edit([{ op: "update_from_schematic", remove_extra: true }]);
+		if (!r.applied) throw new Error(r.report);
+		expect(r.report).toContain("removed: R1");
+		expect(r.report).toContain("copper of /VIN now on LED_A");
+		expect(copperOn("/VIN")).toEqual([0, 0, 0]);
+		expect(copperOn("LED_A")).toEqual(led.map((n, i) => n + vin[i]!));
+		expect(Board.load(boardFile).footprints().map(f => fpRef(f)).sort()).toEqual(["C1", "D1"]);
+	}, 180_000);
+
+	test("a chain of renames: /VIN's pads take the name LED_A while LED_A's take LED_B; each net's copper moves once, to its own pads' new name", async () => {
+		const vin = copperOn("/VIN");
+		const led = copperOn("LED_A");
+		await schematic([
+			{ op: "rename_net", from: "LED_A", to: "LED_B" },
+			{ op: "remove_label", sheet: "root", name: "VIN", at: [101.6, 97.79] },
+			{ op: "remove_label", sheet: "root", name: "VIN", at: [121.92, 97.79] },
+			{ op: "add_label", sheet: "root", name: "LED_A", kind: "global", at: [101.6, 97.79] },
+			{ op: "add_label", sheet: "root", name: "LED_A", kind: "global", at: [121.92, 97.79] },
+		]);
+		const ctx = await inMemory();
+		const board = ctx.project.board();
+		expect(ctx.notes.filter(n => n.startsWith("copper of "))).toEqual([
+			`copper of /VIN now on LED_A: ${vin[0]} tracks, ${vin[1]} vias, ${vin[2]} zones`,
+			`copper of LED_A now on LED_B: ${led[0]} tracks, ${led[1]} vias, ${led[2]} zones`,
+		]);
+		expect([copperOn("/VIN", board), copperOn("LED_A", board), copperOn("LED_B", board)]).toEqual([[0, 0, 0], vin, led]);
+		const r = await edit([{ op: "update_from_schematic" }]);
+		if (!r.applied) throw new Error(r.report);
+		expect([copperOn("/VIN"), copperOn("LED_A"), copperOn("LED_B")]).toEqual([[0, 0, 0], vin, led]);
+		expect((await pcbDrc(boardFile, o(), true)).parity).toEqual([]);
+	}, 180_000);
+
+	test("a split net: one pad moved to another net while another stays; no copper moves, the note reports it", async () => {
+		const gnd = copperOn("GND");
+		const led = copperOn("LED_A");
+		// D1's cathode from GND to LED_A
+		await schematic([
+			{ op: "remove_symbol", ref: "#PWR2" },
+			{ op: "add_label", sheet: "Led", name: "LED_A", kind: "global", at: [97.79, 114.3], rot: 180 },
+		]);
+		const ctx = await inMemory();
+		expect(ctx.notes.filter(n => n.startsWith("copper of ")).map(n => n.split(" (")[0])).toEqual(["copper of GND not moved"]);
+		expect([copperOn("GND", ctx.project.board()), copperOn("LED_A", ctx.project.board())]).toEqual([gnd, led]);
+		const r = await edit([{ op: "update_from_schematic" }]);
+		if (!r.applied) throw new Error(r.report);
+		expect(r.report).toContain("copper of GND not moved");
+		// KiCad's re-save gives copper that touches only D1.1 (its stub and via) the pad's net; the zone stays on GND
+		expect(copperOn("GND")[2]).toBe(gnd[2]!);
+	}, 180_000);
+
+	test("a net whose parts were all removed: its copper stays, reported as orphaned", async () => {
+		const led = copperOn("LED_A");
+		await schematic([
+			{ op: "set_attrs", ref: "R1", on_board: false },
+			{ op: "set_attrs", ref: "D1", on_board: false },
+		]);
+		const r = await edit([{ op: "update_from_schematic", remove_extra: true }]);
+		if (!r.applied) throw new Error(r.report);
+		expect(r.report).toContain("copper of LED_A orphaned");
+		expect(copperOn("LED_A")).toEqual(led);
+	}, 180_000);
 });

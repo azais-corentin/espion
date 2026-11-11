@@ -540,7 +540,7 @@ function ptsOf(l: List | undefined): Pt[] {
 }
 
 /** Net names by item: the name in KiCad 10, a number into the net table in older boards. */
-function netReader(tree: List): (item: List) => string {
+export function netReader(tree: List): (item: List) => string {
 	const table = new Map<string, string>();
 	for (const n of children(tree, "net")) if (n.length >= 3) table.set(text(n, 1) ?? "", text(n, 2) ?? "");
 	return item => {
