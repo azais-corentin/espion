@@ -23,6 +23,8 @@ scopes = [
   "esp32p4-csi",
   # firmware/esp32p4-jpeg: hardware JPEG encoder (greyscale) and 2D-DMA driver.
   "esp32p4-jpeg",
+  # firmware/esp32p4-perf: cycle, instruction, branch and cache counters of the P4.
+  "esp32p4-perf",
   # firmware/ov9281: OV9281 sensor driver (mode solver and SCCB control).
   "ov9281",
   # firmware/poc-p4-eth: throwaway proof of concept on the Waveshare ESP32-P4-ETH.

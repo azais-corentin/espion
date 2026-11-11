@@ -1,9 +1,12 @@
 # Rust build outputs (host workspace and each firmware crate)
 target/
 # Library crates built standalone only for checks and tests; their lockfiles live in the
-# firmware that uses them (cam-p4, poc-p4-eth)
+# firmware that uses them (cam-p4, poc-p4-eth, poc-p4-stream)
 firmware/esp32p4-csi/Cargo.lock
 firmware/esp32p4-jpeg/Cargo.lock
+firmware/esp32p4-perf/Cargo.lock
+firmware/esp32p4-pie/Cargo.lock
+firmware/espion-vision/Cargo.lock
 firmware/ov9281/Cargo.lock
 
 # Nix / direnv
