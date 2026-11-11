@@ -135,6 +135,7 @@ All in constants at the top of `src/main.rs`; one plan per boot. The default sel
 |---|---|---|
 | `RUN_BENCH` | `false` (default) / `true` | Detector benchmark on synthetic frames, before the camera |
 | `RUN_CAMERA` | `true` (default) | The camera section |
+| `RUN_CORE1` | `false` (default) / `true` | Instead of `PLAN`: strip runs on the modes of `CAMERA_PLAN`, 30 s each, with the detector on the second core started bare (see "Detector on core 1"). Not run on the board yet |
 | `PLAN` | `&CAMERA_PLAN` (default) | Modes 0..=3 (the 120 fps RAW8 modes), then the soak chosen by `SOAK` |
 | `PLAN` | `&FAST_CAPTURE_PLAN` | Capture only over modes 4..=11, 5 s each, then the detector check per mode |
 | `PLAN` | `&MODE_STILLS_PLAN` | All 12 modes (order 0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3, so RAW10 follows its RAW8 window and 8 follows the binned modes), gain 2x: capture only, the detector check, a scene still and a bar-pattern still per mode |
@@ -149,7 +150,8 @@ All in constants at the top of `src/main.rs`; one plan per boot. The default sel
 | `SOAK` | `Soak::None` | With `CAMERA_PLAN`: capture only, then the detector check per mode |
 | `SOAK_SKIP` | `SkipChoice::Pie` (default) / `SkipChoice::Scalar` | The dark skip of the frame soak and the strip soak: PIE on core 0 (the token is made once in `app`; `Scalar` if `Pie::enable` refuses) or the portable one. The benchmark always runs both |
 
-Every plan that uses the strip path needs `RUN_BENCH = false` (checked at compile time).
+Every plan that uses the strip path, and `RUN_CORE1`, needs `RUN_BENCH = false` (checked at
+compile time).
 `camera::Plan` holds the modes (indexes into `modes::MODES`) or the requests, the sensor
 settings (`camera::Sensor`: exposure 800 lines, clamped per mode to its longest, gain 2x,
 continuous clock, scene or a test pattern), the measurement window (5 s), the `cache_check`
@@ -223,6 +225,83 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | `../ov9281` (crate) | The sensor driver: mode builder and solver, the measured limits, the register list, SCCB control (`firmware/ov9281/README.md`) |
 | `tools/still.py` | Decodes the still dumps of a log into PGM and PNG files, and the JPEG dumps into `.jpg` files |
 | `tools/jpeg_check.py` | Checks the board's JPEG files against libjpeg-turbo (decoding, PSNR, size against `cjpeg`) |
+| `src/core1.rs` | `RUN_CORE1`, core 1's side: start through `CpuControl::start_app_core`, its own trap vector, the poll / detect / release loop (`detect_rows` is the one detector call), the result queue, the reader mailbox, heartbeat and trap record |
+| `src/core1_soak.rs` | `RUN_CORE1`, core 0's side: strip receivers split per strip size, sensor and receiver per mode, the monitor loop (`service()` every millisecond, results drained, a log line per second, heartbeat and trap check) |
+| `src/spsc.rs` | Single-producer single-consumer queue on two atomic indices, overwrite-never; host tests with `rustc --edition 2024 --test src/spsc.rs` |
+
+### Detector on core 1 (`RUN_CORE1`)
+
+**Not run on the board yet** (2026-11-11). Built, clippy-clean and checked in the release ELF
+only. The plan behind it is performance plan step 5.3: core 1 runs bare, with no scheduler,
+no interrupts, no critical section and no logging.
+
+Start-up (esp-hal 1.2.2, `system/multi_core.rs`, `soc/esp32p4/cpu_control.rs`):
+- `start_app_core` copies the entry closure to the bottom of a 16 KiB static stack, enables
+  core 1's clock, releases its reset and gives the ROM the boot address. Core 1 then sets
+  `gp`, the FPU, `sp` and the branch predictor, clears the boot address, writes the stack
+  guard word (60 bytes above the bottom) with a watchpoint on it, and runs `init_vectoring`:
+  `mtvec` on the shared `_vector_table` in CLIC mode and its CLIC lines enabled. No
+  peripheral interrupt is routed to core 1 and nothing sets `mstatus.MIE`.
+- If the closure returned, core 1 would park itself. Dropping the `AppCoreGuard` parks it
+  (PMU stall) wherever it is, possibly holding the `esp32p4-cache` lock, so the guard lives
+  in a static and is never dropped.
+
+The entry clears `mstatus.MIE`, points `mtvec` at its own trap vector (`core1_trap`, in RAM,
+256-byte aligned, the CLIC mode bits kept) and calls `esp32p4_perf::init()` (the event
+counters are per core). esp-hal's default trap path would end in `ExceptionHandler`'s
+`panic!`, formatted and printed through `esp-println` from core 1, and for a stack pointer
+below RAM it would move `sp` onto core 0's main stack. `core1_trap` stores `mcause`, `mepc`
+and `mtval` in atomics without a stack and waits for ever; core 0 logs them.
+
+Core 1 to core 0: frame results in a queue of 4 slots (`spsc.rs`): frame number, strips,
+late strips, blob count, the blobs (up to 256), the detector's `Stats`, detector cycles and
+instructions, and the worst strip latency from `queued_at_cycles`. Never overwritten: a full
+queue counts a drop. Also a heartbeat counter, a count of abandoned frames and the trap
+record. Core 0 to core 1: the detector parameters (atomics, written while stopped) and the
+strip reader (a two-slot mailbox; core 1 uses the reader in place).
+
+Core 0 per mode: parameters, sensor set-up, `StripControl::start`, stream-on, then for 30 s
+every millisecond `service()` and the queue drained, and once a second a line with frames
+per second, detector time per frame (mean and max), instructions per frame, late strips
+(consumed more than one strip period after the reader took them), worst latency, lapped
+strips, abandoned frames, blobs, detector overflow, dropped results and heartbeat rate. A
+trap record or a heartbeat that did not move for a second ends the runs with a report.
+
+Call graph of the release build with `RUN_CORE1 = true`, from esp-hal's core-1 entry: the
+loop (`core1::run`, with the reader's `poll` and `release` inlined) reaches `Tracker::complete`,
+the detector (`push_rows_with::<Scalar>`, `Labels::link`, `Labels::end_row`,
+`Scalar::first_bright`, `first_bright10`) and the ROM's `memset`, `memcpy`,
+`Cache_Get_L2_Cache_Line_Size` and `Cache_Invalidate_Addr`. No reference to
+`CRITICAL_SECTION`, `SCHEDULER`, `esp_println::LOCK` or `raise`; no indirect call. The
+panic handler is reachable only through bounds and division checks that the detector's
+invariants rule out: `free[nfree - 1]` and `merged[i]` (counts kept at most `COMPS`),
+`runs[prev]` and `nruns[prev]` (`prev` is 0 or 1), `[..nruns]` (at most `RUNS`),
+`blocks[i]` in `first_bright10` (an index found in `blocks[from..]`), and the divisions of
+`q5` (`sw` is at least 1 for every component and stays below 2^32 for frames up to 4 M
+pixels; `div_q16` gets `sw > 0`). esp-hal's own start-up code before the closure
+(`init_vectoring`, `set_stack_watchpoint`) has panic paths of its own. Re-run the walk when
+the detector call changes.
+
+With `RUN_CORE1 = false` the runner's large statics are not linked (the set-up runs before
+the first await of a `const`-gated future): 620 bytes more RAM than without it (the trap
+record and the mailbox) and about 15 KB of unreachable code.
+
+Board checks still to do:
+1. Boot with `RUN_CORE1 = true`: "core 1: started", one line per second per mode, a
+   heartbeat of up to about 100 000 per second (one turn per 10 us pause when idle).
+2. All four 120 fps modes for 30 s each: fps 120, `results dropped`, `lapped` and
+   `abandoned` 0 after the first second, stalls and length errors 0 in the summary,
+   detector time per frame as on core 0 (`proc` of the strip soak) or better.
+3. The same with core 0 busy (a later step adds the network load): no change on core 1
+   beyond the shared cache.
+4. A deliberate fault on core 1 (an illegal instruction in a test build): core 0 logs the
+   trap with `mcause` 2 and the `mepc` of the instruction within one second, and keeps
+   running.
+5. A deliberate endless loop in the detector call: core 0 reports the stalled heartbeat
+   within one second.
+6. Hold a strip on core 1 for (N - 1) to N strip periods (N strips in the ring): lapped
+   strips counted, delivery from the next frame, no stall; longer: a stall, `service()`
+   resumes, the run goes on.
 
 ## Measured results
 

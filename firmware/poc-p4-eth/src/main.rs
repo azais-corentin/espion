@@ -61,10 +61,13 @@ macro_rules! with_skip {
 
 mod bench;
 mod camera;
+mod core1;
+mod core1_soak;
 mod jpeg_bench;
 mod modes;
 mod requests;
 mod soak;
+mod spsc;
 mod strip_soak;
 
 /// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print
@@ -104,6 +107,9 @@ impl DarkSkip<'_> {
         }
     }
 }
+/// Instead of [`PLAN`]: strip runs on the modes of [`CAMERA_PLAN`] with the blob detector on
+/// the second core, started bare (`core1`, `core1_soak`). Not run on the board yet.
+const RUN_CORE1: bool = false;
 /// What the camera section runs after capture starts in each mode.
 #[allow(
     dead_code,
@@ -276,7 +282,7 @@ const JPEG_PLAN: camera::Plan = camera::Plan {
     ..CAMERA_PLAN
 };
 // The benchmark's 300 KiB frame buffer and the strip ring do not both fit in internal RAM.
-const _: () = assert!(!(RUN_BENCH && PLAN.strips.is_some()));
+const _: () = assert!(!(RUN_BENCH && (PLAN.strips.is_some() || RUN_CORE1)));
 
 /// SCCB data: net ESP_I2C_SDA, U6 pin 7 (GPIO7) to CSI connector J1 pin 2.
 const SCCB_SDA_GPIO: u8 = 7;
@@ -331,7 +337,16 @@ async fn main(spawner: Spawner) -> ! {
     }
     log_chip();
     let (psram_mem, internal) = memory_report(peripherals.PSRAM);
-    spawner.spawn(app(peripherals.I2C0, peripherals.VDMA_CH0, psram_mem, internal).unwrap());
+    spawner.spawn(
+        app(
+            peripherals.I2C0,
+            peripherals.VDMA_CH0,
+            peripherals.CPU_CTRL,
+            psram_mem,
+            internal,
+        )
+        .unwrap(),
+    );
     loop {
         Timer::after(Duration::from_secs(1)).await;
     }
@@ -344,6 +359,7 @@ async fn main(spawner: Spawner) -> ! {
 async fn app(
     i2c0: esp_hal::peripherals::I2C0<'static>,
     vdma: esp_hal::peripherals::VDMA_CH0<'static>,
+    cpu: esp_hal::peripherals::CPU_CTRL<'static>,
     psram_mem: Option<&'static mut [u8]>,
     internal: &'static mut [u8],
 ) {
@@ -371,7 +387,11 @@ async fn app(
         Some(a) if RUN_CAMERA => {
             const STRIPS: bool = PLAN.strips.is_some();
             let cam = CAMERA.init(Ov9281::new(i2c, a));
-            camera::run::<STRIPS>(cam, vdma, mem, internal, PLAN, skip).await;
+            if RUN_CORE1 {
+                core1_soak::run::<RUN_CORE1>(cam, vdma, cpu).await;
+            } else {
+                camera::run::<STRIPS>(cam, vdma, mem, internal, PLAN, skip).await;
+            }
         }
         None if RUN_CAMERA => error!("camera section skipped: no OV9281"),
         _ => {}

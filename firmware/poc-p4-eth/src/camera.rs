@@ -175,7 +175,7 @@ fn make_check(rest: &'static mut [u8]) -> Option<DetectorCheck> {
 }
 
 /// Turns on LDO VO3 at 2.5 V (`VDD_MIPI_DPHY` on this board) and lets it settle.
-async fn power_up() -> bool {
+pub(crate) async fn power_up() -> bool {
     if !enable_vo3() {
         return false;
     }
@@ -1132,7 +1132,11 @@ fn log_strip_state(cs: &CsiStrips<'_>) {
 
 /// `mode`'s registers, then the exposure, the gain, and as `sensor` says the test pattern, the
 /// gated clock and PSV off. Leaves the sensor in standby.
-async fn sensor_setup(cam: &mut Cam, mode: &Mode, sensor: &Sensor) -> Result<(), SensorError> {
+pub(crate) async fn sensor_setup(
+    cam: &mut Cam,
+    mode: &Mode,
+    sensor: &Sensor,
+) -> Result<(), SensorError> {
     cam.configure(mode, &mut Delay).await?;
     cam.set_exposure(Exposure::lines(sensor.exposure(mode)))
         .await?;
