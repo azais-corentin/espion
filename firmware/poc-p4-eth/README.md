@@ -497,6 +497,76 @@ moved by 40 / 64 / 64 bytes with the extra static; aligned 0x4FF2_BC00 / 0x4FF5_
   the detector's data [INFERENCE on the mechanism; the miss counts are measured]. The change
   showed no gain and was reverted.
 
+### Frame pointers (2026-11-11)
+
+`.cargo/config.toml` no longer passes `-C force-frame-pointers`. The same source as
+"Detector benchmark with counters" built both ways (logs `/tmp/p4perf-logs/BenchFlags/A-unaligned.log`,
+with, and `C-nofp.log`, without):
+
+| Mode | Blobs | Path | Mean us | Cycles | Instructions | Mispredicts | l1i_miss | Cycles change | Instructions change |
+|---|---|---|---|---|---|---|---|---|---|
+| 1280x800 | 0 | strip | 4320 → 4238 | 1 728 342 → 1 695 529 | 921 639 → 909 570 | 1603 → 1618 | 997 → 1718 | -1.9 % | -1.3 % |
+| 1280x800 | 0 | psram | 9930 → 9833 | 3 972 087 → 3 933 276 | 920 336 → 908 326 | 1612 → 1614 | 9427 → 2612 | -1.0 % | -1.3 % |
+| 1280x800 | 16 | strip | 4575 → 4452 | 1 830 331 → 1 780 856 | 974 832 → 961 722 | 2962 → 3029 | 21 501 → 6645 | -2.7 % | -1.3 % |
+| 1280x800 | 16 | psram | 10132 → 10038 | 4 053 161 → 4 015 373 | 973 529 → 960 491 | 2931 → 2999 | 9592 → 2674 | -0.9 % | -1.3 % |
+| 1280x800 | 64 | strip | 5261 → 5107 | 2 104 554 → 2 042 823 | 1 147 154 → 1 130 803 | 6915 → 7360 | 40 475 → 6821 | -2.9 % | -1.4 % |
+| 1280x800 | 64 | psram | 10784 → 10688 | 4 313 903 → 4 275 410 | 1 145 851 → 1 129 572 | 6847 → 7257 | 9021 → 982 | -0.9 % | -1.4 % |
+| 640x400 | 0 | strip | 1323 → 1280 | 529 420 → 512 389 | 277 591 → 271 545 | 803 → 811 | 564 → 349 | -3.2 % | -2.2 % |
+| 640x400 | 0 | psram | 2733 → 2676 | 1 093 547 → 1 070 742 | 276 936 → 270 926 | 807 → 808 | 7646 → 292 | -2.1 % | -2.2 % |
+| 640x400 | 16 | strip | 1547 → 1514 | 618 984 → 605 877 | 335 575 → 328 434 | 2212 → 2320 | 1674 → 6561 | -2.1 % | -2.1 % |
+| 640x400 | 16 | psram | 2956 → 2906 | 1 182 647 → 1 162 794 | 334 920 → 327 815 | 2178 → 2259 | 8740 → 3843 | -1.7 % | -2.1 % |
+| 640x400 | 64 | strip | 2228 → 2177 | 891 258 → 871 182 | 511 418 → 500 696 | 6078 → 6532 | 8063 → 6850 | -2.3 % | -2.1 % |
+| 640x400 | 64 | psram | 3623 → 3570 | 1 449 298 → 1 428 273 | 510 763 → 500 077 | 6079 → 6540 | 8786 → 3759 | -1.5 % | -2.1 % |
+
+- Every case is faster: 1 to 3 % in cycles, 1.3 to 2.2 % fewer instructions. The
+  instruction counts are the firm part; the cycle figures also hold code-layout noise (the
+  L1 instruction misses moved both ways).
+- The dark-row fit: 470.3 → 429.0 cycles and 229.6 → 214.6 instructions per row (warm), the
+  per-pixel part unchanged (1.250 → 1.249): each row's calls no longer save and set up `s0`.
+  Stores per row 46.7 → 44.4 at 1280.
+- Per blob (radius 2 / 4 / 8 / 12): 4354 / 6042 / 11 538 / 18 313 → 3754 / 5513 / 10 939 /
+  17 580 cycles; 2354 / 3572 / 7327 / 12 110 → 2304 / 3502 / 7199 / 11 919 instructions.
+- Mispredictions per blob frame rose slightly (64 synth discs: 6915 → 7360), the dark frame
+  stayed the same (1603 → 1618). The spike's drop from 2390 to 1609 on the dark frame was a
+  layout effect: this baseline already had 1603.
+
+**What a panic prints without them.** esp-backtrace 0.20's build script looks for
+`force-frame-pointers` in the rustflags. With it, the panic handler walks the frame pointers.
+Without it, the handler never walks them (no garbage addresses, no fault while walking):
+it prints the message and location, then one `STACKDUMP:` line, the hex of up to 8 KiB of
+stack (`ESP_BACKTRACE_CONFIG_STACK_DUMP_MAX_SIZE`, default `8K`). `espflash monitor --elf`
+decodes that line into a backtrace from the ELF's `.eh_frame`, but only without
+`--no-addresses`. No esp-config key or cargo feature of esp-backtrace changes this, and the
+defaults are kept: nothing misleading is printed, and the dump is complete. For a panic hunt,
+run the monitor without `--no-addresses`. `.cargo/backtrace.toml` brings the frame pointers
+back: `cargo build --release --config .cargo/backtrace.toml` (cargo appends that file's
+`build.rustflags` to the ones of `.cargo/config.toml`, checked with `cargo config get
+--show-origin`; that build is byte-identical to the build of the previous config).
+
+Checked on the board with a temporary `fault_outer` → `fault_inner` call after the boot report
+(not committed), both builds, monitor without `--no-addresses` (logs
+`/tmp/p4perf-logs/BenchFlags/{P,E}-{fp,nofp}.log`):
+
+- Panic, frame pointers: `panicked at src/main.rs:351:14: deliberate panic (backtrace check)`,
+  then `Backtrace:` with `fault_inner` (main.rs:351), `fault_outer` (main.rs:344), the `app`
+  task, the embassy executor, `esp_rtos` `Executor::run`.
+- Panic, no frame pointers: the same message and location, `STACKDUMP: 4004454c ...`, then
+  `Backtrace (decoded from the stack dump):` with `dump_stack`, `rust_begin_unwind`,
+  `panic_fmt`, `fault_inner` (main.rs:351), `(reconstructed) fault_outer` (main.rs:344), the
+  `app` task, the executor with its inlined frames, `main`, `hal_main`. With
+  `--no-addresses` only the `STACKDUMP` hex line follows the message.
+- Illegal instruction, both builds: `panicked at .../esp-hal-1.2.2/src/exception_handler/mod.rs:117:5:
+  [ProCpu] Exception 'Illegal instruction (2)' mepc=0x4001e04e, mtval=0x00000000` (0x4001e338
+  with frame pointers), `mepc` resolved to `fault_inner` at main.rs:353, and the trap frame's registers.
+  - With frame pointers the walk goes `ExceptionHandler`, `_start_trap_rust_hal`,
+    `_dispatch_exception`, the trap entry (0x4FF2_04B4, unnamed), then the `app` task: it
+    skips `fault_outer`, the caller of the faulting function.
+  - Without, the decoded dump stops at `ExceptionHandler` with `backtrace stopped:
+    0x40044f44 didn't save the return address of its caller`. The faulting place is in the
+    message (`mepc`).
+- Every case printed the panic once and then stayed in esp-backtrace's halt loop with
+  interrupts off: no reset, no second fault, through the rest of the 15 s capture.
+
 ### Camera capture (whole frames in PSRAM)
 
 Set-up: three frame buffers at the start of PSRAM (0x4800_0000), filled with the sentinel

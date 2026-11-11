@@ -1,0 +1,9 @@
+# Frame pointers, for esp-backtrace's backtrace on a panic. Debugging only: they cost the
+# detector 1 to 3 % of its cycles. Use with
+#   cargo build --release --config .cargo/backtrace.toml
+# Cargo appends this `build.rustflags` array to the one of `.cargo/config.toml` (arrays given
+# with `--config` are merged, not replaced); that file sets none today. esp-backtrace's build
+# script looks for `force-frame-pointers` in the flags and then walks the frame pointers
+# instead of dumping the stack. The flags change, so every crate is rebuilt.
+[build]
+rustflags = ["-C", "force-frame-pointers"]

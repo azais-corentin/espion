@@ -7,7 +7,8 @@ runner = "espflash flash --monitor --chip esp32p4 --port /dev/ttyACM0"
 
 [build]
 target = "riscv32imafc-unknown-none-elf"
-rustflags = [
-  # Required for backtraces (esp-backtrace). May cost some performance.
-  "-C", "force-frame-pointers",
-]
+# No `-C force-frame-pointers`: frame pointers cost the detector 1 to 3 % of its cycles
+# (firmware/poc-p4-eth/README.md, "Frame pointers"). Without them a panic prints its message
+# and location, then a stack dump that `espflash monitor --elf` decodes into a backtrace (not
+# with `--no-addresses`). For esp-backtrace's frame-pointer walk instead, build with
+#   cargo build --release --config .cargo/backtrace.toml
