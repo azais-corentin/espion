@@ -12,7 +12,7 @@ import { boardIsEmpty } from "../checks/board";
 import * as cli from "../cli";
 import { EXCLUSION_KINDS, type Exclusion, exclusions, hiddenBy } from "../exclusions";
 import { type Box, bbox, key, onInterior, overlap, type Pt, pt, r3, type Seg, samePt, xform } from "../geom";
-import { druHeader, druRules } from "../ops/project";
+import { busAliases, busAliasUses, druHeader, druRules, memberTaps } from "../ops/project";
 import type { Project, SheetInst } from "../project";
 import { at, isHidden, type Label, propValue, type Sch } from "../sch";
 import { child, children, flag, head, isList, type List, num, text } from "../sexpr";
@@ -587,6 +587,28 @@ const netclasses: QueryDef = {
 	},
 };
 
+const busAliasesQuery: QueryDef = {
+	what: "bus_aliases",
+	doc:
+		"Bus aliases from the .kicad_pro (a bus labelled `{NAME}` carries its members): members in order, uses (sheet, kind: bus label, global label, hierarchical label or sheet pin with its block, position, text) " +
+		"and unused_members, the members no local label takes off a bus carrying the alias (on a wire a bus entry joins to it; a vector member such as `D[0..7]` is used when one of its bits is); used_nowhere when nothing names the alias (remove_bus_alias can delete it).",
+	fields: {},
+	async run({ project }) {
+		return {
+			aliases: Object.entries(busAliases(project)).map(([name, members]) => {
+				const { uses, taps } = busAliasUses(project, name);
+				return {
+					name,
+					members,
+					uses,
+					unused_members: members.filter(m => !memberTaps(m, taps).length),
+					...(uses.length ? {} : { used_nowhere: true }),
+				};
+			}),
+		};
+	},
+};
+
 /** Words of a list, flattened: (constraint clearance (min 2mm)) → "clearance min 2mm". */
 function words(l: List): string {
 	return l
@@ -975,4 +997,4 @@ const freeSpace: QueryDef = {
 	},
 };
 
-export const queries: QueryDef[] = [hierarchy, symbols, symbol, nets, net, labels, wires, nextRefQuery, netclasses, rules, exclusionsQuery, bom, sheet, freeSpace];
+export const queries: QueryDef[] = [hierarchy, symbols, symbol, nets, net, labels, wires, nextRefQuery, netclasses, busAliasesQuery, rules, exclusionsQuery, bom, sheet, freeSpace];

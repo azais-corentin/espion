@@ -1142,7 +1142,7 @@ function removeSegOp(layer: Layer): OpDef {
 const ENTRY_STEP = 2.54;
 
 /** A bus entry's bus-side end (the one on a bus; `a` when neither or both are) and wire-side end. */
-function entrySides(sch: Sch, e: Seg): { bus: Pt; wire: Pt } {
+export function entrySides(sch: Sch, e: Seg): { bus: Pt; wire: Pt } {
 	const buses = sch.buses();
 	const onBus = (p: Pt) => buses.some(s => touches(p, s));
 	return onBus(e.b) && !onBus(e.a) ? { bus: e.b, wire: e.a } : { bus: e.a, wire: e.b };

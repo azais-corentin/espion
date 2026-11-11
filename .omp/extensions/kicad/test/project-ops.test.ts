@@ -1,21 +1,26 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Analysis } from "../src/analysis";
 import { druProblems } from "../src/checks/rules";
 import { bom, netlist } from "../src/cli";
-import { druHeader, druRules, ops } from "../src/ops/project";
+import { onInterior, type Pt } from "../src/geom";
+import { druHeader, druRules, memberTaps, ops } from "../src/ops/project";
+import { ops as schematicOps } from "../src/ops/schematic";
 import { Project } from "../src/project";
+import { queries } from "../src/queries/project";
 import { text } from "../src/sexpr";
 import { validate } from "../src/spec";
+import { runEdit } from "../src/txn";
 import type { OpContext } from "../src/types";
 import { cleanup, HAS_KICAD, PROJECT, stageFixture } from "./helpers";
 
-/** Apply ops to a freshly opened project and write the pending files; returns the op notes. */
+/** Apply ops (project and schematic) to a freshly opened project and write the pending files; returns the op notes. */
 async function apply(root: string, list: Record<string, unknown>[]): Promise<string[]> {
 	const project = Project.open(PROJECT, root);
 	const ctx: OpContext = { project, libs: await project.libs(), notes: [], touch() {}, touchPart() {}, touchBoard() {} };
 	for (const { op, ...args } of list) {
-		const def = ops.find(o => o.op === op);
+		const def = [...ops, ...schematicOps].find(o => o.op === op);
 		if (!def) throw new Error(`no op ${String(op)}`);
 		await def.apply(ctx, validate(def.op, args, def.fields));
 	}
@@ -224,5 +229,162 @@ describe.skipIf(!HAS_KICAD)("project ops", () => {
 		expect(await druProblems(Project.open(PROJECT, root))).toEqual([]);
 		await expect(apply(root, [{ op: "set_rule", rule: '(rule "x" (constraint clearence (min 1mm)))' }])).rejects.toThrow("clearence");
 		await expect(apply(root, [{ op: "set_rule", rule: '(rule "x" (constraint clearance (min 1mm))' }])).rejects.toThrow();
+	});
+});
+
+describe.skipIf(!HAS_KICAD)("bus alias ops", () => {
+	let root: string;
+	let proFile: string;
+	const aliases = (): Record<string, string[]> => JSON.parse(fs.readFileSync(proFile, "utf8")).schematic.bus_aliases;
+	const FIXTURE_ALIASES = ["CAMCTL", "CSI", "IMU", "LEDCTL", "PHY", "POE"];
+
+	beforeEach(() => {
+		root = stageFixture();
+		proFile = path.join(root, PROJECT, "espion-cam.kicad_pro");
+	});
+	afterEach(() => cleanup(root));
+
+	// biome-ignore lint/suspicious/noExplicitAny: query results are plain JSON, inspected by shape
+	async function busAliasesQuery(): Promise<any> {
+		const project = Project.open(PROJECT, root);
+		const analysis = new Analysis(project);
+		try {
+			return await queries.find(d => d.what === "bus_aliases")!.run({ project, analysis, libs: () => project.libs() }, {});
+		} finally {
+			analysis.dispose();
+		}
+	}
+
+	test("set_bus_alias creates an alias in KiCad's name order and replaces its members; the rest of the .kicad_pro keeps its bytes", async () => {
+		const pro0 = fs.readFileSync(proFile, "utf8");
+		expect(await apply(root, [{ op: "set_bus_alias", name: "AUX", members: ["AUX_A", "AUX_B"] }])).toEqual(["bus alias AUX: created with AUX_A, AUX_B"]);
+		const pro1 = fs.readFileSync(proFile, "utf8");
+		expect(inserted(pro0, pro1)).toBe('AUX": [\n        "AUX_A",\n        "AUX_B"\n      ],\n      "');
+		expect(Object.keys(aliases())).toEqual(["AUX", ...FIXTURE_ALIASES]);
+
+		expect(await apply(root, [{ op: "set_bus_alias", name: "AUX", members: ["AUX_B", "AUX_C"] }])).toEqual(["bus alias AUX: added AUX_C; removed AUX_A"]);
+		expect(aliases().AUX).toEqual(["AUX_B", "AUX_C"]);
+		expect(await apply(root, [{ op: "set_bus_alias", name: "AUX", members: ["AUX_C", "AUX_B"] }])).toEqual(["bus alias AUX: members reordered"]);
+		expect(aliases().AUX).toEqual(["AUX_C", "AUX_B"]);
+		await expect(apply(root, [{ op: "set_bus_alias", name: "AUX", members: ["AUX_C", "AUX_C"] }])).rejects.toThrow("members: AUX_C is given twice");
+		await expect(apply(root, [{ op: "set_bus_alias", name: "AUX", members: [] }])).rejects.toThrow("members: give at least one member");
+
+		// replacing an existing alias's members touches only its list
+		const withoutAux = (s: string) => s.replace(/"AUX": \[[^\]]*\],\n {6}/, "");
+		await apply(root, [{ op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL", "IMU_INT1", "IMU_SPARE"] }]);
+		expect(inserted(withoutAux(pro1), withoutAux(fs.readFileSync(proFile, "utf8")))).toBe(',\n        "IMU_SPARE"');
+		// and the alias goes again without a trace (remove_bus_alias of an unused alias)
+		expect(await apply(root, [{ op: "remove_bus_alias", name: "AUX" }])).toEqual(["bus alias AUX removed (members: AUX_C, AUX_B)"]);
+		await apply(root, [{ op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL", "IMU_INT1"] }]);
+		expect(fs.readFileSync(proFile, "utf8")).toBe(pro0);
+	});
+
+	test("set_bus_alias adding and removing an unused member passes the transaction's gates with the connectivity unchanged", async () => {
+		const pro0 = fs.readFileSync(proFile, "utf8");
+		const add = await runEdit({ ops: [{ op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL", "IMU_INT1", "IMU_SPARE"] }] }, root, undefined);
+		expect(add.report).toStartWith("Applied.");
+		expect(add.report).toContain("bus alias IMU: added IMU_SPARE");
+		expect(aliases().IMU).toEqual(["IMU_SDA", "IMU_SCL", "IMU_INT1", "IMU_SPARE"]);
+		// no `expect`: any connectivity change would refuse the edit
+		const remove = await runEdit({ ops: [{ op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL", "IMU_INT1"] }] }, root, undefined);
+		expect(remove.report).toStartWith("Applied.");
+		expect(remove.report).toContain("bus alias IMU: removed IMU_SPARE");
+		expect(remove.report).toContain("Connectivity and part changes:\n  - none");
+		expect(fs.readFileSync(proFile, "utf8")).toBe(pro0);
+	});
+
+	test("set_bus_alias refuses to remove a member a local label still takes off a bus carrying the alias, naming sheet and label", async () => {
+		const pro0 = fs.readFileSync(proFile, "utf8");
+		const drop = { op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL"] };
+		await expect(apply(root, [drop])).rejects.toThrow(
+			"bus alias IMU: can't remove IMU_INT1, still taken off a {IMU} bus by local label IMU_INT1 on MCU at (199.39, 152.4); local label IMU_INT1 on IMU at (124.46, 119.38): remove that label and its bus entry first",
+		);
+		expect(fs.readFileSync(proFile, "utf8")).toBe(pro0);
+		// the labels on the bus entries' wires block it, not the IMU_INT1 label at the IMU's pin (170.18, 93.98) on a sheet using the alias
+		await apply(root, [
+			{ op: "remove_label", sheet: "MCU", name: "IMU_INT1" },
+			{ op: "remove_label", sheet: "IMU", name: "IMU_INT1", at: [124.46, 119.38] },
+		]);
+		expect(await apply(root, [drop])).toEqual(["bus alias IMU: removed IMU_INT1"]);
+		expect(aliases().IMU).toEqual(["IMU_SDA", "IMU_SCL"]);
+	});
+
+	test("remove_bus_alias is refused while a label or sheet pin names the alias, also in a group, and allowed when none does", async () => {
+		await expect(apply(root, [{ op: "remove_bus_alias", name: "IMU" }])).rejects.toThrow(
+			"bus alias IMU is still used: sheet pin {IMU} of sheet block MCU on root at (167.64, 106.68); sheet pin {IMU} of sheet block IMU on root at (215.9, 144.78); ",
+		);
+		await expect(apply(root, [{ op: "remove_bus_alias", name: "IMU" }])).rejects.toThrow("hierarchical label {IMU} on IMU at (119.38, 104.14)");
+		await expect(apply(root, [{ op: "remove_bus_alias", name: "NOPE" }])).rejects.toThrow('no bus alias "NOPE"; aliases: CAMCTL, CSI, IMU, LEDCTL, PHY, POE');
+
+		const pro0 = fs.readFileSync(proFile, "utf8");
+		await apply(root, [
+			{ op: "set_bus_alias", name: "AUX", members: ["AUX_A"] },
+			{ op: "add_label", sheet: "root", name: "{IMU AUX}", at: [27.94, 27.94] },
+		]);
+		await expect(apply(root, [{ op: "remove_bus_alias", name: "AUX" }])).rejects.toThrow("bus alias AUX is still used: bus label {IMU AUX} on root at (27.94, 27.94); remove those first");
+		await apply(root, [{ op: "remove_label", sheet: "root", name: "{IMU AUX}" }]);
+		await apply(root, [{ op: "remove_bus_alias", name: "AUX" }]);
+		expect(fs.readFileSync(proFile, "utf8")).toBe(pro0);
+	});
+
+	test("the bus_aliases query lists members, uses and unused members", async () => {
+		const before = await busAliasesQuery();
+		expect(before.aliases.map((a: { name: string }) => a.name)).toEqual(FIXTURE_ALIASES);
+		expect(before.aliases.find((a: { name: string }) => a.name === "IMU")).toEqual({
+			name: "IMU",
+			members: ["IMU_SDA", "IMU_SCL", "IMU_INT1"],
+			uses: [
+				{ sheet: "root", kind: "sheet pin", text: "{IMU}", at: [167.64, 106.68], block: "MCU" },
+				{ sheet: "root", kind: "sheet pin", text: "{IMU}", at: [215.9, 144.78], block: "IMU" },
+				{ sheet: "MCU", kind: "bus label", text: "{IMU}", at: [114.3, 99.06] },
+				{ sheet: "MCU", kind: "bus label", text: "{IMU}", at: [205.74, 157.48] },
+				{ sheet: "MCU", kind: "hierarchical label", text: "{IMU}", at: [114.3, 101.6] },
+				{ sheet: "IMU", kind: "hierarchical label", text: "{IMU}", at: [119.38, 104.14] },
+			],
+			unused_members: [],
+		});
+		expect(before.aliases.every((a: { unused_members: string[] }) => a.unused_members.length === 0)).toBe(true);
+
+		await apply(root, [
+			{ op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL", "IMU_INT1", "IMU_SPARE"] },
+			{ op: "set_bus_alias", name: "AUX", members: ["AUX_A", "AUX_B"] },
+			// a label of the member's name on a sheet using the alias, but on no wire from its bus, doesn't use the member
+			{ op: "add_label", sheet: "IMU", name: "IMU_SPARE", at: [27.94, 27.94] },
+		]);
+		const after = await busAliasesQuery();
+		expect(after.aliases.find((a: { name: string }) => a.name === "IMU").unused_members).toEqual(["IMU_SPARE"]);
+		expect(after.aliases.find((a: { name: string }) => a.name === "AUX")).toEqual({ name: "AUX", members: ["AUX_A", "AUX_B"], uses: [], unused_members: ["AUX_A", "AUX_B"], used_nowhere: true });
+
+		// a branch ending on the middle of the root's {IMU} bus carries the alias: a tap on it uses the member
+		await apply(root, [
+			{ op: "add_bus", sheet: "root", points: [[187.96, 127], [177.8, 127]] },
+			{ op: "add_bus_entry", sheet: "root", at: [180.34, 127], dir: "DL" },
+			{ op: "add_wire", sheet: "root", points: [[177.8, 129.54], [170.18, 129.54]] },
+			{ op: "add_label", sheet: "root", name: "IMU_SPARE", at: [175.26, 129.54], rot: 180 },
+		]);
+		expect(Project.open(PROJECT, root).sheet("root").sch.buses().some(s => onInterior([187.96, 127], s))).toBe(true);
+		expect((await busAliasesQuery()).aliases.find((a: { name: string }) => a.name === "IMU").unused_members).toEqual([]);
+	});
+
+	test("a vector member is in use while a local label takes one of its bits off the bus", async () => {
+		const imu = async () => (await busAliasesQuery()).aliases.find((a: { name: string }) => a.name === "IMU");
+		// the tapped IMU_INT1 becomes a bit of IMU_INT[0..1]: the vector covers its label, so the swap is allowed
+		const vector = ["IMU_SDA", "IMU_SCL", "IMU_INT[0..1]"];
+		expect(await apply(root, [{ op: "set_bus_alias", name: "IMU", members: vector }])).toEqual(["bus alias IMU: added IMU_INT[0..1]; removed IMU_INT1"]);
+		expect((await imu()).unused_members).toEqual([]);
+		const drop = { op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL"] };
+		await expect(apply(root, [drop])).rejects.toThrow(
+			"bus alias IMU: can't remove IMU_INT[0..1], still taken off a {IMU} bus by local label IMU_INT1 on MCU at (199.39, 152.4); local label IMU_INT1 on IMU at (124.46, 119.38): remove that label and its bus entry first",
+		);
+		await apply(root, [
+			{ op: "remove_label", sheet: "MCU", name: "IMU_INT1" },
+			{ op: "remove_label", sheet: "IMU", name: "IMU_INT1", at: [124.46, 119.38] },
+		]);
+		expect((await imu()).unused_members).toEqual(["IMU_INT[0..1]"]);
+		expect(await apply(root, [drop])).toEqual(["bus alias IMU: removed IMU_INT[0..1]"]);
+
+		// bits in either direction, the text after "]" kept, no leading zeros
+		const taps = ["D0_N", "D1_N", "D3_N", "D4_N", "D01_N", "D1"].map(net => ({ sheet: "root", net, label: net, at: [0, 0] as Pt }));
+		expect(memberTaps("D[3..1]_N", taps).map(t => t.net)).toEqual(["D1_N", "D3_N"]);
 	});
 });

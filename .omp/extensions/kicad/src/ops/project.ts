@@ -1,6 +1,6 @@
 /**
- * Project settings ops: net classes and their patterns, BOM presets, ERC and DRC exclusions
- * (.kicad_pro), and custom design rules (.kicad_dru).
+ * Project settings ops: net classes and their patterns, BOM presets, bus aliases, ERC and DRC
+ * exclusions (.kicad_pro), and custom design rules (.kicad_dru).
  *
  * .kicad_pro changes go through `proJson` (byte-exact outside the changed keys). The rules file is
  * edited as text: only the named rule's text changes, every other rule keeps its comments and
@@ -8,10 +8,13 @@
  */
 import { conditionNetclasses, itemProblems, type NetclassJson, netSettings, scanDru } from "../checks/rules";
 import { EXCLUSION_KINDS, type ExclusionKind, editableList, selectExclusions } from "../exclusions";
+import { key, onInterior, type Pt, type Seg, touches } from "../geom";
 import type { Project } from "../project";
+import type { LabelKind } from "../sch";
 import { child, head, type List, parse, text } from "../sexpr";
 import { type Fields, validate } from "../spec";
 import type { OpContext, OpDef } from "../types";
+import { entrySides } from "./schematic";
 
 // ---- net classes --------------------------------------------------------------------------------
 
@@ -213,6 +216,206 @@ const removeBomPreset: OpDef = {
 		const i = presets.findIndex(p => p.name === args.name);
 		if (i < 0) throw new Error(`no BOM preset "${String(args.name)}"; presets: ${presets.map(p => p.name).join(", ") || "none"}`);
 		presets.splice(i, 1);
+		ctx.project.touchPro();
+	},
+};
+
+// ---- bus aliases --------------------------------------------------------------------------------
+
+/** schematic.bus_aliases of the .kicad_pro: alias name → member names, in KiCad's order (by name). */
+export function busAliases(project: Project): Record<string, string[]> {
+	const sch = project.proJson.data.schematic;
+	const aliases = typeof sch === "object" && sch !== null && "bus_aliases" in sch ? sch.bus_aliases : undefined;
+	if (typeof aliases !== "object" || aliases === null || Array.isArray(aliases)) {
+		throw new Error(`${project.rel(project.proFile)} has no schematic.bus_aliases: open and save the project in KiCad 10 once`);
+	}
+	// KiCad's own output: every value is the list of member names
+	return aliases as Record<string, string[]>;
+}
+
+/** Where a label, hierarchical label or sheet pin names a bus alias. */
+export interface AliasUse {
+	sheet: string;
+	kind: "bus label" | "global label" | "hierarchical label" | "sheet pin";
+	/** The label or pin text: "{IMU}", or a group naming the alias ("{IMU SPI}", "X{IMU}"). */
+	text: string;
+	at: Pt;
+	/** A sheet pin's sheet block. */
+	block?: string;
+}
+
+/** A local label on a wire that a bus entry joins to a bus carrying the alias. */
+export interface AliasTap {
+	sheet: string;
+	/** The net the label takes off the bus (its text without a group's "X." prefix): a member, or a bit of a vector member. */
+	net: string;
+	label: string;
+	at: Pt;
+}
+
+/** The taps of an alias member: those naming it or, for a vector member (KiCad's `D[0..7]` or `D[7..0]`, text after `]` kept: D0 … D7), one of its bits. */
+export function memberTaps(member: string, taps: AliasTap[]): AliasTap[] {
+	const v = /^(.*)\[(\d+)\.\.(\d+)\](.*)$/.exec(member);
+	if (!v) return taps.filter(t => t.net === member);
+	const [pre, post] = [v[1]!, v[4]!];
+	const [lo, hi] = [Math.min(Number(v[2]), Number(v[3])), Math.max(Number(v[2]), Number(v[3]))];
+	return taps.filter(t => {
+		if (t.net.length <= pre.length + post.length || !t.net.startsWith(pre) || !t.net.endsWith(post)) return false;
+		const bit = t.net.slice(pre.length, t.net.length - post.length);
+		return /^(0|[1-9]\d*)$/.test(bit) && lo <= Number(bit) && Number(bit) <= hi;
+	});
+}
+
+const USE_KIND: Record<LabelKind, AliasUse["kind"]> = { label: "bus label", global_label: "global label", hierarchical_label: "hierarchical label" };
+
+/** The prefix a bus label text gives the alias's members ("" for "{IMU}" or "{IMU SPI}", "X." for "X{IMU}"); undefined when the text doesn't name the alias. */
+function aliasPrefix(label: string, alias: string): string | undefined {
+	const m = /^([^{}]*)\{([^{}]*)\}$/.exec(label.trim());
+	if (!m || !m[2]!.split(/[\s,]+/).includes(alias)) return undefined;
+	return m[1] ? `${m[1]}.` : "";
+}
+
+/** Segments joined at their ends and where one of `pts` or another segment's end lands inside one: a point's group. */
+function joined(segs: Seg[], pts: Pt[]): (p: Pt) => string {
+	const parent = new Map<string, string>();
+	const find = (k: string): string => {
+		const up = parent.get(k);
+		if (up === undefined || up === k) return k;
+		const r = find(up);
+		parent.set(k, r);
+		return r;
+	};
+	const union = (a: string, b: string) => {
+		const [ra, rb] = [find(a), find(b)];
+		if (ra !== rb) parent.set(ra, rb);
+	};
+	for (const s of segs) union(key(s.a), key(s.b));
+	for (const p of [...pts, ...segs.flatMap(s => [s.a, s.b])]) for (const s of segs) if (onInterior(p, s)) union(key(p), key(s.a));
+	return p => find(key(p));
+}
+
+/**
+ * Every sheet instance's labels, hierarchical labels and sheet pins naming a bus alias (alone or in
+ * a group), and the local labels taking members off a bus that carries it: a bus (buses joined at
+ * their ends or an end landing inside another) one of those sits on, a bus entry from it, and a
+ * local label on the wire at the entry's wire side (or at that point).
+ */
+export function busAliasUses(project: Project, alias: string): { uses: AliasUse[]; taps: AliasTap[] } {
+	const uses: AliasUse[] = [];
+	const taps: AliasTap[] = [];
+	for (const inst of project.hierarchy()) {
+		const sch = inst.sch;
+		const named: { use: AliasUse; prefix: string }[] = [];
+		for (const l of sch.labels()) {
+			const prefix = aliasPrefix(l.name, alias);
+			if (prefix !== undefined) named.push({ use: { sheet: inst.name, kind: USE_KIND[l.kind], text: l.name, at: l.at }, prefix });
+		}
+		for (const b of sch.sheets()) {
+			for (const sp of b.pins) {
+				const prefix = aliasPrefix(sp.name, alias);
+				if (prefix !== undefined) named.push({ use: { sheet: inst.name, kind: "sheet pin", text: sp.name, at: sp.at, block: b.name }, prefix });
+			}
+		}
+		if (!named.length) continue;
+		uses.push(...named.map(n => n.use));
+		const buses = sch.buses();
+		const onBus = (p: Pt) => buses.some(s => touches(p, s));
+		const entries = sch.busEntries().map(e => entrySides(sch, e));
+		const busOf = joined(buses, [...named.map(n => n.use.at), ...entries.map(e => e.bus)]);
+		const prefixes = new Map<string, Set<string>>();
+		for (const n of named) {
+			if (!onBus(n.use.at)) continue;
+			const g = busOf(n.use.at);
+			prefixes.set(g, (prefixes.get(g) ?? new Set()).add(n.prefix));
+		}
+		const tapped = entries.filter(e => onBus(e.bus) && prefixes.has(busOf(e.bus)));
+		if (!tapped.length) continue;
+		const locals = sch.labels().filter(l => l.kind === "label");
+		const wireOf = joined(sch.wires(), [...locals.map(l => l.at), ...tapped.map(e => e.wire)]);
+		const seen = new Set<List>();
+		for (const e of tapped) {
+			const wire = wireOf(e.wire);
+			for (const prefix of prefixes.get(busOf(e.bus))!) {
+				for (const l of locals) {
+					if (seen.has(l.node) || !l.name.startsWith(prefix) || wireOf(l.at) !== wire) continue;
+					seen.add(l.node);
+					taps.push({ sheet: inst.name, net: l.name.slice(prefix.length), label: l.name, at: l.at });
+				}
+			}
+		}
+	}
+	return { uses, taps };
+}
+
+const setBusAlias: OpDef = {
+	op: "set_bus_alias",
+	group: "project",
+	doc:
+		"Create a bus alias (a bus labelled `{NAME}` carries its members) or replace its member list. " +
+		"A member removed while still in use is refused: a local label of that name (or of one of its bits, for a vector member such as `D[0..7]`) that no remaining member covers, on a wire that a bus entry joins to a bus carrying the alias " +
+		"(a bus label, hierarchical label or sheet pin naming it, alone or in a group such as `{NAME OTHER}`, sits on that bus or on a bus joined to it), on any sheet; remove that label and its bus entry first.",
+	fields: {
+		name: { t: "string", req: true, doc: "alias name, without braces" },
+		members: { t: "strings", req: true, doc: 'member net names in order, e.g. ["IMU_SDA", "IMU_SCL", "IMU_INT1"]' },
+	},
+	apply(ctx, args) {
+		const name = String(args.name);
+		if (!name || /[\s{}[\]]/.test(name)) throw new Error(`name: ${JSON.stringify(name)} must be non-empty, without spaces, braces or brackets`);
+		const members = (args.members as string[]).map(m => m.trim());
+		if (members.length === 0) throw new Error("members: give at least one member");
+		const bad = members.find(m => !m || /[\s{}]/.test(m));
+		if (bad !== undefined) throw new Error(`members: ${JSON.stringify(bad)} must be non-empty, without spaces or braces`);
+		const dup = members.find((m, i) => members.indexOf(m) !== i);
+		if (dup !== undefined) throw new Error(`members: ${dup} is given twice`);
+		const aliases = busAliases(ctx.project);
+		const old = Object.hasOwn(aliases, name) ? aliases[name]! : undefined;
+		const removed = (old ?? []).filter(m => !members.includes(m));
+		const added = members.filter(m => !old?.includes(m));
+		if (removed.length) {
+			const taps = busAliasUses(ctx.project, name).taps;
+			const kept = new Set(members.flatMap(m => memberTaps(m, taps)));
+			const inUse = removed.map(m => ({ m, taps: memberTaps(m, taps).filter(t => !kept.has(t)) })).filter(x => x.taps.length);
+			if (inUse.length) {
+				const where = inUse.flatMap(x => x.taps.map(t => `local label ${t.label} on ${t.sheet} at (${t.at[0]}, ${t.at[1]})`)).join("; ");
+				throw new Error(`bus alias ${name}: can't remove ${inUse.map(x => x.m).join(", ")}, still taken off a {${name}} bus by ${where}: remove that label and its bus entry first`);
+			}
+		}
+		if (old && !added.length && !removed.length && old.every((m, i) => m === members[i])) {
+			ctx.notes.push(`bus alias ${name} already has those members`);
+			return;
+		}
+		if (old) aliases[name] = members;
+		else {
+			// KiCad writes the aliases sorted by name
+			const all = Object.entries({ ...aliases, [name]: members }).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+			for (const k of Object.keys(aliases)) delete aliases[k];
+			Object.assign(aliases, Object.fromEntries(all));
+		}
+		const change = old
+			? [added.length ? `added ${added.join(", ")}` : "", removed.length ? `removed ${removed.join(", ")}` : "", !added.length && !removed.length ? "members reordered" : ""].filter(Boolean).join("; ")
+			: `created with ${members.join(", ")}`;
+		ctx.notes.push(`bus alias ${name}: ${change}`);
+		ctx.project.touchPro();
+	},
+};
+
+const removeBusAlias: OpDef = {
+	op: "remove_bus_alias",
+	group: "project",
+	doc: "Delete a bus alias; refused while a bus label, hierarchical label or sheet pin names it (alone or in a group such as `{NAME OTHER}`) on any sheet.",
+	fields: { name: { t: "string", req: true, doc: "alias name, without braces" } },
+	apply(ctx, args) {
+		const name = String(args.name);
+		const aliases = busAliases(ctx.project);
+		if (!Object.hasOwn(aliases, name)) throw new Error(`no bus alias "${name}"; aliases: ${Object.keys(aliases).join(", ") || "none"}`);
+		const { uses } = busAliasUses(ctx.project, name);
+		if (uses.length) {
+			const where = uses.map(u => `${u.kind} ${u.text}${u.block ? ` of sheet block ${u.block}` : ""} on ${u.sheet} at (${u.at[0]}, ${u.at[1]})`);
+			throw new Error(`bus alias ${name} is still used: ${where.join("; ")}; remove those first`);
+		}
+		const members = aliases[name]!;
+		delete aliases[name];
+		ctx.notes.push(`bus alias ${name} removed (members: ${members.join(", ")})`);
 		ctx.project.touchPro();
 	},
 };
@@ -465,6 +668,8 @@ export const ops: OpDef[] = [
 	setNetclassPatterns,
 	setBomPreset,
 	removeBomPreset,
+	setBusAlias,
+	removeBusAlias,
 	removeExclusion,
 	setExclusionComment,
 	setRule,
