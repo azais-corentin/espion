@@ -14,7 +14,7 @@ decisions, the accepted risks and the checks.
 | Block | Parts | Control (U6 pin) | Test point |
 |---|---|---|---|
 | [LED power switch](#led-power-switch) | U8 TPS22918, C34, C35, R57 | `LED_PWR_EN` GPIO20 (U6.16) | – |
-| [Boost converter](#boost-converter) | U10 TPS61170, L3, D3, C36, C38, C39, C41, C43, C45, C46, C47, R59, R62, R65, R66 | `BST_EN` GPIO53 (U6.71), PWM | TP13 `+32V` |
+| [Boost converter](#boost-converter) | U10 TPS61170, L3, D3, C36, C39, C41, C43, C45, C46, C47, R62, R65, R66 | `BST_EN` GPIO53 (U6.71), PWM | TP13 `+32V` |
 | [Current sink](#current-sink) | U11 TLV9061, Q1 HL2310A, R69, NT1, R60, R61, R63, R64, R67, R68, C40, C42, C44 | – | TP12 `LED_ON`, TP14 `ISNS` |
 | [STROBE gating and timeout](#strobe-gating-and-timeout) | U9 SN74LVC1G97, C33, R54, R55, R56, R58, C37 | `LED_EN` GPIO11 (U6.13), STROBE GPIO12 (U6.14) | TP11 `LED_EN`, TP9 `STB` |
 | [LED ring](#led-ring) | D4–D15 A-SC880IR3C | – | – |
@@ -190,7 +190,7 @@ at the end of the pulse stays in a band, whose edges are set in FW-22:
 |---|---|
 | L3 | Inside TI's 10–22 µH (SLVS789D p.4, p.18). Isat > ILIM max; Irms > the average input at the current limit; DCR from the Changjiang FNR4030S catalogue p.10. Ripple ΔIL / IIN at the nominal input and output inside TI's 30–40 % (SLVS789D p.17 Eq. 3, p.18) |
 | D3 | Schottky; TI asks for a diode rated above the 40 V switch (p.18). Peak current vs IFSM 30 A, loss = VF × average current (R+O SS16 datasheet p.1 IFSM, p.2 VF) |
-| C36, C38 | CI ≥ 1 µF is met (p.4). C36 is above TI's recommended 1–4.7 µF (p.19). That is harmless: more input capacitance only lowers the ripple on `+5V_BST`. Loop stability is set by the output capacitors and the COMP network, not by CI, and U8's slew rate limits C36's inrush. The 0805 X5R part loses capacitance with DC bias at 5 V (estimate) |
+| C36 | CI ≥ 1 µF is met by C36 alone (p.4); the small extra bypass C38 was removed (user decision 2026-11-11, board simplification). C36 is above TI's recommended 1–4.7 µF (p.19). That is harmless: more input capacitance only lowers the ripple on `+5V_BST`. Loop stability is set by the output capacitors and the COMP network, not by CI, and U8's slew rate limits C36's inrush. The 0805 X5R part loses capacitance with DC bias at 5 V (estimate) |
 | C43, C45 | High-frequency output capacitors right at D3's cathode |
 
 The duty cycle is D = 1 − Vin × η / Vout, with η ≈ 0.83 (p.7 Fig. 1). It must stay under the 90 %
@@ -319,9 +319,12 @@ TI's recommended output capacitance is 1–10 µF, and other values "should be f
 
 ### BST_EN
 
-`BST_EN` is GPIO53 (U6.71) on U10's CTRL pin. R59 pulls it down, together with U10's
-internal ≈ 800 kΩ (p.5, p.10), so the boost stays off from reset until firmware drives the pin
-(below CTRL VIL 0.4 V).
+`BST_EN` is GPIO53 (U6.71) on U10's CTRL pin, with no pull on the board: R59 was removed (user
+decision 2026-11-11, board simplification). U10's internal pull-down, R(CTRL) 400–1600 kΩ
+(≈ 800 kΩ typical; p.5, p.10), keeps the boost off from reset until firmware drives the pin.
+GPIO53 is high impedance at and after reset (no input, no pull; ESP32-P4 datasheet Table 2-1
+p.16), so V(CTRL) = I_leak × R(CTRL), with I_leak the pad's leakage (≤ 50 nA, the IIH/IIL limit
+of Table 5-4 p.89) and R(CTRL) at its maximum, must stay below CTRL VIL 0.4 V (p.5).
 
 CTRL picks one of two ways to program the feedback reference at each start from shutdown (p.10):
 PWM, the default, or TI's EasyScale. This board uses PWM ([Headroom control](#headroom-control)):
@@ -454,7 +457,7 @@ The sense is Kelvin-connected:
 |---|---|
 | C42 | U11 integrator capacitor (SINK_DRV to IN−), with R64 |
 | R67 | Gate resistor. It isolates U11's output from Q1's input capacitance (Ciss, HL2310A p.2 and Fig. 5 p.3). Gate-charge peaks are small and µs long |
-| R68 | Gate pull-down: Q1 stays off while U11 is unpowered |
+| R68 | Gate pull-down: Q1 stays off while U11 is unpowered. It stays (user decision 2026-11-11): the bank can be charged while `+5V` decays through the range where U11's output is unspecified (below its minimum supply, SBOS839N p.10) |
 | C44 | U11 supply bypass |
 
 U11 swings to within 20–60 mV of its rails (SBOS839N p.13), so VGS_max = +5V minus that swing. That
@@ -856,10 +859,10 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
      (FW-9's pulse-width limit, the exposure cap plus 50 µs, assumes it), and a longer STROBE, e.g. 0.6 ms, must make firmware
      drop `LED_EN` before the next frame.
 6. **Default-off and USB.** At reset and in download mode, nothing drives the three enables:
-   `LED_PWR_EN` (R57), `BST_EN` (R59) and `LED_EN` (R56); R68 also holds Q1's gate low. Then +32V
-   must stay unpowered (U8 off) and `LED_ON` low. On USB power alone, firmware must hold
-   `LED_PWR_EN` low: check that +32V stays at 0 V. Pulling PoE must drop `LED_EN`, `BST_EN` and
-   `LED_PWR_EN` in that order.
+   `LED_PWR_EN` (R57), `BST_EN` (U10's internal pull-down) and `LED_EN` (R56); R68 also holds Q1's
+   gate low. Then +32V must stay unpowered (U8 off) and `LED_ON` low. On USB power alone, firmware
+   must hold `LED_PWR_EN` low: check that +32V stays at 0 V. Pulling PoE must drop `LED_EN`,
+   `BST_EN` and `LED_PWR_EN` in that order.
 7. **Headroom loop.** With probes on Q1's drain (R70.1) and on `ISNS` (TP14), on one unit unless
    a step names two:
    - `LED_K_SENSE` × (R70 + R76) / R76 must match the drain at the end of a pulse within the

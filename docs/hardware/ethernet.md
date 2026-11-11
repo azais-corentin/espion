@@ -89,19 +89,31 @@ Placement:
 
 ### Reset
 
-- PHY_RST_N runs from GPIO22 (U6.18) to RESET_N (U1.32). R8 to GND holds it low.
-  - RESET_N has an internal 222 kΩ pull-up (p.12). With R8, at the top of the +3V3 ±5 % envelope:
-    V = VDD,max × R8/(R8 + 222 kΩ), which must stay under VRST (0.4 × VDDIO, p.57).
-  - GPIO22 has no pull and its input is disabled at and after reset (ESP32-P4 datasheet v0.7 p.15).
-  - So the PHY stays in reset through the whole P4 boot, far longer than the 10 ms minimum (p.54),
-    with the crystal already running.
+- PHY_RST_N runs from GPIO22 (U6.18) to RESET_N (U1.32), with no pull on the board: R8, the
+  pull-down that held the PHY in reset through the P4 boot, was removed (user decision
+  2026-11-11, board simplification; the reset pulse moved to firmware).
+  - RESET_N has an internal 222 kΩ pull-up (p.12). GPIO22 has no pull and its input is disabled
+    at and after reset (ESP32-P4 datasheet v0.7 p.15). So RESET_N rises with the supply at
+    power-up, and the PHY runs from then on, through the whole P4 boot.
+  - That rise is not a complete reset: the IP101G wants RESET_N low ≥ 10 ms (p.54) with the
+    25 MHz clock running ≥ 10 cycles before the rising edge (p.18). So the firmware resets the PHY
+    before it uses it: PHY_RST_N low ≥ 10 ms with the crystal running, release, wait ≥ 2.5 ms
+    (FW-11, [firmware-rules](firmware-rules.md#rules)).
+  - Between power-up and that pulse the PHY drives 50 MHz (50M_CLKO, through R13) into GPIO50 and
+    its receive lines (RXD0, RXD1, CRS_DV, through R11, R12, R15) into GPIO28–30. None of these is a
+    P4 strap (the straps are GPIO34–38, ESP32-P4 datasheet §3 p.36), and all have input and pulls off
+    at reset (p.15–16).
+  - The straps are static resistors (R1, R10) or the PHY's own pulls ([Straps](#straps)), so the
+    PHY latches the same values at its power-up and at the firmware's pulse. FX_HEN (on CRS_DV)
+    latches at power-up with GPIO28 high impedance (the P4 in reset or booting, no pull).
 - TP1 (silkscreen "PRST") is on the net.
 - **Firmware order.** While in reset, the PHY drives no 50 MHz clock (50M_CLKO is Hi-Z), and the
-  EMAC has no other clock. So the firmware releases PHY_RST_N and waits ≥ 2.5 ms before it touches the
-  EMAC or MDIO ([firmware-rules](firmware-rules.md#rules)).
+  EMAC has no other clock. So after the reset pulse the firmware waits ≥ 2.5 ms before it touches
+  the EMAC or MDIO ([firmware-rules](firmware-rules.md#rules)).
 - PHY_RST_N is a long net with several vias. It runs round the lens inside the LED ring, partly close
-  to the ring pads. Once driven high it is a low-impedance push-pull line. A first-board
-  check confirms the LED pulses don't disturb it.
+  to the ring pads. Until the firmware drives it, only the PHY's 222 kΩ pull-up holds it high, while
+  the LEDs are still off (their enables default off, [led](led.md#led-power-switch)). Once driven it
+  is a low-impedance push-pull line. A first-board check confirms the LED pulses don't disturb it.
 
 ## MagJack and MDI
 
@@ -128,8 +140,8 @@ side at the east edge, soldered by hand ([layout](layout.md#assembly)).
   planes. There is no RC network to GND (user decision 2026-11-09, "replace R2, R3 and C1 by a
   wire"); the Bob-Smith termination stays inside the jack (HanRun p.1). Cable-shield and ESD
   currents return through board GND ([Accepted risks](#accepted-risks)).
-- **Hand-soldering trial.** J1's lands are close to three reflowed parts: R46 (a CSI link), C3 and R8.
-  J1's hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over those three.
+- **Hand-soldering trial.** J1's lands are close to two reflowed parts: R46 (a CSI link) and C3.
+  J1's hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over both.
 
 ### MDI pairs crossed at J1
 
@@ -209,10 +221,10 @@ vias to keep P on P. Consequences:
 
 ### LEDs
 
-| LED | J1 pins | Driven by | Mode 2 meaning (Table 8, p.53) |
+| LED | J1 pins | Driven by | Mode 1 meaning (Table 7, p.53) |
 |---|---|---|---|
-| Green | LEDG+ J1.13 = +3V3, LEDG− J1.14 → R4 → PHY_LED0 (U1.11) | LED0 sinks (active low) | Link / activity |
-| Yellow | LEDY+ J1.11 ← R5 ← PHY_LED3 (U1.12), LEDY− J1.12 = GND | LED3 sources (active high) | 100BASE-TX |
+| Green | LEDG+ J1.13 = +3V3, LEDG− J1.14 → R4 → PHY_LED0 (U1.11) | LED0 sinks (active low) | Link |
+| Yellow | LEDY+ J1.11 ← R5 ← PHY_LED3 (U1.12), LEDY− J1.12 = GND | LED3 sources (active high) | 100 Mbit/s link, blinking with traffic |
 
 - The LED pad driver limits the current to its default 1.62 mA (LED_DRIVE, p.35). R4 and R5 limit it
   if the firmware raises the drive: I ≤ (+3V3 max − V_F)/R, with +3V3 at the top of its ±5 % envelope,
@@ -244,9 +256,9 @@ All seven are series resistors, one at each driver.
 - Each sits close to its driving pin: `near` entries R35/R36/R37 → U6 and R11/R12/R13/R15 → U1. The
   distance is far shorter than any edge of 0.5 ns or more can see, so the resistor works as a lumped
   source termination.
-- TXD0/TXD1 are also the P4's strapping pins GPIO34/GPIO35. R38 (pull-up to +3V3) and the BOOT button
-  through R39 sit on the MCU side of R36 ([mcu](mcu.md#reset-and-boot)); the `paths` entry
-  "BOOT stub" keeps their stubs short.
+- TXD0/TXD1 are also the P4's strapping pins GPIO34/GPIO35. The BOOT button through R39 sits on the
+  MCU side of R36 ([mcu](mcu.md#reset-and-boot)); GPIO35 has only its internal pull-up. The `paths`
+  entry "BOOT stub" keeps R39's stub short.
 
 ### REF_CLK branches
 
@@ -322,7 +334,7 @@ U1.10, the remedies, in order:
 
 - MDC (GPIO31) and MDIO (GPIO52) reach the P4 through the GPIO matrix. R14, a pull-up to +3V3, pulls up
   MDIO alongside the pin's internal pull-up (p.16). MDC is always driven by the MAC and has no pull. R14
-  is the same part as the strap resistors R1, R7, R9 and R10 (one BOM line; user decision 2026-11-09,
+  is the same part as the strap resistors R1 and R10 (one BOM line; user decision 2026-11-09,
   replacing the SCCB pull-up part to lower the sink current). Whichever side drives MDIO low sinks
   (+3V3 max − VOL) / R14 at R14's low tolerance. R14 sets no edge rate: it only holds MDIO while
   neither side drives it (idle and the first turnaround bit of a read, which the MAC does not
@@ -343,23 +355,26 @@ U1.10, the remedies, in order:
 
 The IP101G latches its straps when RESET_N rises (pp.16–18):
 
-- Internal pull-downs are 104 kΩ and pull-ups 222 kΩ (p.12). The external straps R1, R7, R9 and R10
-  use the datasheet latch resistor, 5.1 kΩ (Table 13, p.58).
+- Internal pull-downs are 104 kΩ and pull-ups 222 kΩ (p.12). The external straps R1 and R10 use the
+  datasheet latch resistor, 5.1 kΩ (Table 13, p.58). PHY_AD3 and LEDMOD have no board resistor: R7
+  and R9, which set them to 0 and 1, were removed (user decision 2026-11-11, board simplification;
+  the PHY address stays 1, the LEDs take the PHY's default mode 1). Their internal pull-downs set
+  both to 0 (p.17, p.18).
 - VIH ≥ 0.8 × VDDIO at the bottom of the +3V3 ±5 % envelope (p.57). These strap checks use the generic
   ±5 % envelope, which is wider than the DC set point and the switchover minimum
   ([Rails](README.md#rails)).
-- LED0 and LED3 are Hi-Z during reset (p.18), so only the strap resistors and the LED paths set
-  them. Both pull the same way as their strap.
+- LED0 and LED3 are Hi-Z during reset (p.18), so only R1, LED3's internal pull-down and the LED paths
+  set them. Both LED paths pull the same way as their strap.
 
 | Strap | U1 pin | Set by | Level | Result |
 |---|---|---|---|---|
 | PHY_AD0 | 11 (LED0) | R1 to +3V3 (+ green LED to +3V3) | 1 | PHY address bit 0 = 1 |
-| PHY_AD3 | 12 (LED3) | R7 to GND (+ internal pull-down, yellow LED to GND) | 0 | PHY address bit 3 = 0 |
+| PHY_AD3 | 12 (LED3) | internal 104 kΩ pull-down only (+ yellow LED to GND) | 0 | PHY address bit 3 = 0 |
 | | | | | **PHY address 1** (Table 4, p.47, 32-pin package) |
 | COL/RMII | 4 | R10 to +3V3: V = VDD,min × 104 kΩ/(104 kΩ + R10) ≥ 0.8 × VDDIO | 1 | RMII mode (p.17) |
-| CRS/LEDMOD | 20 | R9 to +3V3: same formula with R9 | 1 | LED mode 2: LED0 link/activity, LED3 100BASE-TX (Table 8, p.53) |
+| CRS/LEDMOD | 20 | internal 104 kΩ pull-down only; U1.20 not connected | 0 | LED mode 1 (default): LED0 link, LED3 100 Mbit/s link and activity (Table 7, p.53) |
 | FX_HEN (RXDV/CRS_DV) | 19 | internal 104 kΩ pull-down only; GPIO28 has no pull at reset | 0 | Twisted-pair (copper) mode (p.16, p.55) |
-| RESET_N | 32 | R8 to GND against the internal 222 kΩ pull-up (formula under [Reset](#reset)) | 0 | Held in reset until GPIO22 drives high |
+| RESET_N | 32 | internal 222 kΩ pull-up only; GPIO22 high impedance at reset | 1 from power-up | PHY runs from power-up; FW-11's pulse gives it the complete reset ([Reset](#reset)) |
 
 - The firmware addresses the PHY at MDIO address 1.
 - The firmware must not enable GPIO28's internal pull-up while RESET_N rises: it fights the 104 kΩ
@@ -392,8 +407,9 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 - **Unequal crystal traces.** X1 runs round Y1 to its far-corner pin, X2 is short; the traces
   enclose a small loop over In1 GND (user decision 2026-11-03,
   [layout](layout.md#ethernet-and-poe-isolation)).
-- **PHY_RST_N inside the LED ring**, close to the ring pads over part of its length.
-- **J1 lands close to reflowed parts** (R46, C3, R8), to be checked in the
+- **PHY_RST_N inside the LED ring**, close to the ring pads over part of its length; held only by
+  the PHY's internal pull-up until the firmware drives it.
+- **J1 lands close to reflowed parts** (R46, C3), to be checked in the
   hand-soldering trial.
 - **Shield tied straight to GND** (user decision 2026-11-09): cable-shield and ESD currents return
   through board GND, and a cable whose far end grounds its shield closes a ground loop.
@@ -413,9 +429,10 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
    0.2 and 0.8 × VDDIO on the edges. If one shows, use the remedies under
    [Timing](#timing).
 4. **Straps and LEDs.** The PHY answers on MDIO address 1, the EMAC gets its clock in RMII mode, the
-   green LED shows link and activity, and the yellow LED lights at 100 Mbit/s only.
-5. **Reset order.** With the firmware releasing PHY_RST_N ≥ 2.5 ms before the EMAC starts, Ethernet
-   comes up on every boot.
+   green LED shows link, and the yellow LED lights at 100 Mbit/s only and blinks with traffic.
+5. **Reset order.** With the firmware's reset pulse (PHY_RST_N low ≥ 10 ms, then released
+   ≥ 2.5 ms before the EMAC starts, FW-11), Ethernet comes up on every boot, also after a power
+   cycle and after a reset of the P4 alone (RESET button).
 6. **LED interference.** Run the LEDs at 0.5 ms, 120 fps. Scope TP1: PHY_RST_N stays above
    0.6 × VDDIO. Watch the link: it never drops while the LEDs pulse.
 7. **Temperatures.** In the LED thermal test (0.5 ms, 120 fps, 30 min, 30 °C ambient), put
@@ -423,7 +440,7 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
    TSX-3225 p.1) and REF_CLK stays within ± 50 ppm; if not, lower the LED current or duty, or pull
    the east edge of the Q1 drain copper on B.Cu back from Y1
    ([layout](layout.md#thermal)).
-8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect R46, C3 and R8 for
+8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect R46 and C3 for
    bridges and shifted parts.
 9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source.
 10. **REGOUT.** With the link up at 100 Mbit/s and traffic running, scope REGOUT at C6 (short ground

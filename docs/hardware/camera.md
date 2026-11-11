@@ -42,7 +42,7 @@ FFC pin table (drawing), which J4 copies one to one:
 | 1 | GND | GND | 9 | MCP | CAM_CLK_P |
 | 2 | MDN0 | CAM_D0_N | 10 | GND | GND |
 | 3 | MDP0 | CAM_D0_P | 11 | PWDN | CAM_EN |
-| 4 | GND | GND | 12 | GPIO | CAM_IO1 |
+| 4 | GND | GND | 12 | GPIO | — (no-connect) |
 | 5 | MDN1 | CAM_D1_N | 13 | SIO-C | SCCB_SCL |
 | 6 | MDP1 | CAM_D1_P | 14 | SIO-D | SCCB_SDA |
 | 7 | GND | GND | 15 | 3.3V | CAM_3V3 |
@@ -242,20 +242,21 @@ p.12), held by the `viaParity` entries "CSI lanes, P4 side" and "CAM lanes, FPC 
   OV9281 asks for. The firmware learns the polarity on the first module
   ([firmware-rules](firmware-rules.md#rules)).
 
-### R52 and CAM_IO1
+### Module pin 12
 
-- Module pin 12 is labelled only "GPIO" on the drawing. On the board it is net CAM_IO1, and it goes
-  only to R52.
-- R52 is a 0 Ω link from CAM_IO1 to CAM_EN, **not fitted** (DNP, not in the BOM). It is the
-  assembly option for a module that needs pin 12 driven with pin 11.
-- With R52 open, pin 12 floats on the board side.
+- Module pin 12 is labelled only "GPIO" on the drawing. J4.12 carries a no-connect flag: nothing on
+  the board drives it or pulls it, so pin 12 floats on the board side.
+- The board had an unfitted 0 Ω link (R52) from pin 12 to CAM_EN, the assembly option for a module
+  that needs pin 12 driven with pin 11. It was removed with its net CAM_IO1 (user decision
+  2026-11-11, board simplification); such a module now needs a board change.
 
 ### CAM_3V3
 
 - The module's 3.3 V input (pin 15) is CAM_3V3. It comes from +3V3 through R53, a 0 Ω 0402 jumper. R53 is
   the one place the camera supply can be opened, to measure the module's current or to power it
   separately.
-- C30 and C32 decouple CAM_3V3 at J4 pin 15. TP10 ("CAM_3V3") is the test pad.
+- C32 decouples CAM_3V3 at J4 pin 15; the small extra C30 and the test pad TP10 were removed (user
+  decision 2026-11-11, board simplification). Probe CAM_3V3 on C32.1.
 - **Load:** the OV9281's typical supply currents are IDD-A 24 mA, IDD-IO 2.5 mA and IDD-D 52 mA
   (datasheet Table 8-3). The module's regulators add their own losses. The camera budget is in
   [+3V3 loads](power.md#3v3-loads).
@@ -360,8 +361,8 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
   - what pin 11 (PWDN) does, and its polarity;
   - whether the back pads go straight to the sensor's FSIN and STROBE balls.
 
-  Mitigations: the XVS divider options above, R41/R42 as an option, U7 accepting any level, R43
-  holding CAM_EN low, and R52 as an option.
+  Mitigations: the XVS divider options above, R41/R42 as an option, U7 accepting any level and R43
+  holding CAM_EN low.
 - **SCCB at 3.3 V.** The OV9281 rates SIOC/SIOD to 3.0 V and every I/O to DOVDD + 1 V (2.8 V at DOVDD
   1.8 V). The board pulls SCCB to +3V3 (up to the top of the +3V3 range in [Rails](README.md#rails))
   and drives PWDN from a 3.3 V GPIO. That is safe only if the module level-shifts these pins or runs

@@ -74,7 +74,7 @@ sheet 1 of 3), next to the espion-cam board ([docs/hardware/camera.md](../../doc
 | SCCB SDA | GPIO7 (net ESP_I2C_SDA, J1 pin 2, 2.2 k pull-up R46) | GPIO8 |
 | SCCB SCL | GPIO8 (net ESP_I2C_SCL, J1 pin 3, 2.2 k pull-up R44) | GPIO9 |
 | Camera enable (module pin 11, PWDN) | no GPIO: CSI_IO0 (J1 pin 6) held at 3.3 V by R42 (10 k) | GPIO10 (CAM_EN), R43 pull-down |
-| Module pin 12 | CSI_IO1 (J1 pin 5), floating (R43 not fitted), no GPIO | CAM_IO1 |
+| Module pin 12 | CSI_IO1 (J1 pin 5), floating (R43 not fitted), no GPIO | not connected (no-connect at J4.12), no GPIO |
 | XVS / STROBE | not connected (free-running) | GPIO7 / GPIO12 |
 | MIPI D-PHY supply (VDD_MIPI_DPHY, U6 pin 41) | ESP_LDO_VO3, the P4's internal LDO channel 3 | ESP_LDO_VO3 on the ESP32-P4-Core module ([docs/architecture.md](../../docs/architecture.md)) |
 

@@ -61,7 +61,7 @@ In1 GND plane, with In2 GND unbroken below:
   spacing fit the jack.
 - F.Cu copper of other nets keeps ≥ 1.0 mm sideways from the In1 PoE copper, through the one thin
   7628 ply between F.Cu and In1. KiCad does not check copper across layers, so this is measured by
-  hand (`kicad_query distance`). The tightest point is TP10.1 (CAM_3V3) to POE_VA1. The same-layer
+  hand (`kicad_query distance`). The tightest point is the F.Cu pour "R41/R42 +3V3" beside POE_VA1. The same-layer
   keep-off of rule `PoE isolation` does not fit here.
 
 The layout details (lane outline, distances) are in
@@ -210,7 +210,8 @@ never carries the boost; the boost then stops on its collapsing input (UVLO). Th
 - **Soft start:** C21 sets the output slew rate SR (Table 9-1, p.13). Inrush = SR × C(`+5V`) with
   C(`+5V`) the sum of C20, C22, C10, C34 and the small bypass parts; ramp time = VOUT / SR. A VBUS attach
   sees only C16 before that.
-- **Capacitors:** C15 at IN1, C16 at IN2, C20 (ceramic) + C22 (polymer) + C23 on OUT.
+- **Capacitors:** C15 at IN1, C16 at IN2, C20 (ceramic) + C22 (polymer) on OUT. The small OUT
+  bypass C23 was removed (user decision 2026-11-11, board simplification).
 
 `+5V` range in steady state: low end = USB VBUS minimum (4.40 V, see [USB VBUS](#usb-vbus)) minus
 RON × the USB-only current; high end = the PoE upper bound from
@@ -240,7 +241,7 @@ The boost runs at its switch current limit whenever it recharges `+32V`
 ### Layout
 
 U4's periphery follows TI's layout example (SLVSEA3F §12.2 p.33): OUT pins 1 and 8 tied across,
-C20/C23 on the OUT side, C16 at IN2, C15 at IN1, C21 and R22 straight off SS/ILIM, the divider
+C20 on the OUT side, C16 at IN2, C15 at IN1, C21 and R22 straight off SS/ILIM, the divider
 row R20, R21, R18, R75, R19 beside PR1/CP2. TI draws two vias per IN pin and four on OUT and marks
 a via in each of pads 1, 2, 7 and 8 (land pattern p.39). The board has two vias on IN1 and two on
 OUT (a larger OUT via would break the clearance to C15 or U4.9) and one on IN2 (USB current only),
@@ -296,10 +297,11 @@ in TI's recommended "++" cell for VOUT ≥ 1.8 V (Table 4, p.9).
 
 ### Capacitors
 
-- Input: C10 at VIN, close to U3.4; C12 beside it on the outside. TI's layout has one input
-  capacitor (Fig. 20 p.13), C10's role; TI says 4.7 µF is enough (p.10). C12 is an extra with
-  little high-frequency effect where it sits.
-- Output: C18 and C19 at the buck, plus the rest of `+3V3` (C29, C32, C8 and the small bypass parts) and
+- Input: C10 at VIN, close to U3.4. TI's layout has one input capacitor (Fig. 20 p.13), C10's
+  role; TI says 4.7 µF is enough (p.10). The small extra C12 that sat outboard of C10, with little
+  high-frequency effect there, was removed (user decision 2026-11-11, board simplification).
+- Output: C18 at the buck (the small extra C19 beside it was removed, user decision 2026-11-11,
+  board simplification), plus the rest of `+3V3` (C29, C32, C8 and the small bypass parts) and
   the module's own capacitors on its 3.3 V input (Waveshare ESP32-P4-Core schematic p.1). The
   effective capacitance is the nominal sum derated for 3.3 V bias (estimate). TI's Table 4 tests up
   to 2 × 22 µF and says "further combinations should be checked": a first-board load-step check.
@@ -309,9 +311,9 @@ in TI's recommended "++" cell for VOUT ≥ 1.8 V (Table 4, p.9).
 U3 is turned 180° against TI's Fig. 20 (SLVSDG1C p.13), with the same loops:
 
 - L2 at U3's SW side; the switch node is one short F.Cu track.
-- C10's VIN end and C18's GND end close to U3.4 and U3.2; C18, C19 and C10 return to U3.2 on F.Cu.
+- C10's VIN end and C18's GND end close to U3.4 and U3.2; C18 and C10 return to U3.2 on F.Cu.
 - R16, R17 and C17 at U3.5; the feedback is sensed at C18.1 and routed away from the switch node.
-- C10, C12, C18 and C19 each have GND vias, U3.2 one under the body. In1 and In2 GND are solid
+- C10 and C18 each have GND vias, U3.2 one under the body. In1 and In2 GND are solid
   under U3, L2 and the switch node.
 - The accelerometer's I²C lines pass L2 on B.Cu, below both GND planes; on F.Cu they keep clear of
   switch-node copper, and IMU_SDA crosses the corner of L2's courtyard margin (not its body)
@@ -380,14 +382,15 @@ does not hold a USB-only load to the 500 mA a high-power port supplies (USB 2.0 
 On USB alone the LED supply stays off by a firmware rule only
 (user decision 2026-10-31, "LEDs off on USB: firmware rule only"; no extra hardware gate), which
 leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)): it must stay
-≤ 500 mA. The LED switch U8, the boost enable and the LED gate all default off through pull-downs
-(R57, R59, R56), so nothing draws LED current before firmware runs.
+≤ 500 mA. The LED switch U8, the boost enable and the LED gate all default off: R57 and R56 pull
+`LED_PWR_EN` and `LED_EN` down, and U10's internal pull-down holds `BST_EN` low
+([LED driver](led.md#bst_en)), so nothing draws LED current before firmware runs.
 
 ## Accepted risks
 
 - **Some isolation only on the PoE lane.** Other nets' F.Cu copper is closer sideways to the In1 PoE
   copper than rule `PoE isolation`'s same-layer keep-off, through one thin 7628 ply; it keeps only
-  the hand-kept ≥ 1.0 mm. The tightest spot is TP10.1 (`kicad_query distance`). The layout is meant
+  the hand-kept ≥ 1.0 mm. The tightest spot is the F.Cu pour "R41/R42 +3V3" (`kicad_query distance`). The layout is meant
   to give some isolation only; no isolation level is rated or tested (user decision 2026-11-02).
 - **DP1435 output tolerance and capacitive load are not specified** (DP1435 p.1–5). The rails
   assume one 5 % regulation term (see [Output and filter](#output-and-filter)) and start-up into
@@ -415,11 +418,8 @@ leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)):
   and J1's 350 mA per centre tap. User decision 2026-11-02: "Accept, measure on first boards"; if
   the measurement is over either limit, a firmware LED limit on PoE follows, with no design change
   now.
-- **C15 and C23 closer than JLCPCB's 1.0 mm QFN spacing** to U4 (C15–U4 and C23.1–U4.1,
-  `kicad_query distance`), kept at the pins as TI asks ("as close as possible", SLVSEA3F §11); C23
-  cannot move because C20's courtyard abuts it.
-- **C12 outboard of C10 at the buck input.** Swapping them needs TP12 and the RMII_TX_EN track
-  moved; TI's layout has one input capacitor, which C10 is.
+- **C15 closer than JLCPCB's 1.0 mm QFN spacing** to U4 (`kicad_query distance`), kept at the
+  pin as TI asks ("as close as possible", SLVSEA3F §11).
 - **`+3V3` capacitance outside TI's tested cells** (Table 4: up to 2 × 22 µF), counting the
   module's own capacitors.
 - **Reflow ratings of C13, C14 and C22 are not printed or are at JLCPCB's limit** (JLCPCB reflows
@@ -457,10 +457,8 @@ leaves the buck input, from the estimated `+3V3` total ([+5V loads](#5v-loads)):
    not, reduce C18 or remove C17.
 8. **Temperatures.** At PoE with the LEDs at 0.5 ms / 120 fps (and once during `+32V` start-up),
    a thermal camera on U4 and its IN1/OUT vias, the U8 neck, U3, L1 and U2.
-9. **GND test loops.** Insert one GND test loop into TP2's plated hole before soldering: the
-   loop's drawing gives no hole size; if it is loose or tight, change the drill in the footprint.
-10. **B.Cu under U2.** At the `+5V` peak on PoE (LEDs at 0.5 ms / 120 fps, camera streaming,
-    Ethernet up), scope XVS and SCCB_SCL/SDA at J4 for ringing or extra edges, and run USB
-    enumeration and a bulk transfer; repeat on USB power alone as the reference. VBUS, the USB pair,
-    CAM_EN, SCCB, a short XVS hop and a +3V3 run on B.Cu right under the module's flyback magnetics
-    ([layout](layout.md#bcu-under-u2)).
+9. **B.Cu under U2.** At the `+5V` peak on PoE (LEDs at 0.5 ms / 120 fps, camera streaming,
+   Ethernet up), scope XVS and SCCB_SCL/SDA at J4 for ringing or extra edges, and run USB
+   enumeration and a bulk transfer; repeat on USB power alone as the reference. VBUS, the USB pair,
+   CAM_EN, SCCB, a short XVS hop and a +3V3 run on B.Cu right under the module's flyback magnetics
+   ([layout](layout.md#bcu-under-u2)).

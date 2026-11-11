@@ -1740,18 +1740,6 @@
 		)
 	)
 	(junction
-		(at 162.56 63.5)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "04eee3c3-3bd3-470e-b054-204ef7b5525e")
-	)
-	(junction
-		(at 193.04 41.91)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "26844cc9-2889-4c0f-bfcd-c621d571b7f1")
-	)
-	(junction
 		(at 142.24 48.26)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -1780,12 +1768,6 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "75c97939-c0be-4468-be91-352123c86de2")
-	)
-	(junction
-		(at 193.04 25.4)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "76f00617-7204-4c3a-a8c2-afaacee73ef4")
 	)
 	(junction
 		(at 147.32 125.73)
@@ -1817,9 +1799,19 @@
 		(color 0 0 0 0)
 		(uuid "e392feb8-3090-446e-a854-a12e7734507a")
 	)
+	(junction
+		(at 195.58 41.91)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "f2631b6a-8795-49d8-a1f8-bd6eeb8e2995")
+	)
 	(no_connect
 		(at 187.96 143.51)
 		(uuid "04e08a40-9e9b-43b7-9c94-186077d9bca9")
+	)
+	(no_connect
+		(at 187.96 63.5)
+		(uuid "ea009ca7-7d1f-4817-b0de-5aebdc7c3376")
 	)
 	(bus_entry
 		(at 129.54 73.66)
@@ -2083,6 +2075,16 @@
 	)
 	(wire
 		(pts
+			(xy 193.04 41.91) (xy 193.04 50.8)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "34d0d82d-7f5e-4cc0-ab5b-15dfa673dfad")
+	)
+	(wire
+		(pts
 			(xy 180.34 48.26) (xy 142.24 48.26)
 		)
 		(stroke
@@ -2293,26 +2295,6 @@
 	)
 	(wire
 		(pts
-			(xy 165.1 63.5) (xy 162.56 63.5)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "70e66e67-6a58-40ec-9898-c78cb9d626dd")
-	)
-	(wire
-		(pts
-			(xy 212.09 25.4) (xy 228.6 25.4)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "76d1fdbf-71bd-4c3d-9e02-88aaf7db9348")
-	)
-	(wire
-		(pts
 			(xy 157.48 130.81) (xy 157.48 146.05)
 		)
 		(stroke
@@ -2340,16 +2322,6 @@
 			(type default)
 		)
 		(uuid "7ccfd27d-840b-475e-8853-add8d2ca376d")
-	)
-	(wire
-		(pts
-			(xy 193.04 25.4) (xy 193.04 26.67)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "7d605c98-07b6-40b5-b781-ef082630bcae")
 	)
 	(wire
 		(pts
@@ -2403,16 +2375,6 @@
 	)
 	(wire
 		(pts
-			(xy 228.6 24.13) (xy 228.6 25.4)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "912ba77a-3c9e-4c2b-87bd-75a3c40bb5d7")
-	)
-	(wire
-		(pts
 			(xy 167.64 128.27) (xy 166.37 128.27)
 		)
 		(stroke
@@ -2440,6 +2402,16 @@
 			(type default)
 		)
 		(uuid "9c16a5b9-fa5f-4c93-ad00-8a602eb171c5")
+	)
+	(wire
+		(pts
+			(xy 195.58 41.91) (xy 212.09 41.91)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a1c8bc7a-1097-4d30-9831-1660b2987c94")
 	)
 	(wire
 		(pts
@@ -2530,16 +2502,6 @@
 			(type default)
 		)
 		(uuid "b89d4e11-61de-46b4-9998-d4fd6ebbb503")
-	)
-	(wire
-		(pts
-			(xy 172.72 63.5) (xy 187.96 63.5)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "be974683-05d1-4e8a-aa00-5e875f768440")
 	)
 	(wire
 		(pts
@@ -2653,16 +2615,6 @@
 	)
 	(wire
 		(pts
-			(xy 212.09 34.29) (xy 212.09 35.56)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "dc332544-cafd-4cda-a381-bf351fc85b73")
-	)
-	(wire
-		(pts
 			(xy 187.96 66.04) (xy 162.56 66.04)
 		)
 		(stroke
@@ -2680,16 +2632,6 @@
 			(type default)
 		)
 		(uuid "dd83dedb-2ad2-4417-b215-a647c39f67f3")
-	)
-	(wire
-		(pts
-			(xy 193.04 34.29) (xy 193.04 50.8)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "e4da3af7-709d-436c-a7a7-f8ca480aaec3")
 	)
 	(wire
 		(pts
@@ -2741,6 +2683,26 @@
 		)
 		(uuid "f60c399f-52cb-4f08-87a7-9d29676fc228")
 	)
+	(wire
+		(pts
+			(xy 212.09 41.91) (xy 212.09 34.29)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fa9adbab-4346-4ac0-92d4-67a1c93c86d8")
+	)
+	(wire
+		(pts
+			(xy 212.09 25.4) (xy 224.79 25.4)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ff73683d-2794-4da2-8cbe-75e22b48cbf0")
+	)
 	(label "CSI_CLK_P"
 		(at 130.81 71.12 0)
 		(effects
@@ -2770,16 +2732,6 @@
 			(justify left bottom)
 		)
 		(uuid "22e0e9de-4dde-40d3-9ba5-89f8c9939fd5")
-	)
-	(label "CAM_IO1"
-		(at 173.99 63.5 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "2db26ddf-f5f4-4aa5-8fc3-d59a9c94a801")
 	)
 	(label "STROBE_CAM"
 		(at 158.75 146.05 0)
@@ -2871,16 +2823,6 @@
 		)
 		(uuid "65b8a20d-a253-4a10-a628-7af9a85d3d0f")
 	)
-	(label "CAM_3V3"
-		(at 214.63 25.4 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "75149d79-3bc2-449c-a2db-cffa653a7752")
-	)
 	(label "CAM_D1_N"
 		(at 167.64 81.28 0)
 		(effects
@@ -2910,6 +2852,16 @@
 			(justify left bottom)
 		)
 		(uuid "a43098d2-e890-4931-b108-52af8558feb0")
+	)
+	(label "CAM_3V3"
+		(at 224.79 25.4 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "a6418bc9-0eaf-423b-af7f-0d6e638e4873")
 	)
 	(label "CSI_D1_P"
 		(at 130.81 78.74 0)
@@ -4682,121 +4634,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:C")
-		(at 193.04 30.48 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "7f18b135-efcc-417f-8c39-64725ba0ec05")
-		(property "Reference" "C30"
-			(at 196.85 29.21 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "100nF 16V"
-			(at 196.85 31.75 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "Capacitor_SMD:C_0402_1005Metric"
-			(at 193.04 30.48 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf"
-			(at 193.04 30.48 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Unpolarized capacitor"
-			(at 193.04 30.48 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "Samsung"
-			(at 193.04 30.48 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "CL05B104KO5NNNC"
-			(at 193.04 30.48 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C1525"
-			(at 193.04 30.48 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "3bbea48c-124a-4e6d-a09d-ace807911bf7")
-		)
-		(pin "2"
-			(uuid "bdfb7b05-eb9a-4eee-ad96-7e2ae6765fc4")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/ced9b58c-3461-4369-95cf-100fb6b8baef"
-					(reference "C30")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "Device:R")
 		(at 142.24 58.42 0)
 		(unit 1)
@@ -4906,84 +4743,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/ced9b58c-3461-4369-95cf-100fb6b8baef"
 					(reference "R43")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "power:GND")
-		(at 212.09 35.56 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "8111f683-7eda-48a3-bd31-64e8d8a16b13")
-		(property "Reference" "#PWR0101"
-			(at 212.09 41.91 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "GND"
-			(at 212.09 39.37 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" ""
-			(at 212.09 35.56 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 212.09 35.56 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 212.09 35.56 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "72a6b336-aecd-4b57-9e40-eabe6512e9d2")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/ced9b58c-3461-4369-95cf-100fb6b8baef"
-					(reference "#PWR0101")
 					(unit 1)
 				)
 			)
@@ -5534,85 +5293,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Connector:TestPoint")
-		(at 228.6 24.13 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom no)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "adfd611c-77e1-4e2f-a986-4250acbebf3b")
-		(property "Reference" "TP10"
-			(at 231.14 20.828 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "CAM_3V3"
-			(at 231.14 23.368 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "TestPoint:TestPoint_Pad_D1.0mm"
-			(at 228.6 24.13 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 228.6 24.13 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "test point"
-			(at 228.6 24.13 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "e1e92abc-b85c-467e-9f26-2e359fa98f0e")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/ced9b58c-3461-4369-95cf-100fb6b8baef"
-					(reference "TP10")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "power:+3V3")
 		(at 193.04 125.73 0)
 		(unit 1)
@@ -6002,119 +5682,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/ced9b58c-3461-4369-95cf-100fb6b8baef"
 					(reference "#PWR099")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
-		(at 168.91 63.5 90)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom no)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp yes)
-		(fields_autoplaced yes)
-		(uuid "b56dd734-3f6e-4e68-a3dd-e633ca0a5a58")
-		(property "Reference" "R52"
-			(at 168.91 58.039 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "0"
-			(at 168.91 60.579 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0805_2012Metric"
-			(at 168.91 63.5 90)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
-			(at 168.91 63.5 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 168.91 63.5 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" ""
-			(at 168.91 63.5 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" ""
-			(at 168.91 63.5 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" ""
-			(at 168.91 63.5 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "eadd80a6-582f-481d-a655-76c132e3272e")
-		)
-		(pin "2"
-			(uuid "5db6931f-9ef9-4efc-b3c3-c9d913d3c3bc")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/ced9b58c-3461-4369-95cf-100fb6b8baef"
-					(reference "R52")
 					(unit 1)
 				)
 			)
