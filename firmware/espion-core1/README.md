@@ -84,3 +84,16 @@ script of 2026-11-11 is `/tmp/p4perf-logs/TwoCore/walk.py`, not in the repositor
 ## Verified
 
 - Host: `spsc`'s 4 tests pass (`rustc --test`, 2026-11-11).
+- `poc-p4-eth`, `RUN_CORE1 = true`, after the move (2026-11-11,
+  `/tmp/p4perf-logs/CoLoad/eth-bringup.log`): four 120 fps modes, 3600 frames each, nothing
+  dropped or lapped, detect 855 / 865 us at 1280x800 as before the move (849 / 860). Walk
+  (`eth-bringup.walk`): 24 reachable functions with the panic leaves, no banned reference,
+  31 panic call sites.
+- `poc-p4-stream`, `Service::BenchVision` (2026-11-11, `/tmp/p4perf-logs/CoLoad/co1.log`,
+  `co2.log`): beside the bench at the wire rate, 0 late, lapped or dropped; 10 min of pixel
+  check under PSRAM TX, 0 bad rows of 57 824 000. Walk of that build (`co1.walk`): 24
+  reachable functions, no banned reference, 36 panic call sites. Figures in that crate's
+  README, "Co-load".
+- Earlier checks of the same code in `poc-p4-eth` (trap, stalled heartbeat, laps, stalls,
+  stop/start cycles, cache contention): `firmware/poc-p4-eth/README.md`, "Detector on core
+  1"; not repeated after the move.

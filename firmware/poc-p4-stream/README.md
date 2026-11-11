@@ -112,6 +112,17 @@ python3 tools/netbench.py rx --rate 100 --size 64 --seconds 18  # beside a tx ru
 python3 tools/netbench.py done                                # the board logs "bench: host done"
 ```
 
+With `SERVICE = Service::BenchVision` the same test service runs on core 0 while core 1,
+started bare (`espion-core1`), runs the blob detector or the pixel check on the camera's live
+1280x800 RAW8 strips at 120 fps ([Co-load](#co-load-the-detector-on-core-1-beside-the-wire-rate-2026-11-11));
+build it with `--features stats` for the cache lock's per-core figures. Core 1 starts at the
+first `vision` request (the boot and the first runs are the same service without core 1):
+
+```sh
+python3 tools/netbench.py vision --job detect --autoload 1    # or --job check / --job off
+python3 tools/netbench.py tx --source psram --seconds 60      # internal and psram only here
+```
+
 `tools/netbench.py` (Python standard library only) binds every socket to the link-local address
 of the interface, sends the request first, and prints the host's figures (rate, lost, duplicate,
 reordered and bad datagrams, the host's UDP6 and interface counters) and the board's report.
@@ -121,8 +132,9 @@ listens.
 ### Choosing what runs
 
 `SERVICE` at the top of `src/main.rs`: `Service::Stream` (default) runs the camera stream,
-`Service::Bench` the network test service below, `Service::Network` only the network (ping,
-neighbour discovery).
+`Service::Bench` the network test service below, `Service::BenchVision` that service with
+core 1 on the camera's strips, `Service::Network` only the network (ping, neighbour
+discovery).
 
 ## What the firmware does
 
@@ -152,7 +164,12 @@ The test service (`src/bench.rs`, the module docs have the formats):
   `P` a 1 024 000-byte buffer in PSRAM, its cache lines written back and invalidated before
   each pass (cold, as after a DMA write); `F` camera frames, the newest complete one each time;
   `C` capture only (frames counted and dropped, no datagrams but the report); `D` nothing, the
-  board logs `bench: host done`. In `I` and `P` every byte is a known pattern the host checks.
+  board logs `bench: host done`; `V` (`Service::BenchVision` only, `[V, job, autoload, 0]`,
+  job 0 off, 1 detector, 2 pixel check) ends core 1's run and starts the one asked for, and
+  the board answers with one report datagram ("...: ok" or why it refused). A run whose
+  prefetch mode writes the L1 data autoload registers is refused while core 1's run has the
+  autoload on, and the other way round; `F` and `C` are refused in `BenchVision` (the camera
+  feeds core 1). In `I` and `P` every byte is a known pattern the host checks.
   Datagrams go beside smoltcp (`net/chunk.rs`) once the host's MAC is known, through the
   socket before. At boot the service checks the chunk path's UDP checksum against smoltcp's
   on 4096 random datagrams (`bench: UDP checksum of the chunk path ...`; a failure panics).
@@ -221,7 +238,9 @@ and without `accounting` alike.
 | `src/net/chunk.rs` | UDP datagrams sent beside smoltcp, straight onto the TX ring: the peer's MAC learned from received frames, the headers, a PIE copy of the payload into the descriptor's buffer, the UDP checksum (PIE), the checksum self-test |
 | `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only, prefetch mode |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
-| `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
+| `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports, the `vision` request (`Service::BenchVision`) |
+| `src/vision.rs` | `Service::BenchVision`'s camera side on core 0: the pixel check's reference (whole frames, once), core 1 and the strip receiver started at the first request, each run's set-up, the monitor every millisecond and its lines once a second, the run's totals |
+| `../espion-core1` (crate) | Core 1's runner (bare: the detector or the pixel check on each strip, the result queue) and core 0's handle and monitor |
 | `dram_dma.x` | Linker section for esp-hal's Ethernet DMA storage at 0x4FF40000 or above (see below) |
 | `tools/netbench.py` | Host side of the test service |
 
@@ -612,6 +631,60 @@ spinlocks): every embassy-sync signal and channel, and the CSI driver's DMA inte
 task on the other core from inside a critical section, and a wake takes the scheduler lock;
 or core 1's stack. Single core meets the requirements (wire rate, requests answered in about
 5 ms, no capture error), so the stream runs on core 0 alone.
+
+### Co-load: the detector on core 1 beside the wire rate, 2026-11-11
+
+`Service::BenchVision`, one build (`--features stats`), one boot per session, this board, the
+link at 100 Mbit/s. Logs in `/tmp/p4perf-logs/CoLoad/`: `co1.log` / `co1.host.txt` (the plan
+below, `coload.sh`), `co2.log` / `co2.host.txt` (the follow-up on the preload, `co2.sh`),
+parsed by `parse.py`. Core 1: live 1280x800 RAW8 at 120 fps, 64-row strips, 3 strips, PIE
+skip; the room was dark (0 blobs per frame), so the detector is faster than in `poc-p4-eth`'s
+runs (754 against 845 us): compare within this table only. Bench prefetch `preload_ahead`
+unless named. Core 0's figures are the bench report's (`busy_pct`, the TX task's cycles per
+datagram, the CPU accounts' `vision` task); lock figures are the run's maxima per core.
+
+| Run (60 s unless named) | Datagrams, MB/s, lost/dup/reord/bad | Core 0 busy, TX task cyc/dg | Detect mean / max, ins/frame | Strip start latency max | Lock hold / wait max, core 0 · core 1 |
+|---|---|---|---|---|---|
+| internal, core 1 not started | 491 295, 11.796, 0/0/0/0 | 13.6 %, 6 338 | | | |
+| psram, core 1 not started | 488 262, 11.801, 0/0/0/0 | 14.1 %, 6 589 | | | |
+| (a) idle, autoload on | | | 754 / 779 us, 114 674 | 9 us | 9 / 7 us · 9 / 7 us |
+| (b) internal, autoload on | 491 099, 11.792, 0/0/0/0 | 15.3 %, 6 635 (+ vision 498) | 758 / 785 | 11 | 5 / 4 · 2 / 2 |
+| (c) psram, autoload on | 487 999, 11.794, 0/0/0/0 | 17.2 %, 7 360 (+ vision 601) | 769 / 805 | 19 | 14 / 10 · 8 / 15 |
+| idle, autoload off | | | 974 / 1000, 114 388 | 9 | |
+| internal, autoload off | 491 089, 11.791, 0/0/0/0 | 15.3 %, 6 627 | 980 / 988 | 11 | 9 / 9 · 2 / 2 |
+| psram, autoload off | 488 005, 11.794, 0/0/0/0 | 16.3 %, 6 940 | 1028 / 1110 | 23 | 14 / 10 · 14 / 19 |
+| psram, prefetch off, autoload on, 30 s | 244 005, 11.794, 0 | 22.4 %, 9 930 | 803 / 844 | 20 | 14 / 10 · 8 / 11 |
+| psram, L2 autoload, autoload on, 30 s | 243 997, 11.794, 0 | 18.7 %, 8 159 | 765 / 801 | 19 | 14 / 10 · 8 / 16 |
+| psram, `preload` (same chunk), autoload on, 30 s | 243 997, 11.794, 0 | 20.7 %, 9 099 | 771 / 817 | 19 | 14 / 10 · 7 / 16 |
+| psram, `l1l2` on core 0, core 1 autoload off, 30 s | 244 004, 11.794, 0 | 18.7 %, 8 154 | 1011 / 1070 | 22 | 14 / 10 · 3 / 14 |
+| RX 20 s (host to board, every byte checked), autoload on | 162 616, 11.802; bad, lost, late 0 | | 765 / 768 | 10 | 2 / 2 · 2 / 2 |
+| (d) psram 600 s, pixel check, autoload on | 4 879 045, 11.792, 0/0/0/0 | 32.8 %, 15 194 | check: 57 824 000 rows, 0 bad | 23 | 14 / 10 · 14 / 19 |
+
+In every run: late strips, lapped strips, abandoned frames, dropped results, stalls, length
+and DMA errors, `ISR runs`, EMAC `missed` and `tx_errors` 0; core 1's heartbeat 82 000-85 600
+per second (35 000 in the check); core 0 spent 450 us per second in `service()` and the
+drain idle, 1 850 under psram load (longest call 60 us). (d): 939 640 strips, 72 280 of 72 280
+frames good. Refusals, each answered: `--prefetch 1` (`l1l2`) while core 1's autoload was on;
+a `vision` request with the autoload while `l1l2` was in use; `--source camera`.
+
+What it costs core 0: the detector adds the `vision` task (500-600 cycles a datagram: the
+millisecond monitor) and the CSI interrupts (handlers 130-140 → 470-490 cycles a datagram);
+from internal RAM nothing else (6 338 → 6 635), from PSRAM with `preload_ahead` 770 more
+(7 360) with core 1's autoload on, 350 (6 940) with it off. The pixel check (`co2.log`, 30 s
+each) shows where that goes: psram `preload_ahead` 15 183 cycles a datagram with core 1's
+autoload on, 6 898 with it off; prefetch off 9 906 and 9 903 (on, off); internal 6 628 and
+6 619. So the cost comes only from core 0's manual L1 data preload beside core 1's L1 data
+autoload, and grows with the share of time core 1's autoload section is open (about 9 % of
+the time for the detector, 75 % for the check, which reads each strip for 500 us): core 0's
+next `l1d_preload` waits for the previous one, which does not finish while core 1's section
+is open [INFERENCE: the two share one prefetch engine; the ROM's own preload suspends the
+autoload, which fits; not documented]. No wrong byte: the host checked every datagram of
+every run, and core 1's pixel check found 0 bad rows beside psram with `preload_ahead` and
+with prefetch off, its autoload on and off, and beside internal (`co2.log`, 30 s each, plus
+(d)); beside `l2`, `preload` and `l1l2` only the detector ran, so core 1's bytes there are
+not checked.
+For the detector the interaction costs 6 % of core 0's TX cycles (7 360 against 6 940):
+keep `preload_ahead`, or use `l2` (8 159) if the autoload's share grows.
 
 ## Measured results
 
@@ -1321,9 +1394,11 @@ multicast, the EMAC's PTP clock and timestamps.
 - **CPU**: at the wire rate core 0 is 20-24 % busy (raw, link-bound JPEG), 8 500-9 400
   cycles a datagram since the preload of the next chunk
   ([plan step 6.2](#measured-plan-step-62-cache-prefetch-of-the-psram-reads-2026-11-11)):
-  the copy (1 100-1 400), the headers and the checksum (1 200), the descriptor and the waits. Core 1 is off
-  ([the two-core attempt](#the-two-core-attempt)). Sending the bytes from PSRAM without the
-  copy failed on TX underflows (step 3).
+  the copy (1 100-1 400), the headers and the checksum (1 200), the descriptor and the waits.
+  The detector runs on a bare core 1 beside the wire rate in `Service::BenchVision`
+  ([Co-load](#co-load-the-detector-on-core-1-beside-the-wire-rate-2026-11-11)); the stream
+  service itself still runs on core 0 alone ([the two-core attempt](#the-two-core-attempt)).
+  Sending the bytes from PSRAM without the copy failed on TX underflows (step 3).
 - Not verified: an encoder timeout (never seen; the path is the same as the driver's errors),
   the encoder's codec and DMA errors on this firmware (only `OutputTooSmall` was provoked),
   quality below 20 on the camera, a scene in daylight (the room was dark for every run).

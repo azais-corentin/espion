@@ -118,16 +118,38 @@ and that was invalidated, with no prefetch in flight at that buffer's next inval
   one section over the bytes read, on for the copy only) over live camera frames too (copy
   2700-3200 cycles); the content checks ran with `preload_ahead` and with prefetch off only.
 
+Beside the network on the other core (2026-11-11, `poc-p4-stream`'s `Service::BenchVision`,
+`/tmp/p4perf-logs/CoLoad/co1.log` and `co2.log`; figures in that crate's README, "Co-load"):
+
+- **Prefetch on one core while the other runs cache-sync operations, data checked**: core 1
+  read each live strip inside its L1 data autoload section and checked its pixels while core
+  0 sent from PSRAM at the wire rate (a write-back and invalidate of the 1 MB buffer per
+  pass, the manual preload of the next chunk, the Ethernet rings' maintenance): 10 min,
+  57 824 000 rows, 0 bad; 4 879 045 datagrams, every byte right. Lock maxima under that
+  load: hold 14 us on each core, wait 10 us (core 0) and 19 us (core 1).
+- **Prefetch owners, settled**: the L1 data autoload registers belong to core 1 while its
+  run has the autoload on; core 0 keeps the manual L1 data preload and the L2 autoload.
+  `poc-p4-stream` refuses the modes that would write the autoload registers meanwhile, and
+  the other way round. The two register groups are separate (preload 0xD8-0xE0, autoload
+  0x134-0x154), so no register has two writers. Measured combinations, every byte the host
+  received right: core 1's autoload beside core 0's preload ahead, preload of the same
+  chunk, L2 autoload, prefetch off; core 0's L1+L2 autoload beside core 1 without autoload.
+- **They interact in time**: core 0's manual preload waits while core 1's autoload section
+  is open. Core 0's TX cycles per datagram with the preload ahead: 15 183 with core 1's
+  pixel check holding its autoload 75 % of the time, 6 898 without its autoload; 7 360 and
+  6 940 beside the detector (9 %). [INFERENCE: one prefetch engine for both; the ROM's
+  `Cache_Start_L1_DCache_Preload` suspends the autoload during a preload, which fits.]
+- **The ROM's cache-sync path**: on the board `rom_cache_op_cb` is 0 and the internal table
+  pointer 0x4fc1fcf0. In the rev 3.0 ROM ELF (esp-rom-elfs 20260528) `Cache_Invalidate_Addr`
+  and `Cache_WriteBack_Addr` go through `Cache_Sync_Addr` and `Cache_Op_Addr`, call that hook
+  only when it is set, and write only the sync registers (0x98-0xA4). That ELF's default
+  table is at 0x4fc1fd3c, so the v3.2 chip's ROM differs from it; its code is not read.
+- **esp-hal's own cache calls** (Ethernet TX buffers and descriptors, DMA buffer helpers)
+  still bypass the lock. `poc-p4-stream` makes its rings' maintenance through this crate;
+  esp-hal's EMAC bring-up runs once before core 1 starts. Not covered otherwise.
+
 Not tested:
 
-- Prefetch on one core while the other core runs cache-sync operations, with the data
-  checked. It ran without a hang or trap: `poc-p4-eth`'s detector on core 1 with its
-  per-strip autoload for 2 minutes while core 0 ran about 444 000 cache operations per
-  second (`/tmp/p4perf-logs/TwoCore/f3-contention.log`, 14 404 frames, none dropped), but
-  the pixel check that ran under the same load does not use the autoload.
-- Two owners. The detector's per-strip autoload and the stream's preload use the one set of
-  L1 data cache prefetch registers of the chip. If both ran in one firmware they would share
-  it; nothing in this crate arbitrates, and the combination has not run. Open point.
 - The L1 and L2 autoload over whole frames in PSRAM (the table above) under live capture.
 
 ## Lock statistics (feature `stats`)

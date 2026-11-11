@@ -17,8 +17,8 @@ operation).
 ## Strips on two cores: `CsiStrips::split`
 
 Run on the board on 2026-11-11 with the reader on a bare core 1 (`poc-p4-eth`,
-`RUN_CORE1`); results under "Board checks" below. Items 7's network part and 8's wire-rate
-load are left for the co-load step.
+`RUN_CORE1`); results under "Board checks" below. Item 8's wire-rate load ran in
+`poc-p4-stream`'s `Service::BenchVision`; item 7's network part did not run.
 
 `split(self)` turns a stopped (or running: it stops it) `CsiStrips` into two halves:
 
@@ -153,14 +153,21 @@ Reader on core 1 (`poc-p4-eth`, `RUN_CORE1`, plans in `src/core1_soak.rs`), logs
    HS): `stop` resets the D-PHY and `start` must come before stream-on, as documented.
 7. Drop the control half while the reader polls: **pass** (`c-check.log`): list items
    unchanged over 50 ms, no strip delivered, core 1's heartbeat still moving.
-8. Cache contention (`f3-contention.log`): **pass** for the cache-operation part; the network
-   load is left for the co-load step. Core 0 ran cache operations through `esp32p4-cache` in
-   a tight loop in thread mode and from a 10 kHz timer interrupt (internal 64 B to 4 KiB,
-   PSRAM 64 B to a whole frame), about 444 000 lock operations per second, while core 1
-   polled. Pixel check, 10 min: 936 377 strips, 57 623 200 rows, 0 bad, 72 029 of 72 029
-   frames good, stalls, laps and `isr_runs` 0, `invalidate_cycles_max` 3956 (9.9 us), strip
-   start latency at most 14 us. Detector live, 2 min: 14 404 frames, 0 dropped or lapped,
-   detect mean 936 us (845 without contention). Lock maxima in the `esp32p4-cache` README.
+8. Cache contention (`f3-contention.log`): **pass**, and beside the network: **pass**
+   (`/tmp/p4perf-logs/CoLoad/co1.log`, `poc-p4-stream` README, "Co-load"): core 0 sending
+   from PSRAM at the wire rate (11.792 MB/s, 4 879 045 datagrams, every byte right) while
+   core 1 checked the strips with its L1 autoload on, 10 min: 939 640 strips, 57 824 000
+   rows, 0 bad, 72 280 of 72 280 frames good, lapped and stalls 0, strip start latency at
+   most 23 us, `invalidate_cycles_max` 8804. The control half's `service()` ran every
+   millisecond on core 0 between the network tasks. Item 7 (dropping the control half)
+   was not repeated under network load. In the contention run core 0 ran cache operations
+   through `esp32p4-cache` in a tight loop in thread mode and from a 10 kHz timer interrupt
+   (internal 64 B to 4 KiB, PSRAM 64 B to a whole frame), about 444 000 lock operations per
+   second, while core 1 polled. Pixel check, 10 min: 936 377 strips, 57 623 200 rows, 0 bad,
+   72 029 of 72 029 frames good, stalls, laps and `isr_runs` 0, `invalidate_cycles_max` 3956
+   (9.9 us), strip start latency at most 14 us. Detector live, 2 min: 14 404 frames, 0
+   dropped or lapped, detect mean 936 us (845 without contention). Lock maxima in the
+   `esp32p4-cache` README.
 
 ## Build
 

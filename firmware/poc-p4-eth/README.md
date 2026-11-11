@@ -306,8 +306,12 @@ Board checks (2026-11-11, logs in `/tmp/p4perf-logs/TwoCore/`):
    second). Detector live 2 min, 1280x800: 14 404 frames, dropped and lapped 0, detect mean
    936 us max 956 us (845 / 858 without), worst strip start latency 17 us after the first
    second (81 us in it), last strip to result 41 us mean, 48 us max. Pixel check 10 min:
-   57 623 200 rows, 0 bad. **Pass** for cache contention; the network load is left for the
-   co-load step.
+   57 623 200 rows, 0 bad. **Pass** for cache contention. Network load: **pass** in
+   `poc-p4-stream`'s `Service::BenchVision` on the same runner (2026-11-11,
+   `/tmp/p4perf-logs/CoLoad/co1.log`): detector beside PSRAM TX at the wire rate, mean /
+   max 769 / 805 us (754 / 779 idle, dark scene), 0 late, lapped or dropped; pixel check
+   with the autoload on beside 10 min of PSRAM TX, 57 824 000 rows, 0 bad, 4 879 045
+   datagrams, every byte right (that crate's README, "Co-load").
 4. Trap test (`e2-trap.log`, a temporary `unimp` in `core1::run::<Pie>` at frame 600):
    **pass**. Core 0 logged "core 1 trapped: mcause 0x30000002 mepc 0x40010300 mtval 0x0"
    at its next once-a-second check (exception code 2, illegal instruction; the upper bits
