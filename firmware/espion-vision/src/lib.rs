@@ -253,16 +253,17 @@ impl Scan<'_> {
         }
     }
 
-    /// One RAW8 row.
+    /// One RAW8 row, from `first`, an answer of the skip for the row (or for a span of rows
+    /// starting with it).
     ///
     /// With no run open, the skip says where the next bright pixel can be; from there the
     /// row is read exactly: pixel by pixel up to the next aligned word, then word by word (a
     /// SWAR test, then pixel by pixel in the words that pass). That goes on until a dark
     /// word with no run open, once a bright word was read or the skip's window (which holds
     /// a bright pixel unless the row ended) was passed; then the skip takes over again, from
-    /// a later place each time. The skip's answer is clamped to the row, so a wrong one
+    /// a later place each time. The skip's answers are clamped to the row, so a wrong one
     /// gives wrong blobs, never a read outside the row.
-    fn row<S: Skip, const HIGH: bool>(&mut self, skip: &S, row: &[u8], add: u32) {
+    fn row<S: Skip, const HIGH: bool>(&mut self, skip: &S, row: &[u8], add: u32, first: usize) {
         let t = self.t as u8;
         // SAFETY: every bit pattern is a valid `u32`, and `align_to` only reinterprets the
         // middle part, which it aligns for `u32`; the slices cover `row` exactly, in order.
@@ -270,13 +271,9 @@ impl Scan<'_> {
         let lead = pre.len();
         let body_end = lead + words.len() * 4;
         let len = row.len();
-        let mut x = 0;
-        loop {
-            // No run is open and no pixel before `x` is bright.
-            x += skip.first_bright(&row[x..], t).min(len - x);
-            if x == len {
-                break;
-            }
+        // No run is open and no pixel before `x` is bright.
+        let mut x = first.min(len);
+        while x < len {
             let end = x + WINDOW;
             let mut seen = false;
             let to = if x < lead {
@@ -317,33 +314,31 @@ impl Scan<'_> {
                 }
                 break;
             }
+            // No run is open and no pixel before `x` is bright.
+            x += skip.first_bright(&row[x..], t).min(len - x);
         }
         if self.open {
             self.close(len as u32);
         }
     }
 
-    /// One RAW10 row (`width / 4` groups of [`raw10::GROUP_BYTES`] bytes).
+    /// One RAW10 row (`width / 4` groups of [`raw10::GROUP_BYTES`] bytes) from `first`, as
+    /// in [`Self::row`].
     ///
     /// As [`Self::row`], group by group: the skip answers with a group start (its test is
     /// on the top 8 bits against `t >> 2`: a pixel with top 8 bits `< t >> 2` is `< t`
     /// whatever its low bits), then the groups are tested exactly until a dark group with
     /// no run open, once a group with top bits at or above `t >> 2` was read (the skip
     /// stops on those, bright or not) or the skip's window was passed.
-    fn row10<S: Skip>(&mut self, skip: &S, row: &[u8]) {
+    fn row10<S: Skip>(&mut self, skip: &S, row: &[u8], first: usize) {
         let (groups, _) = row.as_chunks::<{ raw10::GROUP_BYTES }>();
         let ngroups = groups.len();
         let row = &row[..ngroups * raw10::GROUP_BYTES];
         let t = self.t;
         let top = (t >> 2) as u8;
-        let mut g = 0;
-        loop {
-            // No run is open and no pixel before group `g` is bright.
-            let rest = &row[g * raw10::GROUP_BYTES..];
-            g += skip.first_bright10(rest, top).min(rest.len()) / raw10::GROUP_BYTES;
-            if g == ngroups {
-                break;
-            }
+        // No run is open and no pixel before group `g` is bright.
+        let mut g = first.min(row.len()) / raw10::GROUP_BYTES;
+        while g < ngroups {
             let end = g + WINDOW10 / raw10::GROUP_BYTES;
             let mut seen = false;
             while g < ngroups {
@@ -369,6 +364,12 @@ impl Scan<'_> {
                 }
                 g += 1;
             }
+            if g == ngroups {
+                break;
+            }
+            // No run is open and no pixel before group `g` is bright.
+            let rest = &row[g * raw10::GROUP_BYTES..];
+            g += skip.first_bright10(rest, top).min(rest.len()) / raw10::GROUP_BYTES;
         }
         if self.open {
             self.close((ngroups * 4) as u32);
@@ -662,18 +663,52 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
 
     /// [`Self::push_rows`] with the dark skip `skip`. Every skip that keeps the [`Skip`]
     /// contract gives the same blobs and `Stats`.
+    ///
+    /// While no component crosses the row above, a dark row changes nothing but the row
+    /// counter; so the skip then runs once over the rest of the strip (its rows are
+    /// contiguous), and the rows before its answer are counted as passed without being
+    /// visited. Row by row work resumes in the row holding the answer, from the answer.
     pub fn push_rows_with<S: Skip>(&mut self, skip: &S, rows: &[u8], first_row: u16) {
-        if self.stride == 0 {
+        let stride = self.stride;
+        if stride == 0 {
             return;
         }
         if first_row != self.next_row {
             self.flush();
         }
+        let rows = &rows[..rows.len() / stride * stride];
         let mut y = first_row;
-        for row in rows.chunks_exact(self.stride) {
-            self.row(skip, row, y);
+        let mut at = 0;
+        while at < rows.len() {
+            let first = if self.nruns[self.prev] == 0 {
+                let span = &rows[at..];
+                let o = self.first_bright(skip, span);
+                let dark = o / stride;
+                at += dark * stride;
+                y = y.wrapping_add(dark as u16);
+                self.next_row = y;
+                if at == rows.len() {
+                    break;
+                }
+                o - dark * stride
+            } else {
+                self.first_bright(skip, &rows[at..at + stride])
+            };
+            self.row(skip, &rows[at..at + stride], y, first);
+            at += stride;
             y = y.wrapping_add(1);
         }
+    }
+
+    /// The skip's answer for `bytes` (whole rows) in the frame's format, at most
+    /// `bytes.len()`.
+    fn first_bright<S: Skip>(&self, skip: &S, bytes: &[u8]) -> usize {
+        let o = if self.raw10 {
+            skip.first_bright10(bytes, (self.threshold >> 2) as u8)
+        } else {
+            skip.first_bright(bytes, self.threshold as u8)
+        };
+        o.min(bytes.len())
     }
 
     /// Finishes the frame: writes the blobs into `out` (at most `out.len()`, the rest is
@@ -758,7 +793,8 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         self.lab.stats
     }
 
-    fn row<S: Skip>(&mut self, skip: &S, row: &[u8], y: u16) {
+    /// Row `y` from `first`, an answer of the skip for it.
+    fn row<S: Skip>(&mut self, skip: &S, row: &[u8], y: u16, first: usize) {
         let [a, b] = &mut self.runs;
         let (prev, cur) = if self.prev == 0 { (a, b) } else { (b, a) };
         let mut scan = Scan {
@@ -774,9 +810,9 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             peak: 0,
         };
         match (self.raw10, self.high) {
-            (false, true) => scan.row::<S, true>(skip, row, self.add),
-            (false, false) => scan.row::<S, false>(skip, row, self.add),
-            (true, _) => scan.row10(skip, row),
+            (false, true) => scan.row::<S, true>(skip, row, self.add, first),
+            (false, false) => scan.row::<S, false>(skip, row, self.add, first),
+            (true, _) => scan.row10(skip, row, first),
         }
         let nc = scan.n;
         let stats = &mut self.lab.stats;

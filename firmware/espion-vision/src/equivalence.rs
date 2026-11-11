@@ -134,7 +134,7 @@ fn run(raw10: bool, seed: u32) {
     };
     let mut rng = Rng(seed);
     // Rows of 1280 pixels hold at most 640 runs; merged slots live until the row ends.
-    let mut det = Detector::<1024, 2048, 2048>::new();
+    let mut det = Det::new();
     let mut got = vec![Blob::default(); 2048];
     for w in WIDTHS {
         let stride = if raw10 { w / 4 * raw10::GROUP_BYTES } else { w };
@@ -146,42 +146,128 @@ fn run(raw10: bool, seed: u32) {
                 1 + rng.below(max)
             };
             let px = scene(&mut rng, w, h, t, max);
-            let want = reference::flood(&px, w, t, if raw10 { 2 } else { 0 });
-
-            let offset = rng.below(4) as usize;
-            let mut buf = vec![0u8; stride * h + 4];
-            let f = &mut buf[offset..offset + stride * h];
-            if raw10 {
-                for (p, g) in px.as_chunks::<4>().0.iter().zip(f.as_chunks_mut().0) {
-                    *g = raw10::pack(*p);
-                }
-                det.begin_frame_raw10(w as u16, t as u16);
-            } else {
-                for (b, &p) in f.iter_mut().zip(&px) {
-                    *b = p as u8;
-                }
-                det.begin_frame(w as u16, t as u8);
-            }
+            // Strips; one in eight is not pushed (a gap: `first_row` jumps), which must give
+            // the blobs of the frame with those rows dark.
             let model = [Model::Scalar, Model::Block, Model::Early][rng.below(3) as usize];
-            let mut splits = Vec::new();
+            let mut strips = Vec::new();
             let mut y = 0;
             while y < h {
                 let n = 1 + rng.below((h - y) as u32) as usize;
-                det.push_rows_with(&model, &f[y * stride..(y + n) * stride], y as u16);
-                splits.push(n);
+                strips.push((y, n, rng.below(8) != 0));
                 y += n;
+            }
+            let mut seen = px.clone();
+            for &(y, n, pushed) in &strips {
+                if !pushed {
+                    seen[y * w..(y + n) * w].fill(0);
+                }
+            }
+            let want = reference::flood(&seen, w, t, if raw10 { 2 } else { 0 });
+
+            let offset = rng.below(4) as usize;
+            // The frame as seen, whole, with the scalar skip: the `Stats` to match.
+            let mut whole = vec![0u8; stride * h];
+            fill(raw10, &mut whole, &seen);
+            begin(&mut det, raw10, w, t);
+            det.push_rows(&whole, 0);
+            det.finish(&mut got);
+            let want_stats = det.stats();
+
+            let mut buf = vec![0u8; stride * h + 4];
+            let f = &mut buf[offset..offset + stride * h];
+            fill(raw10, f, &px);
+            begin(&mut det, raw10, w, t);
+            for &(y, n, pushed) in &strips {
+                if pushed {
+                    det.push_rows_with(&model, &f[y * stride..(y + n) * stride], y as u16);
+                }
             }
             let n = det.finish(&mut got);
 
             let ctx = format!(
                 "raw10 {raw10} w {w} case {case} h {h} t {t} offset {offset} {model:?} \
-                 strips {splits:?}"
+                 strips (first, rows, pushed) {strips:?}"
             );
             let s = det.stats();
             assert_eq!(s.overflow, 0, "{ctx}");
-            let bright = px.iter().filter(|&&v| u32::from(v) >= t).count();
+            let bright = seen.iter().filter(|&&v| u32::from(v) >= t).count();
             assert_eq!(s.pixels as usize, bright, "{ctx}");
             assert_eq!(got[..n], want[..], "{ctx}");
+            assert_eq!(s, want_stats, "{ctx}");
+        }
+    }
+}
+
+type Det = Detector<1024, 2048, 2048>;
+
+/// Writes the pixels `px` into `f` in the frame's format.
+fn fill(raw10: bool, f: &mut [u8], px: &[u16]) {
+    if raw10 {
+        for (p, g) in px.as_chunks::<4>().0.iter().zip(f.as_chunks_mut().0) {
+            *g = raw10::pack(*p);
+        }
+    } else {
+        for (b, &p) in f.iter_mut().zip(px) {
+            *b = p as u8;
+        }
+    }
+}
+
+fn begin(det: &mut Det, raw10: bool, w: usize, t: u32) {
+    if raw10 {
+        det.begin_frame_raw10(w as u16, t as u16);
+    } else {
+        det.begin_frame(w as u16, t as u8);
+    }
+}
+
+/// Single bright pixels in every row (so in the first and last row of every strip and of
+/// the frame), at both row ends and in the middle, and two bars separated by exactly one
+/// dark row, for every strip height and every skip model.
+fn strip_edges(raw10: bool) {
+    const H: usize = 12;
+    // RAW10 background 3: low-bit bytes 0xff.
+    let (t, v, bg, shift) = if raw10 {
+        (512, 700, 3, 2)
+    } else {
+        (128, 200, 0, 0)
+    };
+    let mut det = Det::new();
+    let mut got = vec![Blob::default(); 64];
+    for w in [4usize, 36, 72, 1288] {
+        let stride = if raw10 { w / 4 * raw10::GROUP_BYTES } else { w };
+        let mut scenes = Vec::new();
+        for r in 0..H {
+            for x in [0, w / 2, w - 1] {
+                let mut px = vec![bg; w * H];
+                px[r * w + x] = v;
+                scenes.push(px);
+            }
+        }
+        let mut px = vec![bg; w * H];
+        for y in (2..=4).chain(6..=8) {
+            px[y * w + w / 2] = v;
+            px[y * w + w - 1] = v;
+        }
+        scenes.push(px);
+        for (i, px) in scenes.iter().enumerate() {
+            let want = reference::flood(px, w, t, shift);
+            let mut f = vec![0u8; stride * H];
+            fill(raw10, &mut f, px);
+            for strip in 1..=H {
+                for model in [Model::Scalar, Model::Block, Model::Early] {
+                    begin(&mut det, raw10, w, t);
+                    for y in (0..H).step_by(strip) {
+                        let n = strip.min(H - y);
+                        det.push_rows_with(&model, &f[y * stride..(y + n) * stride], y as u16);
+                    }
+                    let n = det.finish(&mut got);
+                    let ctx = format!("raw10 {raw10} w {w} scene {i} strip {strip} {model:?}");
+                    assert_eq!(got[..n], want[..], "{ctx}");
+                    let bright = px.iter().filter(|&&p| u32::from(p) >= t).count();
+                    assert_eq!(det.stats().pixels as usize, bright, "{ctx}");
+                }
+            }
         }
     }
 }
@@ -194,4 +280,14 @@ fn raw8_random_scenes_match_flood_fill() {
 #[test]
 fn raw10_random_scenes_match_flood_fill() {
     run(true, 0x5eed_0010);
+}
+
+#[test]
+fn raw8_strip_edges_match_flood_fill() {
+    strip_edges(false);
+}
+
+#[test]
+fn raw10_strip_edges_match_flood_fill() {
+    strip_edges(true);
 }

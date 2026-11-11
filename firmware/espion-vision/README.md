@@ -55,6 +55,10 @@ Any skip that keeps the contract in `skip.rs` gives the same blobs.
   their 16 words, then each word of a block that passes (the OR of dark bytes can pass).
   RAW10 runs the same test on the top 8 bits (low-bit bytes masked out), 80 bytes at a
   time, and the scan tests each group of four pixels exactly.
+- While no component crosses the row above, dark rows change nothing but the row counter,
+  so the skip runs once over the rest of the strip (the rows of one `push_rows` call are
+  contiguous) and row by row work resumes in the row of its answer, from the answer. A
+  dark strip costs only the skip; there is no work per dark row.
 - Blobs come out in the order in which their last row was seen, the same for a whole frame
   and for any split into strips.
 
