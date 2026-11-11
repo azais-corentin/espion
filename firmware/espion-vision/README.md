@@ -44,6 +44,7 @@ Any skip that keeps the contract in `skip.rs` gives the same blobs.
 | Feature | What |
 |---|---|
 | `pie` | `impl Skip for esp32p4_pie::Pie` (crate `firmware/esp32p4-pie`): the PIE dark skip of the ESP32-P4, 16 bytes per load. The impl is compiled for `target_arch = "riscv32"` only; on the host the feature builds the dependency's encoders and adds nothing, so `cargo test --features pie` runs the same tests. The token comes from `Pie::enable()` on the core that runs the detector; pass `&pie` to the `_with` calls |
+| `ram` | The hot functions (`push_rows_with` with the strip loop, `Scalar`'s skip methods, `link`, `end_row`, `emit`, `finish`, the centroid division) in `.rwtext`, which esp-hal's linker script places in internal RAM; with `pie`, the PIE kernels too (`esp32p4-pie/ram`). No effect on the host. Every linked instance of the generic functions moves: about 9.3 KB for the Pie path, 12.7 KB for `Scalar`. Measured on the ESP32-P4 in `firmware/poc-p4-eth/README.md`, "Hot code in RAM and Zb/Zcb" |
 
 ## Algorithm
 

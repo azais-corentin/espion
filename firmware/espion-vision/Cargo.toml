@@ -15,6 +15,10 @@ publish      = false
 # RISC-V builds only; on the host the feature builds the dependency's encoders and adds
 # nothing.
 pie = ["dep:esp32p4-pie"]
+# The detector's hot functions (strip loop, `Scalar` skip, labelling, blob output) in RAM
+# (`.rwtext`, placed in internal RAM by esp-hal's linker script) instead of flash, and the
+# PIE kernels with them if `pie` is on. No effect on the host.
+ram = ["esp32p4-pie?/ram"]
 
 [dependencies]
 esp32p4-pie = { path = "../esp32p4-pie", optional = true }

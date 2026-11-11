@@ -43,6 +43,7 @@ pub struct Scalar;
 // each method is one call with no call inside.
 impl Skip for Scalar {
     #[inline]
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn first_bright(&self, bytes: &[u8], threshold: u8) -> usize {
         let (add, high) = swar_params(threshold);
         if high {
@@ -53,6 +54,7 @@ impl Skip for Scalar {
     }
 
     #[inline]
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn first_bright10(&self, bytes: &[u8], threshold_top8: u8) -> usize {
         let (add, high) = swar_params(threshold_top8);
         if high {

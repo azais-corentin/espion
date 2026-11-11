@@ -324,6 +324,7 @@ impl<const RUNS: usize, const COMPS: usize> Scan<'_, RUNS, COMPS> {
 
     /// Ends the open run before column `x`.
     #[inline]
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn close(&mut self, x: u32) {
         self.open = false;
         self.pixels += x - self.start;
@@ -575,6 +576,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         self.stats = Stats::default();
     }
 
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn alloc(&mut self, y: u16) -> Option<Slot<COMPS>> {
         let n = self.nfree.checked_sub(1)?;
         self.nfree = n;
@@ -587,6 +589,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         Some(i)
     }
 
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn release(&mut self, i: Slot<COMPS>) {
         // Each slot is released once per allocation, so the stack never overflows.
         if let Some(f) = self.free.get_mut(self.nfree) {
@@ -595,6 +598,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         }
     }
 
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn find(&mut self, mut i: Slot<COMPS>) -> Slot<COMPS> {
         loop {
             let p = self.comps[i].parent;
@@ -609,6 +613,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
     }
 
     /// Merges the component of `b` into root `a` (or the other way); returns the root.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn union(&mut self, a: Slot<COMPS>, b: Slot<COMPS>) -> Slot<COMPS> {
         let b = self.find(b);
         if a == b {
@@ -634,6 +639,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
     /// Labels the runs of row `y` from the touching runs of the row above (8-connected:
     /// a run `s..e` touches the runs above that overlap `s-1..e+1`) and adds them to their
     /// components.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn link(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16) {
         let mut j = 0;
         for c in cur.iter_mut() {
@@ -670,6 +676,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
 
     /// After row `y`: points the new runs at their roots, finishes the components of the
     /// row above that got no run in row `y`, and frees the slots merged away.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn end_row(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16) {
         for c in cur.iter_mut() {
             if let Some(l) = c.label.slot() {
@@ -694,6 +701,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         self.nmerged = 0;
     }
 
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn emit(&mut self, r: Slot<COMPS>) {
         let c = self.comps[r];
         if c.area < self.min_area || c.area > self.max_area {
@@ -722,6 +730,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
 /// one 32-bit division, the rest [`div_q16`]. `sw == 0` (only if the `u32` sum wrapped)
 /// falls back to the 64-bit division, as before.
 #[inline]
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 fn q5(s: u64, sw: u32) -> u16 {
     let n = s * 32 + u64::from(sw / 2);
     let d = u64::from(sw);
@@ -754,6 +763,7 @@ fn q5(s: u64, sw: u32) -> u16 {
 /// `r < B` is tested first, so `r * B + u0 < 2^32`; once `r >= B`, `r * B + u0 >= 2^32`,
 /// above `q * v0`, and the test fails as it must. With `v1 >= B / 2`, `q_start` is at most 2
 /// above the quotient (Knuth's theorem B): two passes at most.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 fn div_q16(n: u64, d: u32) -> u16 {
     const B: u32 = 1 << 16;
     let k = d.leading_zeros();
@@ -885,6 +895,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     /// counter; so the skip then runs once over the rest of the strip (its rows are
     /// contiguous), and the rows before its answer are counted as passed without being
     /// visited. Row by row work resumes in the row holding the answer, from the answer.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     pub fn push_rows_with<S: Skip>(&mut self, skip: &S, rows: &[u8], first_row: u16) {
         let Some(stride) = NonZeroUsize::new(self.stride) else {
             return;
@@ -901,6 +912,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
 
     /// The rows of one [`Self::push_rows_with`] call in format `F`. The scan state and the
     /// two run buffers are taken once for the call; the rows swap the buffers by reference.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn strip<S: Skip, F: Format>(
         &mut self,
         skip: &S,
@@ -981,6 +993,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
 
     /// Finishes the frame: writes the blobs into `out` (at most `out.len()`, the rest is
     /// counted in `overflow`) and returns how many.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     pub fn finish(&mut self, out: &mut [Blob]) -> usize {
         self.flush();
         let found = self.lab.nblobs;
@@ -1062,6 +1075,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     }
 
     /// Finishes every component crossing the last row pushed.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn flush(&mut self) {
         let prev = &self.runs[self.prev][..self.nruns[self.prev]];
         self.lab.end_row(prev, &mut [], self.next_row);
