@@ -1,9 +1,9 @@
 # esp32p4-perf
 
 Performance and cache counters of the ESP32-P4 HP cores, for profiling firmware on the
-board. `no_std`, no dependencies, no locks: it works from either core, including a bare
-second core with no RTOS. RISC-V only (`riscv32imafc-unknown-none-elf`); it must run in
-machine mode.
+board, and marker pins through the cores' dedicated-IO CSRs. `no_std`, no dependencies, no
+locks: it works from either core, including a bare second core with no RTOS. RISC-V only
+(`riscv32imafc-unknown-none-elf`); it must run in machine mode.
 
 ## Counters
 
@@ -82,3 +82,26 @@ The same division on `d.cpu.instructions` gives instructions per pixel; their ra
 IPC (`d.ipc_milli()`). Low IPC with few instructions per pixel points at memory stalls; high
 instruction count per pixel points at the code. Time in microseconds is `cycles / 400` at
 400 MHz.
+
+## Marker pins
+
+`marker` drives the calling core's dedicated-IO outputs (TRM 2.13.2) through its CSRs, for a
+logic analyser:
+
+| Function | CSR | What |
+|---|---|---|
+| `enable(mask)` | `csrc 0x803` (`cpu_gpio_oen`) | Turns the outputs of the channels in `mask` on. Active low, as esp-hal's `riscv_v2` driver and ESP-IDF have it; the TRM (p.175) says 1 enables. Measured: clearing the bits drives the pads (the marker self-check of `espion-core1`, 2026-11-11) |
+| `toggle(mask)` | `csrr`, `xor`, `csrw 0x805` (`cpu_gpio_out`) | Inverts those channels: 3 instructions, no memory access |
+| `outputs()` | `csrr 0x805` | The output levels |
+
+- Each core has 8 channels and its own CSRs: core 0's channels are the GPIO-matrix output
+  signals 214 to 221 (esp-hal `OutputSignal::CPU_GPIO_0..=7`), core 1's 222 to 229
+  (`CPU_GPIO_8..=15`). A core drives only its own channels and enables them itself; routing a
+  channel to a pad is a GPIO-matrix write that core 0 can do for both cores
+  (`espion_core1::markers::Marker`).
+- `toggle` writes all 8 channels back: a context of the same core that changes another channel
+  between the read and the write loses that change. Toggle a core's markers from one context
+  only (not also from an interrupt handler).
+- Cost, measured on core 0 (`espion-core1`'s self-check, 2026-11-11): 16 toggles back to back
+  take 175 cycles and 53 instructions between two `CpuSample`s whose empty window takes 15
+  cycles and 5 instructions: 10 cycles and 3 instructions per toggle.

@@ -24,6 +24,9 @@
 //! - All counters are 32 bits wide. `mcycle` wraps after 10.7 s at 400 MHz, so a window
 //!   must be shorter than that; [`cycles64`] reads the full 64-bit cycle count.
 //!
+//! [`marker`] toggles the calling core's dedicated-IO outputs through their CSRs: marker pins
+//! for a logic analyser, three instructions and no memory access per marker.
+//!
 //! The crate takes no locks and has no dependencies, so a bare second core can use it. It
 //! must run in machine mode, which is how esp-hal firmware runs.
 
@@ -33,6 +36,8 @@
 use core::arch::asm;
 use core::fmt;
 use core::ptr::{read_volatile, write_volatile};
+
+pub mod marker;
 
 /// Base address of the cache controller (`CACHE` in the `esp32p4` PAC 0.3.0).
 const CACHE: usize = 0x3FF1_0000;

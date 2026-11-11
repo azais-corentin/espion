@@ -1,6 +1,6 @@
 [package]
 name         = "esp32p4-perf"
-description  = "Performance and cache counters of the ESP32-P4 HP cores (no_std, no dependencies)"
+description  = "Performance and cache counters of the ESP32-P4 HP cores, and dedicated-IO marker pins (no_std, no dependencies)"
 version      = "0.1.0"
 edition      = "2024"
 rust-version = "1.99"
