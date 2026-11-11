@@ -19,13 +19,14 @@ selectable.
 - Status: the camera streams in JPEG at the sensor's full rate in every window measured (1280x800
   at 153.98 Hz to 320x200 binned at 557.9 Hz) while the frames fit the 100 Mbit/s link, and the
   automatic quality keeps the rate when they would not; raw frames stream at the wire rate.
-  `poc-viewer`'s board test passes against it (full run: every section but `auto`, whose one
-  failure led to the IJG-scaled room rule below; `auto` and `agreement` rerun on the final
-  build: 0 failed checks; logs `board-full1.log`, `board-auto2.log` in
-  `/tmp/poc-p4-eth/stream-jpeg/`). The
-  10-minute soak with JPEG (mode and encoding changes, viewer restarts, malformed datagrams,
-  injected encoder errors; `/tmp/poc-p4-eth/stream-jpeg/soak.py`) has not been run yet; the
-  raw-frame soak of the previous step passed (see [The camera stream](#the-camera-stream)).
+  `poc-viewer`'s board test passes against the final build and viewer: every section (`sizes`
+  to `timeout`, the JPEG ones included), 0 failed checks (`board-final.log` in
+  `/tmp/poc-p4-eth/stream-jpeg/`; an earlier run's one `auto` failure led to the IJG-scaled
+  room rule below). The
+  10.6-minute soak with JPEG at 1280x800 153.98 Hz every other step (mode and encoding changes
+  every 20 s over JPEG and raw, RAW8 and RAW10 modes, five sizes, a viewer restart each step,
+  malformed-datagram bursts, injected encoder errors) ran without a crash or stall (see
+  [Soak](#soak-jpeg)).
   The network alone sends and
   receives at the wire limit with every byte checked (see [Measured results](#measured-results)).
   esp-hal's Ethernet driver needs three workarounds on the P4 (see
@@ -411,6 +412,59 @@ stays answered whatever the encoder does: the control task never waits for it.
 Two RAW8 bars frames are identical, so the bars row is the codec's error alone: the board's
 encoder is within libjpeg-turbo's (same largest error, 1.9 dB lower PSNR on this extreme
 picture; on camera scenes the driver measured them equal within 0.02 dB).
+
+#### Soak (JPEG)
+
+2026-11-11, the final build flashed and its log captured for 720 s (`soak-board.log`: no panic,
+exception, reset or warning). `soak.py` (in `/tmp/poc-p4-eth/stream-jpeg/`, outputs `soak1/`,
+`soak1b/`) ran 35 steps of 18 s on that one boot, 636 s: every other step crop 1280x800 RAW8 at
+153.98 Hz in JPEG q90 with automatic quality, and in between, in turn: the same at gain 15.5x;
+RAW10 sent as RAW10 at 120 Hz; JPEG q75 fixed; binned 640x400 JPEG at 302.2 Hz; RAW8 sent raw;
+binned 320x200 JPEG at 557.9 Hz; binned 640x400 RAW10 sent as RAW8; crop 1280x720 JPEG at
+169.85 Hz; crop 640x480 JPEG with the bars pattern at 245.85 Hz. Each step is a new receiver
+process (a viewer restart on a new port); every 4th step got a burst of 2000 malformed
+datagrams, every 5th JPEG step 5 too-small encoder outputs (`C5`).
+
+- Every step: frames from its first second, 0 incomplete and 0 invalid frames at the host,
+  frame numbers increasing, 0 capture errors. JPEG steps at the sensor rate (154.0, 169.75,
+  301.9-302.2, 557.4-557.9 fps; 1280x800 at gain 15.5x 153.9-154.1 fps at quality 74-75), the
+  bars step link-bound at 229 fps at quality 10, raw steps at the wire rate (8.75-8.87, 10.98,
+  39.9 fps). Request round trip 1.36-1.50 ms in JPEG, 4.0-4.9 ms with the link full.
+- Board counters at the end (uptime 655.5 s): captured 126 975, sent 105 600, skipped (link
+  busy) 14 537, encoder could not take 21, encoder errors 15, capture errors 0, receiver drops
+  0, EMAC missed 0. Sent + skipped + encoder skips + encoder errors = 120 173 <= captured; the
+  rest were captured while no receiver polled (between steps) or cut by a mode change.
+- The 15 encoder errors are the injected ones (`output_too_small`, 5 each in three steps); the
+  injections in the two 320x200 steps caused none, since a 320x200 file (about 2.6 kB) fits in
+  4 KiB. The 21 frames the encoder could not take fell in steps that changed size or quality
+  (2 to 9 each: the first encode after a reprogramming takes up to 6.4 ms, and a burst of
+  malformed datagrams delays the encode task).
+- 120 of the 10 000 malformed datagrams reached the stream's socket and were counted as bad
+  requests; smoltcp dropped the rest when the socket's 4 KiB ring was full.
+
+#### Live window on the desktop
+
+2026-11-11, `poc-viewer --selftest 8` built in release (`5040b13`), the desktop's native
+Wayland session at 3840x2160 119.88 Hz with vsync, JPEG q90 with automatic quality, longest
+exposure of each mode, gain 8x (the room dark, night: at 2x the picture is nearly black), display gain 4
+(`desktop.sh`, outputs and screenshots in `/tmp/poc-p4-eth/stream-jpeg/desktop/`). Measured over
+the last 6 s.
+
+| Mode (sensor rate) | Received fps (raw, previous step) | Decoded / presented fps | Mbit/s | Bytes/frame | Decode mean / max | UI frame time mean / p99 | Dropped / cut / replaced | Board link skips / encoder skips | Limit |
+|---|---|---|---|---|---|---|---|---|---|
+| crop 1280x800, 153.98 Hz | 153.9 (11.2) | 120.1 / 120.1 | 67.1 | 53 473 | 1.05 / 1.97 ms | 0.40 / 0.59 ms | 0 / 0 / 203 | 0 / 0 | sensor (received), display (presented) |
+| crop 1280x720, 169.85 Hz | 169.9 (12.1) | 119.9 / 119.9 | 65.0 | 46 931 | 0.90 / 2.05 ms | 0.39 / 0.59 ms | 0 / 0 / 300 | 0 / 0 | sensor, display |
+| crop 640x480, 245.85 Hz | 245.8 (36.6) | 119.7 / 119.7 | 28.6 | 14 281 | 0.33 / 0.68 ms | 0.32 / 0.49 ms | 0 / 0 / 756 | 0 / 0 | sensor, display |
+| binned 640x400, 302.2 Hz | 302.2 (44.1) | 119.9 / 119.9 | 27.0 | 10 956 | 0.26 / 0.57 ms | 0.31 / 0.48 ms | 0 / 0 / 1 093 | 0 / 0 | sensor, display |
+| binned 320x200, 557.9 Hz | 557.9 (181.1) | 119.7 / 119.5 | 11.9 | 2 613 | 0.08 / 0.17 ms | 0.30 / 0.46 ms | 0 / 0 / 2 629 | 0 / 0 | sensor, display |
+| crop 1280x800, 120 Hz | 119.9 | 119.8 / 119.8 | 56.3 | 57 628 | 1.05 / 2.63 ms | 0.40 / 0.59 ms | 0 / 0 / 1 | 0 / 0 | sensor |
+
+The quality stayed at 90 in every run (no link skip, 0 encoder errors, 0 capture errors). The
+viewer decodes only what it can show, so decoded = presented = the display's refresh; the frames
+received in between are replaced before being shown. The screenshots show the live scene with
+continuous edges and no torn rows; at display gain 4 the dark background shows sensor noise and,
+in the darkest areas of the 320x200 and 640x480 pictures, a faint 8x8 block pattern in that
+noise; no block artefacts on the edges at quality 90.
 
 ### Measured: raw frames (protocol version 2)
 
