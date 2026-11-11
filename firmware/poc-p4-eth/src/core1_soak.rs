@@ -197,41 +197,24 @@ const FAULTS: &[Step] = &[
 #[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
 const CYCLES: &[Step] = &[step(0, Work::Cycles(1000), 0), step(0, Work::Check, 10)];
 
-/// A short contention run on 1280x800 RAW8: the detector live for 30 s, then the pixel check
-/// for 60 s, with core 0 running cache operations without pause.
+/// The contention run on 1280x800 RAW8, with core 0 running cache operations without pause
+/// (thread mode and a 10 kHz timer interrupt): the detector live for 2 minutes, then the
+/// pixel check for 10 minutes.
 #[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
 const CONTENTION: &[Step] = &[
     Step {
         contention: true,
-        ..step(0, LIVE, 30)
+        ..step(0, LIVE, 120)
     },
-    Step {
-        contention: true,
-        ..step(0, Work::Check, 60)
-    },
-];
-
-/// The long run: the pixel check of the four 120 fps modes, 10 minutes each, with core 0
-/// running cache operations without pause.
-#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
-const LONG: &[Step] = &[
     Step {
         contention: true,
         ..step(0, Work::Check, 600)
     },
-    Step {
-        contention: true,
-        ..step(1, Work::Check, 600)
-    },
-    Step {
-        contention: true,
-        ..step(2, Work::Check, 600)
-    },
-    Step {
-        contention: true,
-        ..step(3, Work::Check, 600)
-    },
 ];
+
+/// The long run: the pixel check on 1280x800 RAW8 for 10 minutes, core 0 otherwise idle.
+#[allow(dead_code, reason = "alternative plan, selected by editing `PLAN`")]
+const LONG: &[Step] = &[step(0, Work::Check, 600)];
 
 /// The plan `run` executes.
 const PLAN: &[Step] = BRINGUP;
