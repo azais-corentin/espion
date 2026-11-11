@@ -32,8 +32,8 @@ use std::{
 
 use espion_proto::cam::{
     AUTO_QUALITY_PERIOD_MS, CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding,
-    Format, FrameChunk, JPEG_FRAME_MAX, MAX_DATAGRAM, Message, Op, Readout, Reply, Request,
-    Response, STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern, auto_quality,
+    Format, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM, Message, Op, Readout, Reply,
+    Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings, TestPattern, auto_quality,
 };
 use ov9281::Mode;
 
@@ -191,6 +191,15 @@ struct EncodeJob {
     camera: CameraSettings,
     quality: u8,
     timestamp_us: u64,
+    /// When it was captured (the instant of `timestamp_us`).
+    captured: Instant,
+}
+
+/// µs from `from` to `to` (0 when `to` is earlier).
+fn us_between(from: Instant, to: Instant) -> u32 {
+    to.saturating_duration_since(from)
+        .as_micros()
+        .min(u128::from(u32::MAX)) as u32
 }
 
 /// A JPEG frame ready for the link.
@@ -200,8 +209,11 @@ struct Encoded {
     width: u16,
     height: u16,
     timestamp_us: u64,
+    captured: Instant,
     data: Vec<u8>,
     encode_us: u32,
+    /// The encode, after the capture.
+    encode: Span,
 }
 
 /// The encoder's waiting slot (the newest captured frame for it) and the output buffers.
@@ -244,7 +256,8 @@ fn encoder_thread(slot: &EncoderSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
         let t = Instant::now();
         let ok = encode_jpeg(&job.camera, &raw, job.quality, &mut out).is_ok()
             && out.len() <= JPEG_FRAME_MAX as usize;
-        let encode_us = t.elapsed().as_micros() as u32;
+        let end = Instant::now();
+        let encode_us = us_between(t, end);
         let event = if ok {
             Event::Encoded(Encoded {
                 frame: job.frame,
@@ -252,8 +265,13 @@ fn encoder_thread(slot: &EncoderSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
                 width: job.camera.width,
                 height: job.camera.height,
                 timestamp_us: job.timestamp_us,
+                captured: job.captured,
                 data: out,
                 encode_us,
+                encode: Span {
+                    start_us: us_between(job.captured, t),
+                    end_us: us_between(job.captured, end),
+                },
             })
         } else {
             Event::EncodeFailed(out)
@@ -272,6 +290,11 @@ struct Sending {
     width: u16,
     height: u16,
     timestamp_us: u64,
+    captured: Instant,
+    /// The JPEG encode it went through.
+    encode: Option<Span>,
+    /// When its send started, µs after the capture.
+    send_start_us: u32,
     len: u32,
     offset: u32,
 }
@@ -294,6 +317,8 @@ struct Engine {
     counters: Counters,
     encoder: EncoderState,
     start: Instant,
+    /// The last frame sent whole.
+    timing: Option<FrameTiming>,
 
     peer: Option<SocketAddr>,
     last_request: Instant,
@@ -354,6 +379,7 @@ impl Engine {
                 ..EncoderState::default()
             },
             start: now,
+            timing: None,
             peer: None,
             last_request: now,
             last: None,
@@ -467,7 +493,8 @@ impl Engine {
     fn start_jpeg(&mut self, f: Encoded) {
         let old = std::mem::replace(&mut self.pixels, f.data);
         self.slot.lock().pool.push(old);
-        self.busy_since = Some(Instant::now());
+        let now = Instant::now();
+        self.busy_since = Some(now);
         self.sending = Some(Sending {
             frame: f.frame,
             generation: f.generation,
@@ -475,6 +502,9 @@ impl Engine {
             width: f.width,
             height: f.height,
             timestamp_us: f.timestamp_us,
+            captured: f.captured,
+            encode: Some(f.encode),
+            send_start_us: us_between(f.captured, now),
             len: self.pixels.len() as u32,
             offset: 0,
         });
@@ -568,6 +598,7 @@ impl Engine {
                 camera: self.camera,
                 quality: self.encoder.quality,
                 timestamp_us,
+                captured: at,
             };
             if self.slot.lock().job.replace(job).is_some() {
                 self.encoder.frames_skipped = self.encoder.frames_skipped.wrapping_add(1);
@@ -584,6 +615,9 @@ impl Engine {
             width: self.camera.width,
             height: self.camera.height,
             timestamp_us,
+            captured: at,
+            encode: None,
+            send_start_us: us_between(at, Instant::now()),
             len: self.pixels.len() as u32,
             offset: 0,
         });
@@ -613,10 +647,19 @@ impl Engine {
             .len();
         s.offset = end as u32;
         let done = end == s.len as usize;
+        let (frame, encode, start_us, captured) = (s.frame, s.encode, s.send_start_us, s.captured);
         self.transmit(n, peer);
         if done {
             self.sending = None;
             self.counters.frames_sent = self.counters.frames_sent.wrapping_add(1);
+            self.timing = Some(FrameTiming {
+                frame,
+                encode,
+                send: Span {
+                    start_us,
+                    end_us: us_between(captured, Instant::now()).max(start_us),
+                },
+            });
             if let Some(t) = self.busy_since.take() {
                 self.link_busy += t.elapsed();
             }
@@ -717,6 +760,7 @@ impl Engine {
             counters: self.counters,
             encoder: self.encoder,
             uptime_us: (now - self.start).as_micros() as u64,
+            timing: self.timing,
         }
     }
 }

@@ -6,7 +6,7 @@ Instructions for coding agents working in this repo. Read `docs/architecture.md`
 
 | Path | What | Build / test (inside the dev shell) |
 |---|---|---|
-| `crates/espion-proto/` | no_std UDP wire format (serde + postcard), shared. The camera stream (protocol version 3: requests, state, raw and JPEG frame chunks) is implemented and used by `poc-p4-stream` and `poc-viewer`; the tracking messages are a draft | `cargo test -p espion-proto` (root); `cargo build -p espion-proto --target riscv32imafc-unknown-none-elf` |
+| `crates/espion-proto/` | no_std UDP wire format (serde + postcard), shared. The camera stream (protocol version 4: requests, state, raw and JPEG frame chunks) is implemented and used by `poc-p4-stream` and `poc-viewer`; the tracking messages are a draft | `cargo test -p espion-proto` (root); `cargo build -p espion-proto --target riscv32imafc-unknown-none-elf` |
 | `firmware/cam-p4/` | ESP32-P4 firmware (camera, vision, XVS, LEDs, Ethernet/UDP, PTP, PPS capture via ETM) | `cargo build --release` in that directory |
 | `firmware/esp32p4-cache/` | no_std cache maintenance for the P4 (ROM invalidate and write-back behind one cross-core spinlock taken with interrupts masked) and the prefetch set-up (L1 data and L2 autoload, manual L1 data preload, PAC-based); no esp-hal, esp-rtos or critical section, usable from a bare second core. Every cache operation of our crates goes through it; esp-hal's own cache calls are not covered | `cargo build --release` in that directory; also built by `esp32p4-csi` and `esp32p4-jpeg` (so by `cam-p4`, `poc-p4-eth`, `poc-p4-stream`) |
 | `firmware/esp32p4-csi/` | no_std MIPI CSI-2 driver for the P4 (esp-hal style, PAC-based) | `cargo build --release` in that directory; also built by `cam-p4` |

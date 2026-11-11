@@ -47,9 +47,9 @@ use embassy_time::{Duration, Instant};
 use esp_hal::peripherals::{I2C0, VDMA_CH0};
 use esp32p4_csi::Frame;
 use espion_proto::cam::{
-    CAM_PORT, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, MAX_DATAGRAM,
-    Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, State, StreamSettings,
-    TestPattern,
+    CAM_PORT, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, FrameTiming,
+    MAX_DATAGRAM, Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, Span, State,
+    StreamSettings, TestPattern,
 };
 use log::{error, info};
 use ov9281::Mode;
@@ -153,6 +153,8 @@ struct Shared {
     counters: Counters,
     /// The JPEG encoder's part of the state (the encode task keeps it).
     encoder: EncoderState,
+    /// The last frame sent whole (the send task keeps it).
+    timing: Option<FrameTiming>,
 }
 
 impl Shared {
@@ -193,6 +195,7 @@ static SHARED: Mutex<RefCell<Shared>> = Mutex::new(RefCell::new(Shared {
         errors: 0,
         frames_skipped: 0,
     },
+    timing: None,
 }));
 
 /// Microseconds the send task spent on frames, from a frame's first chunk to its end (wraps):
@@ -272,6 +275,8 @@ struct Job {
     width: u16,
     height: u16,
     timestamp_us: u64,
+    /// The JPEG encode the frame went through ([`FrameTiming::encode`]).
+    encode: Option<Span>,
 }
 
 /// The next frame for the send task. Raw: at most one in flight ([`Shared::sending`]). JPEG:
@@ -523,8 +528,8 @@ impl Control {
     }
 
     fn state(&self) -> State {
-        let (stream, generation, counters, encoder) =
-            shared(|s| (s.stream, s.generation, s.counters, s.encoder));
+        let (stream, generation, counters, encoder, timing) =
+            shared(|s| (s.stream, s.generation, s.counters, s.encoder, s.timing));
         State {
             camera: self.camera,
             stream,
@@ -533,6 +538,7 @@ impl Control {
             counters,
             encoder,
             uptime_us: Instant::now().as_micros(),
+            timing,
         }
     }
 }

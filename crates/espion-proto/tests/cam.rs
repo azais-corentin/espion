@@ -4,10 +4,10 @@ use espion_proto::{
     Error, HEADER_LEN, MAGIC, VERSION,
     cam::{
         AUTO_QUALITY_MIN, AUTO_QUALITY_ROOM_PCT, CHUNK_MAX, CamError, CameraSettings, Counters,
-        EncoderState, Encoding, Format, FrameChunk, JPEG_ALIGN, JPEG_FRAME_MAX, JPEG_QUALITY_MAX,
-        JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply,
-        Request, Response, State, StreamSettings, TestPattern, auto_quality, chunk_count,
-        ijg_scale,
+        EncoderState, Encoding, Format, FrameChunk, FrameTiming, JPEG_ALIGN, JPEG_FRAME_MAX,
+        JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op,
+        Origin, Readout, Reply, Request, Response, Span, State, StreamSettings, TestPattern,
+        auto_quality, chunk_count, ijg_scale,
     },
     kind,
 };
@@ -84,6 +84,17 @@ fn state(max: bool) -> State {
             frames_skipped: m(u32::MAX),
         },
         uptime_us: if max { u64::MAX } else { 0 },
+        timing: max.then_some(FrameTiming {
+            frame: u32::MAX,
+            encode: Some(Span {
+                start_us: u32::MAX,
+                end_us: u32::MAX,
+            }),
+            send: Span {
+                start_us: u32::MAX,
+                end_us: u32::MAX,
+            },
+        }),
     }
 }
 

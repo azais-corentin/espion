@@ -1,7 +1,7 @@
 # poc-viewer
 
 Live view and control of the OV9281 camera of the ESP32-P4-ETH proof of concept, over the
-camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 3). The
+camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 4). The
 board runs `firmware/poc-p4-stream` with its `Stream` service; the viewer shows its frames as
 they arrive and sends every camera setting the `ov9281` driver knows (format, size, crop or 2x2
 binning, origin, frame rate and tolerance, exposure, gain, test pattern) and the stream settings

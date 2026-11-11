@@ -16,12 +16,18 @@ use embassy_net::IpEndpoint;
 use embassy_net::udp::{SendError, UdpSocket};
 use embassy_time::Instant;
 use esp32p4_pie::Pie;
-use espion_proto::cam::{CAM_PORT, CHUNK_MAX, FrameChunk, MAX_DATAGRAM};
+use espion_proto::cam::{CAM_PORT, CHUNK_MAX, FrameChunk, FrameTiming, MAX_DATAGRAM, Span};
 
 use super::{JOB, Job, Outgoing, RESPONSES, SEND_BUSY_US, shared};
 use crate::cpu::{self, Counter64};
 use crate::net::chunk;
 
+#[allow(
+    clippy::large_stack_frames,
+    reason = "a spawned task: its future lives in the task's static storage, and its poll frame \
+    (1 KiB, mostly the answer taken from the channel, which holds the whole state) is on the \
+    main stack, which has most of internal RAM"
+)]
 #[embassy_executor::task]
 pub(super) async fn task(sock: &'static RefCell<UdpSocket<'static>>, pie: &'static Pie) {
     cpu::name_current("send");
@@ -116,7 +122,7 @@ async fn respond(sock: &RefCell<UdpSocket<'static>>, r: &Outgoing) {
 /// link's busy time ([`SEND_BUSY_US`]).
 async fn send_frame(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: Job) {
     let start = Instant::now();
-    send_chunks(sock, pie, &job).await;
+    send_chunks(sock, pie, &job, start).await;
     // No preload of the buffer may run once it goes back (`prefetch` module docs).
     crate::prefetch::settle();
     drop(job);
@@ -124,7 +130,12 @@ async fn send_frame(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: Job) {
     SEND_BUSY_US.fetch_add(us, Ordering::Relaxed);
 }
 
-async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job) {
+/// `start`: when the send task took the frame (the start of [`FrameTiming::send`]).
+#[allow(
+    clippy::large_stack_frames,
+    reason = "polled inside the send task's future, see `task`"
+)]
+async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job, start: Instant) {
     let len = job.len;
     let mut offset = 0;
     while offset < len {
@@ -169,10 +180,31 @@ async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job) {
             crate::prefetch::ahead(&rest[..rest.len().min(CHUNK_MAX)]);
         }
     }
+    sent_whole(job, start);
+}
+
+/// Books `job` as sent whole, with its time on the board, unless the stream moved on. Out of
+/// line: it keeps the send future's poll frame small.
+#[inline(never)]
+fn sent_whole(job: &Job, start: Instant) {
+    let after = |t: Instant| {
+        t.as_micros()
+            .saturating_sub(job.timestamp_us)
+            .min(u64::from(u32::MAX)) as u32
+    };
+    let timing = FrameTiming {
+        frame: job.number,
+        encode: job.encode,
+        send: Span {
+            start_us: after(start),
+            end_us: after(Instant::now()),
+        },
+    };
     shared(|s| {
         if s.epoch == job.epoch {
             s.sending = false;
             s.counters.frames_sent = s.counters.frames_sent.wrapping_add(1);
+            s.timing = Some(timing);
         }
     });
 }

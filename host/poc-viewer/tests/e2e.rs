@@ -1009,3 +1009,34 @@ fn a_board_that_restarts_its_frame_numbers_is_followed() {
     );
     assert_eq!(client.take_frame().map(|f| f.number), Some(1));
 }
+
+/// The state names the last frame sent whole and where its time went: a raw frame has no
+/// encode, a JPEG frame is encoded, then sent, in that order.
+#[test]
+fn the_state_times_the_last_frame_sent() {
+    let (_fake, client) = start(raw8());
+    let timed = |s: &Stats| s.state.and_then(|st| st.timing.map(|t| (st, t)));
+    let s = client
+        .wait_until(WAIT, |s| timed(s).is_some())
+        .expect("a state with a frame's timing");
+    let (state, t) = timed(&s).unwrap();
+    assert_eq!(t.encode, None, "a raw frame is not encoded");
+    assert!(t.send.start_us <= t.send.end_us, "{t:?}");
+    assert!(t.frame < state.counters.frames_captured, "{t:?}");
+
+    client.send(Command::SetStream(stream_in(Encoding::Jpeg)));
+    let s = client
+        .wait_until(WAIT, |s| timed(s).is_some_and(|(_, t)| t.encode.is_some()))
+        .expect("a state with a JPEG frame's timing");
+    let (state, t) = timed(&s).unwrap();
+    let encode = t.encode.unwrap();
+    assert!(
+        encode.start_us < encode.end_us
+            && encode.end_us <= t.send.start_us
+            && t.send.start_us <= t.send.end_us,
+        "{t:?}"
+    );
+    assert!(t.frame < state.counters.frames_captured, "{t:?}");
+    // The frame was sent before the state was made, on the same clock.
+    assert!(u64::from(t.send.end_us) < state.uptime_us, "{t:?}");
+}

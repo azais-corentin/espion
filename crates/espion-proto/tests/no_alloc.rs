@@ -8,8 +8,8 @@ use std::{
 
 use espion_proto::cam::{
     CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, FrameChunk,
-    JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response,
-    State, StreamSettings, TestPattern,
+    FrameTiming, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply, Request,
+    Response, Span, State, StreamSettings, TestPattern,
 };
 
 struct Counting;
@@ -92,6 +92,17 @@ fn encode_and_decode_allocate_nothing() {
             frames_skipped: 2,
         },
         uptime_us: 12_345_678,
+        timing: Some(FrameTiming {
+            frame: 41,
+            encode: Some(Span {
+                start_us: 40,
+                end_us: 6_026,
+            }),
+            send: Span {
+                start_us: 6_050,
+                end_us: 9_950,
+            },
+        }),
     };
     let data = [0x5Au8; CHUNK_MAX];
     let frame_len = Encoding::Raw10.frame_bytes(1280, 800).unwrap() as u32;

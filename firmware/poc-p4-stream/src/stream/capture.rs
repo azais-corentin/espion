@@ -232,6 +232,7 @@ impl Capture {
             width,
             height,
             timestamp_us,
+            encode: None,
         });
     }
 }

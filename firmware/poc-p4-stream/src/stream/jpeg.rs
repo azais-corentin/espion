@@ -43,7 +43,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, with_timeout};
 use esp32p4_csi::Frame;
 use esp32p4_jpeg::{Config, Encoder, Error};
-use espion_proto::cam::{AUTO_QUALITY_PERIOD_MS, Encoding, JPEG_FRAME_MAX};
+use espion_proto::cam::{AUTO_QUALITY_PERIOD_MS, Encoding, JPEG_FRAME_MAX, Span};
 use log::{error, info};
 
 use super::{JOB, Job, Payload, SEND_BUSY_US, shared};
@@ -249,7 +249,7 @@ async fn encode(enc: &mut Encoder, input: Input) {
         END.add(cpu::mcycle().wrapping_sub(polled_at));
     }
     let us = start.elapsed().as_micros() as u32;
-    finish(input, blank, r, us);
+    finish(input, blank, r, start, us);
 }
 
 /// Whether `input` is still wanted; the encoder set to its size and the quality in use; a free
@@ -288,7 +288,7 @@ fn prepare(enc: &mut Encoder, input: &Input) -> Option<(Blank, usize)> {
 /// [`ENCODE_TIMEOUT`]) and hands the file on: the newest file waits for the send task,
 /// replacing (and counting as skipped because the link was busy) one still waiting.
 #[inline(never)]
-fn finish(input: Input, blank: Blank, r: Result<usize, Option<Error>>, us: u32) {
+fn finish(input: Input, blank: Blank, r: Result<usize, Option<Error>>, start: Instant, us: u32) {
     let Input {
         frame,
         number,
@@ -333,12 +333,25 @@ fn finish(input: Input, blank: Blank, r: Result<usize, Option<Error>>, us: u32) 
         width,
         height,
         timestamp_us,
+        encode: Some(encode_span(timestamp_us, start, us)),
     };
     if let Some(old) = JOB.try_take() {
         drop(old);
         shared(|s| s.counters.frames_skipped = s.counters.frames_skipped.wrapping_add(1));
     }
     JOB.signal(job);
+}
+
+/// An encode of `us` µs begun at `start`, as µs after the frame's capture at `timestamp_us`.
+fn encode_span(timestamp_us: u64, start: Instant, us: u32) -> Span {
+    let start_us = start
+        .as_micros()
+        .saturating_sub(timestamp_us)
+        .min(u64::from(u32::MAX)) as u32;
+    Span {
+        start_us,
+        end_us: start_us.saturating_add(us),
+    }
 }
 
 /// Counts an encoder error (the driver resets the hardware before the next frame).

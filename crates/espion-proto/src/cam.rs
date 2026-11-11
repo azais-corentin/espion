@@ -423,6 +423,30 @@ pub struct EncoderState {
     pub frames_skipped: u32,
 }
 
+/// A stretch of a frame's way through the board: its start and its end, µs after the frame's
+/// capture time ([`FrameChunk::timestamp_us`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct Span {
+    /// Start, µs after the capture time.
+    pub start_us: u32,
+    /// End, µs after the capture time; never before the start.
+    pub end_us: u32,
+}
+
+/// Where one frame spent its time on the board after its capture ([`State::timing`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FrameTiming {
+    /// The frame's number ([`FrameChunk::frame`]).
+    pub frame: u32,
+    /// The JPEG encode, from the encoder taking the frame to the end of the file; `None` for a
+    /// frame sent in a raw encoding. The time before its start is the wait for the encoder.
+    pub encode: Option<Span>,
+    /// The send, from the frame's first chunk being taken up to its last chunk handed to the
+    /// Ethernet MAC. The time before its start (after the encode, if any) is the wait for the
+    /// link.
+    pub send: Span,
+}
+
 /// The board's complete state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct State {
@@ -440,6 +464,8 @@ pub struct State {
     pub encoder: EncoderState,
     /// Time since boot, µs (the clock of [`FrameChunk::timestamp_us`]).
     pub uptime_us: u64,
+    /// The last frame sent whole and its time on the board; `None` before the first.
+    pub timing: Option<FrameTiming>,
 }
 
 /// Why the board refused a request. The first six mirror `ov9281::Error`, rates in

@@ -6,7 +6,7 @@ protocol version and updates this page and its changelog in the same commit.
 > **Status.** The tracking messages (`0x01`..`0x11`) are a draft, not implemented. Settled:
 > header, versioning (exact match), boards identified by their Ethernet MAC, Q11.5 blob
 > coordinates; their other fields may still change. The [camera stream](#camera-stream)
-> (`0x20`..`0x22`) is implemented (version 3).
+> (`0x20`..`0x22`) is implemented (version 4).
 
 ## Transport (tracking)
 
@@ -30,7 +30,7 @@ protocol version and updates this page and its changelog in the same commit.
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
 | 0 | 2 | magic | `0x45 0x53` (`"ES"`). Anything else is not an espion packet |
-| 2 | 1 | version | Protocol version, currently `3` |
+| 2 | 1 | version | Protocol version, currently `4` |
 | 3 | 1 | kind | Message kind (table below) |
 | 4 | … | body | [postcard](https://postcard.jamesmunns.com/wire-format)-encoded struct for (`version`, `kind`) |
 
@@ -179,6 +179,7 @@ the `poc-viewer` host app; not by the tracking path above.
 | counters | `Counters` | Since boot, each wrapping at `u32::MAX`: frames captured, frames sent, frames skipped because the previous one was still being sent, capture errors, datagrams sent |
 | encoder | `EncoderState` | The JPEG encoder (below) |
 | uptime_us | `u64` | µs since boot, the clock of the frame timestamps |
+| timing | `Option<FrameTiming>` | The last frame sent whole and its time on the board (below); `None` before the first |
 
 `ModeInfo`: `sensor_clock_mhz: u8` (80 or 96), `exceeds_datasheet_clock: bool` (96 MHz),
 `hts: u16`, `vts: u16`, `psv: bool`, `frame_rate_mhz: u32` (at the nominal 24 MHz XVCLK),
@@ -194,6 +195,19 @@ the `poc-viewer` host app; not by the tracking path above.
 | encode_us | `u32` | Time the encoder took for that frame, µs |
 | errors | `u32` | Encoder errors since boot (output too small, codec or DMA error, timeout); that frame is lost. Wraps |
 | frames_skipped | `u32` | Captured frames the encoder could not take since boot because it was still busy with the previous one; not in `counters.frames_skipped` (the link). Wraps |
+
+`FrameTiming`, the board's part of one frame's latency. A `Span` is `start_us`, `end_us`
+(`u32`, `start_us` ≤ `end_us`): µs after that frame's `timestamp_us`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| frame | `u32` | The frame's number, as in its chunks |
+| encode | `Option<Span>` | The JPEG encode, from the encoder taking the frame to the end of the file; `None` for a frame sent in a raw encoding. The time before it is the wait for the encoder |
+| send | `Span` | From the send of the first chunk being taken up to the last chunk handed to the Ethernet MAC (not yet on the wire). The time before it, after the encode if any, is the wait for the link |
+
+The host reads it at its poll rate, so it sees a sample of the frames, not each one. A host
+that received the frame whole can place the board's clock against its own: the frame's last
+chunk arrived no earlier than `timestamp_us + send.end_us`.
 
 `CamError`, the first six mirroring `ov9281::Error` variant for variant (rates in mHz):
 
@@ -292,3 +306,4 @@ Chunks are self-describing: a host shows a frame without having seen any respons
 | 1 | Initial draft (not implemented). Revised before implementation for Ethernet + PTP: Announce (`0x03`) dropped, boards identified by their Ethernet MAC, `SyncState` carries the grandmaster clockIdentity instead of a timescale id |
 | 2 | Camera stream added (`0x20` CamRequest, `0x21` CamResponse, `0x22` FrameChunk) over IPv6 link-local, port 5009, for `poc-p4-stream` and `poc-viewer`. The tracking kinds are unchanged and still a draft |
 | 3 | Camera stream: encoding `Jpeg` (one baseline greyscale JPEG file per frame, variable `frame_len` up to `JPEG_FRAME_MAX`, RAW8 modes with both sides multiples of 8); `StreamSettings` gains `jpeg_quality` and `auto_quality`; `State` gains `encoder: EncoderState`; `CamError` gains `Jpeg` and `Quality`; start-up default `Jpeg` at quality 90 with automatic quality. Everything else of version 2 stays |
+| 4 | Camera stream: `State` gains `timing: Option<FrameTiming>` (the last frame sent whole: its number, the span of its JPEG encode and the span of its send, µs after its `timestamp_us`). The chunks and everything else of version 3 stay |

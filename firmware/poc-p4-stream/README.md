@@ -248,7 +248,7 @@ and without `accounting` alike.
 ## The camera stream
 
 `src/stream/`: the protocol of `espion_proto::cam` (`docs/protocol.md`, "Camera stream",
-version 3) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
+version 4) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
 the reference) does, with the real sensor.
 
 - **Requests.** `GetState` and `Poll` answer the full state; `SetStream` checks the encoding
@@ -284,7 +284,11 @@ the reference) does, with the real sensor.
   RAW8 (the first 4 bytes of every 5, taken as each chunk is copied). JPEG: through the encode
   task ([JPEG](#jpeg)). Capture errors count short frames, the receiver's DMA, CSI host and
   bridge error interrupts, frames the receiver dropped for lack of a buffer, and frames that
-  did not come within two periods (the camera is then restarted).
+  did not come within two periods (the camera is then restarted). The state carries the last
+  frame sent whole and its time on the board (`State::timing`): the encode task stamps the
+  start and the end of its encode into the frame's job, the send task the moment it took the
+  frame and the moment its last chunk was handed to the MAC, all as µs after the frame's
+  timestamp (the capture task's clock reading when it took the frame).
 - **Where it runs.** All on core 0, in the one embassy executor, with the network: control,
   capture, encode, send, diag, the runner and the link task; the EMAC, CSI, JPEG and 2D-DMA
   interrupts are on core 0 too. The send task sends each chunk beside smoltcp
