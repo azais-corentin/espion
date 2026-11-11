@@ -52,7 +52,7 @@ mod strip_soak;
 /// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print
 /// at 115200). Capture with `espflash monitor --monitor-baud <LOG_BAUD>`. `None` keeps 115200.
 const LOG_BAUD: Option<u32> = Some(2_000_000);
-/// Run the detector benchmark on synthetic frames at boot (about 90 s).
+/// Run the detector benchmark on synthetic frames at boot (about 15 s).
 const RUN_BENCH: bool = false;
 /// Run the camera section after the boot report (and the benchmark, if on).
 const RUN_CAMERA: bool = true;

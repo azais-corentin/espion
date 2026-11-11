@@ -110,7 +110,7 @@ python3 tools/still.py /tmp/poc-p4-eth/soak.log   # only with still_dump: true
   capture only takes about 70 s for four modes with the cache check (about 100 s with the
   still dumps too); `MODE_STILLS_PLAN` about 180 s, `REQUESTS_PLAN` about 25 min,
   `STRIP_CHECK_PLAN` about 45 s, `RAW10_STRIP_SOAK_PLAN` about 190 s, `STRIP_STALL_PLAN` about
-  90 s, `JPEG_PLAN` about 8 min; the detector benchmark (`RUN_BENCH = true`) about 90 s.
+  90 s, `JPEG_PLAN` about 8 min; the detector benchmark (`RUN_BENCH = true`) about 15 s.
   Every camera plan ends with the line `camera: done`.
 - `--no-addresses` stops espflash from printing symbol lines for hex numbers in the log.
 - `cargo run --release` uses the runner in `.cargo/config.toml`,
@@ -212,7 +212,7 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 | `src/camera.rs` | Camera section: LDO VO3, sensor set-up through `ov9281::Ov9281`, the CSI receiver (`esp32p4-csi`) with 3 frame buffers at the start of PSRAM (each sized for 1280x800 RAW10), capture measurement against the crate's frame-period prediction, cache check, still dumps, detector check, and the strip path (receiver, mode groups, the random test pattern for the strip check) |
 | `src/soak.rs` | Frame soak: per mode, 30 s on live frames, then 10 s each on synthetic frames with 0, 16 and 64 discs, while capture keeps running; result table |
 | `src/strip_soak.rs` | Strip soak: the same runs on strips in a 320 KiB ring in internal RAM (RAW8: 4 strips of 80 KiB at 1280 wide, 8 of 40 KiB at 640, 64 lines; RAW10: 3 strips of 102 400 B, 64 lines at 1280 and 128 at 640), with per-frame processing and latency, per-strip hold times, and the driver's interrupt and invalidation times. `StripCheck`: row checksums of the reference frames and the strip check against them |
-| `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each |
+| `src/bench.rs` | Detector benchmark on synthetic frames: 4 modes x 3 blob counts x up to 3 memory paths, 50 passes each, timed with the core's counters (`esp32p4-perf`); then the cost of a dark row at 5 widths and the cost of a blob at 4 disc sizes |
 | `../espion-vision/src/lib.rs` (crate `espion-vision`) | Blob detector (`core` only, no heap): threshold, 8-connected runs with union-find, weighted centroids in 1/32 px. `DefaultDetector` = 256 runs per row, 256 live components, 256 blobs, about 19.5 KB. RAW8 or packed RAW10 (`begin_frame_raw10`, `process_frame_raw10`); whole frame (`process_frame`) or strips (`begin_frame` / `push_rows` / `finish`) |
 | `../espion-vision/src/synth.rs` (crate `espion-vision`) | Deterministic synthetic frames: noise 4..19, discs of radius 3..5 peaking at 250. API: `Synth::NEW` (keep it in a static, it holds a 3 KiB disc list), `Synth::fill(&mut self, buf, width, height, blobs, seed)` for RAW8 and `Synth::fill_raw10` for the same scene in packed RAW10 |
 | `src/jpeg_bench.rs` | `JPEG_PLAN`: test and benchmark of the hardware JPEG encoder (`esp32p4-jpeg`): test picture, camera stills, speed table, capture-and-encode runs, robustness |
@@ -343,6 +343,130 @@ Limits of these numbers:
   backgrounds take the detector's per-pixel path more often [INFERENCE].
 - The buffers are not cache-line aligned. Between builds, with the buffers at other
   addresses, detector times moved by up to 2 % and the internal-RAM line-load figure by 11 %.
+
+### Detector benchmark with counters (2026-11-11)
+
+The same benchmark with the core's counters read around every timed window
+([`esp32p4-perf`](../esp32p4-perf/README.md), `init` once before the first case), and two
+sections that the first one did not have: the cost of a dark row and the cost of a blob. Build:
+the commit that adds this section, with `RUN_BENCH = true` and `RUN_CAMERA = false`, frame
+pointers on (`-C force-frame-pointers`, as `.cargo/config.toml` had it then). Log
+`/tmp/p4perf-logs/BenchFlags/A-unaligned.log`. The whole benchmark runs in about 15 s after
+the boot report.
+
+- Every window holds only detector calls (`window` in `src/bench.rs`); the strip path sums 15
+  windows per frame (`begin_frame`, 13 `push_rows`, `finish`). Copies and cache flushes stay
+  outside. Each window counts the 5 closing counter reads as instructions (75 per strip
+  frame).
+- Counters are per-frame means over the 50 passes; IPC = instructions / cycles. Mean us is
+  from the time table of the same run.
+
+Counters per case:
+
+| Mode | Blobs | Path | Mean us | Cycles | Instructions | IPC | Branches | Mispredicts | Stores | l1i_miss | l1d_miss |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1280x800 | 0 | psram | 9930 | 3 972 087 | 920 336 | 0.231 | 82 670 | 1612 | 33 525 | 9427 | 2 369 793 |
+| 1280x800 | 0 | strip | 4320 | 1 728 342 | 921 639 | 0.533 | 82 706 | 1603 | 33 885 | 997 | 161 759 |
+| 1280x800 | 16 | psram | 10132 | 4 053 161 | 973 529 | 0.240 | 90 164 | 2931 | 36 502 | 9592 | 2 370 683 |
+| 1280x800 | 16 | strip | 4575 | 1 830 331 | 974 832 | 0.532 | 90 200 | 2962 | 36 862 | 21 501 | 162 074 |
+| 1280x800 | 64 | psram | 10784 | 4 313 903 | 1 145 851 | 0.265 | 115 024 | 6847 | 45 604 | 9021 | 2 371 472 |
+| 1280x800 | 64 | strip | 5261 | 2 104 554 | 1 147 154 | 0.545 | 115 060 | 6915 | 45 964 | 40 475 | 162 876 |
+| 1280x720 | 0 | psram | 8935 | 3 574 287 | 828 456 | 0.231 | 74 430 | 1443 | 30 205 | 7761 | 2 133 592 |
+| 1280x720 | 0 | strip | 3888 | 1 555 491 | 829 651 | 0.533 | 74 463 | 1443 | 30 535 | 466 | 145 608 |
+| 1280x720 | 16 | psram | 9129 | 3 651 716 | 878 731 | 0.240 | 81 536 | 2683 | 33 030 | 8697 | 2 134 035 |
+| 1280x720 | 16 | strip | 4107 | 1 642 925 | 879 926 | 0.535 | 81 569 | 2702 | 33 360 | 10 826 | 146 388 |
+| 1280x720 | 64 | psram | 9795 | 3 918 318 | 1 054 160 | 0.269 | 106 971 | 6704 | 42 164 | 8841 | 2 134 628 |
+| 1280x720 | 64 | strip | 4834 | 1 933 945 | 1 055 355 | 0.545 | 107 004 | 6730 | 42 494 | 44 921 | 146 708 |
+| 640x480 | 0 | psram | 3276 | 1 310 490 | 332 016 | 0.253 | 30 510 | 963 | 20 245 | 7645 | 711 471 |
+| 640x480 | 0 | strip | 1586 | 634 619 | 332 779 | 0.524 | 30 531 | 963 | 20 455 | 472 | 49 069 |
+| 640x480 | 0 | sram | 1581 | 632 572 | 332 016 | 0.524 | 30 510 | 963 | 20 245 | 531 | 48 549 |
+| 640x480 | 16 | psram | 3483 | 1 393 232 | 385 797 | 0.276 | 38 193 | 2243 | 23 154 | 8882 | 711 702 |
+| 640x480 | 16 | strip | 1807 | 723 186 | 386 560 | 0.534 | 38 214 | 2235 | 23 364 | 7562 | 49 462 |
+| 640x480 | 16 | sram | 1786 | 714 603 | 385 797 | 0.539 | 38 193 | 2244 | 23 154 | 1386 | 48 451 |
+| 640x480 | 64 | psram | 4118 | 1 647 281 | 552 757 | 0.335 | 62 508 | 6179 | 31 883 | 8722 | 712 278 |
+| 640x480 | 64 | strip | 2465 | 986 335 | 553 520 | 0.561 | 62 529 | 6218 | 32 093 | 19 428 | 49 898 |
+| 640x480 | 64 | sram | 2422 | 968 998 | 552 757 | 0.570 | 62 508 | 6179 | 31 883 | 1769 | 48 796 |
+| 640x400 | 0 | psram | 2733 | 1 093 547 | 276 936 | 0.253 | 25 470 | 807 | 16 925 | 7646 | 592 846 |
+| 640x400 | 0 | strip | 1323 | 529 420 | 277 591 | 0.524 | 25 488 | 803 | 17 105 | 564 | 40 928 |
+| 640x400 | 0 | sram | 1319 | 527 612 | 276 936 | 0.524 | 25 470 | 803 | 16 925 | 531 | 40 469 |
+| 640x400 | 16 | psram | 2956 | 1 182 647 | 334 920 | 0.283 | 33 683 | 2178 | 20 107 | 8740 | 593 102 |
+| 640x400 | 16 | strip | 1547 | 618 984 | 335 575 | 0.542 | 33 701 | 2212 | 20 287 | 1674 | 41 279 |
+| 640x400 | 16 | sram | 1540 | 616 202 | 334 920 | 0.543 | 33 683 | 2166 | 20 107 | 1387 | 40 340 |
+| 640x400 | 64 | psram | 3623 | 1 449 298 | 510 763 | 0.352 | 59 521 | 6079 | 29 052 | 8786 | 593 735 |
+| 640x400 | 64 | strip | 2228 | 891 258 | 511 418 | 0.573 | 59 539 | 6078 | 29 232 | 8063 | 41 773 |
+| 640x400 | 64 | sram | 2207 | 882 903 | 510 763 | 0.578 | 59 521 | 6073 | 29 052 | 1768 | 40 731 |
+
+**Row cost.** All-dark rows (bytes 0..63, so the dark skip never stops) through
+`begin_frame` + `push_rows`, per row, means over 5 passes after one untimed pass. Warm: 7680 B
+of rows (6 rows of 1280) pushed again and again as consecutive rows, 1200 rows per pass, so
+they stay in the L1 data cache. Cold: one 80 KiB buffer flushed before each pass (2560 rows at
+width 32, 64 at 1280). The fits are least squares over the five widths, `cost = per row +
+per pixel x width`:
+
+| Width | Warm cycles | Warm instructions | Warm branches | Warm mispredicts | Warm stores | Cold cycles | Cold instructions | Cold l1d_miss |
+|---|---|---|---|---|---|---|---|---|
+| 32 | 509.5 | 253.0 | 25.2 | 1.0 | 41.9 | 511.0 | 252.1 | 5.0 |
+| 64 | 549.4 | 276.5 | 27.2 | 1.0 | 42.0 | 553.6 | 275.6 | 10.1 |
+| 256 | 791.6 | 417.0 | 39.3 | 2.0 | 42.7 | 814.6 | 416.9 | 41.3 |
+| 640 | 1271.7 | 698.2 | 63.5 | 2.5 | 44.2 | 1329.5 | 699.5 | 101.1 |
+| 1280 | 2069.3 | 1166.8 | 103.9 | 2.5 | 46.7 | 2186.0 | 1170.6 | 201.8 |
+
+| Fit | Per row | Per pixel | Largest residual |
+|---|---|---|---|
+| warm cycles | 470.3 | 1.250 | 1.4 |
+| warm instructions | 229.6 | 0.732 | 0.0 |
+| cold cycles | 469.1 | 1.342 | 1.9 |
+| cold instructions | 228.5 | 0.736 | 0.0 |
+
+**Blob cost.** The 1280x800 strip path with 64 discs of one radius drawn over the `synth`
+background (seed 0x1234_5678): `synth`'s profile and spacing (peak 250, falling to the
+background at radius + 1; bounding squares at least 2 pixels apart), drawn by `draw_discs` in
+`src/bench.rs` because `synth` itself draws radius 3..5 only. Per blob = (frame - the same
+background without discs) / found, from the per-frame means. Mean area is the detector's own
+count of pixels at or above the threshold:
+
+| Radius | Found | Mean area (px) | Mean us | Cycles | Instructions | Cycles per blob | Instructions per blob | Branches per blob | Mispredicts per blob | Stores per blob |
+|---|---|---|---|---|---|---|---|---|---|---|
+| none | 0 | - | 4324 | 1 729 705 | 921 639 | - | - | - | - | - |
+| 2 | 64 | 13 | 5021 | 2 008 402 | 1 072 326 | 4354 | 2354 | 332 | 65 | 145 |
+| 4 | 64 | 37 | 5291 | 2 116 426 | 1 150 289 | 6042 | 3572 | 514 | 82 | 190 |
+| 8 | 64 | 121 | 6170 | 2 468 163 | 1 390 590 | 11 538 | 7327 | 1072 | 158 | 321 |
+| 12 | 64 | 261 | 7254 | 2 901 792 | 1 696 702 | 18 313 | 12 110 | 1777 | 219 | 453 |
+
+Where the cycles of a dark 1280x800 strip frame go (1.728 M cycles, 0.922 M instructions):
+
+- **The dark skip: 1.28 to 1.37 M cycles (74 to 79 %).** 1.25 cycles per pixel with the rows
+  in the L1 cache, 1.34 cold, for 1 024 000 pixels; 0.73 instructions per pixel. Line fills
+  add only 7 % (cold against warm): the skip is not waiting for memory.
+- **A fixed cost per row: about 470 cycles, 230 instructions, 42 stores, 25 branches and 1 to
+  2.5 mispredictions (0.38 M cycles, 22 %).** Warm and cold give the same figure, so it is
+  code, not memory. The two parts add up to 1.75 M cycles against 1.73 M measured.
+- **Each blob** costs 4.4 k cycles at 13 pixels, 6.0 k at 37 and 18.3 k at 261; from radius 4
+  to 12, about 55 cycles and 38 instructions per added foreground pixel. Mispredictions per
+  blob rise from 65 to 219. The 64 `synth` discs of the case table (radius 3..5) cost
+  (2 104 554 - 1 728 342) / 64 = 5878 cycles and 3524 instructions per blob.
+- **PSRAM** runs the same instructions at IPC 0.23 instead of 0.53: the whole-frame path
+  waits for memory.
+
+Against the spike of 2026-11-11 (same source with its own counter code; plan document
+`p4perf-spike.md`, section S1): dark strip frame 4320 against 4328 us, 1 728 342 against
+1 731 750 cycles, 921 639 against 921 955 instructions; per-row fit 470.3 + 1.250 per pixel
+against 470 + 1.25. Within the noise floor (2 to 3 % between builds). The 64-blob strip frame
+is 1.5 % slower (2 104 554 against 2 073 575 cycles: 5878 against 5341 cycles per blob) with
+the same instructions per blob (3524) and 40 475 against 1 641 L1 instruction misses per frame:
+a code-layout difference [INFERENCE on the cause; both counts are measured]. Mispredictions on
+the dark frame are 1603 here against 2390 in the spike, with the same code.
+
+Counter caveats (from the `esp32p4-perf` README):
+
+- Every counter counts on core 0 including interrupt time: the esp-rtos timer tick and any
+  other interrupt that falls into a window is counted with it.
+- The L1 miss counters count miss events, including retries while a line fill is pending, not
+  lines: about 10 per 64-byte line read cold from internal RAM, about 148 from PSRAM. Compare
+  them between runs of the same code only.
+- The branch counters count conditional branches only (not jumps or calls).
+- All counters are 32 bits wide; every window here is far shorter than the 10.7 s wrap of
+  `mcycle`.
 
 ### Camera capture (whole frames in PSRAM)
 
