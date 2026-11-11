@@ -8,9 +8,10 @@ license      = "MIT OR Apache-2.0"
 publish      = false
 
 [dependencies]
-esp32p4-csi  = { path = "../esp32p4-csi" }
-esp32p4-jpeg = { path = "../esp32p4-jpeg" }
-ov9281       = { path = "../ov9281" }
+esp32p4-csi   = { path = "../esp32p4-csi" }
+esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
+espion-vision = { path = "../espion-vision" }
+ov9281        = { path = "../ov9281" }
 
 esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp32p4", "log-04"] }

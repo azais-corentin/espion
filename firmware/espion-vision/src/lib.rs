@@ -1,4 +1,4 @@
-//! Marker blob detection on RAW8 mono frames, `core` only, no heap.
+//! Marker blob detection on RAW8 and packed RAW10 mono frames, `core` only, no heap.
 //!
 //! A pixel is foreground when its value is `>= threshold`. Foreground pixels are grouped
 //! into 8-connected components: each row is scanned into runs of foreground pixels, each run
@@ -22,6 +22,22 @@
 //!
 //! Rows can be pushed as a whole frame or in strips of whole rows as they arrive; both give
 //! the same blobs in the same order (the order in which their last row was seen).
+//!
+//! [`synth`] generates deterministic synthetic frames for the tests and for the board
+//! benchmark. The crate has no esp dependency: it builds and tests on the host.
+
+#![no_std]
+
+// The test references collect into `Vec`.
+#[cfg(test)]
+extern crate std;
+
+pub mod synth;
+
+#[cfg(test)]
+mod equivalence;
+#[cfg(test)]
+mod reference;
 
 /// One detected blob, as in the `Blob` of the wire format (`docs/protocol.md`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1110,53 +1126,6 @@ mod tests {
         assert_eq!(detect(&f, 0, &mut out), 4);
     }
 
-    /// Reference: 8-connected flood fill over the whole frame.
-    fn flood(f: &[u8], w: usize, t: u8, out: &mut [Blob]) -> usize {
-        let h = f.len() / w;
-        let mut seen = [false; 128 * 32];
-        let mut stack = [0usize; 128 * 32];
-        let mut n = 0;
-        for start in 0..w * h {
-            if seen[start] || f[start] < t {
-                continue;
-            }
-            let (mut sp, mut area, mut sw, mut sx, mut sy, mut peak) =
-                (0, 0u32, 0u64, 0u64, 0u64, 0);
-            seen[start] = true;
-            stack[sp] = start;
-            sp += 1;
-            while sp > 0 {
-                sp -= 1;
-                let p = stack[sp];
-                let (x, y, v) = (p % w, p / w, f[p]);
-                area += 1;
-                sw += v as u64;
-                sx += v as u64 * x as u64;
-                sy += v as u64 * y as u64;
-                peak = peak.max(v);
-                for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
-                    for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
-                        let q = ny * w + nx;
-                        if !seen[q] && f[q] >= t {
-                            seen[q] = true;
-                            stack[sp] = q;
-                            sp += 1;
-                        }
-                    }
-                }
-            }
-            let q5 = |s: u64| ((s * 32 + sw / 2) / sw) as u16;
-            out[n] = Blob {
-                x: q5(sx),
-                y: q5(sy),
-                area: area as u16,
-                peak,
-            };
-            n += 1;
-        }
-        n
-    }
-
     #[test]
     fn random_frames_match_flood_fill() {
         const RW: usize = 128;
@@ -1170,7 +1139,6 @@ mod tests {
         };
         let mut det = Detector::<256, 256, 1024>::new();
         let mut buf = [0u8; RW * RH + 4];
-        let mut want = [Blob::default(); RW * RH];
         let mut got = [Blob::default(); 1024];
         for round in 0..200 {
             let offset = round % 4;
@@ -1190,13 +1158,10 @@ mod tests {
                 };
             }
             let f = &buf[offset..offset + RW * RH];
-            let nw = flood(f, RW, t, &mut want);
+            let want = reference::flood(f, RW, t.into(), 0);
             let ng = det.process_frame(f, RW as u16, t, &mut got);
             assert_eq!(det.stats().overflow, 0, "round {round}");
-            let key = |b: &Blob| (b.y, b.x, b.area, b.peak);
-            want[..nw].sort_unstable_by_key(key);
-            got[..ng].sort_unstable_by_key(key);
-            assert_eq!(got[..ng], want[..nw], "round {round}");
+            assert_eq!(got[..ng], want[..], "round {round}");
         }
     }
 
@@ -1458,53 +1423,6 @@ mod tests {
         );
     }
 
-    /// Reference for RAW10: 8-connected flood fill over unpacked 10-bit values.
-    fn flood10(f: &[u16], w: usize, t: u16, out: &mut [Blob]) -> usize {
-        let h = f.len() / w;
-        let mut seen = [false; 128 * 32];
-        let mut stack = [0usize; 128 * 32];
-        let mut n = 0;
-        for start in 0..w * h {
-            if seen[start] || f[start] < t {
-                continue;
-            }
-            let (mut sp, mut area, mut sw, mut sx, mut sy, mut peak) =
-                (0, 0u32, 0u64, 0u64, 0u64, 0);
-            seen[start] = true;
-            stack[sp] = start;
-            sp += 1;
-            while sp > 0 {
-                sp -= 1;
-                let p = stack[sp];
-                let (x, y, v) = (p % w, p / w, f[p]);
-                area += 1;
-                sw += v as u64;
-                sx += v as u64 * x as u64;
-                sy += v as u64 * y as u64;
-                peak = peak.max(v);
-                for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
-                    for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
-                        let q = ny * w + nx;
-                        if !seen[q] && f[q] >= t {
-                            seen[q] = true;
-                            stack[sp] = q;
-                            sp += 1;
-                        }
-                    }
-                }
-            }
-            let q5 = |s: u64| ((s * 32 + sw / 2) / sw) as u16;
-            out[n] = Blob {
-                x: q5(sx),
-                y: q5(sy),
-                area: area as u16,
-                peak: (peak >> 2) as u8,
-            };
-            n += 1;
-        }
-        n
-    }
-
     #[test]
     fn raw10_random_frames_match_flood_fill() {
         const RW: usize = 128;
@@ -1520,7 +1438,6 @@ mod tests {
         let mut det = Detector::<256, 256, 1024>::new();
         let mut px = [0u16; RW * RH];
         let mut buf = [0u8; RS * RH + 4];
-        let mut want = [Blob::default(); RW * RH];
         let mut got = [Blob::default(); 1024];
         let thresholds = [4u16, 100, 511, 512, 513, 600, 1023];
         for round in 0..280 {
@@ -1540,13 +1457,10 @@ mod tests {
             }
             pack(&px, &mut buf[offset..offset + RS * RH]);
             let f = &buf[offset..offset + RS * RH];
-            let nw = flood10(&px, RW, t, &mut want);
+            let want = reference::flood(&px, RW, t.into(), 2);
             let ng = det.process_frame_raw10(f, RW as u16, t, &mut got);
             assert_eq!(det.stats().overflow, 0, "round {round}");
-            let key = |b: &Blob| (b.y, b.x, b.area, b.peak);
-            want[..nw].sort_unstable_by_key(key);
-            got[..ng].sort_unstable_by_key(key);
-            assert_eq!(got[..ng], want[..nw], "round {round} t {t}");
+            assert_eq!(got[..ng], want[..], "round {round} t {t}");
         }
     }
 }

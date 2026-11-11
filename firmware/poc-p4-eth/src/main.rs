@@ -48,8 +48,6 @@ mod modes;
 mod requests;
 mod soak;
 mod strip_soak;
-mod synth;
-mod vision;
 
 /// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print
 /// at 115200). Capture with `espflash monitor --monitor-baud <LOG_BAUD>`. `None` keeps 115200.

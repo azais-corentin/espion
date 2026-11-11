@@ -13,12 +13,13 @@ use esp_println::println;
 use esp32p4_csi::{
     Config, Csi, CsiStrips, Frame, LdoChannel, LdoSetting, PhyStatus, StripError, enable_ldo,
 };
+use espion_vision::{Blob, DefaultDetector, synth};
 use log::{error, info, warn};
 use ov9281::{DeviceError, Exposure, Format, Gain, Mode, Ov9281, Readout, TestPattern, limits};
 use static_cell::StaticCell;
 
 use crate::modes::{self, CamMode};
-use crate::{jpeg_bench, requests, soak, strip_soak, synth, vision};
+use crate::{jpeg_bench, requests, soak, strip_soak};
 
 /// The sensor on the camera's I2C bus.
 pub type Cam = Ov9281<I2c<'static, esp_hal::Async>>;
@@ -425,8 +426,8 @@ pub async fn stop(cam: &mut Cam, csi: &mut Csi<'static>) {
 /// The detector on the pixels of a capture-only mode: borrowed from the soak (which does not
 /// run in such a plan), plus a PSRAM area for one synthetic frame of the largest mode.
 struct DetectorCheck {
-    det: &'static mut vision::DefaultDetector,
-    out: &'static mut [vision::Blob; 256],
+    det: &'static mut DefaultDetector,
+    out: &'static mut [Blob; 256],
     synth: &'static mut synth::Synth,
     area: &'static mut [u8],
     mhz: u32,
@@ -476,8 +477,8 @@ async fn detector_check(csi: &mut Csi<'static>, mode: &CamMode, c: &mut Detector
 /// `process_frame` (RAW8) or `process_frame_raw10` over `frame`, timed with the cycle counter.
 #[inline(never)]
 fn detect_frame(
-    det: &mut vision::DefaultDetector,
-    out: &mut [vision::Blob],
+    det: &mut DefaultDetector,
+    out: &mut [Blob],
     frame: &[u8],
     mode: &Mode,
 ) -> Detected {

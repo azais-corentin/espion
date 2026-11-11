@@ -26,6 +26,7 @@ use embassy_time::{Duration, Instant, Timer, with_timeout};
 use esp_println::println;
 use esp32p4_csi::{Csi, Frame};
 use esp32p4_jpeg::{Config as JpegConfig, Encoder, Error as JpegError, HEADER_LEN, Stats};
+use espion_vision::synth::Synth;
 use log::{info, warn};
 use ov9281::Format::Raw8;
 use ov9281::Readout::{Binned, Crop};
@@ -34,7 +35,6 @@ use static_cell::{ConstStaticCell, StaticCell};
 use crate::camera::{self, Cam, Sensor};
 use crate::mcycle;
 use crate::modes::{self, CamMode};
-use crate::synth::Synth;
 
 /// What the JPEG plan runs.
 #[derive(Clone, Copy)]

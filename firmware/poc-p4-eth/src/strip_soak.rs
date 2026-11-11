@@ -34,12 +34,13 @@
 
 use embassy_time::{Duration, Instant, with_timeout};
 use esp32p4_csi::{Config, CsiStrips, Strip, StripLink, StripStats};
+use espion_vision::{Blob, DefaultDetector, synth};
 use log::info;
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::modes::CamMode;
 use crate::soak::{Fps, THRESHOLD, take_detector};
-use crate::{flush_cache, mcycle, synth, vision};
+use crate::{flush_cache, mcycle};
 
 /// Rows per strip unless the format needs more ([`lines`]). 64 is not a divisor of any mode
 /// height here (the driver needs a short last strip).
@@ -311,8 +312,8 @@ impl Acc {
 /// The detector, the synthetic strip and the results, all in internal RAM.
 pub struct StripSoak {
     plan: Plan,
-    det: &'static mut vision::DefaultDetector,
-    out: &'static mut [vision::Blob; 256],
+    det: &'static mut DefaultDetector,
+    out: &'static mut [Blob; 256],
     synth: &'static mut synth::Synth,
     /// Synthetic strip: one strip's bytes used, cache-line aligned.
     scratch: &'static mut [u8],

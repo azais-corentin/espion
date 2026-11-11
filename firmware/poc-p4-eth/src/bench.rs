@@ -1,4 +1,5 @@
-//! Onboard benchmark of the blob detector (`vision`) on synthetic frames (`synth`), no camera.
+//! Onboard benchmark of the blob detector (`espion_vision`) on synthetic frames (`synth`), no
+//! camera.
 //!
 //! For each mode and blob count, three paths over the same frame content:
 //! - `psram`: the whole frame in PSRAM through `process_frame`, its cache lines written back
@@ -12,10 +13,11 @@
 //! No CSI DMA runs at the same time, so the PSRAM bus is idle apart from the CPU: these are
 //! lower bounds for the live case.
 
+use espion_vision::{Blob, DefaultDetector, synth};
 use log::info;
 use static_cell::ConstStaticCell;
 
-use crate::{flush_cache, mcycle, synth, vision};
+use crate::{flush_cache, mcycle};
 
 /// Foreground threshold.
 const THRESHOLD: u8 = 128;
@@ -36,10 +38,9 @@ const BLOB_COUNTS: [u16; 3] = [0, 16, 64];
 const INTERNAL_LEN: usize = 640 * 480;
 const _: () = assert!(INTERNAL_LEN >= STRIP_ROWS * 1280);
 
-static DETECTOR: ConstStaticCell<vision::DefaultDetector> =
-    ConstStaticCell::new(vision::DefaultDetector::new());
-static BLOBS: ConstStaticCell<[vision::Blob; 256]> = ConstStaticCell::new(
-    [vision::Blob {
+static DETECTOR: ConstStaticCell<DefaultDetector> = ConstStaticCell::new(DefaultDetector::new());
+static BLOBS: ConstStaticCell<[Blob; 256]> = ConstStaticCell::new(
+    [Blob {
         x: 0,
         y: 0,
         area: 0,
@@ -114,8 +115,8 @@ impl Timing {
 
 /// The detector and its buffers, all in internal RAM.
 struct Bench {
-    det: &'static mut vision::DefaultDetector,
-    out: &'static mut [vision::Blob; 256],
+    det: &'static mut DefaultDetector,
+    out: &'static mut [Blob; 256],
     internal: &'static mut [u8; INTERNAL_LEN],
     mhz: u32,
 }
@@ -138,7 +139,7 @@ pub fn run(psram: &mut [u8]) {
     info!(
         "detector bench: threshold {THRESHOLD}, {PASSES} passes, {STRIP_ROWS}-line strips, \
          detector {} B and strip/frame buffer {} KiB in internal RAM at {:#010x}",
-        core::mem::size_of::<vision::DefaultDetector>(),
+        core::mem::size_of::<DefaultDetector>(),
         INTERNAL_LEN / 1024,
         bench.internal.as_ptr() as usize
     );
@@ -235,8 +236,8 @@ fn log_table(cases: &[Option<Case>]) {
 
 /// One frame through the strip path; returns the summed cycles of the detector calls only.
 fn strip_pass(
-    det: &mut vision::DefaultDetector,
-    out: &mut [vision::Blob],
+    det: &mut DefaultDetector,
+    out: &mut [Blob],
     frame: &[u8],
     width: u16,
     strip_buf: &mut [u8],

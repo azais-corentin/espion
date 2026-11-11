@@ -1,0 +1,21 @@
+[package]
+name         = "espion-vision"
+description  = "Marker blob detector for RAW8 and packed RAW10 mono frames, and a synthetic frame generator (no_std, no heap)"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.99"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+# No .cargo/config.toml: the crate has no esp dependency, so `cargo test` runs on the host.
+# Build for the P4 with `--target riscv32imafc-unknown-none-elf`.
+
+[dependencies]
+
+[lints.rust]
+missing_docs           = "warn"
+# Not `unsafe_code = "forbid"`: the row scans reinterpret rows as `u32` words with `align_to`.
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

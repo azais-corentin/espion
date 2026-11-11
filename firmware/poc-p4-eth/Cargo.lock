@@ -977,6 +977,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "espion-vision"
+version = "0.1.0"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1328,6 +1332,7 @@ dependencies = [
  "esp32p4",
  "esp32p4-csi",
  "esp32p4-jpeg",
+ "espion-vision",
  "log",
  "ov9281",
  "static_cell",

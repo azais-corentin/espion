@@ -8,7 +8,7 @@
 //! stay at least 2 pixels apart, so at any threshold in `NOISE_MAX..=PEAK` every disc is
 //! exactly one blob with its centroid on its centre.
 
-use crate::vision::raw10;
+use crate::raw10;
 
 /// Lowest background value.
 pub const NOISE_MIN: u8 = 4;
@@ -91,7 +91,7 @@ impl Synth {
     }
 
     /// The same scene as [`Self::fill`] with the same arguments, as 10-bit pixels packed
-    /// in CSI-2 RAW10 ([`crate::vision::raw10`], rows of `width / 4 * 5` bytes) into the
+    /// in CSI-2 RAW10 ([`crate::raw10`], rows of `width / 4 * 5` bytes) into the
     /// first `width / 4 * 5 * height` bytes of `buf` (fewer rows if `buf` is shorter).
     /// `width` must be a multiple of 4 (else nothing is written). The top 8 bits of every
     /// pixel equal the RAW8 frame; the low 2 bits are random in the background (below
@@ -210,7 +210,7 @@ fn draw_raw10(frame: &mut [u8], stride: usize, d: (u32, u32, u32)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vision::{Blob, DefaultDetector};
+    use crate::{Blob, DefaultDetector};
 
     #[test]
     fn detects_every_disc() {

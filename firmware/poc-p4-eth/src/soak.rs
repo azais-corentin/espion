@@ -13,11 +13,12 @@
 
 use embassy_time::{Duration, Instant, with_timeout};
 use esp32p4_csi::{Csi, Frame, Stats};
+use espion_vision::{Blob, DefaultDetector, synth};
 use log::info;
 use static_cell::ConstStaticCell;
 
 use crate::modes::CamMode;
-use crate::{flush_cache, mcycle, synth, vision};
+use crate::{flush_cache, mcycle};
 
 /// Foreground threshold.
 pub(crate) const THRESHOLD: u8 = 128;
@@ -43,10 +44,9 @@ pub struct Plan {
     pub blob_counts: &'static [u16],
 }
 
-static DETECTOR: ConstStaticCell<vision::DefaultDetector> =
-    ConstStaticCell::new(vision::DefaultDetector::new());
-static BLOBS: ConstStaticCell<[vision::Blob; 256]> = ConstStaticCell::new(
-    [vision::Blob {
+static DETECTOR: ConstStaticCell<DefaultDetector> = ConstStaticCell::new(DefaultDetector::new());
+static BLOBS: ConstStaticCell<[Blob; 256]> = ConstStaticCell::new(
+    [Blob {
         x: 0,
         y: 0,
         area: 0,
@@ -151,8 +151,8 @@ struct Sample {
 /// The detector, its buffers and the results, all in internal RAM except `scratch` (PSRAM).
 pub struct Soak {
     plan: Plan,
-    det: &'static mut vision::DefaultDetector,
-    out: &'static mut [vision::Blob; 256],
+    det: &'static mut DefaultDetector,
+    out: &'static mut [Blob; 256],
     synth: &'static mut synth::Synth,
     /// Synthetic frame area in PSRAM, outside the capture buffers, cache-line aligned.
     scratch: &'static mut [u8],
@@ -167,8 +167,8 @@ pub struct Soak {
 /// by the frame soak and the strip soak (`strip_soak`); only one of them runs per boot, so
 /// this may be called once.
 pub(crate) fn take_detector() -> (
-    &'static mut vision::DefaultDetector,
-    &'static mut [vision::Blob; 256],
+    &'static mut DefaultDetector,
+    &'static mut [Blob; 256],
     &'static mut synth::Synth,
 ) {
     (DETECTOR.take(), BLOBS.take(), SYNTH.take())
@@ -301,12 +301,7 @@ impl Soak {
 
 /// Runs the detector over `src`; returns the blobs found and the cycles it took.
 #[inline(never)]
-fn detect(
-    det: &mut vision::DefaultDetector,
-    out: &mut [vision::Blob],
-    src: &[u8],
-    width: u16,
-) -> (u32, u32) {
+fn detect(det: &mut DefaultDetector, out: &mut [Blob], src: &[u8], width: u16) -> (u32, u32) {
     let t0 = mcycle();
     let n = det.process_frame(src, width, THRESHOLD, out);
     (n as u32, mcycle().wrapping_sub(t0))
