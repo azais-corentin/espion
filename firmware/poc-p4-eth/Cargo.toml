@@ -7,6 +7,12 @@ rust-version = "1.99"
 license      = "MIT OR Apache-2.0"
 publish      = false
 
+[features]
+# Marker pins (README, "Marker pins"): dedicated-IO channels toggled at strip taken and frame
+# done by the strip soak (core 0) and the runner (core 1), the boot self-check that reads them
+# back, and the sensor's STROBE output on. Off by default.
+markers = ["espion-core1/markers"]
+
 [dependencies]
 esp32p4-cache = { path = "../esp32p4-cache" }
 esp32p4-csi   = { path = "../esp32p4-csi" }

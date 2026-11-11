@@ -277,6 +277,13 @@ impl Sensor {
 
 /// PSV_CTRL (0x4F00) = 0x00: the power-saving mode off, for [`Sensor::psv_off`].
 const PSV_OFF: (u16, u8) = (0x4F00, 0x00);
+/// Feature `markers`: OUTPUT_ENABLE6 (0x3006) with the STROBE pad's output on (bit 3) beside
+/// ILPWM (bit 2, the mode's 0x04), the one write Linux's `ov9282` driver makes for
+/// `V4L2_CID_FLASH_STROBE_OE`. The mode already has the rest of that driver's strobe set-up
+/// (0x3920 = 0xFF); it does not write the pulse width (0x3925 to 0x3928, left at their reset
+/// values). Written in standby, after the mode. README, "Marker pins".
+#[cfg(feature = "markers")]
+const STROBE_ON: (u16, u8) = (0x3006, 0x0C);
 
 async fn capture_mode(
     cam: &mut Cam,
@@ -1138,6 +1145,8 @@ pub(crate) async fn sensor_setup(
     sensor: &Sensor,
 ) -> Result<(), SensorError> {
     cam.configure(mode, &mut Delay).await?;
+    #[cfg(feature = "markers")]
+    cam.write_register(STROBE_ON.0, STROBE_ON.1).await?;
     cam.set_exposure(Exposure::lines(sensor.exposure(mode)))
         .await?;
     cam.set_gain(sensor.gain).await?;

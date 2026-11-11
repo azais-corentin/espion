@@ -1003,6 +1003,7 @@ dependencies = [
  "embassy-futures",
  "embassy-time",
  "esp-hal",
+ "esp32p4",
  "esp32p4-cache",
  "esp32p4-csi",
  "esp32p4-perf",

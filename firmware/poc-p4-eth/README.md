@@ -151,7 +151,8 @@ All in constants at the top of `src/main.rs`; one plan per boot. The default sel
 | `SOAK_SKIP` | `SkipChoice::Pie` (default) / `SkipChoice::Scalar` | The dark skip of the frame soak and the strip soak: PIE on core 0 (the token is made once in `app`; `Scalar` if `Pie::enable` refuses) or the portable one. The benchmark always runs both |
 
 Every plan that uses the strip path, and `RUN_CORE1`, needs `RUN_BENCH = false` (checked at
-compile time).
+compile time). Cargo feature `markers` (off by default) adds the marker pins and the STROBE
+output (see [Marker pins](#marker-pins-feature-markers)).
 `camera::Plan` holds the modes (indexes into `modes::MODES`) or the requests, the sensor
 settings (`camera::Sensor`: exposure 800 lines, clamped per mode to its longest, gain 2x,
 continuous clock, scene or a test pattern), the measurement window (5 s), the `cache_check`
@@ -344,6 +345,131 @@ The result reaches core 0 at its next 1 ms tick: pop latency mean 509 us, max 26
 `service()` and draining. The live scene was brighter (1 to 4 blobs) than in the core-0
 runs; the synthetic frames, identical on both cores, match within 1 %. Cache lock: longest
 hold 2224 cycles on core 1 (5.6 us), strip invalidate at most 6866 cycles.
+
+## Marker pins (feature `markers`)
+
+Performance plan step 0.4: pins that toggle at fixed points of the strip path, for a logic
+analyser to record beside the sensor's STROBE and read the latency from exposure to
+centroids, and its spread, frame by frame. Off by default; built with
+`cargo build --release --features markers` and `SOAK = Soak::Strips` (core 0's markers) or
+`RUN_CORE1 = true` (core 1's). The feature also turns the sensor's STROBE output on.
+
+| Signal | GPIO | 40-pin header | Driven by | Toggles when |
+|---|---|---|---|---|
+| core 1 strip | GPIO20 | pin 35 | core 1, dedicated-IO channel 0 (`espion_core1::MARKER_STRIP`) | `RUN_CORE1`: core 1's reader has handed out a strip of a detector run, before the detector reads it |
+| core 1 frame | GPIO21 | pin 34 | core 1, channel 1 (`MARKER_FRAME`) | `RUN_CORE1`: the frame's blobs are final and its result is in the queue to core 0 |
+| core 0 strip | GPIO22 | pin 32 | core 0, channel 0 (`markers::STRIP`) | Strip soak: `wait_strip` has handed over a strip, before the detector |
+| core 0 frame | GPIO23 | pin 31 | core 0, channel 1 (`markers::FRAME`) | Strip soak: `finish` has returned the frame's centroids |
+| GND | | pins 33, 28, 38 | | |
+| STROBE | | not on the board | OV9281 | Once per frame (below) |
+
+- The pins are named in one place, `src/markers.rs`. Counted from the USB-C end, the header
+  row that starts VBUS, VSYS, GND reads EN, 3V3, GPIO20, GPIO21, GND, GPIO22, GPIO23, RUN,
+  GPIO26, GND (Waveshare's pinout figure); the pin numbers are those of the Raspberry Pi Pico
+  layout the header copies [INFERENCE: the board prints GPIO numbers, not pin numbers].
+- Why these four: on the Waveshare schematic each runs only from the P4 to the header, and
+  this firmware uses none of them. Not used: the camera (GPIO7, GPIO8), Ethernet RMII
+  (GPIO28 to 31, 34, 35, 49 to 52), UART0 (GPIO37, 38), the strapping pins (GPIO34 to 38),
+  the microSD slot (GPIO39 to 45), the audio codec and amplifier (GPIO9 to 13, 53), USB
+  (GPIO24, 25), and GPIO2 to 5, the P4's JTAG pins, left for a probe. Flash and PSRAM have
+  their own pins.
+- Set-up (`markers::start` at boot, core 0, `espion_core1::markers`): each pad gets its input
+  path and pull-down on and the GPIO-matrix output signal of its channel (core 0's channels
+  are signals 214 to 221, core 1's 222 to 229). Core 0 enables its own outputs; core 1
+  enables its own at its entry, since the enable CSR is per core. Until then a core-1 pad is
+  undriven and the pull-down holds it low. esp-hal's `DedicatedGpioOutput` is not used: it
+  routes the signal of the core it is created on and must stay there, so it cannot set up
+  core 1's channels. Each marker is `esp32p4_perf::marker::toggle`: `csrr`, `xor`, `csrw` of
+  the core's `cpu_gpio_out`, no memory access, no lock, so core 1 may do it.
+- A toggle, not a pulse: a set-and-clear pulse lasts a few cycles (one toggle measured 10 to
+  11 cycles, 25 ns), shorter than a sample of a 24 MS/s analyser (42 ns) and possibly shorter
+  than the pad passes, and widening it means a busy wait per event (1560 strips a second
+  here, 8000 datagrams in `poc-p4-stream`). A toggle holds each level until the next event,
+  at least 666 us for strips and 8.3 ms for frames, so any analyser sees every event. Every
+  edge, rising or falling, is one event: set the analyser's timing measurements to "any
+  edge". A lost edge would flip the polarity of all later ones, so count edges rather than
+  trust a level.
+
+**STROBE.** The dev board does not bring it out: the 22-pin CSI connector J1 carries no
+STROBE, and the module's 15-pin FFC has none (pin table in
+[docs/hardware/camera.md](../../docs/hardware/camera.md)). The module has it on its back
+pads (3V3, XVS, STROBE, IL_PWM, GPIO2, GND in the vendor photo): probe the STROBE pad, with
+the GND pad as reference. The module's I/O level is not known (1.8 V or 3.3 V; same
+document, "Accepted risks"): use an analyser input that takes 3.3 V and a threshold that
+also sees 1.8 V. The `ov9281` crate's mode leaves the pad off (OUTPUT_ENABLE6 0x3006 =
+0x04); with `markers` the firmware writes 0x3006 = 0x0C after each mode set-up, STROBE's
+output on, the one write Linux's `ov9282` driver makes for `V4L2_CID_FLASH_STROBE_OE` (the
+mode already has that driver's 0x3920 = 0xFF). The pulse width registers (0x3925 to 0x3928)
+stay at their reset values. The pulse's polarity, width and place against the exposure have
+not been measured.
+
+**Capture.** Channels: STROBE, the strip and frame pins of the core that runs the detector,
+GND. Any rate from 1 MS/s resolves every edge; the resolution of a latency is one sample
+(42 ns at 24 MS/s), far below the spreads to read (the strip start latency alone varies by
+up to 8 us). Trigger on STROBE. Pairing, at 1280x800 with 64-row strips: 13 strip edges per
+frame, one every 666 us, then a gap; the frame edge follows the 13th strip edge (35 us later
+on core 1, "last strip to result"). A STROBE edge belongs to the group of 13 strip edges that
+starts after it as long as exposure and readout fit in a frame period (8.3 ms at 120 fps);
+check the count on the capture.
+
+Figures to read:
+
+- STROBE to frame edge: exposure to centroids, per frame; its spread over a few thousand
+  frames is the jitter the plan asks for.
+- STROBE to the first strip edge: exposure end, the first 64 rows' readout and the strip
+  handed out. Strip edge to strip edge: the strip cadence (666 us) and its jitter.
+- Last strip edge to frame edge: the last strip's detector time and `finish`.
+- Frame edge to "datagram queued": not available in one firmware today. This firmware has no
+  network, and `poc-p4-stream` does not send the detector's result: its datagram marker
+  times the bench's datagrams or the camera stream's chunks, not centroids.
+
+**Boot self-check** (`espion_core1::markers::self_check`, no wire needed): it logs the cost
+of one toggle, then listens on every marker pad with a GPIO interrupt on any edge, reads the
+pads back through `GPIO_IN`, counts each pad's level changes during 1 s of the first run that
+toggles them, and logs the counts once the markers rest, between runs. A first version logged
+right after the second, in the middle of the run, and the strip soak's live run had its only
+stall (`first/eth-strips-on.log`: stalls 1, a truncated and a skipped frame; the same run
+without the feature had none) [INFERENCE: its 5 lines at 2 Mbaud, about 3 ms, kept the soak's
+task from giving a strip back in time]. 2026-11-11,
+`/tmp/p4perf-logs/Markers/`, 1280x800 RAW8, 120 fps, 64-row strips:
+
+| Build | core 0 strip | core 0 frame | core 1 strip | core 1 frame | Log |
+|---|---|---|---|---|---|
+| `SOAK = Soak::Strips` | 1561 | 120 | 0 (not run) | 0 | `eth-strips-on2.log` |
+| `RUN_CORE1 = true` | 0 (not run) | 0 | 1561 | 120 | `eth-core1-on2.log` |
+
+Edges in 1.000 s: 1561 strips (13 strips a frame at 120 fps make 1560) and 120 frames, none
+merged (two edges between two interrupts). Each marker drives its pad, and the output enable
+is active low on both cores, as esp-hal and ESP-IDF have it (the TRM says 1 enables). The
+markers a run does not drive log a warning ("never toggled").
+
+**Cost.** One toggle: 16 back to back take 175 to 191 cycles and 53 instructions between two
+`CpuSample`s whose empty window takes 15 cycles and 5 instructions (three builds), 10 to 11
+cycles and 3 instructions each. Against the build without the feature, same session (logs
+`eth-*-off.log`, `eth-*-on2.log`):
+
+| Run | without `markers` | with `markers` |
+|---|---|---|
+| Core 1, detect per frame, live, mean / max (after the first second) | 754 / 756 us | 754 / 763 us |
+| Core 1, instructions per frame (detector windows only) | 114 565 | 114 565 |
+| Core 0 strip soak, processing per frame, live, min / mean / max | 760 / 761 / 798 us | 760 / 764 / 807 us |
+| Core 0 strip soak, synthetic dark / 16 / 64 blobs, mean | 761 / 989 / 2226 us | 760 / 989 / 2227 us |
+| Core 0 strip soak, frame end to centroids, live, mean | 43 us | 47 us |
+
+- The synthetic runs feed the same strip every frame: there the markers cost nothing
+  measurable. The live runs differ by a few microseconds; the scene was not controlled, and
+  the self-check's interrupts ran in the first seconds of the run with the markers.
+- Core 1's per-second maxima are 755 to 756 us in both builds; single seconds reach 761
+  (without) and 763 us (with).
+- Without the feature the strip soak's `strip`, core 1's `run` and the detector are
+  instruction for instruction those of the build before the change; across the whole ELF only
+  line numbers in log calls differ (llvm-objdump of both builds, `RUN_CORE1` and
+  `Soak::Strips` variants).
+
+Not done: no logic analyser or scope was connected, so no latency, jitter or STROBE waveform
+has been measured, and the delay from the CSR write to the header pin (through the GPIO
+matrix) is not known. The self-check proves that the pads toggle at the expected rates, read
+through their own input path, not what a probe on the header sees.
 
 ## Measured results
 

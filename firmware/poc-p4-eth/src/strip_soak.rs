@@ -43,7 +43,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::modes::CamMode;
 use crate::soak::{Fps, THRESHOLD, take_detector};
-use crate::{DarkSkip, flush_cache, mcycle};
+use crate::{DarkSkip, flush_cache, markers, mcycle};
 
 /// L1 data-cache autoload while the detector reads a strip (`None`: off). The section is the
 /// strip being read and nothing else, set before `push_rows_with` and turned off after it
@@ -478,6 +478,7 @@ impl StripSoak {
     #[inline(never)]
     fn strip(&mut self, s: &Strip, mode: &CamMode, work: Workload, skip: DarkSkip) {
         let got = mcycle();
+        markers::toggle(markers::STRIP);
         let acc = &mut *self.acc;
         acc.held_since = Some((got, s.first_row()));
         acc.strips += 1;
@@ -523,6 +524,7 @@ impl StripSoak {
         }
         let t0 = mcycle();
         let blobs = self.det.finish(self.out) as u32;
+        markers::toggle(markers::FRAME);
         let done = mcycle();
         cycles = cycles.wrapping_add(done.wrapping_sub(t0));
         let ready = done.wrapping_sub(s.queued_at_cycles());

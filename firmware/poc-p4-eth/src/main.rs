@@ -64,6 +64,7 @@ mod bench;
 mod camera;
 mod core1_soak;
 mod jpeg_bench;
+mod markers;
 mod modes;
 mod requests;
 mod soak;
@@ -319,6 +320,8 @@ async fn main(spawner: Spawner) -> ! {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    #[cfg(feature = "markers")]
+    markers::start(spawner);
 
     if let Some((old, new)) = baud_divider {
         info!(
