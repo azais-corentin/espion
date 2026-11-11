@@ -26,8 +26,11 @@
 //! - [`Pie::first_bright10`]: the same over CSI-2 RAW10 data (four pixels in five bytes),
 //!   80 bytes (64 pixels) per step, ignoring the low-bit byte of each group.
 //!   [`first_bright10_scalar`] is the reference.
-//! - [`Pie::self_test`] and [`Pie::self_test10`] compare the kernels with the references on
-//!   generated rows, on the chip.
+//! - [`Pie::copy`]: `dst.copy_from_slice(src)` at any alignment of both, 16 bytes per
+//!   aligned load and store.
+//! - [`Pie::self_test`], [`Pie::self_test10`] and [`Pie::self_test_copy`] compare the
+//!   kernels with the references (`copy_from_slice` for the copy) on generated cases, on
+//!   the chip.
 //!
 //! Everything that executes PIE or CSR instructions exists for `target_arch = "riscv32"`
 //! only; the encoders and the scalar reference build and test on the host.

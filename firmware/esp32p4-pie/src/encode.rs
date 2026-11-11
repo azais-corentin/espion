@@ -138,6 +138,20 @@ pub const fn andq(qz: Q, qx: Q, qy: Q) -> u32 {
     0x0180_001F | ((qz as u32) << 7) | ((qy as u32) << 26) | ((qx as u32) << 29)
 }
 
+/// `esp.src.q qz, qw, qy`: `qz` = the 32-byte concatenation `{qy, qw}` shifted right by
+/// `SAR_BYTE` bytes, i.e. 16 bytes starting `SAR_BYTE` bytes into `qw` and running on into
+/// `qy`. With `qw` and `qy` two consecutive aligned words, that is the 16 bytes at the
+/// misaligned address.
+pub const fn src_q(qz: Q, qw: Q, qy: Q) -> u32 {
+    let w = qw as u32;
+    0x8000_401B | ((qz as u32) << 7) | ((w >> 2) << 19) | ((w & 3) << 24) | ((qy as u32) << 26)
+}
+
+/// `esp.movx.w.sar.bytes rs1`: `SAR_BYTE` = `rs1[3:0]`, the byte shift of `esp.src.q`.
+pub const fn movx_w_sar_bytes(rs1: Ar) -> u32 {
+    0x98C0_201B | rs1_field(rs1)
+}
+
 /// `esp.max.u8.a qw, rd`: `rd` = the largest of the 16 unsigned bytes of `qw`.
 pub const fn max_u8_a(qw: Q, rd: Ar) -> u32 {
     let q = qw as u32;
@@ -281,6 +295,61 @@ mod tests {
             andq(Q::Q5, Q::Q7, Q::Q1),
             0xe580_029f,
             "esp.andq q5, q7, q1",
+        ),
+        (
+            src_q(Q::Q0, Q::Q0, Q::Q1),
+            0x8400_401b,
+            "esp.src.q q0, q0, q1",
+        ),
+        (
+            src_q(Q::Q1, Q::Q1, Q::Q0),
+            0x8100_409b,
+            "esp.src.q q1, q1, q0",
+        ),
+        (
+            src_q(Q::Q2, Q::Q0, Q::Q1),
+            0x8400_411b,
+            "esp.src.q q2, q0, q1",
+        ),
+        (
+            src_q(Q::Q7, Q::Q5, Q::Q6),
+            0x9908_439b,
+            "esp.src.q q7, q5, q6",
+        ),
+        (
+            src_q(Q::Q3, Q::Q4, Q::Q2),
+            0x8808_419b,
+            "esp.src.q q3, q4, q2",
+        ),
+        (
+            src_q(Q::Q6, Q::Q7, Q::Q3),
+            0x8f08_431b,
+            "esp.src.q q6, q7, q3",
+        ),
+        (
+            movx_w_sar_bytes(Ar::A0),
+            0x98c1_201b,
+            "esp.movx.w.sar.bytes a0",
+        ),
+        (
+            movx_w_sar_bytes(Ar::A3),
+            0x98c2_a01b,
+            "esp.movx.w.sar.bytes a3",
+        ),
+        (
+            movx_w_sar_bytes(Ar::T6),
+            0x98c7_a01b,
+            "esp.movx.w.sar.bytes t6",
+        ),
+        (
+            movx_w_sar_bytes(Ar::S8),
+            0x98c4_201b,
+            "esp.movx.w.sar.bytes s8",
+        ),
+        (
+            movx_w_sar_bytes(Ar::A2),
+            0x98c2_201b,
+            "esp.movx.w.sar.bytes a2",
         ),
         (max_u8_a(Q::Q4, Ar::A3), 0x0008_229b, "esp.max.u8.a q4, a3"),
         (max_u8_a(Q::Q0, Ar::A0), 0x0000_211b, "esp.max.u8.a q0, a0"),

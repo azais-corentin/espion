@@ -2,6 +2,7 @@
 //! `Pie::self_test` on the chip and the host test, and the byte-wise contract. The case
 //! buffer and the random numbers serve the other kernels' generators in the submodules.
 
+pub(crate) mod copy;
 pub(crate) mod raw10;
 
 use crate::first_bright_scalar;

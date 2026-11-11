@@ -7,7 +7,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Error;
 use crate::check::{self, Buffer, Rng};
-use crate::encode::{Ar, Q, andq, max_u8_a, vld_128_ip, vmax_u8, vmax_u8_ld_incp};
+use crate::encode::{
+    Ar, Q, andq, max_u8_a, movx_w_sar_bytes, src_q, vld_128_ip, vmax_u8, vmax_u8_ld_incp,
+    vst_128_ip,
+};
 use crate::split;
 
 /// One flag per HP core: set while a [`Pie`] token exists for that core.
@@ -90,7 +93,7 @@ impl Pie {
     /// 0xFF, so an over-read shows as a wrong result. The same `seed` gives the same cases.
     pub fn self_test(&self, seed: u32, cases: u32) -> u32 {
         // SAFETY: taken once; nothing below takes it again.
-        let buf = unsafe { self.case_buffer() };
+        let [buf, _] = unsafe { self.case_buffers() };
         let mut rng = Rng::new(seed);
         let mut failures = 0;
         for i in 0..cases {
@@ -139,7 +142,7 @@ impl Pie {
     /// last group. Every byte around the row is 0xFF. The same `seed` gives the same cases.
     pub fn self_test10(&self, seed: u32, cases: u32) -> u32 {
         // SAFETY: taken once; nothing below takes it again.
-        let buf = unsafe { self.case_buffer() };
+        let [buf, _] = unsafe { self.case_buffers() };
         let mut rng = Rng::new(seed);
         let mut failures = 0;
         for i in 0..cases {
@@ -151,14 +154,78 @@ impl Pie {
         failures
     }
 
-    /// This core's self-test case buffer.
+    /// Copies `src` to `dst` (as `dst.copy_from_slice(src)`); panics if the lengths differ.
+    ///
+    /// Any alignment of both. Up to 15 bytes are copied one at a time (`copy_from_slice`)
+    /// until the destination reaches a 16-byte boundary; then 16 bytes per aligned load and
+    /// aligned store, and the last 0 to 15 bytes one at a time again. When the source is
+    /// aligned like the destination (same address mod 16) the vector loop is plain loads
+    /// and stores, 64 bytes per pass. Otherwise it loads the aligned 16-byte words that
+    /// hold the source and joins each two neighbours with `esp.src.q`, the byte shift set
+    /// in `SAR_BYTE` by `esp.movx.w.sar.bytes`.
+    ///
+    /// Every PIE load and store is at a 16-byte-aligned address, so the result does not
+    /// depend on the `CFG` misaligned-access modes (`CFG` reads 1 at reset on this silicon,
+    /// against the documented 0). For the same reason the kernel sets `SAR_BYTE` itself
+    /// rather than with `esp.ld.128.usar.ip` at the misaligned address as esp-dl's
+    /// `dl_esp32p4_memcpy.S` does: that load's data at a misaligned address depends on the
+    /// mode.
+    ///
+    /// Reads outside `src`: with a misaligned source the first and the last aligned word
+    /// read each extend past the slice by up to 15 bytes. Each of them holds at least one
+    /// byte of `src`, and an aligned 16-byte word lies inside one cache line and one page,
+    /// so it cannot fault; the bytes outside `src` are shifted out and never stored. No word
+    /// without a byte of `src` is read. Writes stay inside `dst`. Overwrites `q0`-`q3` and
+    /// `SAR_BYTE`.
+    #[track_caller]
+    pub fn copy(&self, dst: &mut [u8], src: &[u8]) {
+        split::copy(dst, src, |dst, src| {
+            let (d, s, n) = (dst.as_mut_ptr(), src.as_ptr(), dst.len());
+            // SAFETY: the split passes a 16-byte-aligned `dst` and a `src` of the same length,
+            // a multiple of 16; `self` proves PIE is enabled on this core and has no other
+            // user.
+            unsafe {
+                if (s as usize).is_multiple_of(16) {
+                    copy_aligned(d, s, n);
+                } else {
+                    copy_shifted(d, s, n);
+                }
+            }
+        });
+    }
+
+    /// Runs `cases` randomised copies through [`copy`](Self::copy) and returns how many
+    /// failed.
+    ///
+    /// Copies are 0..=1600 bytes, with source and destination alignment running through
+    /// every pair of 0..16 x 0..16 (each 256 consecutive cases). A case fails unless the
+    /// destination equals the source byte for byte and every destination byte around it
+    /// (at least 64 on each side) still holds its fill value. The same `seed` gives the same
+    /// cases.
+    pub fn self_test_copy(&self, seed: u32, cases: u32) -> u32 {
+        // SAFETY: taken once; nothing below takes it again.
+        let [src, dst] = unsafe { self.case_buffers() };
+        let mut rng = Rng::new(seed);
+        let mut failures = 0;
+        for i in 0..cases {
+            let c = check::copy::generate(&mut rng, i, src, dst);
+            self.copy(
+                &mut dst.0[c.dst..c.dst + c.len],
+                &src.0[c.src..c.src + c.len],
+            );
+            failures += u32::from(!check::copy::copied(src, dst, &c));
+        }
+        failures
+    }
+
+    /// This core's self-test case buffers.
     ///
     /// # Safety
     ///
     /// The caller holds the reference only while it calls no other function that takes it
     /// (the self-tests call no user code and take it once each).
     #[allow(clippy::mut_from_ref)]
-    unsafe fn case_buffer(&self) -> &mut Buffer {
+    unsafe fn case_buffers(&self) -> &mut [Buffer; 2] {
         // SAFETY: only the token of this core touches `CASE_BUFFERS[self.core]`; the token is
         // unique per core and stays on its thread, and the caller keeps the reference
         // exclusive (see above).
@@ -175,13 +242,14 @@ impl Drop for Pie {
     }
 }
 
-/// Self-test case buffers, one per core.
-struct CaseBuffer(UnsafeCell<Buffer>);
+/// Self-test case buffers, two per core (source and destination for `self_test_copy`).
+struct CaseBuffers(UnsafeCell<[Buffer; 2]>);
 
-// SAFETY: each buffer is only used through the token of its core (see `Pie::self_test`).
-unsafe impl Sync for CaseBuffer {}
+// SAFETY: each pair is only used through the token of its core (see `Pie::case_buffers`).
+unsafe impl Sync for CaseBuffers {}
 
-static CASE_BUFFERS: [CaseBuffer; 2] = [const { CaseBuffer(UnsafeCell::new(Buffer::new())) }; 2];
+static CASE_BUFFERS: [CaseBuffers; 2] =
+    [const { CaseBuffers(UnsafeCell::new([Buffer::new(), Buffer::new()])) }; 2];
 
 /// Chip revision `(major, minor)` from eFuse block 1 word 2 (`EFUSE_RD_MAC_SYS2`):
 /// `WAFER_VERSION_MINOR` in bits 3:0, `WAFER_VERSION_MAJOR` in bits 5:4. These are the
@@ -385,4 +453,125 @@ unsafe fn skip_dark10(p: *const u8, len: usize, threshold: u8) -> usize {
         );
     }
     a0 - start
+}
+
+/// Copies `len` bytes from `src` to `dst`, both 16-byte aligned: 64 bytes per pass (four
+/// loads, then four stores, as the spike's measured copy), then single 16-byte steps.
+///
+/// Registers: `a0` the destination and `a1` the source (PIE address operands, post-
+/// incremented). The end addresses are only used by branches.
+///
+/// `asm!` options: `nostack`. It writes memory, so neither `readonly` nor `nomem`.
+///
+/// # Safety
+///
+/// `dst` and `src` are 16-byte aligned, `dst[..len]` is writable, `src[..len]` readable,
+/// the two do not overlap, `len` is a multiple of 16, and PIE is enabled on this core with
+/// no other user.
+#[inline(never)]
+unsafe fn copy_aligned(dst: *mut u8, src: *const u8, len: usize) {
+    let d = dst as usize;
+    // SAFETY: the caller's contract; loads read `[src, src + len)`, stores write
+    // `[dst, dst + len)`.
+    unsafe {
+        asm!(
+            "bgeu a0, {end64}, 2f",
+            "1:",
+            ".insn 4, {ld_q0}",      // esp.vld.128.ip q0, a1, 16
+            ".insn 4, {ld_q1}",      // esp.vld.128.ip q1, a1, 16
+            ".insn 4, {ld_q2}",      // esp.vld.128.ip q2, a1, 16
+            ".insn 4, {ld_q3}",      // esp.vld.128.ip q3, a1, 16
+            ".insn 4, {st_q0}",      // esp.vst.128.ip q0, a0, 16
+            ".insn 4, {st_q1}",      // esp.vst.128.ip q1, a0, 16
+            ".insn 4, {st_q2}",      // esp.vst.128.ip q2, a0, 16
+            ".insn 4, {st_q3}",      // esp.vst.128.ip q3, a0, 16
+            "bltu a0, {end64}, 1b",
+            // Up to three 16-byte steps.
+            "2:",
+            "bgeu a0, {end}, 3f",
+            ".insn 4, {ld_q0}",      // esp.vld.128.ip q0, a1, 16
+            ".insn 4, {st_q0}",      // esp.vst.128.ip q0, a0, 16
+            "j 2b",
+            "3:",
+            ld_q0 = const vld_128_ip(Q::Q0, Ar::A1, 16),
+            ld_q1 = const vld_128_ip(Q::Q1, Ar::A1, 16),
+            ld_q2 = const vld_128_ip(Q::Q2, Ar::A1, 16),
+            ld_q3 = const vld_128_ip(Q::Q3, Ar::A1, 16),
+            st_q0 = const vst_128_ip(Q::Q0, Ar::A0, 16),
+            st_q1 = const vst_128_ip(Q::Q1, Ar::A0, 16),
+            st_q2 = const vst_128_ip(Q::Q2, Ar::A0, 16),
+            st_q3 = const vst_128_ip(Q::Q3, Ar::A0, 16),
+            end64 = in(reg) d + (len & !63),
+            end = in(reg) d + len,
+            inout("a0") d => _,
+            inout("a1") src => _,
+            options(nostack),
+        );
+    }
+}
+
+/// Copies `len` bytes from a misaligned `src` to a 16-byte-aligned `dst`.
+///
+/// With `k = src % 16` (1..=15) and `W0, W1, ...` the aligned words from `src - k`, the
+/// 16 bytes at `src + 16 i` are `{W(i+1), Wi}` shifted right by `k` bytes (`esp.src.q`
+/// with `SAR_BYTE = k`). The loop keeps the last word loaded and loads each word once:
+/// `n = len / 16` vectors read `n + 1` words, two vectors per pass with `q0` and `q1`
+/// swapping roles, then one more vector if `n` is odd. Word `Wn` starts at
+/// `src + 16 n - k`, before the last byte copied, so every word read holds bytes of
+/// `src[..len]`; with `len == 0` nothing is read.
+///
+/// Registers: `a0` the destination and `a1` the aligned source word (PIE address
+/// operands, post-incremented), `a2` the shift (`esp.movx.w.sar.bytes` operand). The end
+/// addresses are only used by branches.
+///
+/// `asm!` options: `nostack`. It writes memory, so neither `readonly` nor `nomem`.
+///
+/// # Safety
+///
+/// `dst` is 16-byte aligned, `src` is not, `dst[..len]` is writable, `src[..len]`
+/// readable, the two do not overlap, `len` is a multiple of 16, and PIE is enabled on this
+/// core with no other user.
+#[inline(never)]
+unsafe fn copy_shifted(dst: *mut u8, src: *const u8, len: usize) {
+    let d = dst as usize;
+    let s = src as usize;
+    // SAFETY: the caller's contract; the loads read the aligned words that hold
+    // `[src, src + len)` (see above), stores write `[dst, dst + len)`.
+    unsafe {
+        asm!(
+            "bgeu a0, {end}, 4f",
+            ".insn 4, {sar}",        // esp.movx.w.sar.bytes a2
+            ".insn 4, {ld_q0}",      // esp.vld.128.ip q0, a1, 16   (W0)
+            "bgeu a0, {end32}, 2f",
+            // q0 holds Wi.
+            "1:",
+            ".insn 4, {ld_q1}",      // esp.vld.128.ip q1, a1, 16   (W(i+1))
+            ".insn 4, {src_q0}",     // esp.src.q q0, q0, q1
+            ".insn 4, {st_q0}",      // esp.vst.128.ip q0, a0, 16
+            ".insn 4, {ld_q0}",      // esp.vld.128.ip q0, a1, 16   (W(i+2))
+            ".insn 4, {src_q1}",     // esp.src.q q1, q1, q0
+            ".insn 4, {st_q1}",      // esp.vst.128.ip q1, a0, 16
+            "bltu a0, {end32}, 1b",
+            // One vector left when n is odd.
+            "2:",
+            "bgeu a0, {end}, 4f",
+            ".insn 4, {ld_q1}",      // esp.vld.128.ip q1, a1, 16
+            ".insn 4, {src_q0}",     // esp.src.q q0, q0, q1
+            ".insn 4, {st_q0}",      // esp.vst.128.ip q0, a0, 16
+            "4:",
+            sar = const movx_w_sar_bytes(Ar::A2),
+            ld_q0 = const vld_128_ip(Q::Q0, Ar::A1, 16),
+            ld_q1 = const vld_128_ip(Q::Q1, Ar::A1, 16),
+            src_q0 = const src_q(Q::Q0, Q::Q0, Q::Q1),
+            src_q1 = const src_q(Q::Q1, Q::Q1, Q::Q0),
+            st_q0 = const vst_128_ip(Q::Q0, Ar::A0, 16),
+            st_q1 = const vst_128_ip(Q::Q1, Ar::A0, 16),
+            end32 = in(reg) d + (len & !31),
+            end = in(reg) d + len,
+            inout("a0") d => _,
+            inout("a1") s & !15 => _,
+            in("a2") s & 15,
+            options(nostack),
+        );
+    }
 }

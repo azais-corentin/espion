@@ -17,8 +17,10 @@ loads and stores with post-increment, and horizontal reductions such as "largest
 let pie = esp32p4_pie::Pie::enable()?;          // this core, this thread
 assert_eq!(pie.self_test(1, 10_000), 0);       // optional checks at boot
 assert_eq!(pie.self_test10(1, 10_000), 0);
+assert_eq!(pie.self_test_copy(1, 10_000), 0);
 let o = pie.first_bright(row, threshold);       // o == row.len(): no byte >= threshold
 let o = pie.first_bright10(raw10_row, t >> 2);  // the same over RAW10 pixels
+pie.copy(&mut datagram[HEADER..], chunk);       // as copy_from_slice, any alignment
 ```
 
 Each kernel has a scalar reference with the same contract that builds and runs on any
@@ -28,11 +30,15 @@ target, and a self-test that compares the kernel with its reference on the chip:
 |---|---|---|---|
 | `first_bright(bytes, t)` | `o <= len`; no byte of `bytes[..o]` is `>= t`; `o == len` or a byte of `bytes[o..min(o + 64, len)]` is | `first_bright_scalar` (64-byte chunks) | `self_test` |
 | `first_bright10(bytes, t)` | RAW10 from a group boundary (bytes 0..=3 of each 5-byte group are pixels, byte 4 is not); `o` a multiple of 5 or `len`; no pixel byte of `bytes[..o]` is `>= t`; `o == len` or a pixel byte of `bytes[o..min(o + 80, len)]` is | `first_bright10_scalar` (80-byte chunks) | `self_test10` |
+| `copy(dst, src)` | `dst` equals `src` byte for byte; panics if the lengths differ | `copy_from_slice` | `self_test_copy` |
 
-All kernels take any alignment and length and never read outside their slices. A
-self-test returns the number of failed cases (0 = pass); its rows sit between guard bytes
-chosen so that a read or write outside the slice changes the result, at every start
-alignment 0..16 in turn.
+All kernels take any alignment and length and never write outside their slices. They
+read nothing outside them either, with one exception: `copy` with a misaligned source
+reads the whole aligned 16-byte words that hold the first and the last source byte (see
+below). A self-test returns the number of failed cases (0 = pass); its slices sit between
+guard bytes chosen so that a read or write outside the slice changes the result, at every
+start alignment 0..16 in turn (`self_test_copy`: every pair of source and destination
+alignments).
 
 ## Rule for using PIE
 
@@ -68,11 +74,12 @@ encoder with words from `riscv32-esp-elf-as -march=rv32imafcb_zicsr_zifencei_xes
 
 ## Kernels
 
-| kernel | what | cycles per pixel, 1280-byte rows |
+| kernel | what | measured on the board |
 |---|---|---|
-| `first_bright` | first 64-byte block holding a byte `>= threshold` | 0.29 (L1), 0.41 (cold internal RAM) |
-| scalar dark skip (detector today) | same, 32-bit words | 1.27 (L1), 1.35 (cold internal RAM) |
-| `first_bright10` | first 80-byte RAW10 pass (64 pixels) holding a pixel byte `>= threshold` | not measured |
+| `first_bright` | first 64-byte block holding a byte `>= threshold` | 0.29 cycles/pixel (L1), 0.41 (cold internal RAM), 1280-byte rows |
+| scalar dark skip (detector today) | same, 32-bit words | 1.27 cycles/pixel (L1), 1.35 (cold internal RAM) |
+| `first_bright10` | first 80-byte RAW10 pass (64 pixels) holding a pixel byte `>= threshold` | not run yet |
+| `copy` | `copy_from_slice` at any alignment | not run yet (the spike's aligned loop: 0.49 cycles/byte; ROM `memcpy` 1.71 aligned, 9.06 when source and destination differ mod 4) |
 
 The `first_bright` figures were measured in the spike on 2026-11-11 (Waveshare
 ESP32-P4-ETH, rev 3.2, 400 MHz) with the software-pipelined 64-byte loop that
@@ -90,3 +97,18 @@ because every pass starts on a group boundary: the first 0 to 15 groups (up to 7
 are scanned one group at a time until the data reaches a 16-byte boundary, and the tail
 of fewer than 80 bytes is scanned the same way. A 1600-byte row (1280 pixels) that
 starts on a 16-byte boundary is 20 vector passes with no scalar part.
+
+`copy` has not run on the board yet. It copies up to 15 bytes one at a time until the
+destination reaches a 16-byte boundary, so every vector store is aligned, then 16 bytes
+per load and store and the last 0 to 15 bytes one at a time. With the source aligned like
+the destination the loop is the spike's (four loads and four stores per 64 bytes, 0.49
+cycles per byte measured for 1436 bytes in L1). Otherwise it loads the aligned words that
+hold the source, each once, and joins each two neighbours with `esp.src.q`, the byte
+shift set by `esp.movx.w.sar.bytes`. Every PIE load and store is at an aligned address,
+so the result does not depend on the `CFG` misaligned-access modes (`CFG` reads 1 at
+reset on this silicon, against the documented 0); esp-dl's `dl_esp32p4_memcpy.S` instead
+loads with `esp.ld.128.usar.ip` at the misaligned address, whose data depends on that
+mode. The first and the last word read may extend up to 15 bytes past the source slice;
+each holds at least one source byte and an aligned 16-byte word never crosses a cache
+line or a page, so the read cannot fault, and the bytes outside the slice are shifted out
+and never stored.
