@@ -44,8 +44,10 @@
 //!
 //! These functions write the autoload and preload registers only, not the cache-sync
 //! registers the ROM maintenance functions program, so they do not take the crate's lock
-//! \[INFERENCE: the PAC lists them as separate registers; running prefetch on one core while
-//! the other core runs a cache-sync operation was not tested]. Each register set exists once
+//! \[INFERENCE: the PAC lists them as separate registers. Prefetch on one core while the
+//! other core runs cache-sync operations ran 2 minutes without a hang or trap (`poc-p4-eth`,
+//! core 1's per-strip autoload beside core 0's contention loop, crate README "Lock
+//! statistics"); the data on that path was not checked]. Each register set exists once
 //! for the whole chip (the L1 data cache is shared by both cores), so one context, on one
 //! core, owns the autoload set-up and the manual preloads; these functions do not guard
 //! against a second owner. Open point: the detector's per-strip autoload (`poc-p4-eth`) and
