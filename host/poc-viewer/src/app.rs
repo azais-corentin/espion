@@ -1,14 +1,14 @@
-//! The window: controls and status in a side panel, the image in the rest.
+//! The window: the status bar on top, the settings rail on the left, the picture, and the
+//! pipeline timing under it; the counters in a drawer on the right.
 
 use std::{
     net::SocketAddr,
-    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow};
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Margin, Sense, Stroke, Ui, vec2};
 use espion_proto::cam::{
     CameraSettings, Encoding, Format, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, Op, Origin, Readout,
     TestPattern,
@@ -19,10 +19,24 @@ use poc_viewer::{
     fake::{self, FakeCamera},
     net::{Client, Command, RETRY_INTERVAL, Stats},
     stream::{AUTO_QUALITY_CEILING, StreamEdit},
-    timing::{HostFrame, Sensor, Snapshot, Timing},
+    timing::{HostFrame, Sensor, Stage, Timing},
 };
 
-use crate::display::{self, ImageCallback, Shown, UploadTiming};
+use crate::{
+    display::{self, Shown, UploadTiming},
+    selftest::{Probe, SelfTest, SelfTestConfig},
+    ui::{
+        diagram::Diagram,
+        hz, on_off,
+        picture::{self, View},
+        theme::{self, BODY, FAULT, GAP, MUTED, NEUTRAL, PAD, TEXT, hue},
+        widgets::{
+            self, Choice, History, Scale, Tone, button, caption, chip, figure, notice, number, row,
+            section, segmented, slider, stat, stat_toned, switch,
+        },
+        window_picker,
+    },
+};
 
 /// What `main` hands the app.
 pub struct Setup {
@@ -37,22 +51,14 @@ pub struct Setup {
     pub display_gain: f32,
 }
 
-/// `--selftest`.
-pub struct SelfTestConfig {
-    pub secs: f64,
-    pub screenshot: PathBuf,
-    pub vsync: bool,
-}
+/// Width of the settings rail, points.
+const RAIL_WIDTH: f32 = 340.0;
+/// Width of the counters drawer, points.
+const DRAWER_WIDTH: f32 = 330.0;
+/// Height of the staircase when the timing strip is expanded, points.
+const STAIRCASE_HEIGHT: f32 = 300.0;
 
-/// Width of the side panel, points: one column of settings and status; the picture takes the
-/// rest of the window.
-const PANEL_WIDTH: f32 = 390.0;
-
-const RED: Color32 = Color32::from_rgb(235, 70, 60);
-const GREEN: Color32 = Color32::from_rgb(90, 200, 90);
-const ORANGE: Color32 = Color32::from_rgb(240, 160, 40);
-
-/// Rates over the last second.
+/// Rates over the last second, and their last minute.
 struct Meter {
     at: Instant,
     whole: u64,
@@ -73,6 +79,9 @@ struct Meter {
     cpu_sum: f64,
     cpu_n: u32,
     cpu_ms: f64,
+    rx_history: History,
+    shown_history: History,
+    mbps_history: History,
 }
 
 impl Meter {
@@ -95,6 +104,9 @@ impl Meter {
             cpu_sum: 0.0,
             cpu_n: 0,
             cpu_ms: 0.0,
+            rx_history: History::default(),
+            shown_history: History::default(),
+            mbps_history: History::default(),
         }
     }
 
@@ -114,7 +126,7 @@ impl Meter {
         };
         self.shown_fps = (presented - self.presented) as f64 / dt;
         let decoded = d.decoded + d.failures - self.decoded;
-        self.decoded_fps = (d.decoded + d.failures - self.decoded) as f64 / dt;
+        self.decoded_fps = decoded as f64 / dt;
         self.decode_ms = if decoded > 0 {
             (d.decode_total - self.decode_total).as_secs_f64() * 1e3 / decoded as f64
         } else {
@@ -125,6 +137,9 @@ impl Meter {
         } else {
             0.0
         };
+        self.rx_history.push(self.rx_fps as f32);
+        self.shown_history.push(self.shown_fps as f32);
+        self.mbps_history.push(self.mbps as f32);
         (self.at, self.whole, self.bytes, self.presented) =
             (now, s.frames_whole, s.bytes, presented);
         (self.jpeg_whole, self.jpeg_bytes) = (s.jpeg_whole, s.jpeg_bytes);
@@ -133,23 +148,12 @@ impl Meter {
     }
 }
 
-/// Measurement base of the self-test.
-struct Base {
-    at: Instant,
-    stats: Stats,
-    decode: DecodeStats,
-    presented: u64,
-    passes: u64,
-    timing: UploadTiming,
-}
-
-struct SelfTest {
-    cfg: SelfTestConfig,
-    start: Instant,
-    warmup: Duration,
-    base: Option<Base>,
-    requested: Option<Instant>,
-    saved: Arc<Mutex<Option<String>>>,
+/// The view choices of the display section.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ViewChoice {
+    Fit,
+    Pixels,
+    Zoomed,
 }
 
 pub struct App {
@@ -169,7 +173,7 @@ pub struct App {
     lost: bool,
     /// The board's uptime in its last state, µs (it goes back when the board restarts).
     uptime_us: u64,
-    fit: bool,
+    view: View,
     display_gain: f32,
     shown: Option<Arc<Shown>>,
     serial: u64,
@@ -186,6 +190,12 @@ pub struct App {
     drawing: Option<(u64, HostFrame)>,
     /// The board's generation the pipeline's samples are of.
     generation: u32,
+    diagram: Diagram,
+    latency_history: History,
+    /// The timing strip shows the staircase.
+    expanded: bool,
+    /// The counters drawer is open.
+    drawer: bool,
 }
 
 impl App {
@@ -195,6 +205,7 @@ impl App {
             .as_ref()
             .ok_or_else(|| anyhow!("the wgpu renderer is not available"))?;
         display::init(rs);
+        theme::install(&cc.egui_ctx);
         let info = rs.adapter.get_info();
         println!(
             "wgpu adapter {} ({:?}, {:?}), surface {:?}",
@@ -238,7 +249,11 @@ impl App {
             adopt,
             lost: false,
             uptime_us: 0,
-            fit: !setup.one_to_one,
+            view: if setup.one_to_one {
+                View::Pixels
+            } else {
+                View::Fit
+            },
             display_gain: setup.display_gain,
             shown: None,
             serial: 0,
@@ -247,17 +262,14 @@ impl App {
             passes: 0,
             cpu: Vec::new(),
             meter: Meter::new(),
-            selftest: setup.selftest.map(|cfg| SelfTest {
-                warmup: Duration::from_secs_f64((cfg.secs / 3.0).min(2.0)),
-                cfg,
-                start: now,
-                base: None,
-                requested: None,
-                saved: Arc::default(),
-            }),
+            selftest: setup.selftest.map(|cfg| SelfTest::new(cfg, now)),
             pipeline: Timing::new(now),
             drawing: None,
             generation: 0,
+            diagram: Diagram::default(),
+            latency_history: History::default(),
+            expanded: false,
+            drawer: false,
         })
     }
 
@@ -327,8 +339,8 @@ impl App {
     }
 
     /// Feeds the pipeline timing the newest frame the board timed and makes a new snapshot
-    /// when one is due.
-    fn time_pipeline(&mut self, now: Instant, s: &Stats) {
+    /// when one is due; moves the diagram towards it.
+    fn time_pipeline(&mut self, ctx: &egui::Context, now: Instant, s: &Stats) {
         if let Some(st) = s.state
             && st.generation != self.generation
         {
@@ -338,208 +350,194 @@ impl App {
         if let Some(b) = s.board_frame {
             self.pipeline.board(now, b);
         }
-        self.pipeline.update(now, s.state.as_ref().map(Sensor::of));
-    }
-
-    /// One column: what is happening (link, status, the board's last refusal), the settings
-    /// (mode, controls, stream, display), then the board's detailed state, collapsed.
-    fn panel(&mut self, ui: &mut egui::Ui, s: &Stats, d: &DecodeStats, now: Instant) {
-        self.link(ui, s, now);
-        self.status(ui, s, d);
-        answer_line(ui, s);
-        ui.separator();
-        self.mode_editor(ui, s);
-        ui.separator();
-        self.controls(ui, s);
-        ui.separator();
-        self.stream_editor(ui, s);
-        ui.separator();
-        self.display_controls(ui);
-        ui.separator();
-        egui::CollapsingHeader::new("Board: as applied")
-            .default_open(false)
-            .show(ui, |ui| self.board(ui, s));
-    }
-
-    fn link(&self, ui: &mut egui::Ui, s: &Stats, now: Instant) {
-        if s.connected(now) {
-            ui.colored_label(GREEN, RichText::new("Connected").strong().size(18.0));
-        } else {
-            ui.colored_label(RED, RichText::new("DISCONNECTED").strong().size(18.0));
-            let since = s.last_answer.map_or("never answered".to_owned(), |t| {
-                format!("no answer for {:.1} s", (now - t).as_secs_f64())
-            });
-            ui.colored_label(
-                RED,
-                format!("{since}; retrying every {} ms", RETRY_INTERVAL.as_millis()),
-            );
+        if self.pipeline.update(now, s.state.as_ref().map(Sensor::of))
+            && let Some(snap) = self.pipeline.snapshot()
+        {
+            self.latency_history.push(snap.total_us / 1e3);
         }
-        ui.label(format!("camera {}", self.client.camera()));
-        ui.label(format!(
-            "local {}, receive buffer {} KiB",
-            self.client.local_addr(),
-            self.client.rcvbuf() / 1024
-        ));
+        if self.diagram.update(self.pipeline.snapshot(), now) {
+            ctx.request_repaint();
+        }
     }
 
-    fn status(&self, ui: &mut egui::Ui, s: &Stats, d: &DecodeStats) {
-        let m = &self.meter;
-        let board = s.state.map(|st| st.counters);
-        let jpeg = s.state.filter(|st| st.stream.encoding == Encoding::Jpeg);
-        let ms = |t: Duration| t.as_secs_f64() * 1e3;
-        egui::Grid::new("status").num_columns(2).show(ui, |ui| {
-            let mut row = |k: &str, v: String| row(ui, k, v);
-            row("Received whole", format!("{:.1} fps", m.rx_fps));
-            row("Decoded", format!("{:.1} fps", m.decoded_fps));
-            row("Presented", format!("{:.1} fps", m.shown_fps));
-            row("Throughput", format!("{:.1} Mbit/s", m.mbps));
-            row(
-                "Compressed frame, last / mean",
-                jpeg.filter(|_| m.mean_len > 0.0).map_or("-".into(), |_| {
-                    format!("{} B / {:.0} B", s.last_frame_len, m.mean_len)
-                }),
+    // ── Status bar ──────────────────────────────────────────────────────────────────────────
+
+    fn status_bar(&mut self, ui: &mut Ui, s: &Stats, now: Instant) {
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 22.0;
+            link_pill(ui, s, now, &self.client);
+            let m = &self.meter;
+            let stage = |st| hue(st);
+            figure(
+                ui,
+                "Received",
+                &format!("{:.1}", m.rx_fps),
+                "fps",
+                &m.rx_history,
+                stage(Stage::Send),
             );
-            row(
-                "Compression ratio",
-                jpeg.filter(|_| m.mean_len > 0.0).map_or("-".into(), |st| {
-                    let raw = st.camera.width as f64 * st.camera.height as f64;
-                    format!("{:.1} : 1", raw / m.mean_len)
-                }),
+            figure(
+                ui,
+                "Presented",
+                &format!("{:.1}", m.shown_fps),
+                "fps",
+                &m.shown_history,
+                stage(Stage::Draw),
             );
-            row(
-                "Decode time, last / mean",
-                format!("{:.2} ms / {:.2} ms", ms(d.decode_last), m.decode_ms),
+            figure(
+                ui,
+                "Link",
+                &format!("{:.1}", m.mbps),
+                "Mbit/s",
+                &m.mbps_history,
+                stage(Stage::Send),
             );
-            row("Decode failures", d.failures.to_string());
-            row(
-                "Board JPEG quality in use",
-                s.state.map_or("-".into(), |st| {
-                    format!(
-                        "{} (set {}, automatic {})",
-                        st.encoder.quality,
-                        st.stream.jpeg_quality,
-                        on_off(st.stream.auto_quality)
+            let latency = self
+                .diagram
+                .snapshot()
+                .map_or("-".to_owned(), |snap| format!("{:.1}", snap.total_us / 1e3));
+            figure(
+                ui,
+                "Latency",
+                &latency,
+                "ms",
+                &self.latency_history,
+                NEUTRAL,
+            );
+            widgets::from_right(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = GAP;
+                if chip(ui, "Counters", self.drawer).clicked() {
+                    self.drawer = !self.drawer;
+                }
+                let faults = faults(s, &self.decoder.stats());
+                if faults > 0 {
+                    ui.label(
+                        egui::RichText::new(format!("{faults} faults"))
+                            .font(theme::mono(BODY))
+                            .color(FAULT),
                     )
-                }),
-            );
-            row(
-                "Board encode time",
-                s.state.map_or("-".into(), |st| {
-                    format!("{:.2} ms", st.encoder.encode_us as f64 / 1e3)
-                }),
-            );
-            row(
-                "Board encoder errors",
-                s.state
-                    .map_or("-".into(), |st| st.encoder.errors.to_string()),
-            );
-            row(
-                "Skipped by board encoder (busy)",
-                s.state
-                    .map_or("-".into(), |st| st.encoder.frames_skipped.to_string()),
-            );
-            row("Dropped, chunk missing", s.frames_incomplete.to_string());
-            row("Cut by a mode change", s.frames_cut.to_string());
-            row("Replaced before shown", s.frames_replaced.to_string());
-            row(
-                "Skipped by board (link busy)",
-                board.map_or("-".into(), |c| c.frames_skipped.to_string()),
-            );
-            row(
-                "Capture errors",
-                board.map_or("-".into(), |c| c.capture_errors.to_string()),
-            );
-            row(
-                "Request round trip",
-                s.rtt
-                    .map_or("-".into(), |d| format!("{:.2} ms", d.as_secs_f64() * 1e3)),
-            );
-            row(
-                "Frame",
-                self.shown.as_ref().map_or("-".into(), |sh| {
-                    let f = &sh.frame;
-                    match sh.jpeg_len {
-                        Some(n) => format!("{}x{} JPEG, {n} B", f.width, f.height),
-                        None => format!(
-                            "{}x{} {:?}, {} B",
-                            f.width,
-                            f.height,
-                            f.encoding,
-                            f.data.len()
-                        ),
-                    }
-                }),
-            );
-            row(
-                "Number, generation",
-                self.shown.as_ref().map_or("-".into(), |sh| {
-                    format!("#{}, {}", sh.frame.number, sh.frame.generation)
-                }),
-            );
-            row("UI frame time", format!("{:.2} ms", m.cpu_ms));
-        });
-        if let Some(e) = &d.last_failure {
-            ui.colored_label(RED, format!("Last decode failure: {e}"));
-        }
-    }
-
-    fn mode_editor(&mut self, ui: &mut egui::Ui, s: &Stats) {
-        ui.heading("Sensor mode");
-        let e = &mut self.edit;
-        ui.horizontal(|ui| {
-            ui.label("Format");
-            ui.selectable_value(&mut e.format, Format::Raw8, "sensor RAW8");
-            ui.selectable_value(&mut e.format, Format::Raw10, "sensor RAW10");
-        });
-        ui.horizontal(|ui| {
-            ui.label("Readout");
-            ui.selectable_value(&mut e.readout, Readout::Crop, "crop");
-            ui.selectable_value(&mut e.readout, Readout::Binned, "2x2 binned");
-        });
-        ui.horizontal(|ui| {
-            labelled(
-                ui,
-                "Width",
-                egui::DragValue::new(&mut e.width).range(0..=2048),
-            );
-            labelled(
-                ui,
-                "Height",
-                egui::DragValue::new(&mut e.height).range(0..=2048),
-            );
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.centred, "centred origin");
-            ui.add_enabled_ui(!self.centred, |ui| {
-                labelled(ui, "Origin x", egui::DragValue::new(&mut self.origin.x));
-                labelled(ui, "Origin y", egui::DragValue::new(&mut self.origin.y));
+                    .on_hover_text(
+                        "Frames dropped for a missing chunk, capture and encoder errors, \
+                         decode failures since start. The counters drawer has each.",
+                    );
+                }
+                if s.pending {
+                    ui.label(
+                        egui::RichText::new("Waiting for an answer")
+                            .font(theme::sans(BODY))
+                            .color(MUTED),
+                    );
+                }
             });
         });
-        let mut rate = e.rate_mhz as f64 / 1000.0;
-        let mut tol = e.tolerance_mhz as f64 / 1000.0;
-        ui.horizontal_wrapped(|ui| {
-            labelled(
-                ui,
-                "Rate, Hz",
-                egui::DragValue::new(&mut rate)
-                    .range(0.0..=2000.0)
-                    .speed(0.1)
-                    .fixed_decimals(3),
-            );
-            labelled(
-                ui,
-                "Tolerance, Hz",
-                egui::DragValue::new(&mut tol)
-                    .range(0.0..=1000.0)
-                    .speed(0.01)
-                    .fixed_decimals(3),
-            );
-        });
-        e.rate_mhz = (rate * 1000.0).round() as u32;
-        e.tolerance_mhz = (tol * 1000.0).round() as u32;
+    }
 
-        // The driver's verdict on the edited mode, before anything is sent, with the encoding
-        // the stream will have in it.
+    // ── Rail ────────────────────────────────────────────────────────────────────────────────
+
+    fn rail(&mut self, ui: &mut Ui, s: &Stats, d: &DecodeStats) {
+        if let Some(r) = &s.refusal {
+            let what = match r.op {
+                Op::SetCamera(_) => "camera settings",
+                Op::SetStream(_) => "stream settings",
+                Op::GetState | Op::Poll => "request",
+            };
+            notice(
+                ui,
+                Tone::Fault,
+                &format!("The board refused the {what}: {}", r.error),
+            );
+            ui.add_space(GAP);
+        }
+        if let Some(e) = &d.last_failure {
+            notice(ui, Tone::Fault, &format!("Last decode failure: {e}"));
+            ui.add_space(GAP);
+        }
+        self.mode_section(ui, s);
+        self.controls_section(ui, s);
+        self.stream_section(ui, s);
+        self.display_section(ui);
+    }
+
+    fn mode_section(&mut self, ui: &mut Ui, s: &Stats) {
+        let h = hue(Stage::Readout);
+        section(ui, "Sensor mode", h, |ui| {
+            let e = &mut self.edit;
+            segmented(
+                ui,
+                "Sensor format",
+                h,
+                &mut e.format,
+                &[
+                    Choice::new(Format::Raw8, "RAW8"),
+                    Choice::new(Format::Raw10, "RAW10"),
+                ],
+                2,
+            );
+            if segmented(
+                ui,
+                "Readout",
+                h,
+                &mut e.readout,
+                &[
+                    Choice::new(Readout::Crop, "Crop"),
+                    Choice::new(Readout::Binned, "2x2 binned"),
+                ],
+                2,
+            ) {
+                // The window keeps its place on the sensor: binning halves the output size,
+                // cropping doubles it (on the format's grid, within the readout's largest).
+                let f = camera::format(e.format);
+                let (wm, hm) = (
+                    u16::from(ov9281::limits::width_multiple(f)),
+                    u16::from(ov9281::limits::height_multiple(f)),
+                );
+                let (max_w, max_h) = ov9281::limits::max_size(camera::readout(e.readout));
+                let fit = |v: u32, m: u16, max: u16| (v.min(u32::from(max)) as u16 / m * m).max(m);
+                let (w, h2) = match e.readout {
+                    Readout::Binned => (u32::from(e.width) / 2, u32::from(e.height) / 2),
+                    Readout::Crop => (u32::from(e.width) * 2, u32::from(e.height) * 2),
+                };
+                (e.width, e.height) = (fit(w, wm, max_w), fit(h2, hm, max_h));
+            }
+            window_picker::show(ui, h, &mut self.edit, &mut self.centred, &mut self.origin);
+            let e = &mut self.edit;
+            row(ui, "Size", |ui| {
+                let w = (ui.available_width() - 2.0 * GAP - 10.0) / 2.0;
+                number(ui, "Width", &mut e.width, 0..=2048, 1.0, 0, w);
+                ui.label(egui::RichText::new("x").color(MUTED));
+                number(ui, "Height", &mut e.height, 0..=2048, 1.0, 0, w);
+            });
+            switch(ui, "Centred origin", h, &mut self.centred);
+            if !self.centred {
+                let o = &mut self.origin;
+                row(ui, "Origin", |ui| {
+                    let w = (ui.available_width() - 2.0 * GAP - 10.0) / 2.0;
+                    number(ui, "Origin x", &mut o.x, 0..=1280, 1.0, 0, w);
+                    ui.label(egui::RichText::new(",").color(MUTED));
+                    number(ui, "Origin y", &mut o.y, 0..=800, 1.0, 0, w);
+                });
+            }
+            let e = &mut self.edit;
+            let mut rate = f64::from(e.rate_mhz) / 1000.0;
+            let mut tol = f64::from(e.tolerance_mhz) / 1000.0;
+            row(ui, "Rate, Hz", |ui| {
+                let w = ui.available_width();
+                number(ui, "Rate, Hz", &mut rate, 0.0..=2000.0, 0.1, 3, w);
+            });
+            row(ui, "Tolerance, Hz", |ui| {
+                let w = ui.available_width();
+                number(ui, "Tolerance, Hz", &mut tol, 0.0..=1000.0, 0.01, 3, w);
+            });
+            e.rate_mhz = (rate * 1000.0).round() as u32;
+            e.tolerance_mhz = (tol * 1000.0).round() as u32;
+            self.mode_verdict(ui, s);
+        });
+    }
+
+    /// The driver's verdict on the edited mode, before anything is sent, with the encoding the
+    /// stream will have in it; and the button that sends it.
+    fn mode_verdict(&mut self, ui: &mut Ui, s: &Stats) {
+        let h = hue(Stage::Readout);
         let req = self.request();
         let stream = self.stream_for(&req);
         let local = camera::build_mode(&req).and_then(|m| {
@@ -553,9 +551,10 @@ impl App {
             .encoding
             .check(req.format, req.width, req.height)
         {
-            ui.colored_label(
-                ORANGE,
-                format!(
+            notice(
+                ui,
+                Tone::Caution,
+                &format!(
                     "Applying moves the stream from {:?} to RAW8: {e}",
                     self.stream.encoding
                 ),
@@ -564,49 +563,61 @@ impl App {
         match &local {
             Ok(m) => {
                 let info = camera::mode_info(m);
-                clock_line(ui, info.sensor_clock_mhz, info.exceeds_datasheet_clock);
-                ui.label(format!(
-                    "HTS {}, VTS {}, PSV {}: {} ({:+} mHz)",
-                    info.hts,
-                    info.vts,
-                    on_off(info.psv),
-                    hz(info.frame_rate_mhz),
-                    info.rate_error_mhz
-                ));
-                ui.label(format!(
-                    "Longest exposure {} lines ({:.2} ms)",
-                    info.max_exposure_lines,
-                    info.max_exposure_lines as f64 * info.line_ns as f64 / 1e6
-                ));
+                if info.exceeds_datasheet_clock {
+                    notice(
+                        ui,
+                        Tone::Caution,
+                        &format!(
+                            "Sensor clock {} MHz: above the datasheet's 80 MHz",
+                            info.sensor_clock_mhz
+                        ),
+                    );
+                }
+                caption(
+                    ui,
+                    &format!(
+                        "{} ({:+} mHz) at {} MHz: HTS {}, VTS {}, PSV {}. Longest exposure {} \
+                         lines ({:.2} ms).",
+                        hz(info.frame_rate_mhz),
+                        info.rate_error_mhz,
+                        info.sensor_clock_mhz,
+                        info.hts,
+                        info.vts,
+                        on_off(info.psv),
+                        info.max_exposure_lines,
+                        f64::from(info.max_exposure_lines) * f64::from(info.line_ns) / 1e6
+                    ),
+                );
             }
-            Err(err) => {
-                ui.colored_label(RED, format!("Refused locally: {err}"));
-            }
+            Err(err) => notice(ui, Tone::Fault, &format!("Refused here: {err}")),
         }
         let (max_w, max_h) = ov9281::limits::max_size(camera::readout(req.readout));
+        let mut limits = format!(
+            "Sizes 128..={max_w} x 2..={max_h}, width a multiple of {}, height of {}.",
+            ov9281::limits::width_multiple(camera::format(req.format)),
+            ov9281::limits::height_multiple(camera::format(req.format))
+        );
         if (128..=max_w).contains(&req.width) && (2..=max_h).contains(&req.height) {
             let (f80, f96) = camera::fastest_rates(req.format, req.width, req.height, req.readout);
-            ui.label(format!(
-                "Fastest {} at 80 MHz, {} at 96 MHz; slowest {}",
+            limits.push_str(&format!(
+                " Fastest {} at 80 MHz, {} at 96 MHz; slowest {}.",
                 hz(f80),
                 hz(f96),
                 hz(camera::slowest_rate())
             ));
         }
-        ui.label(format!(
-            "Sizes 128..={max_w} x 2..={max_h}; width multiple of {}, height of {}",
-            ov9281::limits::width_multiple(camera::format(req.format)),
-            ov9281::limits::height_multiple(camera::format(req.format))
-        ));
+        caption(ui, &limits);
         let applied = s.state.map(|st| st.camera);
-        if applied.is_some_and(|a| camera::build_mode(&a).ok() != local.ok()) {
-            ui.label("Edited: differs from the board's mode");
+        let differs = applied.is_some_and(|a| camera::build_mode(&a).ok() != local.ok());
+        if differs {
+            caption(ui, "Edited: differs from the board's mode.");
         }
-        if ui
-            .add_enabled(local.is_ok(), egui::Button::new("Apply mode"))
-            .clicked()
-            && let Ok(m) = local
-        {
+        let clicked = ui
+            .add_enabled_ui(local.is_ok(), |ui| {
+                button(ui, "Apply mode", differs.then_some(h)).clicked()
+            })
+            .inner;
+        if clicked && let Ok(m) = local {
             self.edit.exposure_lines = self.edit.exposure_lines.clamp(1, m.max_exposure_lines());
             if stream != self.stream {
                 self.stream = stream;
@@ -616,8 +627,8 @@ impl App {
         }
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, s: &Stats) {
-        ui.heading("Controls (applied at once)");
+    fn controls_section(&mut self, ui: &mut Ui, s: &Stats) {
+        let h = hue(Stage::Exposure);
         let max = s
             .state
             .map(|st| st.mode.max_exposure_lines)
@@ -626,351 +637,580 @@ impl App {
                     .ok()
                     .map(|m| m.max_exposure_lines())
             })
-            .unwrap_or(1);
-        let e = &mut self.edit;
-        let mut changed = false;
-        changed |= ui
-            .add(egui::Slider::new(&mut e.exposure_lines, 1..=max.max(1)).text("exposure, lines"))
-            .changed();
-        if let Some(st) = s.state {
-            ui.label(format!(
-                "Exposure time {:.3} ms",
-                e.exposure_lines as f64 * st.mode.line_ns as f64 / 1e6
-            ));
-        }
-        changed |= ui
-            .add(
-                egui::Slider::new(
-                    &mut e.gain_sixteenths,
-                    ov9281::limits::GAIN_MIN..=ov9281::limits::GAIN_MAX,
-                )
-                .text("gain, 1/16")
-                .custom_formatter(|v, _| format!("{v} ({:.2}x)", v / 16.0)),
-            )
-            .changed();
-        egui::ComboBox::from_label("test pattern")
-            .selected_text(format!("{:?}", e.test_pattern))
-            .show_ui(ui, |ui| {
-                for p in [
-                    TestPattern::Off,
-                    TestPattern::Bars,
-                    TestPattern::RollingBars,
-                    TestPattern::GreySquares,
-                    TestPattern::BlackWhiteSquares,
-                    TestPattern::Random,
-                ] {
-                    changed |= ui
-                        .selectable_value(&mut e.test_pattern, p, format!("{p:?}"))
-                        .changed();
-                }
-            });
-        if changed {
-            // The board's mode with the new controls: it changes only the controls.
-            let base = s.state.map_or(self.request(), |st| st.camera);
-            self.client.send(Command::SetCamera(CameraSettings {
-                exposure_lines: self.edit.exposure_lines,
-                gain_sixteenths: self.edit.gain_sixteenths,
-                test_pattern: self.edit.test_pattern,
-                ..base
-            }));
-        }
+            .unwrap_or(1)
+            .max(1);
+        let line_ns = s.state.map(|st| st.mode.line_ns);
+        section(ui, "Exposure and gain", h, |ui| {
+            caption(ui, "Applied at once, without restarting the stream.");
+            let e = &mut self.edit;
+            let mut changed = false;
+            let mut lines = f64::from(e.exposure_lines);
+            let shown = match line_ns {
+                Some(ns) => format!(
+                    "{:.3} ms  {} lines",
+                    lines * f64::from(ns) / 1e6,
+                    e.exposure_lines
+                ),
+                None => format!("{} lines", e.exposure_lines),
+            };
+            if slider(
+                ui,
+                "Exposure",
+                h,
+                &mut lines,
+                &Scale {
+                    range: 1.0..=f64::from(max),
+                    step: 1.0,
+                    logarithmic: max > 400,
+                },
+                &shown,
+            ) {
+                e.exposure_lines = lines as u16;
+                changed = true;
+            }
+            let mut gain = f64::from(e.gain_sixteenths);
+            let shown = format!("{:.2}x", gain / 16.0);
+            if slider(
+                ui,
+                "Gain",
+                h,
+                &mut gain,
+                &Scale {
+                    range: f64::from(ov9281::limits::GAIN_MIN)
+                        ..=f64::from(ov9281::limits::GAIN_MAX),
+                    step: 1.0,
+                    logarithmic: false,
+                },
+                &shown,
+            ) {
+                e.gain_sixteenths = gain as u8;
+                changed = true;
+            }
+            ui.label(egui::RichText::new("Test pattern").color(MUTED));
+            changed |= segmented(
+                ui,
+                "Test pattern",
+                h,
+                &mut e.test_pattern,
+                &[
+                    Choice::new(TestPattern::Off, "Off"),
+                    Choice::new(TestPattern::Bars, "Bars"),
+                    Choice::new(TestPattern::RollingBars, "Rolling"),
+                    Choice::new(TestPattern::GreySquares, "Grey sq."),
+                    Choice::new(TestPattern::BlackWhiteSquares, "B/W sq."),
+                    Choice::new(TestPattern::Random, "Random"),
+                ],
+                3,
+            );
+            if changed {
+                // The board's mode with the new controls: it changes only the controls.
+                let base = s.state.map_or(self.request(), |st| st.camera);
+                self.client.send(Command::SetCamera(CameraSettings {
+                    exposure_lines: self.edit.exposure_lines,
+                    gain_sixteenths: self.edit.gain_sixteenths,
+                    test_pattern: self.edit.test_pattern,
+                    ..base
+                }));
+            }
+        });
     }
 
-    fn stream_editor(&mut self, ui: &mut egui::Ui, s: &Stats) {
-        ui.heading("Stream (applied at once)");
+    fn stream_section(&mut self, ui: &mut Ui, s: &Stats) {
+        let h = hue(Stage::Send);
+        let enc = hue(Stage::Encode);
         // The running mode decides which encodings can be sent.
         let mode = s.state.map_or_else(|| self.request(), |st| st.camera);
-        let st = &mut self.stream;
-        let mut changed = ui.checkbox(&mut st.enabled, "send frames").changed();
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Encoding");
-            for (e, label) in [
-                (Encoding::Jpeg, "send JPEG"),
-                (Encoding::Raw8, "send RAW8"),
-                (Encoding::Raw10, "send RAW10 packed"),
-            ] {
-                let allowed = e.check(mode.format, mode.width, mode.height);
-                let r = ui.add_enabled(
-                    allowed.is_ok(),
-                    egui::Button::selectable(st.encoding == e, label),
-                );
-                let r = match allowed {
-                    Ok(()) => r,
-                    Err(err) => r.on_disabled_hover_text(err.to_string()),
-                };
-                if r.clicked() && st.encoding != e {
-                    st.encoding = e;
+        let in_use = s.state.map_or(AUTO_QUALITY_CEILING, |b| b.encoder.quality);
+        section(ui, "Stream", h, |ui| {
+            caption(ui, "Applied at once.");
+            let st = &mut self.stream;
+            let mut changed = switch(ui, "Send frames", h, &mut st.enabled).changed();
+            let refusal = |e: Encoding| e.check(mode.format, mode.width, mode.height).err();
+            changed |= segmented(
+                ui,
+                "Encoding",
+                h,
+                &mut st.encoding,
+                &[
+                    Choice {
+                        refused: refusal(Encoding::Jpeg).map(|e| e.to_string()),
+                        ..Choice::new(Encoding::Jpeg, "JPEG")
+                    },
+                    Choice {
+                        refused: refusal(Encoding::Raw8).map(|e| e.to_string()),
+                        ..Choice::new(Encoding::Raw8, "RAW8")
+                    },
+                    Choice {
+                        refused: refusal(Encoding::Raw10).map(|e| e.to_string()),
+                        ..Choice::new(Encoding::Raw10, "RAW10 packed")
+                    },
+                ],
+                3,
+            );
+            if let Some(e) = refusal(Encoding::Jpeg) {
+                caption(ui, &format!("JPEG not available: {e}"));
+            }
+            changed |= switch(ui, "Automatic JPEG quality", enc, &mut st.auto_quality)
+                .on_hover_text(format!(
+                    "The board chooses the quality, up to {AUTO_QUALITY_CEILING}: it lowers it \
+                     while frames are skipped because the link is busy and raises it back when \
+                     there is room. The quality set on the slider applies with this off."
+                ))
+                .changed();
+            let scale = Scale {
+                range: f64::from(JPEG_QUALITY_MIN)..=f64::from(JPEG_QUALITY_MAX),
+                step: 1.0,
+                logarithmic: false,
+            };
+            if st.auto_quality {
+                // The board chooses: the slider shows the quality it has in use.
+                let mut q = f64::from(in_use);
+                ui.add_enabled_ui(false, |ui| {
+                    slider(
+                        ui,
+                        "JPEG quality",
+                        enc,
+                        &mut q,
+                        &scale,
+                        &format!("{in_use} (board, up to {AUTO_QUALITY_CEILING})"),
+                    );
+                });
+            } else {
+                let mut q = f64::from(st.manual_quality);
+                let shown = st.manual_quality.to_string();
+                if slider(ui, "JPEG quality", enc, &mut q, &scale, &shown) {
+                    st.manual_quality = q as u8;
                     changed = true;
                 }
             }
+            row(ui, "Frames/s at most", |ui| {
+                let w = ui.available_width();
+                changed |= number(
+                    ui,
+                    "Frames per second at most (0: no limit)",
+                    &mut st.max_fps,
+                    0..=2000,
+                    1.0,
+                    0,
+                    w,
+                );
+            });
+            caption(ui, "0: no limit.");
+            if changed {
+                self.client.send(Command::SetStream(st.settings()));
+            }
         });
-        if let Err(e) = Encoding::Jpeg.check(mode.format, mode.width, mode.height) {
-            ui.colored_label(ORANGE, format!("JPEG not available: {e}"));
-        }
-        if st.auto_quality {
-            // The board chooses: the slider shows the quality it has in use.
-            let mut in_use = s.state.map_or(AUTO_QUALITY_CEILING, |b| b.encoder.quality);
-            ui.add_enabled(
-                false,
-                egui::Slider::new(&mut in_use, JPEG_QUALITY_MIN..=JPEG_QUALITY_MAX)
-                    .text("JPEG quality"),
-            );
-        } else {
-            changed |= ui
-                .add(
-                    egui::Slider::new(&mut st.manual_quality, JPEG_QUALITY_MIN..=JPEG_QUALITY_MAX)
-                        .text("JPEG quality"),
-                )
-                .changed();
-        }
-        changed |= ui
-            .checkbox(&mut st.auto_quality, "automatic JPEG quality")
-            .on_hover_text(format!(
-                "The board chooses the quality, up to {AUTO_QUALITY_CEILING}: it lowers it while \
-                 frames are skipped because the link is busy and raises it back when there is \
-                 room. The quality set on the slider applies with this off."
-            ))
-            .changed();
-        if st.auto_quality {
-            ui.label(format!(
-                "The board chooses the JPEG quality, up to {AUTO_QUALITY_CEILING}"
-            ));
-        }
-        changed |= labelled(
-            ui,
-            "Frames per second at most (0: no limit)",
-            egui::DragValue::new(&mut st.max_fps).range(0..=2000),
-        )
-        .changed();
-        if changed {
-            self.client.send(Command::SetStream(st.settings()));
-        }
     }
 
-    fn display_controls(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Display");
+    fn display_section(&mut self, ui: &mut Ui) {
+        let h = hue(Stage::Draw);
+        section(ui, "Display", h, |ui| {
+            let ppp = ui.ctx().pixels_per_point();
+            let mut choice = match self.view {
+                View::Fit => ViewChoice::Fit,
+                View::Pixels => ViewChoice::Pixels,
+                View::Free { scale, .. } if (scale * ppp - 1.0).abs() < 1e-3 => ViewChoice::Pixels,
+                View::Free { .. } => ViewChoice::Zoomed,
+            };
+            let zoom = match self.view {
+                View::Free { scale, .. } => format!("{:.2}x", scale * ppp),
+                _ => "Zoomed".to_owned(),
+            };
+            let before = choice;
+            segmented(
+                ui,
+                "View",
+                h,
+                &mut choice,
+                &[
+                    Choice::new(ViewChoice::Fit, "Fit"),
+                    Choice::new(ViewChoice::Pixels, "1:1"),
+                    Choice {
+                        refused: Some("Zoom with the wheel over the picture".to_owned()),
+                        ..Choice::new(ViewChoice::Zoomed, &zoom)
+                    },
+                ],
+                3,
+            );
+            if choice != before {
+                self.view = match choice {
+                    ViewChoice::Fit => View::Fit,
+                    ViewChoice::Pixels | ViewChoice::Zoomed => View::Pixels,
+                };
+            }
+            let mut gain = f64::from(self.display_gain);
+            let shown = format!("{gain:.2}x");
+            if slider(
+                ui,
+                "Display gain",
+                h,
+                &mut gain,
+                &Scale {
+                    range: 0.25..=32.0,
+                    step: 0.0,
+                    logarithmic: true,
+                },
+                &shown,
+            ) {
+                self.display_gain = gain as f32;
+            }
+            caption(
+                ui,
+                "Brightness on screen only. Over the picture: the wheel zooms, dragging moves, \
+                 a double click fits.",
+            );
+        });
+    }
+
+    // ── Timing strip ────────────────────────────────────────────────────────────────────────
+
+    fn timing_strip(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.fit, true, "fit to window");
-            ui.selectable_value(&mut self.fit, false, "1:1 pixels");
+            ui.label(
+                egui::RichText::new("Pipeline timing")
+                    .font(theme::strong(BODY))
+                    .color(TEXT),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Median of the last 2 s, once a second. Solid: measured; dashed: computed \
+                     from the mode; whisker: slowest.",
+                )
+                .font(theme::sans(theme::SMALL))
+                .color(MUTED),
+            );
+            widgets::from_right(ui, |ui| {
+                let text = if self.expanded {
+                    "Collapse timing"
+                } else {
+                    "Expand timing"
+                };
+                if chip(ui, text, self.expanded).clicked() {
+                    self.expanded = !self.expanded;
+                }
+            });
         });
-        ui.add(
-            egui::Slider::new(&mut self.display_gain, 0.25..=32.0)
-                .logarithmic(true)
-                .text("display gain"),
-        );
+        ui.add_space(4.0);
+        self.diagram.ribbon(ui);
+        if self.expanded {
+            ui.add_space(GAP + 4.0);
+            widgets::rule(ui);
+            ui.add_space(GAP);
+            self.diagram.staircase(ui, STAIRCASE_HEIGHT);
+        }
     }
 
-    fn board(&self, ui: &mut egui::Ui, s: &Stats) {
-        let Some(st) = s.state else {
-            ui.label("no state yet");
-            return;
-        };
-        let (c, m, n) = (st.camera, st.mode, st.counters);
-        ui.label(format!(
-            "{:?} {}x{} {:?} at ({}, {}), {} ± {}",
-            c.format,
-            c.width,
-            c.height,
-            c.readout,
-            c.origin.map_or(0, |o| o.x),
-            c.origin.map_or(0, |o| o.y),
-            hz(c.rate_mhz),
-            hz(c.tolerance_mhz)
-        ));
-        clock_line(ui, m.sensor_clock_mhz, m.exceeds_datasheet_clock);
-        egui::Grid::new("board").num_columns(2).show(ui, |ui| {
-            let mut row = |k: &str, v: String| row(ui, k, v);
-            row(
+    // ── Picture ─────────────────────────────────────────────────────────────────────────────
+
+    fn picture(&mut self, ui: &mut Ui, s: &Stats, now: Instant) {
+        match self.shown.clone() {
+            Some(shown) => {
+                picture::show(ui, &mut self.view, &shown, self.display_gain, &self.timing)
+            }
+            None => picture::empty(
+                ui,
+                "Waiting for frames",
+                &format!("From {}", self.client.camera()),
+            ),
+        }
+        if !s.connected(now) {
+            let area = ui.max_rect();
+            let since = s
+                .last_answer
+                .map_or("The camera never answered".to_owned(), |t| {
+                    format!("No answer for {:.1} s", (now - t).as_secs_f64())
+                });
+            let text = format!(
+                "Disconnected. {since}; asking again every {} ms.",
+                RETRY_INTERVAL.as_millis()
+            );
+            let painter = ui.painter();
+            let g = painter.layout_no_wrap(text, theme::strong(BODY), FAULT);
+            let r = egui::Rect::from_center_size(
+                area.center_top() + vec2(0.0, 28.0),
+                g.size() + vec2(28.0, 14.0),
+            );
+            painter.rect(
+                r,
+                theme::RADIUS,
+                theme::FAULT_FILL,
+                Stroke::new(1.0, FAULT),
+                egui::StrokeKind::Inside,
+            );
+            painter.galley(r.min + vec2(14.0, 7.0), g, FAULT);
+        }
+    }
+
+    // ── Counters drawer ─────────────────────────────────────────────────────────────────────
+
+    fn drawer(&self, ui: &mut Ui, s: &Stats, d: &DecodeStats) {
+        let m = &self.meter;
+        let st = s.state;
+        let dash = || "-".to_owned();
+        let ms = |t: Duration| t.as_secs_f64() * 1e3;
+        section(ui, "Sensor", hue(Stage::Readout), |ui| {
+            let Some(st) = st else {
+                caption(ui, "No state from the board yet.");
+                return;
+            };
+            let (c, md, n) = (st.camera, st.mode, st.counters);
+            caption(
+                ui,
+                &format!(
+                    "{:?} {}x{} {:?} at ({}, {}), {} ± {}",
+                    c.format,
+                    c.width,
+                    c.height,
+                    c.readout,
+                    c.origin.map_or(0, |o| o.x),
+                    c.origin.map_or(0, |o| o.y),
+                    hz(c.rate_mhz),
+                    hz(c.tolerance_mhz)
+                ),
+            );
+            stat(ui, "Sensor clock", &format!("{} MHz", md.sensor_clock_mhz));
+            stat(
+                ui,
                 "HTS / VTS / PSV",
-                format!("{} / {} / {}", m.hts, m.vts, on_off(m.psv)),
+                &format!("{} / {} / {}", md.hts, md.vts, on_off(md.psv)),
             );
-            row("Frame rate", hz(m.frame_rate_mhz));
-            row("Rate error", format!("{:+} mHz", m.rate_error_mhz));
-            row("Line time", format!("{} ns", m.line_ns));
-            row(
+            stat(ui, "Frame rate", &hz(md.frame_rate_mhz));
+            stat(ui, "Rate error", &format!("{:+} mHz", md.rate_error_mhz));
+            stat(ui, "Line time", &format!("{} ns", md.line_ns));
+            stat(
+                ui,
                 "Longest exposure",
-                format!("{} lines", m.max_exposure_lines),
+                &format!("{} lines", md.max_exposure_lines),
             );
-            row("Bytes per frame", m.frame_bytes.to_string());
-            row(
+            stat(ui, "Bytes per frame", &md.frame_bytes.to_string());
+            stat(
+                ui,
                 "Exposure, gain",
-                format!(
+                &format!(
                     "{} lines, {:.2}x, {:?}",
                     c.exposure_lines,
-                    c.gain_sixteenths as f32 / 16.0,
+                    f32::from(c.gain_sixteenths) / 16.0,
                     c.test_pattern
                 ),
             );
-            row(
-                "Stream",
-                format!(
-                    "{}, {:?}, {}",
-                    if st.stream.enabled { "on" } else { "off" },
-                    st.stream.encoding,
-                    match st.stream.max_fps {
-                        0 => "no limit".to_owned(),
-                        n => format!("at most {n} fps"),
+            stat(ui, "Captured", &n.frames_captured.to_string());
+            stat_toned(
+                ui,
+                "Capture errors",
+                &n.capture_errors.to_string(),
+                n.capture_errors > 0,
+            );
+        });
+        section(ui, "Encoder", hue(Stage::Encode), |ui| {
+            stat(
+                ui,
+                "Board JPEG quality in use",
+                &st.map_or_else(dash, |st| {
+                    format!(
+                        "{} (set {}, automatic {})",
+                        st.encoder.quality,
+                        st.stream.jpeg_quality,
+                        on_off(st.stream.auto_quality)
+                    )
+                }),
+            );
+            stat(
+                ui,
+                "Board encode time",
+                &st.map_or_else(dash, |st| {
+                    format!("{:.2} ms", f64::from(st.encoder.encode_us) / 1e3)
+                }),
+            );
+            stat(
+                ui,
+                "Last JPEG",
+                &st.map_or_else(dash, |st| format!("{} B", st.encoder.frame_len)),
+            );
+            let errors = st.map_or(0, |st| st.encoder.errors);
+            stat_toned(
+                ui,
+                "Board encoder errors",
+                &st.map_or_else(dash, |_| errors.to_string()),
+                errors > 0,
+            );
+            stat(
+                ui,
+                "Skipped by board encoder (busy)",
+                &st.map_or_else(dash, |st| st.encoder.frames_skipped.to_string()),
+            );
+        });
+        section(ui, "Link", hue(Stage::Send), |ui| {
+            let jpeg = st.filter(|st| st.stream.encoding == Encoding::Jpeg);
+            stat(ui, "Received whole", &format!("{:.1} fps", m.rx_fps));
+            stat(ui, "Throughput", &format!("{:.1} Mbit/s", m.mbps));
+            stat(
+                ui,
+                "Compressed frame, last / mean",
+                &jpeg.filter(|_| m.mean_len > 0.0).map_or_else(dash, |_| {
+                    format!("{} B / {:.0} B", s.last_frame_len, m.mean_len)
+                }),
+            );
+            stat(
+                ui,
+                "Compression ratio",
+                &jpeg.filter(|_| m.mean_len > 0.0).map_or_else(dash, |st| {
+                    let raw = f64::from(st.camera.width) * f64::from(st.camera.height);
+                    format!("{:.1} : 1", raw / m.mean_len)
+                }),
+            );
+            stat(
+                ui,
+                "Sent by the board",
+                &st.map_or_else(dash, |st| st.counters.frames_sent.to_string()),
+            );
+            stat(
+                ui,
+                "Skipped by board (link busy)",
+                &st.map_or_else(dash, |st| st.counters.frames_skipped.to_string()),
+            );
+            stat(
+                ui,
+                "Datagrams sent",
+                &st.map_or_else(dash, |st| st.counters.datagrams_sent.to_string()),
+            );
+            stat_toned(
+                ui,
+                "Dropped, chunk missing",
+                &s.frames_incomplete.to_string(),
+                s.frames_incomplete > 0,
+            );
+            stat(ui, "Cut by a mode change", &s.frames_cut.to_string());
+            stat(
+                ui,
+                "Request round trip",
+                &s.rtt.map_or_else(dash, |d| format!("{:.2} ms", ms(d))),
+            );
+            caption(
+                ui,
+                &format!(
+                    "Camera {}, local {}, receive buffer {} KiB",
+                    self.client.camera(),
+                    self.client.local_addr(),
+                    self.client.rcvbuf() / 1024
+                ),
+            );
+        });
+        section(ui, "Decode", hue(Stage::Decode), |ui| {
+            stat(ui, "Decoded", &format!("{:.1} fps", m.decoded_fps));
+            stat(
+                ui,
+                "Decode time, last / mean",
+                &format!("{:.2} ms / {:.2} ms", ms(d.decode_last), m.decode_ms),
+            );
+            stat_toned(
+                ui,
+                "Decode failures",
+                &d.failures.to_string(),
+                d.failures > 0,
+            );
+        });
+        section(ui, "Display", hue(Stage::Draw), |ui| {
+            stat(ui, "Presented", &format!("{:.1} fps", m.shown_fps));
+            stat(ui, "Replaced before shown", &s.frames_replaced.to_string());
+            stat(
+                ui,
+                "Frame",
+                &self.shown.as_ref().map_or_else(dash, |sh| {
+                    let f = &sh.frame;
+                    match sh.jpeg_len {
+                        Some(n) => format!("{}x{} JPEG, {n} B", f.width, f.height),
+                        None => format!(
+                            "{}x{} {:?}, {} B",
+                            f.width,
+                            f.height,
+                            f.encoding,
+                            f.data.len()
+                        ),
                     }
-                ),
+                }),
             );
-            row(
-                "Quality set, automatic, in use",
-                format!(
-                    "set {}, automatic {}, in use {}",
-                    st.stream.jpeg_quality,
-                    on_off(st.stream.auto_quality),
-                    st.encoder.quality
-                ),
+            stat(
+                ui,
+                "Number, generation",
+                &self.shown.as_ref().map_or_else(dash, |sh| {
+                    format!("#{}, {}", sh.frame.number, sh.frame.generation)
+                }),
             );
-            row(
-                "Last JPEG, encode time",
-                format!(
-                    "{} B, {:.3} ms",
-                    st.encoder.frame_len,
-                    st.encoder.encode_us as f64 / 1e3
-                ),
-            );
-            row(
-                "Encoder errors / skipped",
-                format!("{} / {}", st.encoder.errors, st.encoder.frames_skipped),
-            );
-            row("Generation", st.generation.to_string());
-            row(
-                "Captured / sent",
-                format!("{} / {}", n.frames_captured, n.frames_sent),
-            );
-            row(
-                "Skipped / errors",
-                format!("{} / {}", n.frames_skipped, n.capture_errors),
-            );
-            row("Datagrams sent", n.datagrams_sent.to_string());
-            row("Uptime", format!("{:.1} s", st.uptime_us as f64 / 1e6));
+            stat(ui, "UI frame time", &format!("{:.2} ms", m.cpu_ms));
         });
-    }
-
-    fn image(&mut self, ui: &mut egui::Ui, s: &Stats, now: Instant) {
-        let Some(shown) = self.shown.clone() else {
-            ui.centered_and_justified(|ui| ui.label("waiting for frames…"));
-            return;
-        };
-        let (w, h) = (shown.frame.width as f32, shown.frame.height as f32);
-        let gain = self.display_gain;
-        let timing = self.timing.clone();
-        let paint = |ui: &mut egui::Ui, rect: egui::Rect| {
-            let vis = rect.intersect(ui.clip_rect());
-            if vis.width() <= 0.0 || vis.height() <= 0.0 {
-                return;
-            }
-            let uv0 = (vis.min - rect.min) / rect.size();
-            let uv1 = (vis.max - rect.min) / rect.size();
-            ui.painter().add(
-                ImageCallback {
-                    shown: shown.clone(),
-                    uv: [uv0.x, uv0.y, uv1.x, uv1.y],
-                    gain,
-                    timing: timing.clone(),
-                }
-                .paint(vis),
+        section(ui, "Board", NEUTRAL, |ui| {
+            stat(
+                ui,
+                "Generation",
+                &st.map_or_else(dash, |st| st.generation.to_string()),
             );
-        };
-        let area = ui.available_rect_before_wrap();
-        if self.fit {
-            let scale = (area.width() / w).min(area.height() / h);
-            let rect = egui::Rect::from_center_size(area.center(), egui::vec2(w, h) * scale);
-            paint(ui, rect);
-        } else {
-            let ppp = ui.ctx().pixels_per_point();
-            egui::ScrollArea::both().show(ui, |ui| {
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(w, h) / ppp, egui::Sense::hover());
-                paint(ui, rect);
-            });
-        }
-        if !s.connected(now) {
-            ui.painter().text(
-                area.center(),
-                egui::Align2::CENTER_CENTER,
-                "DISCONNECTED",
-                egui::FontId::proportional(48.0),
-                RED,
+            stat(
+                ui,
+                "Uptime",
+                &st.map_or_else(dash, |st| format!("{:.1} s", st.uptime_us as f64 / 1e6)),
             );
-        }
-    }
-
-    fn selftest_step(&mut self, ctx: &egui::Context, now: Instant, s: &Stats) {
-        let Some(t) = &mut self.selftest else {
-            return;
-        };
-        ctx.request_repaint_after(Duration::from_millis(50));
-        let elapsed = now - t.start;
-        if t.base.is_none() && elapsed >= t.warmup {
-            t.base = Some(Base {
-                at: now,
-                stats: s.clone(),
-                decode: self.decoder.stats(),
-                presented: self.presented,
-                passes: self.passes,
-                timing: *self.timing.lock().unwrap_or_else(|e| e.into_inner()),
-            });
-            self.cpu.clear();
-        }
-        if let Some(asked) = t.requested {
-            if let Some(msg) = t.saved.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                println!("{msg}");
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            } else if now - asked > Duration::from_secs(5) {
-                println!("screenshot: none after 5 s");
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            return;
-        }
-        if elapsed.as_secs_f64() < t.cfg.secs {
-            return;
-        }
-        let Some(b) = &t.base else {
-            return;
-        };
-        let timing = *self.timing.lock().unwrap_or_else(|e| e.into_inner());
-        println!("{}", pipeline_report(self.pipeline.snapshot()));
-        println!(
-            "{}",
-            report(
-                b,
-                now,
-                s,
-                &self.decoder.stats(),
-                self.presented,
-                self.passes,
-                &timing,
-                &mut self.cpu,
-                t.cfg.vsync,
-                self.shown.as_deref()
-            )
-        );
-        let path = t.cfg.screenshot.clone();
-        let saved = t.saved.clone();
-        ctx.request_screenshot(move |image| {
-            let msg = match save_png(&path, &image) {
-                Ok(()) => format!(
-                    "screenshot: {} ({}x{})",
-                    path.display(),
-                    image.size[0],
-                    image.size[1]
-                ),
-                Err(e) => format!("screenshot: {e:#}"),
-            };
-            *saved.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+            stat(
+                ui,
+                "Stream",
+                &st.map_or_else(dash, |st| {
+                    format!(
+                        "{}, {:?}, {}",
+                        on_off(st.stream.enabled),
+                        st.stream.encoding,
+                        match st.stream.max_fps {
+                            0 => "no limit".to_owned(),
+                            n => format!("at most {n} fps"),
+                        }
+                    )
+                }),
+            );
         });
-        t.requested = Some(now);
     }
 }
 
+/// Faults since start: frames dropped for a missing chunk, capture and encoder errors, decode
+/// failures.
+fn faults(s: &Stats, d: &DecodeStats) -> u64 {
+    let board = s.state.map_or(0, |st| {
+        u64::from(st.counters.capture_errors) + u64::from(st.encoder.errors)
+    });
+    s.frames_incomplete + board + d.failures
+}
+
+/// The link's state: a dot and a word, the camera's address under it.
+fn link_pill(ui: &mut Ui, s: &Stats, now: Instant, client: &Client) {
+    let up = s.connected(now);
+    let (word, color) = if up {
+        ("Connected", hue(Stage::Readout).line)
+    } else {
+        ("Disconnected", FAULT)
+    };
+    let painter = ui.painter().clone();
+    let word_g = painter.layout_no_wrap(word.to_owned(), theme::strong(BODY), TEXT);
+    let addr = client.camera().to_string();
+    let addr_g = painter.layout_no_wrap(addr, theme::mono(theme::SMALL), MUTED);
+    let w = 16.0 + word_g.size().x.max(addr_g.size().x);
+    let (rect, response) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo {
+        label: Some("Link".to_owned()),
+        current_text_value: Some(word.to_owned()),
+        ..egui::WidgetInfo::new(egui::Role::Status)
+    });
+    painter.circle_filled(rect.left_top() + vec2(4.0, 9.0), 4.0, color);
+    painter.galley(rect.left_top() + vec2(16.0, 0.0), word_g, TEXT);
+    painter.galley(
+        egui::pos2(rect.left() + 16.0, rect.bottom() - addr_g.size().y),
+        addr_g,
+        MUTED,
+    );
+}
+
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let now = Instant::now();
         self.passes += 1;
         if let Some(cpu) = frame.info().cpu_usage {
-            self.meter.cpu_sum += cpu as f64;
+            self.meter.cpu_sum += f64::from(cpu);
             self.meter.cpu_n += 1;
             if self.cpu.len() < 1 << 20 {
                 self.cpu.push(cpu);
@@ -1001,253 +1241,83 @@ impl eframe::App for App {
             self.adopt = false;
         }
         self.meter.update(now, &stats, &dstats, self.presented);
-        self.time_pipeline(now, &stats);
+        self.time_pipeline(ui.ctx(), now, &stats);
 
-        egui::Panel::left("panel")
+        let bar = |fill| {
+            egui::Frame::new()
+                .fill(fill)
+                .inner_margin(Margin::symmetric(PAD as i8, 8))
+        };
+        egui::Panel::top("status")
             .resizable(false)
-            .exact_size(PANEL_WIDTH)
+            .exact_size(widgets::bar_height() + 8.0)
+            .frame(bar(theme::PANEL).stroke(Stroke::new(1.0, theme::LINE)))
+            .show(ui, |ui| self.status_bar(ui, &stats, now));
+        egui::Panel::left("rail")
+            .resizable(false)
+            .exact_size(RAIL_WIDTH)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::PANEL)
+                    .inner_margin(Margin::symmetric(PAD as i8, PAD as i8)),
+            )
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.panel(ui, &stats, &dstats, now));
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        egui::Frame::new()
+                            .inner_margin(Margin {
+                                right: 10,
+                                ..Margin::ZERO
+                            })
+                            .show(ui, |ui| self.rail(ui, &stats, &dstats));
+                    });
             });
-        egui::CentralPanel::default().show(ui, |ui| self.image(ui, &stats, now));
-        self.selftest_step(ui.ctx(), now, &stats);
+        if self.drawer {
+            egui::Panel::right("counters")
+                .resizable(false)
+                .exact_size(DRAWER_WIDTH)
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::PANEL)
+                        .inner_margin(Margin::symmetric(PAD as i8, PAD as i8)),
+                )
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| self.drawer(ui, &stats, &dstats));
+                });
+        }
+        egui::Panel::bottom("timing")
+            .resizable(false)
+            .frame(egui::Frame::new().fill(theme::BG).inner_margin(Margin {
+                left: PAD as i8 + 4,
+                right: PAD as i8 + 4,
+                top: 10,
+                bottom: 12,
+            }))
+            .show(ui, |ui| self.timing_strip(ui));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(theme::WELL))
+            .show(ui, |ui| self.picture(ui, &stats, now));
+        if let Some(t) = &mut self.selftest {
+            let upload = *self.timing.lock().unwrap_or_else(|e| e.into_inner());
+            t.step(
+                ui.ctx(),
+                now,
+                Probe {
+                    stats: &stats,
+                    decode: dstats,
+                    presented: self.presented,
+                    passes: self.passes,
+                    upload,
+                    cpu: &mut self.cpu,
+                    shown: self.shown.as_deref(),
+                    pipeline: self.pipeline.snapshot(),
+                },
+            );
+        }
         // Keeps the status fresh when no frames come.
         ui.ctx().request_repaint_after(Duration::from_millis(250));
     }
-}
-
-/// The board's latest refusal (until a request of the same kind succeeds), and whether a
-/// request waits for its answer.
-fn answer_line(ui: &mut egui::Ui, s: &Stats) {
-    if let Some(r) = &s.refusal {
-        let what = match r.op {
-            Op::SetCamera(_) => "camera settings",
-            Op::SetStream(_) => "stream settings",
-            Op::GetState | Op::Poll => "request",
-        };
-        ui.colored_label(RED, format!("Refused the {what}: {}", r.error));
-    }
-    if s.pending {
-        ui.label("waiting for an answer…");
-    }
-}
-
-/// A grid row: the name, then the value as text labelled by the name (for AccessKit).
-fn row(ui: &mut egui::Ui, name: &str, value: String) {
-    let id = ui.label(name).id;
-    ui.label(value).labelled_by(id);
-    ui.end_row();
-}
-
-/// `widget` after a label naming it, linked for AccessKit.
-fn labelled(ui: &mut egui::Ui, name: &str, widget: impl egui::Widget) -> egui::Response {
-    let id = ui.label(name).id;
-    ui.add(widget).labelled_by(id)
-}
-
-fn clock_line(ui: &mut egui::Ui, mhz: u8, above: bool) {
-    if above {
-        ui.colored_label(
-            ORANGE,
-            format!("Sensor clock {mhz} MHz: above the datasheet's 80 MHz"),
-        );
-    } else {
-        ui.label(format!("Sensor clock {mhz} MHz"));
-    }
-}
-
-fn on_off(b: bool) -> &'static str {
-    if b { "on" } else { "off" }
-}
-
-fn hz(mhz: u32) -> String {
-    format!("{}.{:03} Hz", mhz / 1000, mhz % 1000)
-}
-
-fn percentile(sorted: &[f32], p: f64) -> f32 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    sorted[((sorted.len() - 1) as f64 * p).round() as usize]
-}
-
-/// The pipeline timing's latest snapshot as the self-test prints it.
-fn pipeline_report(s: Option<&Snapshot>) -> String {
-    let Some(s) = s else {
-        return "pipeline: no snapshot".to_owned();
-    };
-    let ms = |us: f32| us / 1e3;
-    let steps = s
-        .steps
-        .iter()
-        .map(|p| {
-            format!(
-                "{} {:.2} ms at {:.2}{}",
-                p.stage.name(),
-                ms(p.len_us),
-                ms(p.start_us),
-                if p.measured {
-                    format!(" (slowest {:.2})", ms(p.slowest_us))
-                } else {
-                    " (computed)".to_owned()
-                }
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "pipeline: {:.2} ms from the start of the exposure{}, period {:.2} ms, {} board and {} \
-         presented frames in the window\npipeline steps: {steps}",
-        ms(s.total_us),
-        if s.complete {
-            " to the GPU"
-        } else {
-            " (partial)"
-        },
-        ms(s.period_us),
-        s.board_frames,
-        s.host_frames,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn report(
-    b: &Base,
-    now: Instant,
-    s: &Stats,
-    dz: &DecodeStats,
-    presented: u64,
-    passes: u64,
-    timing: &UploadTiming,
-    cpu: &mut [f32],
-    vsync: bool,
-    shown: Option<&Shown>,
-) -> String {
-    let dt = (now - b.at).as_secs_f64();
-    let d = |a: u64, z: u64| a - z;
-    cpu.sort_by(f32::total_cmp);
-    let ms = |v: f32| v as f64 * 1e3;
-    let mean = cpu.iter().map(|&v| v as f64).sum::<f64>() / cpu.len().max(1) as f64 * 1e3;
-    let uploads = timing.count - b.timing.count;
-    let upload_mean = (timing.total - b.timing.total).as_secs_f64() * 1e3 / uploads.max(1) as f64;
-    let board = match (b.stats.state, s.state) {
-        (Some(a), Some(z)) => {
-            let (e, ez) = (a.encoder, z.encoder);
-            let (a, z) = (a.counters, z.counters);
-            format!(
-                "board: captured {}, sent {}, skipped (link busy) {}, capture errors {}, datagrams {}\n\
-                 board encoder: quality in use {} (set {}, automatic {}), last JPEG {} B, encode {:.3} ms, \
-                 errors {}, skipped (busy) {}",
-                z.frames_captured.wrapping_sub(a.frames_captured),
-                z.frames_sent.wrapping_sub(a.frames_sent),
-                z.frames_skipped.wrapping_sub(a.frames_skipped),
-                z.capture_errors.wrapping_sub(a.capture_errors),
-                z.datagrams_sent.wrapping_sub(a.datagrams_sent),
-                ez.quality,
-                s.state.map_or(0, |st| st.stream.jpeg_quality),
-                on_off(s.state.is_some_and(|st| st.stream.auto_quality)),
-                ez.frame_len,
-                ez.encode_us as f64 / 1e3,
-                ez.errors.wrapping_sub(e.errors),
-                ez.frames_skipped.wrapping_sub(e.frames_skipped),
-            )
-        }
-        _ => "board: no state".to_owned(),
-    };
-    let jpeg = d(s.jpeg_whole, b.stats.jpeg_whole);
-    let mean_len = d(s.jpeg_bytes, b.stats.jpeg_bytes) as f64 / jpeg.max(1) as f64;
-    let decoded = (dz.decoded + dz.failures) - (b.decode.decoded + b.decode.failures);
-    let decode_mean =
-        (dz.decode_total - b.decode.decode_total).as_secs_f64() * 1e3 / decoded.max(1) as f64;
-    let raw_len = s
-        .state
-        .map_or(0.0, |st| st.camera.width as f64 * st.camera.height as f64);
-    let decoding = format!(
-        "JPEG frames: {jpeg} whole, mean {mean_len:.0} B (compression {:.1} : 1 against RAW8)\n\
-         decoded: {:.1} fps, decode mean {decode_mean:.3} ms, max {:.3} ms, {} failures, {} raw passed",
-        raw_len / mean_len.max(1.0),
-        decoded as f64 / dt,
-        dz.decode_max.as_secs_f64() * 1e3,
-        dz.failures - b.decode.failures,
-        dz.passed - b.decode.passed,
-    );
-    let mode = s.state.map_or("mode: none".to_owned(), |st| {
-        format!(
-            "mode: {:?} {}x{} {:?}, {} MHz HTS {} VTS {} PSV {}, {}; stream {:?} max_fps {}",
-            st.camera.format,
-            st.camera.width,
-            st.camera.height,
-            st.camera.readout,
-            st.mode.sensor_clock_mhz,
-            st.mode.hts,
-            st.mode.vts,
-            on_off(st.mode.psv),
-            hz(st.mode.frame_rate_mhz),
-            st.stream.encoding,
-            st.stream.max_fps
-        )
-    });
-    let frame = shown.map_or("frame: none".to_owned(), |sh| {
-        let f = &sh.frame;
-        match sh.jpeg_len {
-            Some(n) => format!("frame: {}x{} JPEG {n} B, shown decoded", f.width, f.height),
-            None => format!(
-                "frame: {}x{} {:?} {} B",
-                f.width,
-                f.height,
-                f.encoding,
-                f.data.len()
-            ),
-        }
-    });
-    let refusal = s.refusal.map_or("refusal: none".to_owned(), |r| {
-        format!("refusal: {}", r.error)
-    });
-    format!(
-        "selftest: vsync {}, measured over {dt:.2} s\n{mode}\n{frame}\n\
-         received: {:.1} fps whole, {:.1} Mbit/s UDP payload, {} dropped (chunk missing), \
-         {} cut by a mode change, {} replaced before shown, {} stale chunks\n\
-         presented: {:.1} fps (new frames drawn), {:.1} UI passes/s\n\
-         ui frame time (eframe cpu_usage): mean {mean:.3} ms, p50 {:.3}, p99 {:.3}, max {:.3} \
-         over {} passes\n\
-         upload (write_texture): mean {upload_mean:.3} ms, max {:.3} ms over {uploads} frames\n\
-         {decoding}\n{board}\nrtt: {}\n{refusal}",
-        on_off(vsync),
-        d(s.frames_whole, b.stats.frames_whole) as f64 / dt,
-        d(s.bytes, b.stats.bytes) as f64 * 8.0 / dt / 1e6,
-        d(s.frames_incomplete, b.stats.frames_incomplete),
-        d(s.frames_cut, b.stats.frames_cut),
-        d(s.frames_replaced, b.stats.frames_replaced),
-        d(s.stale_chunks, b.stats.stale_chunks),
-        d(presented, b.presented) as f64 / dt,
-        d(passes, b.passes) as f64 / dt,
-        ms(percentile(cpu, 0.5)),
-        ms(percentile(cpu, 0.99)),
-        ms(percentile(cpu, 1.0)),
-        cpu.len(),
-        timing.max.as_secs_f64() * 1e3,
-        s.rtt.map_or("-".to_owned(), |r| format!(
-            "{:.3} ms",
-            r.as_secs_f64() * 1e3
-        )),
-    )
-}
-
-fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    }
-    let file =
-        std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
-    let mut enc = png::Encoder::new(
-        std::io::BufWriter::new(file),
-        image.size[0] as u32,
-        image.size[1] as u32,
-    );
-    enc.set_color(png::ColorType::Rgba);
-    enc.set_depth(png::BitDepth::Eight);
-    let mut w = enc.write_header()?;
-    w.write_image_data(image.as_raw())?;
-    w.finish()?;
-    Ok(())
 }

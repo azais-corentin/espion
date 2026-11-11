@@ -1,11 +1,13 @@
 //! poc-viewer: live view and control of the OV9281 on the ESP32-P4-ETH proof of concept.
 //!
-//! One window: the controls and the status in a side panel, the image in the rest. Networking
-//! runs on its own thread ([`poc_viewer::net`]); the image goes to the GPU as it came off the
-//! wire ([`display`]).
+//! One window: a status bar, the settings rail, the picture and the pipeline timing under it,
+//! the counters in a drawer ([`app`], drawn with [`ui`]). Networking runs on its own thread
+//! ([`poc_viewer::net`]); the image goes to the GPU as it came off the wire ([`display`]).
 
 mod app;
 mod display;
+mod selftest;
+mod ui;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -294,7 +296,7 @@ fn main() -> Result<()> {
         init_stream: args.init.stream(),
         one_to_one: args.one_to_one,
         display_gain: args.display_gain,
-        selftest: args.selftest.map(|secs| app::SelfTestConfig {
+        selftest: args.selftest.map(|secs| selftest::SelfTestConfig {
             secs,
             screenshot: args.screenshot.clone(),
             vsync: !args.no_vsync,

@@ -22,9 +22,13 @@ frame-rate limit). Not part of the product.
   thread: it decodes only what can be shown (below).
 - `src/fake.rs`: a fake camera speaking the whole protocol, with synthetic frames, JPEG
   included; the reference behaviour of the firmware, and what the end-to-end tests run against.
-- `src/main.rs`, `src/app.rs`, `src/display.rs`: the window. Frames go to the GPU as they came
-  off the wire, a JPEG frame as the decoding stage made it (RAW8 or packed RAW10, expanded in
-  the shader).
+- `src/timing.rs`: where a frame's time goes from the start of its exposure to the GPU (below,
+  "Pipeline timing").
+- `src/main.rs`, `src/app.rs`, `src/display.rs`, `src/ui/`: the window. `src/ui/` holds its
+  look (`theme.rs`) and its controls, painted by hand (`widgets.rs`, the picture, the sensor
+  window picker, the timing diagrams). Frames go to the GPU as they came off the wire, a JPEG
+  frame as the decoding stage made it (RAW8 or packed RAW10, expanded in the shader).
+  `src/selftest.rs`: the self-test switch.
 
 ## Run
 
@@ -100,39 +104,85 @@ the dev shell and is the decoder the header check already uses.
 
 ## The window
 
-One column of settings and status on the left (390 points wide, scrolls), the picture in the
-rest:
+Dark neutral greys around the picture; colour means a pipeline stage (exposure amber, readout
+teal, encode indigo, send rust, decode blue, draw rose), the same in the timing diagrams, on the
+settings that act on that stage and on its counters. Red is for faults and refusals only. Type is
+IBM Plex Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open Font
+License 1.1, `OFL.txt`).
 
-- **Status**: connected or DISCONNECTED (no answer for 1.5 s), the addresses and the receive
-  buffer the kernel granted, then frames per second received whole, decoded and presented,
-  Mbit/s of UDP payload; for JPEG the compressed frame size (last and mean over the last
-  second), the compression ratio against RAW8, the decode time (last and mean) and the decode
-  failures; the board's encoder (quality in use with the set quality and the automatic switch,
-  encode time, encoder errors, frames the encoder could not take); frames dropped for a
-  missing chunk, cut by a mode change, replaced before they were shown, frames the board
-  skipped (link busy), the board's capture errors, the request round trip, the frame shown
-  (size, encoding, bytes, number, generation) and the UI frame time. Below it, in red, the
-  board's last refusal (`Refused the camera settings: ...`, with its values), until a request
-  of the same kind succeeds, and the last decode failure.
-- **Sensor mode**: format, readout, width, height, origin (or centred), rate and tolerance;
-  the driver's verdict on the edited mode; **Apply mode** sends it (disabled while the local
-  check fails). When the stream's encoding cannot be made of the edited mode (JPEG with a
-  RAW10 mode or a size not a multiple of 8, RAW10 with a RAW8 mode) the window says so and
-  Apply moves the stream to RAW8 first.
-- **Controls (applied at once)**: exposure in lines (up to the mode's longest), gain, test
-  pattern. Sent on every change; the board changes them without restarting the stream.
-- **Stream (applied at once)**: send frames; **send JPEG**, **send RAW8** or **send RAW10
-  packed** (only what the board's mode allows is enabled; "JPEG not available: ..." says why
-  not); **JPEG quality** (1..=100); **automatic JPEG quality**; frames per second at most. With
-  automatic quality on, the board chooses the quality, up to 90 (sent as the ceiling); the
-  slider is disabled and shows the quality the board has in use. With it off, the slider sets
-  the quality; the viewer keeps that value while automatic quality is on and sends it again
-  when it is turned off. The board's state never replaces it with the ceiling.
-- **Display**: fit to window or 1:1 pixels, display gain (brightness on screen only).
-- **Board: as applied** (collapsed): the board's state in full: settings, HTS / VTS / PSV,
-  rate and its error, line time, longest exposure, generation, counters, uptime.
+- **Status bar** (top): the link (Connected, or Disconnected after 1.5 s without an answer)
+  and the camera's address; frames per second received whole and presented, Mbit/s of UDP
+  payload and the latency from the pipeline timing, each with its last minute as a line; the
+  number of faults since start (frames dropped for a missing chunk, capture and encoder errors,
+  decode failures) when there are any; "Waiting for an answer" while a request is unanswered;
+  **Counters** opens the drawer.
+- **Rail** (left, 340 points, scrolls). At its top, in red, the board's last refusal (`The
+  board refused the camera settings: ...`, with its values) until a request of the same kind
+  succeeds, and the last decode failure.
+  - **Sensor mode**: format, readout, the **sensor window** (the 1280x800 active area to scale:
+    drag the window to move it, its lower right corner to resize it, on the driver's grid),
+    width and height, **Centred origin** or the origin, rate and tolerance; the driver's
+    verdict on the edited mode (rate, clock, HTS, VTS, PSV, longest exposure, the sizes and
+    rates allowed); **Apply mode** sends it (disabled while the local check fails, filled while
+    the edit differs from the board's mode). Changing the readout keeps the window's place on
+    the sensor (binning halves the size, cropping doubles it). When the stream's encoding cannot
+    be made of the edited mode the rail says so and Apply moves the stream to RAW8 first.
+  - **Exposure and gain** (applied at once): exposure (in ms and lines, up to the mode's
+    longest), gain, test pattern. The board changes them without restarting the stream.
+  - **Stream** (applied at once): **Send frames**; the encoding (**JPEG**, **RAW8**, **RAW10
+    packed**; one the board's mode cannot make is disabled and says why); **Automatic JPEG
+    quality**; **JPEG quality**; frames per second at most. With automatic quality on, the
+    board chooses the quality, up to 90 (sent as the ceiling), and the slider shows the quality
+    it has in use. With it off, the slider sets the quality; the viewer keeps that value while
+    automatic quality is on and sends it again when it is turned off.
+  - **Display**: **Fit**, **1:1** or the zoom, and the display gain (brightness on screen
+    only).
+- **Picture**: fitted, or zoomed with the wheel about the pointer and moved by dragging; a
+  double click fits it again. The pixel under the pointer is shown (x, y and its value at the
+  frame's depth).
+- **Pipeline timing** (under the picture): the ribbon, always; **Expand timing** adds the
+  staircase (next section).
+- **Counters** (drawer, right): everything the board and the viewer count, by stage. Sensor:
+  the mode as applied (HTS, VTS, PSV, rate and its error, line time, longest exposure, bytes per
+  frame, exposure and gain), frames captured, capture errors. Encoder: quality in use, encode
+  time, last JPEG, errors, frames it could not take. Link: received, Mbit/s, compressed frame
+  size and ratio, frames sent and skipped by the board, datagrams, frames dropped for a missing
+  chunk or cut by a mode change, the request round trip, the addresses and the receive buffer.
+  Decode: frames per second, time, failures. Display: presented, replaced before shown, the
+  frame shown, the UI frame time. Board: generation, uptime, stream.
 
-Every control has its own label, so the `egui` MCP tools find it by name.
+Every control has its own accessible name (an option of a choice is `name: option`, e.g.
+`Readout: 2x2 binned`), so the `egui` MCP tools find it.
+
+## Pipeline timing
+
+Where a frame's time goes, from the start of its exposure to its hand-off to the GPU, as the
+typical frame of the last 2 s, redrawn once a second (a new figure glides into place in
+150 ms), so it can be read while frames come at hundreds per second.
+
+| Stage | Source |
+|---|---|
+| Exposure | Computed: exposure lines x line time, right before the readout |
+| Readout | Computed: output lines x line time, ending at the frame's capture time |
+| Encode (JPEG) | The board (`State::timing`, protocol version 4) |
+| Send | From the board taking the frame to its last chunk arriving here |
+| Decode (JPEG) | Here, every frame presented |
+| Draw | Here: the pass that took the picture, to the end of its texture upload |
+
+The board's times come with the state, 4 times a second, so they are a sample of the frames.
+The network thread joins each with the frame's arrival here, and the smallest "arrival minus
+board time" of the window places the board's clock on this PC's; what stays unknown is the
+smallest transit of one datagram, by which this PC's stages sit too early. The gaps between
+stages are waits: for the encoder, for the link, for the decoding stage (it decodes the newest
+frame once the window took the picture before), for the window's next pass. What follows the
+upload (vsync, the compositor, scan-out) is not measured. Each stage shows its median and, as a
+whisker, its slowest sample of the window; computed stages are dashed.
+
+- **Ribbon**: the typical frame as one bar with the latency on the right, and the frames that
+  start meanwhile (one per sensor period) under it.
+- **Staircase**: one row per stage, three consecutive frames a period apart, so the overlap of
+  the stages of successive frames shows; frame 1's latency under the axis. The axis grows at once
+  when the frames no longer fit and shrinks only with a tenth to spare.
 
 ## Measured on the real camera
 
@@ -183,8 +233,9 @@ frames between two refreshes are replaced without being decoded.
 prints the statistics (received and presented frames per second, Mbit/s, dropped and replaced
 frames, UI frame time mean / p50 / p99 / max, texture upload time, JPEG frames and their mean
 size, decoded frames per second and the decode time, the board's counters and encoder over
-the window, round trip), saves a screenshot (`--screenshot PATH`, default
-`/tmp/poc-p4-eth/viewer/selftest.png`) and exits. `--no-vsync` presents without vsync.
+the window, round trip, the pipeline timing's last snapshot), saves a screenshot
+(`--screenshot PATH`, default `/tmp/poc-p4-eth/viewer/selftest.png`) and exits. `--no-vsync`
+presents without vsync.
 
 ```sh
 cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
@@ -198,8 +249,10 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   encoder and within the codec's error of the picture; quality and automatic quality; the
   refusals; switching encodings; loss with variable-length frames; chunks that disagree with
   their frame; a board that restarts its frame numbers; only the frames taken are decoded; a
-  frame that does not decode), the checks,
-  the JPEG header check and the address parsing (unit tests). No board needed.
+  frame that does not decode; the state's timing of the last frame sent and its join with the
+  frame's arrival), the checks, the JPEG header check, the address parsing and the pipeline
+  timing (unit tests: the steps chained in order, the clock offset from the fastest datagram,
+  raw streams, the window and the interval, the axis). No board needed.
 - `tests/board.rs`, against the real board, ignored by default. With the board on `eth0`
   running `poc-p4-stream` (`POC_CAMERA` overrides the address):
 
@@ -230,10 +283,10 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
 
 ```sh
 cargo build -p poc-viewer --release --features inspection
-egui-headless -s 1600x1000 -p 5719 env EGUI_INSPECTION=1 target/release/poc-viewer --fake
+egui-headless -s 1600x1000 -p 5719 target/release/poc-viewer --fake
 ```
 
-`egui-headless` (dev shell) runs it in a headless compositor with software rendering; the
-inspection server listens on `127.0.0.1:5719` only with the feature built in and
-`EGUI_INSPECTION=1` set. Then the `egui` MCP tools attach to that port. Frame rates measured
-there say nothing about the real display.
+`egui-headless` (dev shell) runs it in a headless compositor with software rendering and sets
+`EGUI_INSPECTION` to `127.0.0.1:PORT`; the inspection server listens there only with the
+feature built in. Then the `egui` MCP tools attach to that port. Frame rates measured there say
+nothing about the real display.
