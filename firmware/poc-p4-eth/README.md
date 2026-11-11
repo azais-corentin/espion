@@ -733,6 +733,87 @@ skips in every build; logs `a-density.log` (neither), `b-ram.log`, `b-zb.log`,
   and placing only the Pie instance would need a non-generic wrapper, which is not worth
   it while the PoC links both (its detector check uses `Scalar`).
 
+### RAW10 on the strip path, Scalar and Pie (2026-11-11)
+
+The bench's RAW10 section (log `c-raw10.log`, build with RAM placement and Zb/Zcb, both skips
+in one build): 1280x800 packed RAW10 (`Synth::fill_raw10`, 1600 B per row) in 64-line strips
+of 102 400 B, threshold 512, per-frame means over 50 passes; then rows of 1280 pixels, warm
+(8 rows pushed again and again, 1200 rows per pass) and cold (64 rows flushed before each
+pass), at threshold 514, either dark (10-bit values 0..255) or with a false hit every n
+pixels: a value of 512 or 513, whose top 8 bits (128) reach `514 >> 2` but which is below
+the threshold, so the skip stops there and the exact test rejects it.
+
+| Frame | `Scalar` mean / max us, cycles, instructions | `Pie` | Pie against Scalar | RAW8 `Pie`, same build |
+|---|---|---|---|---|
+| dark | 4032 / 4085, 1 613 023, 837 863 | 1617 / 1664, 647 021, 279 397 | -59.9 % | 985 us, 394 392 cycles |
+| 16 discs | 4526 / 4563, 1 810 479, 945 099 | 2132 / 2158, 853 101, 396 961 | -52.9 % | 1383 us, 553 312 |
+| 64 discs | 5925 / 5973, 2 370 123, 1 265 403 | 3653 / 3676, 1 461 283, 749 170 | -38.3 % | 2577 us, 1 030 952 |
+
+| Row (warm cycles / instructions per 1280-pixel row; cold cycles) | `Scalar` | `Pie` |
+|---|---|---|
+| dark | 1918.4 / 1080.9; 2044.3 | 662.9 / 395.7; 837.2 |
+| false hit every 64 px | 18 076.8 / 11 372.2; 18 217.3 | 13 923.9 / 9008.1; 14 142.3 |
+| false hit every 16 px | 42 902.8 / 25 889.2; 43 045.2 | 23 084.7 / 13 761.1; 23 302.4 |
+| false hit every pixel | 13 112.8 / 9434.2; 13 273.1 | 13 041.3 / 9407.1; 13 215.3 |
+
+- **Skip cost per pixel, RAW10:** 1.50 cycles warm and 1.60 cold with `Scalar`, 0.52 and
+  0.65 with `Pie` (RAW8: 1.17 / 1.25 and 0.31 / 0.41). A RAW10 pixel is 1.25 bytes, and the
+  vector pass also masks out the low-bit bytes.
+- **False hits are expensive:** 20 false hits in a row add about 16 000 cycles with
+  `Scalar` and 13 000 with `Pie` (650 to 800 cycles each), 80 add 41 000 and 22 400; with
+  one in every pixel the scan never leaves its exact path (about 10 cycles per pixel for
+  both skips). A noisy background just under a threshold that is not a multiple of 4 can
+  cost more than the 64-blob frame. With a threshold that is a multiple of 4, the top 8
+  bits decide exactly and there are no false hits [INFERENCE from the skip contract in
+  `espion-vision`; not measured].
+- The L1 data miss counter read 0 in this section and in the autoload section of the same
+  run (it counts in the earlier sections); its cause was not looked into, so no miss
+  figures are given for them.
+
+**Decision for RAW10:** the detector uses `Pie` for RAW10 too (`first_bright10`): 60 % fewer
+cycles on the dark frame, 38 % with 64 discs, and fewer on noisy rows. Thresholds for RAW10
+should be multiples of 4. RAW8 is the better camera mode for the detector whenever 8 bits are
+enough for the threshold and the centroid weights: with `Pie` the RAW8 frame takes 0.61 times
+the RAW10 cycles dark and 0.71 times with 64 discs (25 % fewer bytes to read, and no false
+hits). RAW10 is worth it only when the two low bits matter (dim markers near the threshold,
+centroid weights).
+
+### L1 data autoload on the strip path (2026-11-11)
+
+The bench's autoload section (same log, `c-raw10.log`): the 1280x800 strip path with the L1
+data-cache autoload (`esp32p4_cache::prefetch`) over the 80 KiB strip buffer, ascending, set
+up before the frame and left on while the strips are copied in, flushed and pushed (as the
+DMA and the driver's invalidate would run with it). Means over 50 passes, cycles in brackets:
+
+| Trigger | Scalar dark | Pie dark | Scalar 64 blobs | Pie 64 blobs |
+|---|---|---|---|---|
+| off | 3145 us (1 258 286) | 985 (394 310) | 4513 (1 805 551) | 2576 (1 030 414) |
+| miss | 2984 (1 193 999) | 825 (330 266) | 4363 (1 745 578) | 2416 (966 699) |
+| hit | 2865 (1 146 025) | 786 (314 473) | 4245 (1 698 220) | 2363 (945 303) |
+| miss+hit | 2865 (1 146 025) | 753 (301 263) | 4245 (1 698 222) | 2335 (934 113) |
+
+- Miss+hit is best: Scalar -8.9 % (dark) and -5.9 % (64 blobs), Pie -23.6 % and -9.3 %.
+  Instructions are the same; the gain is line fills overlapped with the scan. The spike
+  measured 4328 → 4083 us for the scalar dark frame from flash (-5.7 %). Pie's dark frame
+  is now 753 us, 0.29 cycles per pixel, as fast as the spike's kernel with the data
+  already in L1.
+- **Live set-up** (`strip_soak::AUTOLOAD`, miss+hit): the section is exactly the strip
+  the detector is reading, set before `push_rows_with` and turned off right after it
+  (`autoload_disable` waits until no prefetch is in flight). Why no stale line can be
+  read: the DMA writes the strips of the ring; `wait_strip` hands a strip out only after
+  the DMA has completed it and invalidates its lines first; the detector reads only the
+  strip it holds, which the DMA does not write until it is given back. With the section
+  limited to that strip, the autoload never loads a line of another strip, including the
+  first lines of the strip that follows it in memory and the lines past the end of the
+  ring, so it never caches a line the DMA has not finished; and since it is off (no fetch
+  in flight) before the next `wait_strip`, no fetch can land after that strip's
+  invalidate. Strips start and end on cache-line boundaries (the driver's rule), so no
+  line is shared between two strips. A whole-ring section would instead let the ascending
+  autoload run past the end of the held strip into one the DMA is writing; that line
+  would only be dropped if the fill finished before that strip's invalidate, which this
+  set-up does not need to rely on. The strip check reads its rows through the same
+  per-strip autoload, so a stale line would show as a bad row.
+
 ### Camera capture (whole frames in PSRAM)
 
 Set-up: three frame buffers at the start of PSRAM (0x4800_0000), filled with the sentinel

@@ -33,6 +33,7 @@
 
 use core::fmt;
 
+use esp32p4_cache::prefetch::{self, Autoload, Level, Order, Section, Trigger};
 use esp32p4_perf::{Delta, Sample};
 use esp32p4_pie::Pie;
 use espion_vision::{Blob, DefaultDetector, Skip, Stats, raw10, synth};
@@ -99,6 +100,25 @@ const SIZE_W: u16 = 1280;
 const SIZE_H: u16 = 800;
 /// Placement attempts per disc (as `synth`).
 const ATTEMPTS: u32 = 1000;
+
+/// RAW10 section: frame width, bytes per row, rows per strip.
+const R10_WIDTH: usize = 1280;
+const R10_STRIDE: usize = R10_WIDTH / 4 * raw10::GROUP_BYTES;
+const R10_STRIP_ROWS: usize = 64;
+const R10_HEIGHT: usize = 800;
+const _: () = assert!(R10_STRIP_ROWS * R10_STRIDE <= INTERNAL_LEN);
+/// 10-bit threshold of the RAW10 frames (as the camera's detector check).
+const R10_THRESHOLD: u16 = 512;
+/// 10-bit threshold of the RAW10 false-hit rows: `514 >> 2 = 128`, so a pixel of 512 or 513
+/// passes the skip's top-8-bit test and fails the exact one.
+const R10_FALSE_T: u16 = 514;
+/// RAW10 row cases: name and one false-hit pixel every `n` pixels (0: none, all dark).
+const R10_ROWS: [(&str, usize); 4] = [
+    ("dark", 0),
+    ("false hit / 64 px", 64),
+    ("false hit / 16 px", 16),
+    ("false hit / px", 1),
+];
 
 /// Cases per PIE self-test at boot: 48 rounds of the 256 source and destination alignment
 /// pairs that `self_test_copy` walks through.
@@ -340,6 +360,10 @@ pub fn run(psram: &mut [u8], pie: Option<&Pie>) {
     for &skip in skips {
         blob_cost(&mut bench, psram, synth, skip);
     }
+    for &skip in skips {
+        raw10_section(&mut bench, psram, synth, skip);
+    }
+    autoload_cases(&mut bench, psram, synth, skips);
     info!("detector bench done");
 }
 
@@ -928,6 +952,226 @@ fn draw_disc(frame: &mut [u8], width: usize, cx: usize, cy: usize, r: u32) {
             }
         }
     }
+}
+
+/// RAW10 at 1280 wide with the dark skip `skip`: the 1280x800 strip path on `synth` frames
+/// with 0, 16 and 64 discs, then rows (warm and cold, as the busy rows) that are dark or hold
+/// false hits: pixels whose top 8 bits reach `threshold >> 2` but whose value is below the
+/// threshold, which stop the skip and are then rejected by the exact test.
+#[inline(never)]
+fn raw10_section(b: &mut Bench, psram: &mut [u8], synth: &mut synth::Synth, skip: DarkSkip) {
+    raw10_frames(b, psram, synth, skip);
+    raw10_rows(b, skip);
+}
+
+#[inline(never)]
+fn raw10_frames(b: &mut Bench, psram: &mut [u8], synth: &mut synth::Synth, skip: DarkSkip) {
+    let frame = &mut psram[..R10_STRIDE * R10_HEIGHT];
+    info!(
+        "detector RAW10, skip {}: {R10_WIDTH}x{R10_HEIGHT} strip path ({R10_STRIP_ROWS}-line \
+         strips of {} B), threshold {R10_THRESHOLD}, per-frame means over {PASSES} passes:",
+        skip.name(),
+        R10_STRIP_ROWS * R10_STRIDE
+    );
+    info!(
+        "| blobs | found | min | mean | max | cycles | instructions | IPC | mispredicts | l1d_miss |"
+    );
+    for blobs in BLOB_COUNTS {
+        synth.fill_raw10(frame, R10_WIDTH, R10_HEIGHT, blobs, SEED);
+        with_skip!(skip, s => measure10(b, s, frame, blobs));
+    }
+}
+
+#[inline(never)]
+fn raw10_rows(b: &mut Bench, skip: DarkSkip) {
+    info!(
+        "detector RAW10 rows, skip {} ({R10_WIDTH} wide, threshold {R10_FALSE_T}; dark = 10-bit \
+         values 0..255, false hit = a value of 512 or 513 every n pixels; begin_frame_raw10 + \
+         push_rows, per row, means over {ROW_PASSES} passes; warm = {BUSY_PUSH_ROWS} rows \
+         pushed again and again, cold = {R10_STRIP_ROWS} rows flushed before each pass):",
+        skip.name()
+    );
+    log_row_columns();
+    for (name, n) in R10_ROWS {
+        raw10_fill(&mut b.internal[..R10_STRIP_ROWS * R10_STRIDE], n);
+        with_skip!(skip, s => row10_case(b, s, name));
+    }
+}
+
+/// Dark RAW10 rows of [`R10_WIDTH`] (10-bit values 0..255) with a value of 512 or 513 every
+/// `n` pixels (`n == 0`: none).
+#[inline(never)]
+fn raw10_fill(buf: &mut [u8], n: usize) {
+    let mut x = 0x2545_F491u32;
+    for row in buf.as_chunks_mut::<R10_STRIDE>().0 {
+        let groups = row.as_chunks_mut::<{ raw10::GROUP_BYTES }>().0;
+        for (g, group) in groups.iter_mut().enumerate() {
+            let px = core::array::from_fn(|k| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                if n != 0 && (4 * g + k).is_multiple_of(n) {
+                    512 + (x >> 31) as u16
+                } else {
+                    (x >> 24) as u16
+                }
+            });
+            *group = raw10::pack(px);
+        }
+    }
+}
+
+/// `PASSES` passes of the RAW10 strip path over `frame` (in PSRAM, `blobs` discs); logs the
+/// timing and the counter sums of the detector calls.
+#[inline(never)]
+fn measure10<S: Skip>(b: &mut Bench, s: &S, frame: &[u8], blobs: u16) {
+    let mut t = Timing::new(b.mhz);
+    let mut ctr = Counters::default();
+    let mut found = 0;
+    let strip_len = R10_STRIP_ROWS * R10_STRIDE;
+    for _ in 0..PASSES {
+        let before = ctr.cycles;
+        let det = &mut *b.det;
+        window(&mut ctr, || {
+            det.begin_frame_raw10(R10_WIDTH as u16, R10_THRESHOLD)
+        });
+        for (i, src) in frame.chunks(strip_len).enumerate() {
+            let strip = &mut b.internal[..src.len()];
+            strip.copy_from_slice(src);
+            flush_cache(strip);
+            window(&mut ctr, || {
+                det.push_rows_with(s, strip, (i * R10_STRIP_ROWS) as u16)
+            });
+        }
+        found = window(&mut ctr, || det.finish(b.out));
+        ctr.passes += 1;
+        t.add((ctr.cycles - before) as u32);
+    }
+    log_raw10_case(blobs, found, &t, &ctr);
+}
+
+#[inline(never)]
+fn log_raw10_case(blobs: u16, found: usize, t: &Timing, k: &Counters) {
+    let (min, mean, max) = t.us();
+    info!(
+        "| {blobs} | {found} | {min} | {mean} | {max} | {} | {} | {} | {} | {} |",
+        k.mean(k.cycles),
+        k.mean(k.instructions),
+        Dec(k.ipc_milli(), 3),
+        k.mean(k.mispredicts),
+        k.mean(k.l1d_miss),
+    );
+}
+
+/// Warm and cold passes over the RAW10 rows in the internal buffer (as [`row_case`]); logs
+/// them as row `name`.
+#[inline(never)]
+fn row10_case<S: Skip>(b: &mut Bench, s: &S, name: &str) {
+    let det = &mut *b.det;
+    let width = R10_WIDTH as u16;
+    let mut discard = Counters::default();
+    let buf = &b.internal[..BUSY_PUSH_ROWS * R10_STRIDE];
+    let mut warm = Counters::default();
+    for pass in 0..=ROW_PASSES {
+        let ctr = if pass == 0 { &mut discard } else { &mut warm };
+        window(ctr, || {
+            det.begin_frame_raw10(width, R10_FALSE_T);
+            for k in 0..WARM_ROWS / BUSY_PUSH_ROWS {
+                det.push_rows_with(s, buf, (k * BUSY_PUSH_ROWS) as u16);
+            }
+        });
+        ctr.passes += 1;
+    }
+    let buf = &b.internal[..R10_STRIP_ROWS * R10_STRIDE];
+    let mut cold = Counters::default();
+    for pass in 0..=ROW_PASSES {
+        let ctr = if pass == 0 { &mut discard } else { &mut cold };
+        flush_cache(buf);
+        window(ctr, || {
+            det.begin_frame_raw10(width, R10_FALSE_T);
+            det.push_rows_with(s, buf, 0);
+        });
+        ctr.passes += 1;
+    }
+    let r = RowCase {
+        width: R10_WIDTH,
+        warm,
+        warm_rows: WARM_ROWS,
+        cold,
+        cold_rows: R10_STRIP_ROWS,
+    };
+    log_row_case(name, &r);
+}
+
+/// L1 data-cache autoload settings of the autoload section: name and trigger (`None`: off).
+const AUTOLOADS: [(&str, Option<Trigger>); 4] = [
+    ("off", None),
+    ("miss", Some(Trigger::Miss)),
+    ("hit", Some(Trigger::Hit)),
+    ("miss+hit", Some(Trigger::MissHit)),
+];
+
+/// The 1280x800 strip path (dark and 64 `synth` discs, every skip of `skips`) with the L1
+/// data-cache autoload over the strip buffer, ascending, for each trigger of [`AUTOLOADS`].
+/// The copy into the strip buffer and its flush run with the autoload on, as the DMA and the
+/// driver's invalidate would; only the detector calls are timed.
+#[inline(never)]
+fn autoload_cases(b: &mut Bench, psram: &mut [u8], synth: &mut synth::Synth, skips: &[DarkSkip]) {
+    let (w, h) = MODES[0];
+    let frame = &mut psram[..usize::from(w) * usize::from(h)];
+    let strip = Section {
+        addr: b.internal.as_ptr() as usize,
+        len: STRIP_ROWS * usize::from(w),
+    };
+    info!(
+        "detector autoload ({w}x{h} strip path, L1 data autoload over the {} B strip buffer at \
+         {:#010x}, ascending; per-frame means over {PASSES} passes):",
+        strip.len, strip.addr
+    );
+    info!("| autoload | blobs | skip | mean | max | cycles | instructions | l1d_miss |");
+    for blobs in [0, 64] {
+        synth.fill(frame, w.into(), h.into(), blobs, SEED);
+        for (name, trigger) in AUTOLOADS {
+            if let Some(trigger) = trigger {
+                prefetch::autoload_configure(
+                    Level::L1Data,
+                    &Autoload {
+                        trigger,
+                        order: Order::Ascending,
+                        sections: [Some(strip), None, None, None],
+                    },
+                );
+                prefetch::autoload_enable(Level::L1Data);
+            }
+            autoload_run(b, frame, blobs, name, skips);
+            prefetch::autoload_disable(Level::L1Data);
+        }
+    }
+}
+
+/// One autoload setting (already on, or off): the strip path with every skip, logged.
+#[inline(never)]
+fn autoload_run(b: &mut Bench, frame: &[u8], blobs: u16, name: &str, skips: &[DarkSkip]) {
+    let (w, h) = MODES[0];
+    for &skip in skips {
+        let c = b.measure(skip, frame, w, h, blobs, Path::Strip);
+        log_autoload_case(name, &c);
+    }
+}
+
+#[inline(never)]
+fn log_autoload_case(name: &str, c: &Case) {
+    let k = &c.ctr;
+    info!(
+        "| {name} | {} | {} | {} | {} | {} | {} | {} |",
+        c.blobs,
+        c.skip,
+        c.mean_us,
+        c.max_us,
+        k.mean(k.cycles),
+        k.mean(k.instructions),
+        k.mean(k.l1d_miss),
+    );
 }
 
 fn verdict(max_us: u32) -> &'static str {

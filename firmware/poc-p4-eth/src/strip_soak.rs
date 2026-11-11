@@ -34,6 +34,7 @@
 //! resynchronised and would count against the run.
 
 use embassy_time::{Duration, Instant, with_timeout};
+use esp32p4_cache::prefetch::{self, Autoload, Level, Order, Section, Trigger};
 use esp32p4_csi::{Config, CsiStrips, Strip, StripLink, StripStats};
 use espion_vision::{Blob, DefaultDetector, synth};
 use log::info;
@@ -42,6 +43,46 @@ use static_cell::{ConstStaticCell, StaticCell};
 use crate::modes::CamMode;
 use crate::soak::{Fps, THRESHOLD, take_detector};
 use crate::{DarkSkip, flush_cache, mcycle};
+
+/// L1 data-cache autoload while the detector reads a strip (`None`: off). The section is the
+/// strip being read and nothing else, set before `push_rows_with` and turned off after it
+/// (`autoload_disable` waits until no prefetch is in flight), so the autoload only ever
+/// loads lines that the DMA has finished and `wait_strip` has invalidated: a stale line can
+/// neither be loaded nor survive, whatever the DMA writes meanwhile in the other strips of
+/// the ring. See the README, "L1 data autoload".
+const AUTOLOAD: Option<Trigger> = Some(Trigger::MissHit);
+
+/// Turns the L1 data autoload on over `strip` (if [`AUTOLOAD`] is set).
+#[inline(always)]
+fn autoload_on(strip: &[u8]) {
+    if let Some(trigger) = AUTOLOAD {
+        prefetch::autoload_configure(
+            Level::L1Data,
+            &Autoload {
+                trigger,
+                order: Order::Ascending,
+                sections: [
+                    Some(Section {
+                        addr: strip.as_ptr() as usize,
+                        len: strip.len(),
+                    }),
+                    None,
+                    None,
+                    None,
+                ],
+            },
+        );
+        prefetch::autoload_enable(Level::L1Data);
+    }
+}
+
+/// Turns the L1 data autoload off again and waits until no prefetch is in flight.
+#[inline(always)]
+fn autoload_off() {
+    if AUTOLOAD.is_some() {
+        prefetch::autoload_disable(Level::L1Data);
+    }
+}
 
 /// Rows per strip unless the format needs more ([`lines`]). 64 is not a divisor of any mode
 /// height here (the driver needs a short last strip).
@@ -452,7 +493,9 @@ impl StripSoak {
             }
         };
         let t0 = mcycle();
+        autoload_on(src);
         with_skip!(skip, k => self.det.push_rows_with(k, src, s.first_row()));
+        autoload_off();
         let pushed = mcycle();
         cycles = cycles.wrapping_add(pushed.wrapping_sub(t0));
         if !s.is_last() {
@@ -1458,6 +1501,9 @@ fn check_strip(acc: &mut CheckAcc, s: &Strip, r: &Reference, want: &[u32], lines
     match acc.open {
         Some(mut o) if o.frame == s.frame() && o.next_row == first => {
             if size_ok {
+                // The same per-strip autoload as the soak's detector, so the check reads
+                // the strip through it and a stale line shows as a bad row.
+                autoload_on(s);
                 for (i, row) in s.chunks_exact(r.line_bytes).enumerate() {
                     let sum = row_sum(row);
                     let at = usize::from(first) + i;
@@ -1468,6 +1514,7 @@ fn check_strip(acc: &mut CheckAcc, s: &Strip, r: &Reference, want: &[u32], lines
                     o.fold = fold_row(o.fold, sum);
                 }
                 acc.rows_checked += u32::from(rows);
+                autoload_off();
             }
             o.next_row = end;
             if s.is_last() {
