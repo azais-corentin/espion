@@ -53,7 +53,8 @@ embassy-net = { version = "0.9.1", features = [
   "proto-ipv6",
   "udp",
 ] }
-# The driver trait esp-hal 1.2.2 implements (its `embassy-net-driver-02` dependency).
+# The driver trait the network driver (`src/net/eth.rs`) implements, the one embassy-net 0.9.1
+# takes.
 embassy-net-driver = "0.2.0"
 # `select` of the stream service's tasks; channels and signals between them (the versions
 # esp-hal 1.2.2 and embassy-net 0.9.1 use).

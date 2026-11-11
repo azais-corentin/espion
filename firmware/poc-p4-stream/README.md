@@ -129,11 +129,13 @@ neighbour discovery).
    `esp32p4-pie`) on core 0, where the executor runs, and runs its copy and checksum-sum
    self-tests against the scalar references (4096 cases each, about 0.4 s; a failure panics),
    brings up PSRAM (250 MHz).
-2. `net::start`: resets the PHY, creates the EMAC driver (which initialises the PHY over MDIO),
-   switches the TX DMA to threshold mode, creates the embassy-net stack with the static
-   address, spawns the runner (`net_task`) and the link task, and waits up to 8 s for the
-   link. The link task wakes the runner every 500 ms so the PHY's link is read, and logs each
-   change (speed and duplex read from the PHY).
+2. `net::start`: resets the PHY, creates esp-hal's EMAC driver (which initialises the MAC and
+   the PHY over MDIO), takes its DMA over with this crate's rings (`net/eth.rs`, TX threshold
+   mode from the start; see [The Ethernet driver](#the-ethernet-driver-esp-hal-122-ethernet-for-the-bring-up-this-crates-dma-rings)),
+   creates the embassy-net stack with the static address, spawns the runner (`net_task`) and
+   the link task, and waits up to 8 s for the link. The link task wakes the runner every
+   500 ms so the PHY's link is read, and logs each change (speed and duplex read from the
+   PHY).
 3. The service: `stream::start` (below, [The camera stream](#the-camera-stream)) or
    `bench::start`, which spawns the two test tasks; the TX task fills its source buffers and
    finds the camera first, then logs `bench: ready`.
@@ -191,9 +193,10 @@ and without `accounting` alike.
 | File | What |
 |---|---|
 | `src/main.rs` | Boot: log baud, chip, PSRAM, the network, the service selected by `SERVICE`, the RAM report |
-| `src/net/mod.rs` | The network module: pins and their sources, PHY reset, EMAC driver, TX threshold mode, the DMA storage in its linker section, embassy-net with the static IPv6 address, the runner and link tasks, EMAC register snapshot |
+| `src/net/mod.rs` | The network module: pins and their sources, PHY reset, esp-hal's EMAC bring-up and its one-descriptor storage in its linker section, embassy-net with the static IPv6 address, the runner and link tasks, EMAC register snapshot |
+| `src/net/eth.rs` | The EMAC's DMA rings and the `embassy-net-driver` driver: descriptors through the non-cacheable alias, one cache call per frame, TX threshold mode, TX completion interrupt every 8th frame, the RX checks, the `ETH_MAC` handler |
 | `src/net/ip101.rs` | IP101 PHY driver (`Phy` trait): link polled every 500 ms, speed and duplex from ANAR and ANLPAR, the last report for the log |
-| `src/net/device.rs` | `embassy-net-driver` wrapper around esp-hal's driver: per-frame cycle counts (feature `accounting`), and the checksum capabilities (UDP and ICMPv6 computed by smoltcp) |
+| `src/net/device.rs` | `embassy-net-driver` wrapper around the driver: per-frame cycle counts (feature `accounting`) |
 | `src/cpu.rs` | Cycle counter, per-task CPU time and polls from the executor's `trace` hooks (feature `accounting`), the idle counter (feature `idle-counter`) |
 | `src/irq.rs` | Interrupt-handler wrappers: calls and own cycles per handler and core, the time outside executor passes, the wake and sleep paths (feature `accounting`) |
 | `src/camera.rs` | OV9281 and CSI receiver: set-up, any mode's start (lanes checked in their stop state before stream-on), controls, stop, the newest frame, the fault switch of the stream's error-path test |
@@ -205,7 +208,7 @@ and without `accounting` alike.
 | `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
-| `dram_dma.x` | Linker section for the Ethernet DMA storage at 0x4FF40000 or above (see below) |
+| `dram_dma.x` | Linker section for esp-hal's Ethernet DMA storage at 0x4FF40000 or above (see below) |
 | `tools/netbench.py` | Host side of the test service |
 
 ## The camera stream
@@ -856,10 +859,85 @@ replace it and only a linker option (`--wrap` or `--defsym` in the build's link 
 could; and step 3 takes the chunk datagrams, nearly all of the stream's bytes, off smoltcp's
 copy. smoltcp then copies only answers, neighbour discovery and ping.
 
-## The Ethernet driver (esp-hal 1.2.2 `ethernet`, `unstable`)
+### Measured: step 2, the Ethernet ring, 2026-11-11
+
+Plan step 7.2. `net/eth.rs` replaces esp-hal's descriptor rings and its embassy-net driver
+(esp-hal keeps the bring-up, the PHY and the MAC's speed and duplex; see
+[The Ethernet driver](#the-ethernet-driver-esp-hal-122-ethernet-for-the-bring-up-this-crates-dma-rings)):
+
+- 16 RX and 16 TX descriptors (32-byte enhanced format), each with a 1536-byte buffer, 50 176
+  B in `.bss`. The CPU reads and writes the descriptors through the non-cacheable alias of
+  internal RAM (+0x4000_0000, as `esp32p4-jpeg`); the DMA gets the ordinary addresses. Their
+  lines are written back and invalidated once at the take-over and never used through the
+  cache after.
+- One cache call per frame, through `esp32p4-cache` (its cross-core lock): a TX buffer is
+  written back after the stack wrote it; the lines of an RX frame the stack read are
+  invalidated before the buffer goes back to the DMA, so no line is cached while the DMA
+  writes it (all of them are invalidated at the take-over). A token request reads one or two
+  descriptor words, no cache call.
+- TX threshold mode (64 bytes) from the start, CIC 0, smoltcp computes UDP and ICMPv6.
+- TX completion interrupt (`TDES0` IC) on every 8th frame only. The runner waits for room only
+  when all 16 descriptors are in flight, so two frames of them ask for it. RX interrupt on
+  every frame, as before. The driver registers its waker only when it returns no token.
+- RX: the frames the DMA or the checksum engine flagged, partial ones and ones of an
+  impossible length go back to the DMA unread (as esp-hal's checks).
+
+Same session, same flags: the step 1 build (`7e303f2`) against this one; logs
+`s2-base-bench.*`, `s2-bench.*`, `s2-base-stream.*`, `s2-stream.*` in
+`/tmp/p4perf-logs/StreamSend/`. Boot log: `own DMA rings: 16 RX + 16 TX descriptors (50176
+B), TX completion interrupt every 8 frames`; RAM 202 304 B static, 379 264 B left for the main
+stack (network DMA 53 376 B: the rings and esp-hal's one-descriptor storage). Bench, 20 s per
+source:
+
+| Source, driver | Datagrams | Host MB/s (datagrams/s) | Lost, dup., reordered, bad | CPU busy (`busy_all`) | `copy_cyc` | TX task | Runner | `tx_stack_cyc` | `tx_driver_cyc` | Token requests per datagram x `token_cyc` | EMAC interrupts (cycles each) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Internal, esp-hal | 163 780 | 11.795 (8187) | 0, 0, 0, 0 | 65.5 % (70.2 %) | 1 349 | 3 798 | 27 143 | 10 136 | 2 074 | 4.95 x 1 155 | 163 759 (867) |
+| Internal, own ring | 163 773 | 11.795 (8187) | 0, 0, 0, 0 | 36.5 % (37.1 %) | 1 328 | 2 946 | 14 736 | 9 772 | 943 | 1.51 x 159 | 20 473 (853) |
+| PSRAM, esp-hal | 162 775 | 11.799 (8136) | 0, 0, 0, 0 | 72.0 % (76.8 %) | 4 554 | 7 065 | 27 287 | 10 222 | 2 084 | 4.97 x 1 157 | 162 756 (848) |
+| PSRAM, own ring | 162 774 | 11.799 (8136) | 0, 0, 0, 0 | 45.6 % (46.2 %) | 4 527 | 6 328 | 15 776 | 9 859 | 957 | 1.98 x 194 | 20 348 (848) |
+| Camera, esp-hal | 162 708 | 11.801 (8137) | 0, 0, 0, 0 | 73.2 % (78.0 %) | 4 928 | 7 516 | 27 400 | 10 268 | 2 092 | 4.97 x 1 154 | 162 689 (864) |
+| Camera, own ring | 162 705 | 11.801 (8137) | 0, 0, 0, 0 | 45.9 % (46.6 %) | 4 892 | 6 685 | 15 637 | 9 871 | 957 | 1.86 x 190 | 20 341 (837) |
+
+Host to board, 1452-byte datagrams unpaced for 20 s, every byte checked on the board: esp-hal
+162 611 sent, 162 611 received; own ring 162 599 sent, 162 599 received (8130/s, 11.802 MB/s);
+0 bad datagrams or bytes, 0 lost, 0 late, EMAC missed frames 0 in both.
+
+Stream (as in [step 1](#measured-step-1-the-datagram-copy-through-pie-2026-11-11), `jrx`, 10 s
+windows):
+
+| Run, driver | Host | Core 0 busy (`busy_all`) | net task | send task | `tx_stack_cyc` | `tx_driver_cyc` | Token requests per datagram x `token_cyc` | Wake paths |
+|---|---|---|---|---|---|---|---|---|
+| Raw 1280x800 RAW8 (link), esp-hal | 89.99 Mbit/s, 10.98 fps | 85.0 % (87.2 %) | 32 401 | 8 965 | 18 093 | 2 135 | 3.65 x 1 197 | 34 972 |
+| Raw 1280x800 RAW8 (link), own ring | 89.99 Mbit/s, 10.98 fps | 63.7 % (64.2 %) | 23 145 | 8 048 | 17 583 | 979 | 1.68 x 184 | 7 245 |
+| JPEG q90, 15.5x, 153.98 Hz (link), esp-hal | 92.71 Mbit/s, 79.9 fps | 91.9 % (93.5 %) | 31 410 | 10 847 | 17 360 | 2 132 | 3.57 x 1 205 | 26 697 |
+| JPEG q90, 15.5x, 153.98 Hz (link), own ring | 92.79 Mbit/s, 74.9 fps | 71.8 % (72.3 %) | 22 654 | 10 231 | 17 073 | 977 | 1.70 x 188 | 6 639 |
+| JPEG q90, 2x, 120 Hz, esp-hal | 13.55 Mbit/s, 120.06 fps | 11.1 % (11.7 %) | 25 272 | 7 573 | 15 798 | 2 125 | 1.96 x 1 302 | 9 550 |
+| JPEG q90, 2x, 120 Hz, own ring | 13.62 Mbit/s, 120.05 fps | 9.4 % (9.7 %) | 19 914 | 7 436 | 15 084 | 990 | 1.32 x 143 | 3 643 |
+
+Every stream run: 0 incomplete or bad frames, 0 capture errors, 0 EMAC missed frames, request
+round trips 1.34-1.38 ms (2x) and 4.6-4.9 ms (link full) as before. `poc-viewer`'s board test,
+sections `patterns` and `raw10` (every byte of the bars pattern and of RAW8 from RAW10
+checked), against this build: 0 failed checks (`s2-stream.board.txt`).
+
+- **Kept.** Net and send tasks together: 41 366 to 31 193 cycles per datagram in the raw
+  stream (-25 %), 42 257 to 32 885 with link-bound JPEG (-22 %), 32 845 to 27 350 at
+  13.6 Mbit/s (-17 %). The runner alone: 27 100-27 400 to 14 700-15 800 in the bench.
+- Where it went: the token requests (4 to 5 per datagram at 1 150 cycles, a ROM cache call
+  each, to 1.3-2 at 140-190), the driver's part of a frame (2 100 to 950-990: a buffer
+  write-back, no descriptor write-back), and 8 times fewer EMAC interrupts and runner wakes
+  (1 000 a second at the wire rate instead of 8 100).
+- smoltcp's `tx_stack` is unchanged (its copy and checksum; step 3).
+
+## The Ethernet driver (esp-hal 1.2.2 `ethernet` for the bring-up, this crate's DMA rings)
 
 Read in the registry source and measured here. The first three needed workarounds in this
-crate; they are defects to take upstream.
+crate; they are defects to take upstream. Since 2026-11-11 ([step 2](#measured-step-2-the-ethernet-ring-2026-11-11))
+esp-hal only brings the EMAC up (`Ethernet::new` in blocking mode: clocks, pads, DMA reset and
+bus mode, MAC configuration and address, the PHY) and keeps the PHY and the MAC's speed and
+duplex; `net/eth.rs` stops its DMA, points the descriptor list registers at its own rings,
+binds its own `ETH_MAC` handler and starts the DMA again. Nothing of esp-hal's API blocked
+that: its blocking driver binds no handler and leaves the DMA interrupts off, and the DMA
+registers are reachable through the PAC.
 
 1. **TX store-and-forward breaks frames on the P4.** `dma_start` sets `TX_STR_FWD` (and the
    checksum insertion needs it). With it, 56-byte pings passed, 400-byte ones failed with
@@ -868,31 +946,39 @@ crate; they are defects to take upstream.
    frames, the rest never arrived; UDP checksum errors on those), and afterwards even 56-byte
    pings failed. ESP-IDF disables TX store-and-forward on every chip
    (`emac_hal_init_dma_default`, threshold 64) and states a 256-byte RX FIFO for the P4
-   [INFERENCE: the TX FIFO is smaller than a full frame too]. `net` stops the TX DMA, clears
-   the bit, sets the 64-byte threshold, flushes the TX FIFO and restarts it.
-2. **No checksum insertion then.** The driver sets CIC 3 on every TX descriptor and tells
+   [INFERENCE: the TX FIFO is smaller than a full frame too]. The take-over in `net/eth.rs`
+   clears the bit, sets the 64-byte threshold and flushes the TX FIFO before it starts the DMA
+   on its rings.
+2. **No checksum insertion then.** esp-hal sets CIC 3 on every TX descriptor and tells
    smoltcp to compute no checksum. In threshold mode the EMAC inserts none: with smoltcp left
    at that, every ping failed with ICMPv6 checksum errors at the host and the board was
-   unreachable (neighbour discovery too). `net/device.rs` overrides the capabilities: smoltcp
-   computes the UDP and ICMPv6 checksums on TX (part of `tx_stack`). In store-and-forward mode
-   (before the fix) small frames did get correct inserted checksums. RX checksums stay with the
-   EMAC (the driver drops frames its RX engine flags).
+   unreachable (neighbour discovery too). `net/eth.rs` leaves CIC at 0 and gives smoltcp the
+   UDP and ICMPv6 checksums on TX (part of `tx_stack`). In store-and-forward mode (before the
+   fix) small frames did get correct inserted checksums. RX checksums stay with the EMAC: the
+   driver drops frames its checksum engine flags in RDES4.
 3. **The DMA-buffer check uses the wrong RAM range.** `InternalMemory::get_mut` asserts the
    address is in esp-metadata's "DRAM" range, 0x4FF40000..0x4FFADFC0, which assumes a 256 KiB
    L2 cache. With the 128 KiB the bootloader sets (`ESP_HAL_CONFIG_L2_CACHE_SIZE`, as
    `poc-p4-eth`), RAM starts at 0x4FF20000, the storage landed in `.bss` below 0x4FF40000 and
    the first `Ethernet::new` panicked (`assertion failed: is_valid_ram_address`). `dram_dma.x`
    adds a NOLOAD section before the stack at 0x4FF40000 or above; `net` zeroes the storage
-   there before use (all-zero is the value `EthernetDmaStorage::new` builds).
+   there before use (all-zero is the value `EthernetDmaStorage::new` builds). Only the
+   one-descriptor storage `Ethernet::new` still needs (3 200 B) lives there now; the rings of
+   `net/eth.rs` are in `.bss`, wherever the linker puts them.
 4. **`GenericPhy` busy-polls.** Its `poll_link` reads BMSR twice and ANLPAR and calls
    `wake_by_ref` every time; embassy-net calls it at the end of every runner poll, so the
    runner never sleeps (measured above: 99.8 % busy). `net/ip101.rs` reads the PHY every
    500 ms, woken by a 500 ms task. The MDC divider at a 400 MHz CPU clock is /124 = 3.2 MHz,
    above the 2.5 MHz of IEEE 802.3 clause 22 (from the source); MDIO works on this board.
-5. **RX cache maintenance works.** The driver invalidates each RX descriptor and buffer before
-   reading; 60 s at the wire limit with every byte checked found no bad byte (below).
-6. Costs to know: every TX descriptor asks for a completion interrupt (one runner wake per
-   frame), and each token request makes one or two ROM cache calls (about 1 200 cycles).
+5. **RX cache maintenance works.** esp-hal invalidated each RX descriptor and buffer before
+   reading; 60 s at the wire limit with every byte checked found no bad byte (below). The
+   rings of `net/eth.rs` read and write the descriptors through the non-cacheable alias and
+   invalidate the lines of a frame the stack read before the buffer goes back to the DMA (none
+   is cached while the DMA owns it); 20 s at the wire limit with every byte checked, no bad
+   byte ([step 2](#measured-step-2-the-ethernet-ring-2026-11-11)).
+6. Costs of esp-hal's rings, gone with the own ones: every TX descriptor asked for a
+   completion interrupt (one runner wake per frame), and each token request made one or two
+   ROM cache calls (about 1 200 cycles).
 7. **smoltcp 0.13.1 (embassy-net 0.9.1) can panic in `UdpSocket::send_to_with`**
    (`unwrap of f.take() failed`, udp.rs:304): `PacketBuffer::enqueue_with_infallible` runs the
    fill closure, then fails when the ring-wrap padding took the last metadata slot. It happened
@@ -918,6 +1004,7 @@ multicast, the EMAC's PTP clock and timestamps.
 - Not verified: an encoder timeout (never seen; the path is the same as the driver's errors),
   the encoder's codec and DMA errors on this firmware (only `OutputTooSmall` was provoked),
   quality below 20 on the camera, a scene in daylight (the room was dark for every run).
-- Keep `net/device.rs`'s checksum override and `net::tx_threshold_mode` until esp-hal fixes the
-  driver; size TX socket metadata rings as in item 7 of [The Ethernet driver](#the-ethernet-driver)
+- Keep the threshold mode and the checksum capabilities of `net/eth.rs` while the P4's EMAC
+  breaks frames in store-and-forward mode; size TX socket metadata rings as in item 7 of
+  [The Ethernet driver](#the-ethernet-driver-esp-hal-122-ethernet-for-the-bring-up-this-crates-dma-rings)
   and give TX rings at least twice the largest datagram (smoltcp wants it contiguous).

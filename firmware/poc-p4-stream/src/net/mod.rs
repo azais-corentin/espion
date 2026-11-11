@@ -1,6 +1,7 @@
-//! Ethernet and IPv6 on the Waveshare ESP32-P4-ETH: the EMAC (esp-hal's `ethernet` driver, RMII)
-//! with the IP101GRI PHY, embassy-net with the fixed link-local address [`ADDRESS`], and the
-//! tasks that run them.
+//! Ethernet and IPv6 on the Waveshare ESP32-P4-ETH: the EMAC (brought up by esp-hal's
+//! `ethernet` driver, RMII, its DMA then run by this crate's rings in [`eth`]) with the
+//! IP101GRI PHY, embassy-net with the fixed link-local address [`ADDRESS`], and the tasks that
+//! run them.
 //!
 //! Pins, from the Waveshare schematic (`ESP32-P4-ETH-datasheet.pdf`, sheet 1, the IP101GRI
 //! block U10), each matching Waveshare's ESP-IDF example (`ESP32-P4-Platform`,
@@ -27,6 +28,7 @@
 //! low through R63. RMII mode: strap COL/RMII (pin 4) high through R49.
 
 mod device;
+mod eth;
 mod ip101;
 
 use core::mem::MaybeUninit;
@@ -35,7 +37,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_executor::Spawner;
 use embassy_net::{Config, Ipv6Address, Ipv6Cidr, Runner, Stack, StackResources, StaticConfigV6};
 use embassy_time::{Duration, Timer, with_timeout};
-use esp_hal::Async;
+use esp_hal::Blocking;
 use esp_hal::ethernet::clock::ExternalRefClock;
 use esp_hal::ethernet::{Ethernet, EthernetDmaStorage, RmiiPinBundle};
 use esp_hal::gpio::{Level, Output, OutputConfig};
@@ -46,6 +48,7 @@ use log::{error, info, warn};
 use static_cell::{ConstStaticCell, StaticCell};
 
 pub use device::{Stats, stats};
+pub use eth::{IC_EVERY, RING_BYTES, RX_DESCRIPTORS, TX_DESCRIPTORS};
 pub use ip101::{LINK_POLL, Report, report};
 
 use crate::cpu;
@@ -56,10 +59,6 @@ pub const ADDRESS: Ipv6Address = Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0x4553,
 pub const PREFIX_LEN: u8 = 64;
 /// MDIO address of U10 (straps PHY_AD0 = 1, PHY_AD3 = 0).
 pub const PHY_ADDRESS: u8 = 1;
-/// RX DMA descriptors, each with a 1524-byte buffer in internal RAM.
-pub const RX_DESCRIPTORS: usize = 16;
-/// TX DMA descriptors, each with a 1524-byte buffer in internal RAM.
-pub const TX_DESCRIPTORS: usize = 16;
 /// Socket slots of the stack.
 pub const SOCKETS: usize = 4;
 /// How long the PHY reset is held low, and how long to wait after releasing it. The IP101G
@@ -69,8 +68,8 @@ const PHY_RESET_MS: u64 = 10;
 /// How long [`start`] waits for the link before it returns anyway.
 const LINK_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// The driver embassy-net runs: esp-hal's EMAC driver with the IP101 PHY, timed per frame.
-pub type Driver = device::Measured<Ethernet<'static, Async, ip101::Ip101>>;
+/// The driver embassy-net runs: this crate's rings on the EMAC, timed per frame.
+pub type Driver = device::Measured<eth::Eth>;
 
 /// The EMAC and the RMII pads.
 pub struct Pins {
@@ -86,27 +85,32 @@ pub struct Pins {
     pub mdio: GPIO52<'static>,
 }
 
-/// Descriptor rings and their buffers (internal RAM; esp-hal's `InternalMemory`, 64-byte aligned).
-pub type DmaStorage = EthernetDmaStorage<RX_DESCRIPTORS, TX_DESCRIPTORS>;
+/// esp-hal's descriptor rings and buffers, one of each: `Ethernet::new` needs them to bring the
+/// EMAC up, and [`eth::Eth::take_over`] stops their use (internal RAM; esp-hal's
+/// `InternalMemory`, 64-byte aligned).
+type HalStorage = EthernetDmaStorage<1, 1>;
 
-/// The DMA storage, in the `.dram_dma` section of `dram_dma.x`: at 0x4FF40000 or above, where
-/// esp-hal's DMA buffer check (which assumes a 256 KiB L2 cache) accepts it. NOLOAD, so
-/// [`dma_storage`] zeroes it.
+/// esp-hal's storage, in the `.dram_dma` section of `dram_dma.x`: at 0x4FF40000 or above,
+/// where esp-hal's DMA buffer check (which assumes a 256 KiB L2 cache) accepts it (README,
+/// "The Ethernet driver", item 3). NOLOAD, so [`hal_storage`] zeroes it.
 #[unsafe(link_section = ".dram_dma")]
-static mut DMA: MaybeUninit<DmaStorage> = MaybeUninit::uninit();
-static DMA_TAKEN: AtomicBool = AtomicBool::new(false);
+static mut HAL_DMA: MaybeUninit<HalStorage> = MaybeUninit::uninit();
+static HAL_DMA_TAKEN: AtomicBool = AtomicBool::new(false);
 
-/// The DMA storage, zeroed (the value of `EthernetDmaStorage::new()`). Once only.
-fn dma_storage() -> &'static mut DmaStorage {
+/// Bytes of internal RAM the Ethernet DMA takes: this crate's rings and esp-hal's storage.
+pub const DMA_BYTES: usize = RING_BYTES + core::mem::size_of::<HalStorage>();
+
+/// esp-hal's storage, zeroed (the value of `EthernetDmaStorage::new()`). Once only.
+fn hal_storage() -> &'static mut HalStorage {
     assert!(
-        !DMA_TAKEN.swap(true, Ordering::AcqRel),
+        !HAL_DMA_TAKEN.swap(true, Ordering::AcqRel),
         "DMA storage taken twice"
     );
-    // SAFETY: first and only reference to `DMA` (checked above). The storage holds only
+    // SAFETY: first and only reference to `HAL_DMA` (checked above). The storage holds only
     // integers (descriptor words and buffer bytes), so all-zero is a valid value, and it is
     // the one `EthernetDmaStorage::new()` builds.
     unsafe {
-        let p = (&raw mut DMA).cast::<DmaStorage>();
+        let p = (&raw mut HAL_DMA).cast::<HalStorage>();
         p.write_bytes(0, 1);
         &mut *p
     }
@@ -118,6 +122,11 @@ static PHY_RESET: StaticCell<Output<'static>> = StaticCell::new();
 /// Resets the PHY (`phy_reset`, U10 pin 32), brings up the EMAC and the stack, spawns the
 /// runner and the link task on `spawner`, and waits (up to [`LINK_TIMEOUT`]) for the link.
 /// `None` if the EMAC or the PHY does not come up.
+#[allow(
+    clippy::large_stack_frames,
+    reason = "once at boot, in `main`'s future on the main stack; the runner (with esp-hal's \
+    `Ethernet` inside) passes through it on its way to its task"
+)]
 pub async fn start(
     spawner: Spawner,
     pins: Pins,
@@ -143,7 +152,8 @@ pub async fn start(
     Some(stack)
 }
 
-/// The EMAC driver (which initialises the PHY over MDIO) and the stack.
+/// The EMAC (esp-hal's driver initialises it and the PHY over MDIO), the take-over of its DMA
+/// and the stack.
 #[allow(
     clippy::large_stack_frames,
     reason = "once at boot, on the main stack: embassy-net builds its interface state there"
@@ -154,9 +164,9 @@ fn bring_up(p: Pins) -> Option<(Stack<'static>, Runner<'static, Driver>)> {
     // would use it too.
     let mut mac = [0u8; 6];
     mac.copy_from_slice(esp_hal::efuse::base_mac_address().as_bytes());
-    let eth = match Ethernet::new(
+    let hal: Ethernet<'static, Blocking, ip101::Ip101> = match Ethernet::new(
         p.eth,
-        dma_storage(),
+        hal_storage(),
         mac,
         ip101::Ip101::new(PHY_ADDRESS),
         RmiiPinBundle {
@@ -171,22 +181,18 @@ fn bring_up(p: Pins) -> Option<(Stack<'static>, Runner<'static, Driver>)> {
             mdio: p.mdio,
         },
     ) {
-        Ok(e) => {
-            log_opmode(tx_threshold_mode());
-            e.into_async()
-        }
+        Ok(e) => e,
         Err(e) => {
             error!("net: EMAC/PHY init failed: {e:?}");
             return None;
         }
     };
+    let (eth, opmode) = eth::Eth::take_over(hal);
+    log_opmode(opmode);
     let r = report();
     info!(
-        "net: EMAC up, MAC {:02x?}, PHY at MDIO {PHY_ADDRESS} id {:#06x} {:#06x}, DMA {RX_DESCRIPTORS} RX + {TX_DESCRIPTORS} TX descriptors ({} B)",
-        mac,
-        r.id.0,
-        r.id.1,
-        core::mem::size_of::<DmaStorage>()
+        "net: EMAC up, MAC {:02x?}, PHY at MDIO {PHY_ADDRESS} id {:#06x} {:#06x}, own DMA rings: {RX_DESCRIPTORS} RX + {TX_DESCRIPTORS} TX descriptors ({RING_BYTES} B), TX completion interrupt every {IC_EVERY} frames",
+        mac, r.id.0, r.id.1,
     );
     let config = Config::ipv6_static(StaticConfigV6 {
         address: Ipv6Cidr::new(ADDRESS, PREFIX_LEN),
@@ -208,57 +214,15 @@ fn bring_up(p: Pins) -> Option<(Stack<'static>, Runner<'static, Driver>)> {
 const OPMODE_TSF: u32 = 1 << 21;
 const OPMODE_TTC_SHIFT: u32 = 14;
 
-/// Switches the TX DMA from store-and-forward (esp-hal 1.2.2's setting) to threshold mode at
-/// 64 bytes, as ESP-IDF does on every chip (`emac_hal_init_dma_default`). Returns
-/// `DMAOPERATION_MODE` before and after.
-///
-/// With store-and-forward, frames larger than a few hundred bytes leave the P4 broken: most
-/// never reach the host's NIC and the rest carry wrong UDP/ICMPv6 checksums (measured: 56-byte
-/// pings pass, 400-byte ones fail, 1452-byte datagrams are lost or fail the checksum)
-/// [INFERENCE: the P4's TX FIFO is smaller than a full frame; ESP-IDF states 256 B for its RX
-/// FIFO]. The checksum insertion works only in store-and-forward mode, so smoltcp computes
-/// the checksums (`device`).
 #[inline(never)]
-fn tx_threshold_mode() -> (u32, u32) {
-    // SAFETY: the EMAC was just started by `Ethernet::new` and nothing is queued yet; the TX
-    // DMA is stopped while its mode changes.
-    let dma = unsafe { &*esp32p4::EMAC_DMA::ptr() };
-    let before = dma.dmaoperation_mode().read().bits();
-    dma.dmaoperation_mode()
-        .modify(|_, w| w.start_stop_transmission_command().clear_bit());
-    for _ in 0..100_000 {
-        if dma.dmastatus().read().trans_proc_state().bits() == 0 {
-            break;
-        }
-    }
-    dma.dmaoperation_mode().modify(|_, w| {
-        w.tx_str_fwd().clear_bit();
-        // SAFETY: TTC 0 = 64 bytes.
-        unsafe { w.tx_thresh_ctrl().bits(0) };
-        w.flush_tx_fifo().set_bit()
-    });
-    for _ in 0..100_000 {
-        if dma
-            .dmaoperation_mode()
-            .read()
-            .flush_tx_fifo()
-            .bit_is_clear()
-        {
-            break;
-        }
-    }
-    dma.dmaoperation_mode()
-        .modify(|_, w| w.start_stop_transmission_command().set_bit());
-    (before, dma.dmaoperation_mode().read().bits())
-}
-
-#[inline(never)]
-fn log_opmode((before, after): (u32, u32)) {
+fn log_opmode(m: eth::OpMode) {
     info!(
-        "net: EMAC DMA operation mode {before:#010x} -> {after:#010x} (TX store-and-forward {} -> {}, threshold code {})",
-        before & OPMODE_TSF != 0,
-        after & OPMODE_TSF != 0,
-        (after >> OPMODE_TTC_SHIFT) & 7,
+        "net: EMAC DMA operation mode {:#010x} -> {:#010x} (TX store-and-forward {} -> {}, threshold code {})",
+        m.before,
+        m.after,
+        m.before & OPMODE_TSF != 0,
+        m.after & OPMODE_TSF != 0,
+        (m.after >> OPMODE_TTC_SHIFT) & 7,
     );
 }
 

@@ -208,7 +208,7 @@ fn log_ram() {
         end - RAM_START,
         RAM_START,
         top - end,
-        core::mem::size_of::<net::DmaStorage>(),
+        net::DMA_BYTES,
         core::mem::size_of::<embassy_net::StackResources<{ net::SOCKETS }>>(),
         match SERVICE {
             Service::Network => 0,

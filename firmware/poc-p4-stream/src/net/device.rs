@@ -1,14 +1,14 @@
 //! An `embassy-net-driver` wrapper that times the driver and the stack per frame.
 //!
-//! esp-hal's tokens hand smoltcp the DMA buffer itself (no copy in the driver). Inside a
+//! The driver's tokens hand smoltcp the DMA buffer itself (no copy in the driver). Inside a
 //! token's `consume`, the closure smoltcp passes is the stack's work on the frame (TX: write
 //! the headers and copy the payload from the socket buffer into the DMA buffer; RX: parse the
 //! frame and copy the payload into the socket buffer); the rest of `consume` is the driver's
 //! (descriptor ownership, cache write-back or invalidation, poll demand). The `receive` and
-//! `transmit` calls (descriptor checks, one cache invalidation each) count as the driver's too.
+//! `transmit` calls (descriptor checks) count as the driver's too.
 //!
-//! With the cargo feature `accounting` off, the wrapper keeps only the checksum capabilities:
-//! no timing, no critical section per frame, [`stats`] returns zeros.
+//! With the cargo feature `accounting` off, the wrapper passes everything through: no timing,
+//! no critical section per frame, [`stats`] returns zeros.
 
 #[cfg(feature = "accounting")]
 use core::cell::Cell;
@@ -16,9 +16,7 @@ use core::task::Context;
 
 #[cfg(feature = "accounting")]
 use critical_section::Mutex;
-use embassy_net_driver::{
-    Capabilities, Checksum, Driver, HardwareAddress, LinkState, RxToken, TxToken,
-};
+use embassy_net_driver::{Capabilities, Driver, HardwareAddress, LinkState, RxToken, TxToken};
 
 /// Frame counts and cycles since boot.
 #[derive(Clone, Copy, Debug, Default)]
@@ -144,14 +142,7 @@ impl<D: Driver> Driver for Measured<D> {
     }
 
     fn capabilities(&self) -> Capabilities {
-        let mut caps = self.0.capabilities();
-        // esp-hal leaves the checksums to the EMAC (descriptor CIC = 3), which inserts them
-        // only in TX store-and-forward mode; `net` turns that mode off (it breaks frames above
-        // a few hundred bytes on the P4), so smoltcp computes the UDP and ICMPv6 checksums.
-        // RX checks stay with the EMAC (esp-hal drops frames its RX checksum engine flags).
-        caps.checksum.udp = Checksum::Tx;
-        caps.checksum.icmpv6 = Checksum::Tx;
-        caps
+        self.0.capabilities()
     }
 
     fn hardware_address(&self) -> HardwareAddress {
