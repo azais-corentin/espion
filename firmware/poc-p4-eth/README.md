@@ -615,12 +615,44 @@ The detector restructure of `espion-vision` and the PIE skip, one step at a time
 with the bench build (`RUN_BENCH = true`, `RUN_CAMERA = false`) in its own board session; logs
 under `/tmp/p4perf-logs/DetectorOneCore/`. Frames: the 1280x800 strip path (dark and 64
 `synth` discs), per-frame means over 50 passes. Rows: the busy-row cases, warm, per row. Per
-blob: the blob-cost section at radius 4 (64 discs, 37 pixels each). Two builds of the same
-source differ by 2 to 3 % in cycles from code layout alone; instructions are the firm part.
+blob: the blob-cost section at radius 4 (64 discs, 37 pixels each), and in brackets that
+section's whole-frame cycles. Two builds of the same source differ by 2 to 3 % in cycles
+from code layout alone; instructions are the firm part. All figures with the `Scalar` skip.
 
-| Step | Log | Dark frame us / cycles / instructions | 64-blob frame us / cycles / instructions | Column row cycles / instructions | Every-8th row cycles / instructions | Per blob cycles / instructions | Result |
+| Step (commit on `main`) | Log | Dark frame us / cycles / instructions | 64-blob frame us / cycles / instructions | Column row cycles / instructions | Every-8th row cycles / instructions | Per blob cycles / instructions (frame cycles) | Result |
 |---|---|---|---|---|---|---|---|
-| baseline (`main`, busy-row cases added) | `s0b-base.log` | 4235 / 1 694 165 / 909 557 | 5098 / 2 039 229 / 1 130 803 | 2626.8 / 1548.7 | 2133.7 / 1218.2 | 5445 / 3502 | - |
+| baseline (`dfeddcf`, busy-row cases added) | `s0b-base.log` | 4235 / 1 694 165 / 909 557 | 5098 / 2 039 229 / 1 130 803 | 2626.8 / 1548.7 | 2133.7 / 1218.2 | 5445 / 3502 (2 043 547) | - |
+| one skip interface (`9420364`) | `s1-skip.log` | 4174 / 1 669 843 / 830 770 | 5165 / 2 066 297 / 1 083 102 | 2773.4 / 1571.3 | 2110.3 / 1135.0 | 6224 / 3995 (2 072 128) | kept, judged with the next two (they build on it) |
+| span skip while idle (`318e1d0`) | `s2-span.log` | 3142 / 1 257 172 / 628 187 | 4655 / 1 862 035 / 987 710 | 2776.2 / 1584.7 | 1735.5 / 957.2 | 9364 / 5566 (1 856 960) | kept |
+| lean row entry (`29f50b7`) | `s3-lean.log` | 3144 / 1 257 727 / 628 317 | 4640 / 1 856 201 / 969 750 | 2685.0 / 1479.7 | 1720.2 / 942.4 | 9297 / 5288 (1 853 333) | kept |
+| centroid without 64-bit division (`757a3b6`) | `s4-div.log` | 3145 / 1 258 015 / 628 315 | 4601 / 1 840 714 / 964 276 | 2702.5 / 1485.7 | 1700.8 / 928.1 | 9010 / 5200 (1 835 137) | kept |
+| component table without bounds checks (`0c6888c`) | `s5-slot.log` | 3145 / 1 258 221 / 628 569 | 4578 / 1 831 278 / 960 042 | 2672.5 / 1473.9 | 1700.6 / 927.1 | 8844 / 5132 (1 825 062) | kept |
+
+- **One skip interface** alone: the dark frame 1.4 % fewer cycles and 8.7 % fewer
+  instructions (the 64-byte OR loop), but the row overhead rose (dark-row fit 428.8 → 546.1
+  cycles per row, 1.249 → 1.116 per pixel), the column row by 5.6 % and the blob by 14 %
+  (3502 → 3995 instructions per blob; [INFERENCE] from the code: the in-row scan now calls
+  the skip after each run, each call with its own head and tail). The 64-blob frame took
+  1.3 % more cycles with 4.2 % fewer instructions. It is the base of the next two steps;
+  after them (`29f50b7`) the 64-blob frame is 9.0 % under the baseline and the column row
+  2.2 % over it in cycles with 4.5 % fewer instructions.
+- **Span skip**: dark rows cost only the skip (fit 2.2 + 1.160 per pixel warm, 0 + 1.247
+  cold): the dark frame 24.7 % fewer cycles, the 64-blob frame 9.9 %, the every-8th row
+  17.8 %; the column row, which is never idle, unchanged. From here the per-blob figure
+  also holds the rows near the blob, which the dark frame no longer pays: compare the
+  frame cycles in brackets.
+- **Lean row entry**: column row 3.3 % fewer cycles and 6.6 % fewer instructions, 64-blob
+  frame 1.8 % fewer instructions; dark frame unchanged.
+- **Centroid division**: 88 instructions and 287 cycles less per blob at radius 4 (1.0 %
+  of the frame), 64-blob frame 0.8 % fewer cycles. The column row rose by 0.7 % (6
+  instructions), inside the layout noise.
+- **Slot index**: per blob 1.3 % fewer instructions and 1.8 % fewer cycles, 64-blob frame
+  0.5 %, column row 1.1 %; the dark frame 254 instructions more (0.04 %).
+- **The series** against the baseline: dark frame 4235 → 3145 us (1 694 165 → 1 258 221
+  cycles, -25.7 %; 909 557 → 628 569 instructions, -30.9 %); 64-blob frame 5098 → 4578 us
+  (2 039 229 → 1 831 278 cycles, -10.2 %); column row 2626.8 → 2672.5 cycles (+1.7 %) with
+  1548.7 → 1473.9 instructions (-4.8 %); every-8th row -20.3 %; the radius-4 blob frame
+  -10.7 %, the radius-12 blob frame 2 816 617 → 2 780 264 cycles (-1.3 %).
 
 ### Camera capture (whole frames in PSRAM)
 
