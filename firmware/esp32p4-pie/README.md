@@ -38,8 +38,10 @@ target, and a self-test that compares the kernel with its reference on the chip:
 | `copy(dst, src)` | `dst` equals `src` byte for byte; panics if the lengths differ | `copy_from_slice` | `self_test_copy` |
 | `sum16_be(bytes)` | the one's-complement sum of `bytes` as big-endian 16-bit words (odd last byte = high byte), fully folded: in `0..=0xFFFF`, equal to the plain word sum modulo 0xFFFF, 0 only for all-zero bytes | `sum16_be_scalar` | `self_test_sum` |
 
-None of `first_bright10`, `copy` and `sum16_be` has run on the board yet: their
-self-tests and timing are still to be done there.
+All four self-tests passed on the board on 2026-11-11 (Waveshare ESP32-P4-ETH, rev v3.2,
+the `poc-p4-eth` bench build, 12 288 cases each, seed `0x5EED_0001`: 0 failures; see
+`firmware/poc-p4-eth/README.md`, "PIE self-tests at boot"). `first_bright10`, `copy` and
+`sum16_be` have not been timed on the board yet.
 
 All kernels take any alignment and length and never write outside their slices. They
 read nothing outside them either, with one exception: `copy` with a misaligned source
@@ -87,9 +89,9 @@ encoder with words from `riscv32-esp-elf-as -march=rv32imafcb_zicsr_zifencei_xes
 |---|---|---|
 | `first_bright` | first 64-byte block holding a byte `>= threshold` | 0.29 cycles/pixel (L1), 0.41 (cold internal RAM), 1280-byte rows |
 | scalar dark skip (detector today) | same, 32-bit words | 1.27 cycles/pixel (L1), 1.35 (cold internal RAM) |
-| `first_bright10` | first 80-byte RAW10 pass (64 pixels) holding a pixel byte `>= threshold` | not run yet |
-| `copy` | `copy_from_slice` at any alignment | not run yet (the spike's aligned loop: 0.49 cycles/byte; ROM `memcpy` 1.71 aligned, 9.06 when source and destination differ mod 4) |
-| `sum16_be` | Internet checksum partial sum, big-endian 16-bit words | not run yet |
+| `first_bright10` | first 80-byte RAW10 pass (64 pixels) holding a pixel byte `>= threshold` | self-test passed; not timed yet |
+| `copy` | `copy_from_slice` at any alignment | self-test passed; not timed yet (the spike's aligned loop: 0.49 cycles/byte; ROM `memcpy` 1.71 aligned, 9.06 when source and destination differ mod 4) |
+| `sum16_be` | Internet checksum partial sum, big-endian 16-bit words | self-test passed; not timed yet |
 
 The `first_bright` figures were measured in the spike on 2026-11-11 (Waveshare
 ESP32-P4-ETH, rev 3.2, 400 MHz) with the software-pipelined 64-byte loop that
@@ -100,7 +102,7 @@ yet.
 `first_bright` uses 16-byte-aligned loads, so the bytes before the first 16-byte boundary
 and after the last one are scanned one at a time.
 
-`first_bright10` has not run on the board yet. Per 80 bytes (lcm of the 5-byte group and
+`first_bright10` has not been timed on the board yet. Per 80 bytes (lcm of the 5-byte group and
 the 16-byte vector) it does five loads, five ANDs with constant masks that clear the
 low-bit bytes, four unsigned maxima and one horizontal maximum. The masks are constants
 because every pass starts on a group boundary: the first 0 to 15 groups (up to 75 bytes)
@@ -108,7 +110,7 @@ are scanned one group at a time until the data reaches a 16-byte boundary, and t
 of fewer than 80 bytes is scanned the same way. A 1600-byte row (1280 pixels) that
 starts on a 16-byte boundary is 20 vector passes with no scalar part.
 
-`copy` has not run on the board yet. It copies up to 15 bytes one at a time until the
+`copy` has not been timed on the board yet. It copies up to 15 bytes one at a time until the
 destination reaches a 16-byte boundary, so every vector store is aligned, then 16 bytes
 per load and store and the last 0 to 15 bytes one at a time. With the source aligned like
 the destination the loop is the spike's (four loads and four stores per 64 bytes, 0.49
@@ -123,7 +125,7 @@ each holds at least one source byte and an aligned 16-byte word never crosses a 
 line or a page, so the read cannot fault, and the bytes outside the slice are shifted out
 and never stored.
 
-`sum16_be` has not run on the board yet. The bytes up to the first 16-byte boundary and
+`sum16_be` has not been timed on the board yet. The bytes up to the first 16-byte boundary and
 after the last one are summed one at a time; the aligned middle goes through
 `esp.vmulas.u16.xacc` against a vector of ones, so the 40-bit accumulator `XACC` adds
 the eight little-endian 16-bit lanes of each 16 bytes, with the load of the next 16 bytes
