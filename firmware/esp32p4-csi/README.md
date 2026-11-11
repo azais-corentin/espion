@@ -16,8 +16,9 @@ operation).
 
 ## Strips on two cores: `CsiStrips::split`
 
-**Not run on the board yet** (2026-11-11). Built and checked by reading and in the release
-ELF only; the board checks are listed below.
+Run on the board on 2026-11-11 with the reader on a bare core 1 (`poc-p4-eth`,
+`RUN_CORE1`); results under "Board checks" below. Items 7's network part and 8's wire-rate
+load are left for the co-load step.
 
 `split(self)` turns a stopped (or running: it stops it) `CsiStrips` into two halves:
 
@@ -72,7 +73,7 @@ host error that core 0 has not handled yet can let one damaged strip through.
 
 The reader gives each item back to the DMA as soon as it takes the block, not when the
 consumer is done. With N strips in the ring and T the time the DMA takes for one strip
-(about 0.64 ms at 1280x800, 120 fps):
+(0.59 ms measured at 1280x800, 120 fps: 64 lines of 9.1 us):
 
 | The consumer keeps one strip for | Effect |
 |---|---|
@@ -83,7 +84,12 @@ consumer is done. With N strips in the ring and T the time the DMA takes for one
 Lap detection: strip `k` is overwritten only after the DMA finished item `k - 1` once more,
 whose done bit the reader cleared before it took `k`. So `release` reports a lap if `k - 1`
 shows done. [INFERENCE] This assumes the write-back of `k - 1` becomes visible before the
-DMA's first data write into `k`; the TRM does not say.
+DMA's first data write into `k`; the TRM does not say. On the board (1280x800, N = 4,
+log `TwoCore/d2-faults.log`), after the take of `k`: item `k + 1` done at 593 us, `k + 2` at
+1180 us, `k + 3` (= `k - 1`) at 1737 to 1767 us, the first row of `k` changed at 1767 us
+(sampled about every 30 us), `k` done again at 2328 us; a hold to about 2330 us stalls the
+DMA. Over 3752 holds no strip whose data changed released `true`; the sampling was too coarse
+to test the order itself.
 
 The consumer must treat what it computed from a frame as valid only if every strip of the
 frame released `true`.
@@ -106,34 +112,37 @@ frame released `true`.
 
 Shared state is atomics only; each field names its single writer in `src/strips/split.rs`.
 
-### Board checks still to do
+### Board checks (2026-11-11)
 
-1. Build the core-1 runner (performance plan 5.3) and run the `llvm-objdump` call-graph walk
-   from its entry closure: no reference to `CRITICAL_SECTION`, `SCHEDULER`,
-   `esp_println::LOCK`, `SoftwareInterrupt::raise`, and no ROM cache call outside
-   `esp32p4_cache`.
-2. `poc-p4-eth` strip check (`StripCheck`: row checksums of the sensor's random test pattern
-   from a whole-frame capture) with the reader on core 1, in all four 120 fps modes, 10 min
-   each: every row of every strip released `true` matches, `frames_complete` equals the
-   frames the consumer finished, `length_errors = dma_stalls = strips_lapped() = 0`,
-   `dma_errors = 0`.
-3. Interrupt count: the DMA interrupt runs only on errors and stalls (`isr_runs` stays 0 in
-   a clean soak).
-4. Lap test: keep strips for times stepped from (N - 2) T to N T, with row checksums taken
-   when the strip is handed out and again just before `release`. Every strip whose checksum
-   changed must release `false` (this tests the [INFERENCE] above), and the number of
-   `false` releases with unchanged checksums shows how conservative the check is. Delivery
-   resumes at the next frame start; `dma_stalls` stays 0 below N T.
-5. Stall test: keep one strip (or stop polling) for 1 to 100 ms, longer than N T, so the DMA
-   halts; core 0 counts a stall, `service()` resumes, the next
-   whole frame arrives within the 25 to 33 ms measured on one core after the reader polls
-   again, and the guard areas after the ring and around the items stay unwritten.
-6. 1000 `stop`/`start` cycles while the reader polls: no `ReaderBusy`, no strip of an old
-   run released `true`, every run delivers again after two frames.
-7. Drop the control half while the reader polls: the reader returns `None` from then on and
-   writes no item (guard check on the items).
-8. Cache contention: core 0 streaming at the wire rate while core 1 polls; strip invalidate
-   cycles (`invalidate_cycles_max`) and no corrupt row.
+Reader on core 1 (`poc-p4-eth`, `RUN_CORE1`, plans in `src/core1_soak.rs`), logs in
+`/tmp/p4perf-logs/TwoCore/`.
+
+1. Call-graph walk of the core-1 runner from its entry: **pass**. No reference to
+   `CRITICAL_SECTION`, `SCHEDULER`, `esp_println::LOCK` or `raise`; the only ROM cache
+   calls (`Cache_Invalidate_Addr`, `Cache_WriteBack_Addr`, `Cache_Get_L2_Cache_Line_Size`)
+   are inside `esp32p4_cache`. Details in the `poc-p4-eth` README.
+2. Pixel check with the reader on core 1, all four 120 fps modes, 30 s each (not 10 min;
+   `c-check.log`): **pass**. 1280x800: 46 787 strips, 2 879 200 rows, 0 bad, 3599 of 3599
+   frames good; 1280x720: 2 591 280 rows, 640x480: 1 728 000, 640x400 bin2: 1 439 600, all
+   0 bad; stalls, length, DMA errors and laps 0. The 10-minute runs with core 0 contention
+   were not run.
+3. Interrupt count: **pass**. `isr_runs` 0 in every clean run (`a-bringup.log`,
+   `c-check.log`); in the fault runs it equals the stall count.
+4. Lap test (`d-faults.log`, `d2-faults.log`): **pass** for the safety property: 3752 holds
+   from 0.5 to 100 ms, changed and released `true` 0. The release came after a re-read of
+   the whole strip through the uncached alias, so holds of 0.8 ms and more released `false`,
+   consistent with item `k - 1` finishing at 1737 us [INFERENCE: re-read time derived, not
+   timed]. Timeline above; delivery resumed with the next frame.
+5. Stall test (holds of 1, 5, 30, 100 ms every 20 frames, `d2-faults.log`): **pass**. A stall
+   per hold of 5 ms or more (27, 24, 18), `service()` resumed each time, the next good frame
+   ended at most 11.2, 32.1, 32.1 and 28.8 ms after the hold, rows bad 0, the guard after
+   the ring and the items intact after each case.
+6. 1000 stop/start cycles: **not verified**. Both runs reached the step but the monitor
+   capture (240 s) ended before its summary; no result.
+7. Drop the control half while the reader polls: **pass** (`c-check.log`): list items
+   unchanged over 50 ms, no strip delivered, core 1's heartbeat still moving.
+8. Cache contention with network load: deferred to the co-load step. A core-0 cache-operation
+   loop (`CONTENTION`, `LONG` plans) is built but was not run.
 
 ## Build
 

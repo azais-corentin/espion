@@ -133,3 +133,15 @@ Not tested:
 `.cargo/config.toml`). `esp32p4-csi` and `esp32p4-jpeg` depend on it, so it is linked into
 `cam-p4`, `poc-p4-eth` and `poc-p4-stream`; the two PoCs also call it directly (prefetch, and
 the stream's Ethernet rings).
+
+## Lock statistics (feature `stats`)
+
+With `stats`, each operation that takes the cross-core lock records per core the operation
+count, the longest wait and the longest hold, in `mcycle` cycles (`stats::get(core)`,
+`stats::reset_max()`). Measured on 2026-11-11 with the strip reader and the detector on a
+bare core 1 (`poc-p4-eth`, `RUN_CORE1`, log `/tmp/p4perf-logs/TwoCore/b-measure-pie.log`):
+longest hold on core 1 2224 cycles (5.6 us at 400 MHz), strip invalidate at most 6866 cycles.
+Core 0 under a tight loop of cache operations (plans `CONTENTION`, `LONG`) was not run. On
+the co-load path, esp-hal's own cache maintenance does not take this lock (Ethernet and SPI
+DMA buffers, interrupt vector set-up, PSRAM boot invalidate) [INFERENCE: from reading
+esp-hal 1.2.2, not measured].

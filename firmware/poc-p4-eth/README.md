@@ -135,7 +135,7 @@ All in constants at the top of `src/main.rs`; one plan per boot. The default sel
 |---|---|---|
 | `RUN_BENCH` | `false` (default) / `true` | Detector benchmark on synthetic frames, before the camera |
 | `RUN_CAMERA` | `true` (default) | The camera section |
-| `RUN_CORE1` | `false` (default) / `true` | Instead of `PLAN`: strip runs on the modes of `CAMERA_PLAN`, 30 s each, with the detector on the second core started bare (see "Detector on core 1"). Not run on the board yet |
+| `RUN_CORE1` | `false` (default) / `true` | Instead of `PLAN`: strip runs on the modes of `CAMERA_PLAN`, 30 s each, with the detector on the second core started bare (see "Detector on core 1"; test plan `core1_soak::PLAN`) |
 | `PLAN` | `&CAMERA_PLAN` (default) | Modes 0..=3 (the 120 fps RAW8 modes), then the soak chosen by `SOAK` |
 | `PLAN` | `&FAST_CAPTURE_PLAN` | Capture only over modes 4..=11, 5 s each, then the detector check per mode |
 | `PLAN` | `&MODE_STILLS_PLAN` | All 12 modes (order 0, 9, 1, 10, 6, 11, 4, 5, 7, 8, 2, 3, so RAW10 follows its RAW8 window and 8 follows the binned modes), gain 2x: capture only, the detector check, a scene still and a bar-pattern still per mode |
@@ -231,9 +231,11 @@ Each call prints its blob count, the detector overflow and the time from the cyc
 
 ### Detector on core 1 (`RUN_CORE1`)
 
-**Not run on the board yet** (2026-11-11). Built, clippy-clean and checked in the release ELF
-only. The plan behind it is performance plan step 5.3: core 1 runs bare, with no scheduler,
-no interrupts, no critical section and no logging.
+Run on the board on 2026-11-11 (results below). The plan behind it is performance plan
+step 5: core 1 runs bare, with no scheduler, no interrupts, no critical section and no
+logging. Core 1 enables its own PIE token (`CORE1_SKIP`, Pie by default) and runs each strip
+inside an L1 data-cache autoload section; core 0 never touches the autoload registers in
+this path.
 
 Start-up (esp-hal 1.2.2, `system/multi_core.rs`, `soc/esp32p4/cpu_control.rs`):
 - `start_app_core` copies the entry closure to the bottom of a 16 KiB static stack, enables
@@ -267,41 +269,58 @@ per second, detector time per frame (mean and max), instructions per frame, late
 strips, abandoned frames, blobs, detector overflow, dropped results and heartbeat rate. A
 trap record or a heartbeat that did not move for a second ends the runs with a report.
 
-Call graph of the release build with `RUN_CORE1 = true`, from esp-hal's core-1 entry: the
-loop (`core1::run`, with the reader's `poll` and `release` inlined) reaches `Tracker::complete`,
-the detector (`push_rows_with::<Scalar>`, `Labels::link`, `Labels::end_row`,
-`Scalar::first_bright`, `first_bright10`) and the ROM's `memset`, `memcpy`,
-`Cache_Get_L2_Cache_Line_Size` and `Cache_Invalidate_Addr`. No reference to
-`CRITICAL_SECTION`, `SCHEDULER`, `esp_println::LOCK` or `raise`; no indirect call. The
-panic handler is reachable only through bounds and division checks that the detector's
-invariants rule out: `free[nfree - 1]` and `merged[i]` (counts kept at most `COMPS`),
-`runs[prev]` and `nruns[prev]` (`prev` is 0 or 1), `[..nruns]` (at most `RUNS`),
-`blocks[i]` in `first_bright10` (an index found in `blocks[from..]`), and the divisions of
-`q5` (`sw` is at least 1 for every component and stays below 2^32 for frames up to 4 M
-pixels; `div_q16` gets `sw > 0`). esp-hal's own start-up code before the closure
-(`init_vectoring`, `set_stack_watchpoint`) has panic paths of its own. Re-run the walk when
-the detector call changes.
+Call graph of the release build with `RUN_CORE1 = true` (walk from `start_core1_run`,
+2026-11-11): 23 functions: the runner (`core1::run::<Pie>` and `<Scalar>`, `check_strip`,
+`check_rows`, `hold_changed`), `StripReader::poll`, `StripRef::release`,
+`Tracker::complete`, the detector (`push_rows_with` for Pie and Scalar, `finish`,
+`Labels::link`, `Labels::end_row`, `first_bright`, `first_bright10`, Pie's `skip_dark`,
+`skip_dark10`) and the ROM's `Cache_Get_L2_Cache_Line_Size`, `Cache_Invalidate_Addr`,
+`Cache_WriteBack_Addr`, `memcpy`, `memset`. No reference to `CRITICAL_SECTION`,
+`SCHEDULER`, `esp_println::LOCK` or `raise`; no indirect call. CSRs: `mcycle`, `minstret`,
+the event counters, `mhartid`, `mtvec`, PIE enable (`0x7f2`) and the cache lock's `MIE`
+clear and restore. 30 panic call sites, none reachable under the invariants: the detector's
+bounds and divisions as before (`free`, `merged`, `runs`, `[..nruns]`, `blocks[i]`, `q5`,
+`div_q16`), and `autoload_configure`'s section-count check (one section per strip).
+`Pie::enable` reads the eFuse and swaps a per-core flag; no lock. Re-run the walk when the
+detector call changes.
 
 With `RUN_CORE1 = false` the runner's large statics are not linked (the set-up runs before
 the first await of a `const`-gated future): 620 bytes more RAM than without it (the trap
 record and the mailbox) and about 15 KB of unreachable code.
 
-Board checks still to do:
-1. Boot with `RUN_CORE1 = true`: "core 1: started", one line per second per mode, a
-   heartbeat of up to about 100 000 per second (one turn per 10 us pause when idle).
-2. All four 120 fps modes for 30 s each: fps 120, `results dropped`, `lapped` and
-   `abandoned` 0 after the first second, stalls and length errors 0 in the summary,
-   detector time per frame as on core 0 (`proc` of the strip soak) or better.
-3. The same with core 0 busy (a later step adds the network load): no change on core 1
-   beyond the shared cache.
-4. A deliberate fault on core 1 (an illegal instruction in a test build): core 0 logs the
-   trap with `mcause` 2 and the `mepc` of the instruction within one second, and keeps
-   running.
-5. A deliberate endless loop in the detector call: core 0 reports the stalled heartbeat
-   within one second.
-6. Hold a strip on core 1 for (N - 1) to N strip periods (N strips in the ring): lapped
-   strips counted, delivery from the next frame, no stall; longer: a stall, `service()`
-   resumes, the run goes on.
+Board checks (2026-11-11, logs in `/tmp/p4perf-logs/TwoCore/`):
+1. Boot, "core 1: started", a line per second per mode, heartbeat about 84 000 per second
+   (`a-bringup.log`): **pass**.
+2. Four 120 fps modes, 30 s each (`a-bringup.log`): **pass**. 3600 frames complete per mode,
+   results dropped, lapped, abandoned, stalls, length errors and `isr_runs` 0; detector
+   mean 849 us (1280x800, live, brighter scene than the core-0 log), 772 (1280x720), 235
+   (640x480), 304 (640x400).
+3. With core 0 busy: deferred to the co-load step (the cache-operation contention plans
+   `CONTENTION` and `LONG` are built, not run).
+4. Trap test, 5. stalled-heartbeat test: **not run** (test builds made, no board session).
+6. Lap and stall holds: **pass**, see the `esp32p4-csi` README (no changed strip released
+   `true` in 3752 holds; every stall resumed, next good frame within 32.1 ms).
+
+#### Core 1 against core 0, 1280x800 RAW8, 120 fps (2026-11-11)
+
+2-minute runs, `b-measure-pie.log` and `b-measure-scalar.log`; core-0 figures from the
+strip soak above (`DetectorOneCore/e-pie.log`, `e-scalar.log`).
+
+| | Pie core 1 | Pie core 0 | Scalar core 1 | Scalar core 0 |
+|---|---|---|---|---|
+| detect per frame, live (mean / max) | 845 / 858 us | 762 us | 2955 / 2974 us | 2873 us |
+| the same without L1 autoload | 1068 / 1081 us | | 3230 us | |
+| synthetic dark frame | 754 / 756 us | 762 us | 2863 us | 2873 us |
+| synthetic 64 blobs | 2221 / 2223 us | 2228 us | 4093 us | 4112 us |
+| instructions per frame, live | 137 112 | | 649 693 | |
+
+Live: 14 404 frames complete in 120 s, dropped and lapped 0, worst strip start latency
+9 us. Last strip to result on core 1: 36 us (Pie), 120 us (Scalar); 126 us with 64 blobs.
+The result reaches core 0 at its next 1 ms tick: pop latency mean 509 us, max 2694 us
+(after log lines at 2 Mbaud). Core 0 spends 545 us per second (Pie) and 472 us (Scalar) on
+`service()` and draining. The live scene was brighter (1 to 4 blobs) than in the core-0
+runs; the synthetic frames, identical on both cores, match within 1 %. Cache lock: longest
+hold 2224 cycles on core 1 (5.6 us), strip invalidate at most 6866 cycles.
 
 ## Measured results
 
