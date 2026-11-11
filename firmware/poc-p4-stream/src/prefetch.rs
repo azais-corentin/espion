@@ -29,8 +29,32 @@
 //! out to the 128-byte line inside their buffer; should the hardware load past a section's
 //! end, into a buffer a DMA is still writing, the stale line is dropped by that buffer's own
 //! invalidate (point 1) before the CPU reads it.
+//!
+//! # Beside core 1 (`Service::BenchVision`)
+//!
+//! The chip has one set of each prefetch register group for the shared L1 data cache: the
+//! L1 data autoload (`L1_DCACHE_AUTOLOAD_CTRL` +0x134 and its sections +0x138..+0x154), the
+//! manual L1 data preload (`L1_DCACHE_PRELOAD_CTRL/ADDR/SIZE` +0xD8..+0xE0) and the L2
+//! autoload (+0x2B4..+0x2D4). Each group has one owner:
+//!
+//! - the L1 data autoload is core 1's while its run has the per-strip autoload on
+//!   ([`lend_l1_autoload`]): it configures, enables and disables it around every strip, so
+//!   a mode of this side that writes it ([`Mode::L1L2`], [`Mode::L1`], [`Mode::L1L2Hit`]) is
+//!   refused meanwhile, and core 1's autoload is refused while such a mode is selected;
+//! - the manual preload and the L2 autoload stay this side's (core 0): core 1 never writes
+//!   them.
+//!
+//! So no register has two writers. Whether a manual preload and an autoload of the same cache
+//! disturb each other in the hardware is not documented: the TRM (9.3.3.3) describes both in
+//! one sentence each, and the PAC lists them as separate registers. The ROM's own
+//! `Cache_Start_L1_DCache_Preload` suspends the L1 data autoload for the length of a preload
+//! and `Cache_End_L1_DCache_Preload` resumes it (read in the disassembly of
+//! `esp32p4_rev300_rom.elf`, espressif/esp-rom-elfs 20260528), without saying why; this side
+//! cannot do the same while core 1 owns the autoload (it would write core 1's register). The
+//! combination of core 1's autoload and [`Mode::PreloadAhead`] was measured instead, with
+//! every byte checked on both sides (README, "Co-load").
 
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering::Relaxed};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering::Relaxed};
 
 use esp32p4_cache::prefetch::{self, Autoload, Level, Order, Section, Trigger};
 
@@ -87,15 +111,64 @@ static AHEAD: AtomicUsize = AtomicUsize::new(0);
 /// The 128-byte line of the L2 cache in PSRAM, the larger of the two levels' lines.
 const LINE: usize = 128;
 
-/// Selects mode `n` (a [`Mode`] number); `false` for an unknown one. Waits for a preload in
-/// flight first ([`settle`]); the next [`reading`] starts afresh.
-pub fn set_mode(n: u8) -> bool {
+/// Core 1 owns the L1 data autoload registers (module docs).
+static L1_AUTOLOAD_LENT: AtomicBool = AtomicBool::new(false);
+
+/// Why [`set_mode`] or [`lend_l1_autoload`] refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// No such mode.
+    Unknown,
+    /// The mode writes the L1 data autoload registers, which core 1 owns now.
+    L1AutoloadOnCore1,
+    /// The mode in use writes the L1 data autoload registers.
+    ModeUsesL1Autoload,
+}
+
+impl Refused {
+    /// A sentence for the log and the host.
+    pub const fn text(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown prefetch mode",
+            Self::L1AutoloadOnCore1 => {
+                "prefetch mode refused: it writes the L1 data autoload registers, which core 1 owns while its autoload is on"
+            }
+            Self::ModeUsesL1Autoload => {
+                "core 1's autoload refused: the prefetch mode in use writes the L1 data autoload registers"
+            }
+        }
+    }
+}
+
+/// Mode `n` writes the L1 data autoload registers.
+const fn uses_l1_autoload(n: u8) -> bool {
+    n == Mode::L1L2 as u8 || n == Mode::L1 as u8 || n == Mode::L1L2Hit as u8
+}
+
+/// Selects mode `n` (a [`Mode`] number), unless it is unknown or writes the L1 data autoload
+/// registers while core 1 owns them. Waits for a preload in flight first ([`settle`]); the
+/// next [`reading`] starts afresh.
+pub fn set_mode(n: u8) -> Result<(), Refused> {
     if n >= MODES {
-        return false;
+        return Err(Refused::Unknown);
+    }
+    if uses_l1_autoload(n) && L1_AUTOLOAD_LENT.load(Relaxed) {
+        return Err(Refused::L1AutoloadOnCore1);
     }
     settle();
     MODE.store(n, Relaxed);
-    true
+    Ok(())
+}
+
+/// Gives the L1 data autoload registers to core 1 (`true`; refused while the mode in use
+/// writes them) or takes them back (`false`, once core 1's run stopped: no strip is read
+/// then, so its autoload is off).
+pub fn lend_l1_autoload(lend: bool) -> Result<(), Refused> {
+    if lend && uses_l1_autoload(MODE.load(Relaxed)) {
+        return Err(Refused::ModeUsesL1Autoload);
+    }
+    L1_AUTOLOAD_LENT.store(lend, Relaxed);
+    Ok(())
 }
 
 /// The name of the mode in use.

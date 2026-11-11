@@ -157,6 +157,12 @@ pub async fn init(
     vdma: VDMA_CH0<'static>,
     psram: &'static mut [u8],
 ) -> Option<&'static mut Camera> {
+    let (sensor, address) = sensor(i2c0).await?;
+    make_camera(vdma, psram, sensor, address)
+}
+
+/// Finds the sensor on SCCB and turns on the D-PHY supply. `None` (logged) on failure.
+pub async fn sensor(i2c0: I2C0<'static>) -> Option<(Sensor, Address)> {
     let mut i2c = make_bus(i2c0);
     let mut address = None;
     for a in [Address::Primary, Address::Alternate] {
@@ -174,7 +180,27 @@ pub async fn init(
         return None;
     }
     Timer::after_millis(1).await;
-    make_camera(vdma, psram, i2c, address)
+    Some((Ov9281::new(Bus { i2c }, address), address))
+}
+
+/// Writes `mode` (software reset, registers, standby) and the controls `c`.
+pub async fn setup(sensor: &mut Sensor, mode: &Mode, c: &Controls) -> Result<(), SensorError> {
+    sensor.configure(mode, &mut Delay).await?;
+    set_controls(sensor, mode, c).await
+}
+
+/// Exposure (clamped to `mode`'s range), gain and test pattern, while streaming or not.
+pub async fn set_controls(
+    sensor: &mut Sensor,
+    mode: &Mode,
+    c: &Controls,
+) -> Result<(), SensorError> {
+    let lines = c
+        .exposure_lines
+        .clamp(limits::EXPOSURE_MIN, mode.max_exposure_lines());
+    sensor.set_exposure(Exposure::lines(lines)).await?;
+    sensor.set_gain(c.gain).await?;
+    sensor.set_test_pattern(c.pattern).await
 }
 
 #[inline(never)]
@@ -194,7 +220,7 @@ fn make_bus(i2c0: I2C0<'static>) -> I2c<'static, esp_hal::Async> {
 fn make_camera(
     vdma: VDMA_CH0<'static>,
     psram: &'static mut [u8],
-    i2c: I2c<'static, esp_hal::Async>,
+    sensor: Sensor,
     address: Address,
 ) -> Option<&'static mut Camera> {
     let (b0, rest) = psram.split_at_mut(BUFFER_LEN);
@@ -215,7 +241,7 @@ fn make_camera(
     ]);
     log_ready(address);
     Some(CAMERA.init(Camera {
-        sensor: Ov9281::new(Bus { i2c }, address),
+        sensor,
         csi,
         running: None,
     }))
@@ -279,18 +305,12 @@ impl Camera {
     }
 
     async fn setup(&mut self, mode: &Mode, c: &Controls) -> Result<(), SensorError> {
-        self.sensor.configure(mode, &mut Delay).await?;
-        self.set_controls(mode, c).await
+        setup(&mut self.sensor, mode, c).await
     }
 
     /// Exposure (clamped to `mode`'s range), gain and test pattern, while streaming or not.
     pub async fn set_controls(&mut self, mode: &Mode, c: &Controls) -> Result<(), SensorError> {
-        let lines = c
-            .exposure_lines
-            .clamp(limits::EXPOSURE_MIN, mode.max_exposure_lines());
-        self.sensor.set_exposure(Exposure::lines(lines)).await?;
-        self.sensor.set_gain(c.gain).await?;
-        self.sensor.set_test_pattern(c.pattern).await
+        set_controls(&mut self.sensor, mode, c).await
     }
 
     /// Polls the D-PHY until the clock and both data lanes are in their stop state (LP-11),

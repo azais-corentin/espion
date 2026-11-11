@@ -16,7 +16,14 @@
 //! - `F`: camera frames (the newest complete frame each time; `camera::MODE`);
 //! - `C`: capture only, no datagrams but the report (camera frames counted and dropped);
 //! - `D` (1 byte or more): nothing is sent; the board logs `bench: host done`, the end of a
-//!   host test sequence.
+//!   host test sequence;
+//! - `V` (`Service::BenchVision` only), `[V, job, autoload, 0]`: core 1's run (`crate::vision`):
+//!   job 0 stops it, 1 the detector, 2 the pixel check; autoload 1 turns the L1 data autoload
+//!   over each strip on. Answered by one report datagram with the outcome.
+//!
+//! In `Service::BenchVision` the camera feeds core 1's strips: `F` and `C` are refused with a
+//! report datagram that says so, as are prefetch modes that would write the L1 data autoload
+//! registers while core 1 owns them (`crate::prefetch`).
 //!
 //! In `I` and `P`, byte `j` of a frame is [`pattern`]`(j)`, so the host checks every byte.
 //! The datagrams go out beside smoltcp (`net::chunk`): the header and a PIE copy of the
@@ -33,7 +40,8 @@
 //! [`QUERY`] gets the counts as an ASCII reply. Requests to the two ports can overlap: video
 //! out and control in.
 //!
-//! Results also go to the log, after each run (nothing is logged while one runs).
+//! Results also go to the log, after each run (this service logs nothing while one runs; in
+//! `Service::BenchVision` the camera side logs core 1's figures once a second meanwhile).
 
 use core::cell::RefCell;
 use core::fmt::{self, Write};
@@ -45,11 +53,12 @@ use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{Duration, Instant};
 use esp_hal::peripherals::{I2C0, VDMA_CH0};
 use esp32p4_pie::Pie;
+use espion_core1::Job;
 use log::{info, warn};
 use static_cell::ConstStaticCell;
 
 use crate::camera::{self, Camera};
-use crate::{cpu, irq, net};
+use crate::{cpu, irq, net, vision};
 
 /// Port of the board-to-host service.
 pub const TX_PORT: u16 = 5010;
@@ -146,13 +155,27 @@ pub const RAM_BYTES: usize = INTERNAL_LEN
     + 4 * REPLY_LEN
     + (4 + TX_META + RX_META + REPLY_META) * core::mem::size_of::<PacketMetadata>();
 
-/// What the TX service needs besides the stack: PSRAM for the camera buffers and the PSRAM
-/// source, the camera's peripherals, and core 0's PIE token for the datagram copy.
+/// What the TX service needs besides the stack: PSRAM for the PSRAM source, the camera, and
+/// core 0's PIE token for the datagram copy.
 pub struct Resources {
+    /// PSRAM after the camera's frame buffers: the `P` source at its start.
     pub psram: &'static mut [u8],
-    pub i2c0: I2C0<'static>,
-    pub vdma: VDMA_CH0<'static>,
+    pub camera: CameraUse,
     pub pie: &'static Pie,
+}
+
+/// Who has the camera.
+pub enum CameraUse {
+    /// This service (`Service::Bench`): its peripherals and its frame buffers (PSRAM, the
+    /// first `camera::BUFFERS * camera::BUFFER_LEN` bytes), for `F` and `C`.
+    Bench {
+        i2c0: I2C0<'static>,
+        vdma: VDMA_CH0<'static>,
+        frames: &'static mut [u8],
+    },
+    /// Core 1's strips (`Service::BenchVision`, `crate::vision`): `F` and `C` are refused,
+    /// `V` is served.
+    Core1,
 }
 
 /// Spawns the two service tasks.
@@ -274,8 +297,7 @@ struct Tally {
 #[embassy_executor::task]
 async fn tx_task(stack: Stack<'static>, res: Resources) {
     cpu::name_current("tx");
-    let (cam_mem, rest) = res.psram.split_at_mut(camera::BUFFERS * camera::BUFFER_LEN);
-    let psram_src = &mut rest[..Camera::frame_bytes()];
+    let psram_src = &mut res.psram[..Camera::frame_bytes()];
     for (i, b) in psram_src.iter_mut().enumerate() {
         *b = pattern(i as u32);
     }
@@ -286,7 +308,11 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
     for (i, b) in internal.iter_mut().enumerate() {
         *b = pattern(i as u32);
     }
-    let mut camera = camera::init(res.i2c0, res.vdma, cam_mem).await;
+    let core1 = matches!(res.camera, CameraUse::Core1);
+    let mut camera = match res.camera {
+        CameraUse::Bench { i2c0, vdma, frames } => camera::init(i2c0, vdma, frames).await,
+        CameraUse::Core1 => None,
+    };
     log_misaligned_access(&MISALIGNED_PROBE.take().0);
 
     let mut sock = UdpSocket::new(
@@ -307,13 +333,24 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
             log_done();
             continue;
         }
+        if n >= 1 && req[0] == b'V' {
+            vision_request(&mut sock, meta.endpoint, core1, &req[..n]).await;
+            continue;
+        }
         let (Some(kind), true) = (Kind::parse(req[0]), n >= 4) else {
             warn!("bench: bad request of {n} B from {}", meta.endpoint);
             continue;
         };
         let secs = u16::from_le_bytes([req[2], req[3]]).clamp(1, MAX_SECONDS);
-        if req[1] > 0 && !crate::prefetch::set_mode(req[1] - 1) {
-            warn!("bench: unknown prefetch mode {}", req[1] - 1);
+        if req[1] > 0
+            && let Err(e) = crate::prefetch::set_mode(req[1] - 1)
+        {
+            answer(
+                &mut sock,
+                meta.endpoint,
+                format_args!("tx refused: {}", e.text()),
+            )
+            .await;
             continue;
         }
         let ep = meta.endpoint;
@@ -328,7 +365,18 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
                 Some(c)
             }
             None if needs_camera => {
-                warn!("bench: {} requested, no camera", kind.name());
+                let why = if core1 {
+                    "the camera feeds core 1's strips in this service (BenchVision); sources internal and psram only"
+                } else {
+                    "no camera"
+                };
+                let ep = meta.endpoint;
+                answer(
+                    &mut sock,
+                    ep,
+                    format_args!("tx source={} refused: {why}", kind.name()),
+                )
+                .await;
                 continue;
             }
             _ => None,
@@ -397,6 +445,68 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
             warn!("bench: report not sent: {e:?}");
         }
     }
+}
+
+/// A `V` request (module docs): starts or stops core 1's run and answers with the outcome.
+async fn vision_request(sock: &mut UdpSocket<'_>, ep: IpEndpoint, core1: bool, req: &[u8]) {
+    let (job, name) = match req.get(1).copied().unwrap_or(0) {
+        0 => (None, "off"),
+        1 => (Some(Job::Detect), "detect"),
+        2 => (Some(Job::Check), "check"),
+        _ => {
+            answer(sock, ep, format_args!("vision refused: unknown job")).await;
+            return;
+        }
+    };
+    let autoload = req.get(2).copied().unwrap_or(0) != 0;
+    let r = if core1 {
+        vision::request(vision::Request { job, autoload }).await
+    } else {
+        Err("core 1 runs only in Service::BenchVision")
+    };
+    let state = if autoload { "on" } else { "off" };
+    match r {
+        Ok(()) => {
+            answer(
+                sock,
+                ep,
+                format_args!("vision job={name} autoload={state}: ok"),
+            )
+            .await
+        }
+        Err(why) => {
+            answer(
+                sock,
+                ep,
+                format_args!("vision job={name} autoload={state}: refused: {why}"),
+            )
+            .await
+        }
+    }
+}
+
+/// Sends `text` to `ep` as a report datagram (frame number [`REPORT_FRAME`]) and logs it: the
+/// answer to a request that sends no data.
+async fn answer(sock: &mut UdpSocket<'_>, ep: IpEndpoint, text: fmt::Arguments<'_>) {
+    let r = sock
+        .send_to_with(DATAGRAM, ep, |buf| (write_answer(buf, text), ()))
+        .await;
+    if let Err(e) = r {
+        warn!("bench: answer not sent: {e:?}");
+    }
+}
+
+#[inline(never)]
+fn write_answer(buf: &mut [u8], text: fmt::Arguments<'_>) -> usize {
+    let (words, _) = buf.as_chunks_mut::<4>();
+    for (d, v) in words.iter_mut().zip([0, REPORT_FRAME, 0, 0]) {
+        *d = v.to_le_bytes();
+    }
+    let mut w = BufWriter::new(&mut buf[HEADER..]);
+    let _ = w.write_fmt(text);
+    let len = w.len;
+    log_text(&buf[HEADER..HEADER + len]);
+    HEADER + len
 }
 
 /// Sends `data` as frame `frame` to `ep`, [`CHUNK`] bytes per datagram, each copied by PIE into

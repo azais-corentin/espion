@@ -12,6 +12,11 @@ always sends first, so a stateful firewall lets the board's replies in.
       Host to board: sends datagrams of known content to UDP 5011 at that rate (0: as fast as
       the socket takes them), then asks the board for its counts and prints both.
 
+  netbench.py vision --job off|detect|check [--autoload 0|1]
+      Service::BenchVision only: stops core 1's run and starts the one asked for (the blob
+      detector or the pixel check on live strips, the L1 data autoload over each strip on or
+      off), and prints the board's answer.
+
   netbench.py done
       The board logs "bench: host done": the end of a test sequence.
 
@@ -83,7 +88,7 @@ def cmd_tx(args):
     s, (board, scope) = open_socket(args)
     kind = KINDS[args.source]
     expected = {}
-    seen = bytearray(4_000_000)
+    seen = bytearray(max(4_000_000, args.seconds * 9_000))
     buf = bytearray(2048)
     mv = memoryview(buf)
     got = dup = late = bad = bad_bytes = 0
@@ -222,6 +227,23 @@ def cmd_done(args):
     s.sendto(b"D", (board, TX_PORT, 0, scope))
 
 
+JOBS = {"off": 0, "detect": 1, "check": 2}
+
+
+def cmd_vision(args):
+    s, (board, scope) = open_socket(args)
+    s.sendto(b"V" + bytes([JOBS[args.job], args.autoload, 0]), (board, TX_PORT, 0, scope))
+    s.settimeout(15.0)
+    try:
+        n = s.recv_into(buf := bytearray(2048))
+    except socket.timeout:
+        sys.exit("board: no answer")
+    text = bytes(buf[HEADER:n]).decode(errors="replace")
+    print(f"board: {text}")
+    if not text.endswith(": ok"):
+        sys.exit(1)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--iface", default="eth0")
@@ -244,8 +266,11 @@ def main():
     r.add_argument("--stream", type=int, default=os.getpid())
     r.add_argument("--sndbuf", type=int, default=32768, help="SO_SNDBUF (bounds the host queue)")
     sub.add_parser("done", help="tell the board the test sequence is over (it logs it)")
+    v = sub.add_parser("vision", help="core 1's run (Service::BenchVision)")
+    v.add_argument("--job", choices=JOBS, required=True)
+    v.add_argument("--autoload", type=int, choices=(0, 1), default=1)
     args = p.parse_args()
-    {"tx": cmd_tx, "rx": cmd_rx, "done": cmd_done}[args.cmd](args)
+    {"tx": cmd_tx, "rx": cmd_rx, "done": cmd_done, "vision": cmd_vision}[args.cmd](args)
 
 
 if __name__ == "__main__":

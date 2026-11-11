@@ -171,10 +171,9 @@ pub(super) async fn task(stack: Stack<'static>) {
                         let _ = w.write_str(if d == b'1' { "encode only" } else { "send" });
                     }
                     [b'A', d @ b'0'..=b'9', ..] => {
-                        let _ = if crate::prefetch::set_mode(d - b'0') {
-                            write!(w, "prefetch {}", crate::prefetch::mode_name())
-                        } else {
-                            w.write_str("unknown prefetch mode")
+                        let _ = match crate::prefetch::set_mode(d - b'0') {
+                            Ok(()) => write!(w, "prefetch {}", crate::prefetch::mode_name()),
+                            Err(e) => w.write_str(e.text()),
                         };
                     }
                     _ => {

@@ -17,12 +17,19 @@ accounting = ["embassy-executor/trace"]
 # interrupt (src/cpu.rs): the busy share of builds with and without `accounting`. Off by
 # default (no `wfi`: more power).
 idle-counter = []
+# The cross-core cache lock's per-core statistics (operations, longest hold and wait) in the
+# co-load's once-a-second lines (`Service::BenchVision`). Two `mcycle` reads and two atomic
+# maxima per cache operation, the Ethernet ring's included; off by default.
+stats = ["espion-core1/stats"]
 
 [dependencies]
 esp32p4-cache = { path = "../esp32p4-cache" }
 esp32p4-csi   = { path = "../esp32p4-csi" }
 esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
 esp32p4-pie   = { path = "../esp32p4-pie" }
+# The blob detector on a bare core 1 (`Service::BenchVision`, src/vision.rs).
+espion-core1  = { path = "../espion-core1" }
+espion-vision = { path = "../espion-vision" }
 espion-proto  = { path = "../../crates/espion-proto" }
 ov9281        = { path = "../ov9281" }
 

@@ -39,6 +39,7 @@ mod irq;
 mod net;
 mod prefetch;
 mod stream;
+mod vision;
 
 /// UART0 log baud rate the app switches to right at boot (the ROM and the bootloader print
 /// at 115200). Capture with `espflash monitor --monitor-baud <LOG_BAUD>`. `None` keeps 115200.
@@ -56,6 +57,10 @@ enum Service {
     /// The camera stream (`stream`): the `espion_proto::cam` protocol on UDP 5009 for
     /// `poc-viewer`, test hooks on UDP 5010.
     Stream,
+    /// The co-load (README, "Co-load"): the `Bench` service on this core (sources internal and
+    /// psram; the camera feeds core 1), and the blob detector or the pixel check on a bare
+    /// core 1 on live strips (`vision`), started and stopped by the host's `V` requests.
+    BenchVision,
 }
 
 /// The service this build runs.
@@ -113,16 +118,28 @@ async fn main(spawner: Spawner) -> ! {
     };
     let stack = net::start(spawner, pins, p.GPIO51).await;
     match (SERVICE, stack, psram) {
-        (Service::Bench, Some(stack), Some(psram)) => bench::start(
-            spawner,
-            stack,
-            bench::Resources {
-                psram,
-                i2c0: p.I2C0,
-                vdma: p.VDMA_CH0,
-                pie,
-            },
-        ),
+        (Service::Bench | Service::BenchVision, Some(stack), Some(psram)) => {
+            let (frames, psram) = psram.split_at_mut(camera::BUFFERS * camera::BUFFER_LEN);
+            let camera = if SERVICE == Service::BenchVision {
+                vision::start(
+                    spawner,
+                    vision::Resources {
+                        i2c0: p.I2C0,
+                        vdma: p.VDMA_CH0,
+                        frames,
+                        cpu: p.CPU_CTRL,
+                    },
+                );
+                bench::CameraUse::Core1
+            } else {
+                bench::CameraUse::Bench {
+                    i2c0: p.I2C0,
+                    vdma: p.VDMA_CH0,
+                    frames,
+                }
+            };
+            bench::start(spawner, stack, bench::Resources { psram, camera, pie });
+        }
         (Service::Stream, Some(stack), Some(psram)) => stream::start(
             spawner,
             stack,
@@ -133,7 +150,7 @@ async fn main(spawner: Spawner) -> ! {
                 pie,
             },
         ),
-        (Service::Bench | Service::Stream, _, _) => {
+        (Service::Bench | Service::BenchVision | Service::Stream, _, _) => {
             error!("service: needs the network and PSRAM, not started")
         }
         (Service::Network, _, _) => {}
@@ -214,6 +231,7 @@ fn log_ram() {
         match SERVICE {
             Service::Network => 0,
             Service::Bench => bench::RAM_BYTES,
+            Service::BenchVision => bench::RAM_BYTES + vision::RAM_BYTES,
             Service::Stream => stream::RAM_BYTES,
         },
     );
