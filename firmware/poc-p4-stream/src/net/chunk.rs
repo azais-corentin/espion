@@ -230,6 +230,7 @@ pub async fn send(
     let c2 = cpu::mcycle();
     esp32p4_cache::write_back(addr, len);
     eth::tx_queue(i, addr, len, ic);
+    crate::markers::toggle(crate::markers::DATAGRAM);
     count(
         cpu::mcycle().wrapping_sub(c0),
         c2.wrapping_sub(c1),

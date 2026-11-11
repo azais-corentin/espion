@@ -97,7 +97,8 @@ python3 firmware/poc-p4-stream/tools/streamdiag.py path     # and the frame path
 
 Cargo features: `accounting` (default) builds the CPU accounts; `--no-default-features`
 leaves them out; `--features idle-counter` adds the idle counter (see
-[What the firmware does](#what-the-firmware-does)).
+[What the firmware does](#what-the-firmware-does)); `--features markers` the marker pins and
+the STROBE output ([Marker pins](#marker-pins-feature-markers)).
 
 With `SERVICE = Service::Bench` the board runs the network test service instead (ready at
 `bench: ready`); on the host, with the board on the interface `eth0` (default; `--iface`
@@ -685,6 +686,63 @@ with prefetch off, its autoload on and off, and beside internal (`co2.log`, 30 s
 not checked.
 For the detector the interaction costs 6 % of core 0's TX cycles (7 360 against 6 940):
 keep `preload_ahead`, or use `l2` (8 159) if the autoload's share grows.
+
+## Marker pins (feature `markers`)
+
+Performance plan step 0.4, as in `poc-p4-eth` (its README, "Marker pins", has the full
+rationale): pins that toggle at fixed points, for a logic analyser beside the sensor's STROBE.
+Off by default; `cargo build --release --features markers` (also with
+`--no-default-features`). The feature also turns the sensor's STROBE output on (0x3006 =
+0x0C after each mode set-up, `camera::setup`).
+
+| Signal | GPIO | 40-pin header | Driven by | Toggles when |
+|---|---|---|---|---|
+| datagram queued | GPIO26 | pin 29 | core 0, dedicated-IO channel 0 (`markers::DATAGRAM`) | `net::chunk::send` has handed a datagram to the EMAC's TX ring (`eth::tx_queue`): every bench datagram and every camera-stream chunk on the direct path |
+| core 1 strip | GPIO20 | pin 35 | core 1, channel 0 (`espion_core1::MARKER_STRIP`) | `Service::BenchVision`: core 1's reader has handed out a strip, before the detector |
+| core 1 frame | GPIO21 | pin 34 | core 1, channel 1 (`MARKER_FRAME`) | `Service::BenchVision`: the frame's blobs are final |
+| GND | | pins 28, 33 | | |
+| STROBE | | not on the board: the camera module's STROBE back pad | OV9281 | Once per frame |
+
+- Pins named in `src/markers.rs`; header numbering, why these pins are free (each wired only
+  P4 to header on the Waveshare schematic; none of camera, RMII, UART, strapping, microSD,
+  audio, USB or JTAG) and STROBE's place and level: `poc-p4-eth`'s README.
+- Toggles, not pulses: each level lasts until the next event (about 122 us between datagrams
+  at the wire rate, about 10 us at the closest when the ring has room [INFERENCE: one
+  `direct_cyc` of about 4 200 cycles]), so any analyser from 1 MS/s sees every edge; count
+  every edge, rising or falling, as one event.
+- Figures to read: STROBE to datagram edges in `Service::Stream` (exposure to the frame's
+  chunks on the wire queue); in `BenchVision`, STROBE to core 1's frame edge (exposure to
+  centroids). Frame done to datagram queued is not available in one firmware today: neither
+  PoC sends the detector's result on the network, so the datagram marker times bench
+  datagrams or camera chunks, never centroids.
+
+**Boot self-check** (`espion_core1::markers::self_check`, pads read back through `GPIO_IN`,
+no wire): `Service::BenchVision`, the host's `vision --job detect --autoload 1` then `tx
+--source internal`, 2026-11-11, `/tmp/p4perf-logs/Markers/stream-bv-on2.log`: in 1.000 s
+8189 datagram edges (the host received 8186 datagrams/s), 1561 core-1 strip edges, 120
+frame edges, none merged.
+
+**Cost**, one boot each, same session, `tools/netbench.py tx --source internal --seconds 20`
+(`first/stream-bv-off.host.txt`, `first/stream-bv-on.host.txt`; the self-check's second falls
+in the first run):
+
+| | without `markers` | with `markers` |
+|---|---|---|
+| `direct_cyc` per datagram, core 1 detecting (two runs) | 4213.5 / 4211.4 | 4246.2 / 4243.0 |
+| `direct_cyc` per datagram, core 1 idle | 3986.8 | 4017.2 |
+| Core 1 detect per frame, mean / max | 758 / 787 us | 758 / 787 us |
+| Host rate, datagrams/s | 8185 to 8188 | 8186 to 8188 |
+
+One toggle measures 10 to 11 cycles back to back (`esp32p4-perf` README); the datagram path
+grows by 30 to 33 cycles (0.8 %), of which `direct_hdr_cyc` and `direct_copy_cyc` (work
+before the toggle) take 17 [INFERENCE: code placement]. Between boots of the same build
+`direct_cyc` moves by about 30 cycles too (3959 to 3987 without the feature, core 1 idle), so
+the difference is at the noise between boots. Without the feature the TX and net tasks, core
+1's `run` and the detector are instruction for instruction those of the build before the
+change (llvm-objdump, `BenchVision` with and without default features).
+
+Not done: no logic analyser or scope was connected; no latency, jitter or STROBE waveform
+has been measured.
 
 ## Measured results
 

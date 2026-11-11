@@ -58,6 +58,13 @@ const FIRST_FRAME_MARGIN: Duration = Duration::from_millis(500);
 const LANES_STOP_TIMEOUT: Duration = Duration::from_millis(10);
 /// Shortest wait after stream off before the receiver is reset.
 const STOP_MIN: Duration = Duration::from_millis(20);
+/// Feature `markers`: OUTPUT_ENABLE6 (0x3006) with the STROBE pad's output on (bit 3) beside
+/// ILPWM (bit 2, the mode's 0x04), the one write Linux's `ov9282` driver makes for
+/// `V4L2_CID_FLASH_STROBE_OE`. The mode already has the rest of that driver's strobe set-up
+/// (0x3920 = 0xFF); it does not write the pulse width (0x3925 to 0x3928, left at their reset
+/// values). Written in standby, after the mode. README, "Marker pins".
+#[cfg(feature = "markers")]
+const STROBE_ON: (u16, u8) = (0x3006, 0x0C);
 
 pub type Sensor = Ov9281<Bus>;
 pub type SensorError = DeviceError<I2cError>;
@@ -183,9 +190,12 @@ pub async fn sensor(i2c0: I2C0<'static>) -> Option<(Sensor, Address)> {
     Some((Ov9281::new(Bus { i2c }, address), address))
 }
 
-/// Writes `mode` (software reset, registers, standby) and the controls `c`.
+/// Writes `mode` (software reset, registers, standby) and the controls `c` (with feature
+/// `markers`, the STROBE output on).
 pub async fn setup(sensor: &mut Sensor, mode: &Mode, c: &Controls) -> Result<(), SensorError> {
     sensor.configure(mode, &mut Delay).await?;
+    #[cfg(feature = "markers")]
+    sensor.write_register(STROBE_ON.0, STROBE_ON.1).await?;
     set_controls(sensor, mode, c).await
 }
 

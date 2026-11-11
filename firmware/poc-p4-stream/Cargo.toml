@@ -21,12 +21,18 @@ idle-counter = []
 # co-load's once-a-second lines (`Service::BenchVision`). Two `mcycle` reads and two atomic
 # maxima per cache operation, the Ethernet ring's included; off by default.
 stats = ["espion-core1/stats"]
+# Marker pins (README, "Marker pins"): a dedicated-IO channel toggled as each direct-path
+# datagram goes to the TX ring, core 1's strip and frame channels (`Service::BenchVision`),
+# the boot self-check that reads them back, and the sensor's STROBE output on. Off by default.
+markers = ["dep:esp32p4-perf", "espion-core1/markers"]
 
 [dependencies]
 esp32p4-cache = { path = "../esp32p4-cache" }
 esp32p4-csi   = { path = "../esp32p4-csi" }
 esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
 esp32p4-pie   = { path = "../esp32p4-pie" }
+# `markers` only: the dedicated-IO CSR toggle.
+esp32p4-perf  = { path = "../esp32p4-perf", optional = true }
 # The blob detector on a bare core 1 (`Service::BenchVision`, src/vision.rs).
 espion-core1  = { path = "../espion-core1" }
 espion-vision = { path = "../espion-vision" }

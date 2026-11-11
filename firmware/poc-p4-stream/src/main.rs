@@ -36,6 +36,7 @@ mod bench;
 mod camera;
 mod cpu;
 mod irq;
+mod markers;
 mod net;
 mod prefetch;
 mod stream;
@@ -92,6 +93,8 @@ async fn main(spawner: Spawner) -> ! {
     #[cfg(feature = "idle-counter")]
     esp_rtos::start_with_idle_hook(timg0.timer0, p.FROM_CPU_INTR0, cpu::idle_hook);
     irq::install(&[irq::Source::Tick]);
+    #[cfg(feature = "markers")]
+    markers::start(spawner);
     cpu::name_current("main");
     let pie = pie_init();
 
