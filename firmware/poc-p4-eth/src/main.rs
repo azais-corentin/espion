@@ -108,7 +108,8 @@ impl DarkSkip<'_> {
     }
 }
 /// Instead of [`PLAN`]: strip runs on the modes of [`CAMERA_PLAN`] with the blob detector on
-/// the second core, started bare (`core1`, `core1_soak`). Not run on the board yet.
+/// the second core, started bare (`core1`, `core1_soak`; plan `core1_soak::PLAN`). Board
+/// results: README, "Blob detector on core 1".
 const RUN_CORE1: bool = false;
 /// What the camera section runs after capture starts in each mode.
 #[allow(
@@ -342,6 +343,7 @@ async fn main(spawner: Spawner) -> ! {
             peripherals.I2C0,
             peripherals.VDMA_CH0,
             peripherals.CPU_CTRL,
+            peripherals.TIMG1,
             psram_mem,
             internal,
         )
@@ -360,6 +362,7 @@ async fn app(
     i2c0: esp_hal::peripherals::I2C0<'static>,
     vdma: esp_hal::peripherals::VDMA_CH0<'static>,
     cpu: esp_hal::peripherals::CPU_CTRL<'static>,
+    timg1: esp_hal::peripherals::TIMG1<'static>,
     psram_mem: Option<&'static mut [u8]>,
     internal: &'static mut [u8],
 ) {
@@ -388,7 +391,7 @@ async fn app(
             const STRIPS: bool = PLAN.strips.is_some();
             let cam = CAMERA.init(Ov9281::new(i2c, a));
             if RUN_CORE1 {
-                core1_soak::run::<RUN_CORE1>(cam, vdma, cpu).await;
+                core1_soak::run::<RUN_CORE1>(cam, vdma, cpu, timg1, mem, internal).await;
             } else {
                 camera::run::<STRIPS>(cam, vdma, mem, internal, PLAN, skip).await;
             }

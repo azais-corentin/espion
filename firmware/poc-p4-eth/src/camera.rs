@@ -31,9 +31,9 @@ pub type SensorError = DeviceError<I2cError>;
 /// copy all of it onto the stack (or into the future) first.
 const MODES: &[CamMode] = &modes::MODES;
 /// Frame buffers the driver rotates.
-const BUFFERS: usize = 3;
+pub(crate) const BUFFERS: usize = 3;
 /// Every buffer is sized for the largest configuration: 1280x800 RAW10 (1 286 144 B).
-const BUFFER_LEN: usize = Csi::buffer_len(&Config::raw10(1280, 800, limits::LANE_MBPS));
+pub(crate) const BUFFER_LEN: usize = Csi::buffer_len(&Config::raw10(1280, 800, limits::LANE_MBPS));
 /// How long to wait for a frame beyond two frame periods of the mode ([`frame_timeout`])
 /// before printing the debugging checklist.
 const FRAME_TIMEOUT: Duration = Duration::from_millis(500);
@@ -1030,7 +1030,7 @@ async fn strip_group(
 /// [`strip_soak::REFERENCE_FRAMES`] whole frames to the check. Each is held while its rows are
 /// summed (about 11 ms at 1280x800 RAW10), so they are not consecutive. `false` if a frame
 /// did not come.
-async fn reference_frames(
+pub(crate) async fn reference_frames(
     csi: &mut Csi<'_>,
     check: &mut strip_soak::StripCheck,
     slot: usize,

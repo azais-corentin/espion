@@ -187,6 +187,23 @@ impl Ring {
         (self.mem as usize + used, RING_BYTES - used)
     }
 
+    /// The strip buffers' and the list items' addresses.
+    pub fn addrs(&self) -> (usize, usize) {
+        (self.mem as usize, self.links as usize)
+    }
+
+    /// A checksum of the [`MAX_STRIPS`] list items, read through the non-cacheable alias (the
+    /// path the strip reader writes them through).
+    pub fn links_sum(&self) -> u32 {
+        let words = MAX_STRIPS * core::mem::size_of::<StripLink>() / 4;
+        let base = esp32p4_cache::non_cacheable(self.links as usize) as *const u32;
+        (0..words).fold(FOLD_SEED, |acc, i| {
+            // SAFETY: the items are `MAX_STRIPS` 64-byte words in L2MEM owned by the ring; a
+            // volatile read through the uncached alias changes nothing.
+            fold_row(acc, unsafe { core::ptr::read_volatile(base.add(i)) })
+        })
+    }
+
     /// `N` strips sized for `config`, from the start of the ring memory, and `N` list items.
     ///
     /// # Safety
@@ -521,20 +538,7 @@ impl StripSoak {
     /// Builds the synthetic strip of `lines` rows for `target` blobs per frame of `mode`.
     #[inline(never)]
     fn prepare_synthetic(&mut self, mode: &CamMode, target: u16, lines: u16) -> Workload {
-        let w = usize::from(mode.mode.width());
-        let raw10 = mode.raw10();
-        let (bands, per_frame) = band_counts(target, mode.mode.height(), lines);
-        let band_len = mode.mode.bytes_per_line() as usize * BAND_ROWS;
-        for j in 0..usize::from(lines) / BAND_ROWS {
-            let (discs, seed) = (bands[j % BANDS], SEED.wrapping_add((j % BANDS) as u32));
-            let band = &mut self.scratch[j * band_len..(j + 1) * band_len];
-            if raw10 {
-                self.synth.fill_raw10(band, w, BAND_ROWS, discs, seed);
-            } else {
-                self.synth.fill(band, w, BAND_ROWS, discs, seed);
-            }
-        }
-        flush_cache(&self.scratch[..band_len * usize::from(lines) / BAND_ROWS]);
+        let (bands, per_frame) = fill_synthetic(self.scratch, self.synth, mode, target, lines);
         let work = Workload::Synthetic {
             target,
             bands,
@@ -628,6 +632,33 @@ fn band_counts(target: u16, height: u16, lines: u16) -> ([u16; BANDS], u32) {
         }
     }
     (best.0, best.1)
+}
+
+/// Fills `scratch` (cache-line aligned) with a synthetic strip of `lines` rows of `mode` for
+/// `target` blobs per frame (16-row bands, see the module docs) and writes it back. Returns
+/// the bands' disc counts and the blobs per frame they give.
+pub(crate) fn fill_synthetic(
+    scratch: &mut [u8],
+    synth: &mut synth::Synth,
+    mode: &CamMode,
+    target: u16,
+    lines: u16,
+) -> ([u16; BANDS], u32) {
+    let w = usize::from(mode.mode.width());
+    let raw10 = mode.raw10();
+    let (bands, per_frame) = band_counts(target, mode.mode.height(), lines);
+    let band_len = mode.mode.bytes_per_line() as usize * BAND_ROWS;
+    for j in 0..usize::from(lines) / BAND_ROWS {
+        let (discs, seed) = (bands[j % BANDS], SEED.wrapping_add((j % BANDS) as u32));
+        let band = &mut scratch[j * band_len..(j + 1) * band_len];
+        if raw10 {
+            synth.fill_raw10(band, w, BAND_ROWS, discs, seed);
+        } else {
+            synth.fill(band, w, BAND_ROWS, discs, seed);
+        }
+    }
+    flush_cache(&scratch[..band_len * usize::from(lines) / BAND_ROWS]);
+    (bands, per_frame)
 }
 
 fn consumed(acc: &mut Acc, cycles: u32) {
@@ -992,7 +1023,7 @@ const FOLD_SEED: u32 = 0x811C_9DC5;
 /// style, so the order of the words counts), then a tail of up to 3 bytes. Rows of both paths
 /// start on a word boundary (frame buffers 4 KiB aligned, strip buffers 64 B, rows of a
 /// multiple of 4 bytes); another start takes a slower path with the same result.
-fn row_sum(row: &[u8]) -> u32 {
+pub(crate) fn row_sum(row: &[u8]) -> u32 {
     let (mut a, mut b) = (0u32, 0u32);
     let mut add = |w: u32| {
         a = a.wrapping_add(w);
@@ -1249,6 +1280,18 @@ impl StripCheck {
     pub fn log_reference(&self, slot: usize) {
         if let Some(Some(r)) = self.refs.get(slot) {
             info!("{}", RefLine(r));
+        }
+    }
+
+    /// The reference row checksums of plan slot `slot` (one per row, row 0 first), if its
+    /// reference passed (every whole frame right-sized and identical to the first).
+    pub fn reference_rows(&self, slot: usize) -> Option<&[u32]> {
+        match self.refs.get(slot) {
+            Some(Some(r)) if ref_verdict(r) == "PASS" => self
+                .rows
+                .get(slot * CHECK_ROWS..)?
+                .get(..usize::from(r.height)),
+            _ => None,
         }
     }
 
@@ -1887,7 +1930,7 @@ pub struct Guard {
 
 /// What a guard check found.
 #[derive(Clone, Copy, Default)]
-struct GuardReport {
+pub(crate) struct GuardReport {
     /// Words that lost their pattern, the first and last of them, and the first one's value.
     written: u32,
     first: usize,
@@ -1912,7 +1955,7 @@ impl Guard {
     }
 
     /// The ring memory the current receiver leaves unused.
-    fn set_tail(&mut self, addr: usize, len: usize) {
+    pub(crate) fn set_tail(&mut self, addr: usize, len: usize) {
         self.areas[2] = (addr, len);
     }
 
@@ -1928,7 +1971,7 @@ impl Guard {
     }
 
     /// Fills every area and writes it back to memory. With the receiver stopped.
-    fn fill(&self) {
+    pub(crate) fn fill(&self) {
         for &(addr, len) in &self.areas {
             let words = Self::area(addr, len);
             for (i, w) in words.iter_mut().enumerate() {
@@ -1940,7 +1983,7 @@ impl Guard {
     }
 
     /// Re-reads every area from memory. With the receiver stopped.
-    fn check(&self) -> GuardReport {
+    pub(crate) fn check(&self) -> GuardReport {
         let mut r = GuardReport {
             links: self.links,
             ..GuardReport::default()
@@ -1962,6 +2005,13 @@ impl Guard {
             }
         }
         r
+    }
+}
+
+impl GuardReport {
+    /// Words that lost their pattern (0: intact).
+    pub(crate) fn written(&self) -> u32 {
+        self.written
     }
 }
 
