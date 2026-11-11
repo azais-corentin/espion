@@ -17,6 +17,12 @@
 //!   host test sequence.
 //!
 //! In `I` and `P`, byte `j` of a frame is [`pattern`]`(j)`, so the host checks every byte.
+//! The datagrams go out beside smoltcp (`net::chunk`): the header and a PIE copy of the
+//! payload in a TX descriptor's buffer; through the socket (the same into its ring) only while
+//! the host's MAC is not known.
+//!
+//! At boot the service compares the chunk path's UDP checksum with smoltcp's on random
+//! datagrams (`net::chunk::self_test`) and times misaligned word accesses; both are logged.
 //!
 //! **Host to board** (UDP [`RX_PORT`]): datagrams `[seq u32 LE, stream u32 LE, payload]`; the
 //! payload's byte `j` must be [`pattern`]`(seq % 251 + j)` (shifted per datagram, so a stale or
@@ -201,6 +207,7 @@ struct Probe {
     cpu: cpu::Snapshot,
     irq: irq::Snapshot,
     net: net::Stats,
+    direct: net::chunk::Stats,
 }
 
 /// The probes of the current run, start and end (kept out of the task's stack frame).
@@ -216,9 +223,26 @@ fn mark(i: usize) -> Instant {
         cpu: cpu::snapshot(),
         irq: irq::snapshot(cpu::core()),
         net: net::stats(),
+        direct: net::chunk::stats(),
     };
     critical_section::with(|cs| PROBES.borrow_ref_mut(cs)[i] = Some(p));
     p.at
+}
+
+/// Cases of the chunk path's checksum self-test at boot.
+const CHECKSUM_TEST_CASES: u32 = 4096;
+
+/// Compares the chunk path's UDP checksum with smoltcp's on random datagrams
+/// (`net::chunk::self_test`, in `scratch`) and logs the result; panics on a failed case.
+#[inline(never)]
+fn log_checksum_test(pie: &Pie, scratch: &mut [u8]) {
+    let c0 = cpu::mcycle();
+    let failed = net::chunk::self_test(pie, 1, CHECKSUM_TEST_CASES, scratch);
+    let kcycles = cpu::mcycle().wrapping_sub(c0) / 1000;
+    info!(
+        "bench: UDP checksum of the chunk path against smoltcp's: {failed} of {CHECKSUM_TEST_CASES} cases failed ({kcycles} kcycles)"
+    );
+    assert!(failed == 0, "chunk path checksum differs from smoltcp's");
 }
 
 /// Counts of one run.
@@ -229,7 +253,9 @@ struct Tally {
     errors: u32,
     /// Frames sent whole (every datagram of the frame queued).
     frames: u32,
-    /// Cycles in the copy into the socket buffer (header and payload).
+    /// Datagrams that went through the socket (the host's MAC not known yet), each copied into
+    /// its ring by PIE, and the cycles of those copies (header and payload).
+    copies: u32,
     copy_cycles: u64,
     /// Copies whose source and destination differ in alignment modulo 4 (the ROM `memcpy`
     /// copies those byte by byte).
@@ -252,13 +278,14 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
         *b = pattern(i as u32);
     }
     flush_cache(psram_src);
+    let pie = res.pie;
     let internal = &mut INTERNAL.take().0;
+    log_checksum_test(pie, &mut internal[..]);
     for (i, b) in internal.iter_mut().enumerate() {
         *b = pattern(i as u32);
     }
     let mut camera = camera::init(res.i2c0, res.vdma, cam_mem).await;
     log_misaligned_access(&MISALIGNED_PROBE.take().0);
-    let pie = res.pie;
 
     let mut sock = UdpSocket::new(
         stack,
@@ -366,8 +393,9 @@ async fn tx_task(stack: Stack<'static>, res: Resources) {
     }
 }
 
-/// Sends `data` as frame `frame` to `ep`, [`CHUNK`] bytes per datagram, each copied into the
-/// socket's ring by PIE. `false` if the deadline came first.
+/// Sends `data` as frame `frame` to `ep`, [`CHUNK`] bytes per datagram, each copied by PIE into
+/// a TX descriptor's buffer beside smoltcp, or into the socket's ring while the host's MAC is
+/// not known. `false` if the deadline came first.
 async fn send_frame(
     sock: &mut UdpSocket<'_>,
     pie: &Pie,
@@ -384,13 +412,25 @@ async fn send_frame(
         }
         let header = [t.datagrams, frame, (i * CHUNK) as u32, total];
         let len = HEADER + chunk.len();
+        let head = |buf: &mut [u8]| {
+            let (words, _) = buf.as_chunks_mut::<4>();
+            for (d, v) in words.iter_mut().zip(header) {
+                *d = v.to_le_bytes();
+            }
+            HEADER
+        };
+        if net::chunk::send(pie, ep, TX_PORT, head, chunk)
+            .await
+            .is_ok()
+        {
+            t.datagrams += 1;
+            t.bytes += len as u64;
+            continue;
+        }
         match sock
             .send_to_with(len, ep, |buf| {
                 let c0 = cpu::mcycle();
-                let (words, _) = buf.as_chunks_mut::<4>();
-                for (d, v) in words.iter_mut().zip(header) {
-                    *d = v.to_le_bytes();
-                }
+                head(buf);
                 let dst = &mut buf[HEADER..len];
                 let misaligned =
                     !(chunk.as_ptr() as usize ^ dst.as_ptr() as usize).is_multiple_of(4);
@@ -400,6 +440,7 @@ async fn send_frame(
             .await
         {
             Ok((c, misaligned)) => {
+                t.copies += 1;
                 t.copy_cycles += u64::from(c);
                 t.copy_misaligned += u32::from(misaligned);
                 t.datagrams += 1;
@@ -431,6 +472,7 @@ fn write_report(buf: &mut [u8], kind: Kind, t: &Tally, cam: Option<&esp32p4_csi:
     let mut w = BufWriter::new(&mut buf[HEADER..]);
     write_tally(&mut w, kind, t, us);
     write_net(&mut w, &after.net.since(&before.net));
+    write_direct(&mut w, &after.direct.since(&before.direct));
     let c = after.cpu.since(&before.cpu);
     let i = after.irq.since(&before.irq);
     write_cpu(&mut w, &c, &i, t.datagrams, us);
@@ -461,19 +503,37 @@ impl fmt::Display for Ratio {
 
 #[inline(never)]
 fn write_tally(w: &mut BufWriter<'_>, kind: Kind, t: &Tally, us: u64) {
-    let n = u64::from(t.datagrams.max(1));
     let _ = write!(
         w,
-        "tx source={} us={us} datagrams={} bytes={} frames={} errors={} rate_kBps={} copy_cyc={} copy_misaligned={} flush_us={}",
+        "tx source={} us={us} datagrams={} bytes={} frames={} errors={} rate_kBps={} copies={} copy_cyc={} copy_misaligned={} flush_us={}",
         kind.name(),
         t.datagrams,
         t.bytes,
         t.frames,
         t.errors,
         t.bytes * 1000 / us,
-        Ratio(t.copy_cycles, n),
+        t.copies,
+        Ratio(t.copy_cycles, u64::from(t.copies.max(1))),
         t.copy_misaligned,
         t.flush_cycles / 400,
+    );
+}
+
+/// The datagrams sent beside smoltcp (`net::chunk`): cycles each from the room found to the
+/// frame queued, of which the headers and the checksum, and how many waited for room.
+#[inline(never)]
+fn write_direct(w: &mut BufWriter<'_>, d: &net::chunk::Stats) {
+    if !cfg!(feature = "accounting") {
+        return;
+    }
+    let n = u64::from(d.datagrams.max(1));
+    let _ = write!(
+        w,
+        " | direct datagrams={} direct_cyc={} direct_hdr_cyc={} direct_waits={}",
+        d.datagrams,
+        Ratio(d.cycles, n),
+        Ratio(d.header_cycles, n),
+        d.waits,
     );
 }
 
@@ -583,15 +643,15 @@ fn write_handlers(w: &mut BufWriter<'_>, i: &irq::Snapshot) {
     }
 }
 
-/// EMAC DMA status, missed frames since the last report (the counter clears on read) and the
-/// MAC debug register.
+/// EMAC DMA status, missed frames since the last report (the counter clears on read), the MAC
+/// debug register and the TX frames reported with an error since boot (of which underflows).
 #[inline(never)]
 fn write_emac(w: &mut BufWriter<'_>) {
     let r = net::emac_regs();
     let _ = write!(
         w,
-        " | emac status={:#010x} missed={:#010x} debug={:#010x}",
-        r.status, r.missed, r.debug
+        " | emac status={:#010x} missed={:#010x} debug={:#010x} tx_errors={} tx_underflows={}",
+        r.status, r.missed, r.debug, r.tx_errors, r.tx_underflows
     );
 }
 

@@ -150,13 +150,17 @@ The test service (`src/bench.rs`, the module docs have the formats):
   each pass (cold, as after a DMA write); `F` camera frames, the newest complete one each time;
   `C` capture only (frames counted and dropped, no datagrams but the report); `D` nothing, the
   board logs `bench: host done`. In `I` and `P` every byte is a known pattern the host checks.
+  Datagrams go beside smoltcp (`net/chunk.rs`) once the host's MAC is known, through the
+  socket before. At boot the service checks the chunk path's UDP checksum against smoltcp's
+  on 4096 random datagrams (`bench: UDP checksum of the chunk path ...`; a failure panics).
 - **UDP 5011, host to board**: datagrams `[seq u32, stream u32, payload]` whose payload is a
   known pattern shifted per sequence number; the board checks every byte and counts datagrams,
   bad ones, gaps and late ones per stream, and answers a query (stream `0xFFFF_FFFF`) with its
   counts.
 
-The reports carry the CPU time: `copy_cyc`, cycles per datagram in the application's copy into
-the socket buffer (PIE's copy since 2026-11-11, [step 1](#measured-step-1-the-datagram-copy-through-pie-2026-11-11)),
+The reports carry the CPU time: `copies` and `copy_cyc`, the datagrams that went through the
+socket and the cycles of each in the application's copy into the socket buffer (PIE's copy
+since 2026-11-11, [step 1](#measured-step-1-the-datagram-copy-through-pie-2026-11-11)),
 and `copy_misaligned`, how many of those copies had source and destination unlike modulo 4
 (the ROM `memcpy` copies them byte by byte, see
 [copy alignment](#measured-baseline-and-copy-alignment-2026-11-11)); from the driver wrapper
@@ -171,7 +175,12 @@ fell outside executor passes (`outside_pct`, counted as idle before), the wake p
 esp-rtos's scheduler interrupt, the context switch, the executor's wake-up), each handler's
 calls and mean own cycles (`eth`, `tick`, `csi_dma`, `csi_host`, `csi_bridge`, `jpeg`,
 `dma2d_rx`, `dma2d_tx`), and `busy_all_pct`, the executor's busy share plus the handlers outside
-it and the wake path; and the EMAC's DMA status, missed-frame counter and MAC debug register.
+it and the wake path; for the datagrams sent beside smoltcp (`direct`, since
+[step 3](#measured-step-3-chunk-datagrams-beside-smoltcp-2026-11-11)) the cycles of each from
+the room found to the frame queued (`direct_cyc`), of which the headers and the checksum
+(`direct_hdr_cyc`), and how many waited for room (`direct_waits`); and the EMAC's DMA status,
+missed-frame counter, MAC debug register and the TX frames it reported with an error since
+boot (`tx_errors`, of which `tx_underflows`).
 
 **Interrupt handlers.** The drivers bind their handlers (`esp32p4-csi`, `esp32p4-jpeg`,
 esp-hal's EMAC handler, esp-rtos's timer tick); `irq::install` then puts a trampoline in the
@@ -204,7 +213,8 @@ and without `accounting` alike.
 | `src/stream/check.rs` | The `SetCamera` checks in the protocol's order, as the viewer's fake camera makes them |
 | `src/stream/capture.rs` | The capture task: frames, counters, the stream rules, mode changes and recovery |
 | `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
-| `src/stream/send.rs` | The send task: answers and frame chunks, encoded straight into the socket's ring (`espion_proto` writes the chunk header, PIE copies the bytes) |
+| `src/stream/send.rs` | The send task: answers through the socket; frame chunks beside smoltcp (`net/chunk.rs`: `espion_proto` writes the chunk header, PIE copies the bytes), through the socket until the host's MAC is known |
+| `src/net/chunk.rs` | UDP datagrams sent beside smoltcp, straight onto the TX ring: the peer's MAC learned from received frames, the headers, a PIE copy of the payload into the descriptor's buffer, the UDP checksum (PIE), the checksum self-test |
 | `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports |
@@ -253,16 +263,19 @@ the reference) does, with the real sensor.
   did not come within two periods (the camera is then restarted).
 - **Where it runs.** All on core 0, in the one embassy executor, with the network: control,
   capture, encode, send, diag, the runner and the link task; the EMAC, CSI, JPEG and 2D-DMA
-  interrupts are on core 0 too. The send task encodes each chunk straight into the socket's TX
-  ring (`send_to_with`): `FrameChunk::encode_header` writes the chunk's header and PIE copies
-  the bytes (`Pie::copy`, any alignment), the one CPU copy of the pixels or of the JPEG file
-  (RAW10 sent as RAW8 is reduced to its high bits in that place instead); smoltcp copies the
-  datagram into the DMA buffer with its checksum pass. Core 1 stays off (below: the two-core
-  attempt hung).
-- **RAM** (boot log): 182 272 B of internal RAM static, of which the service's sockets and
-  buffers are 22 740 B (camera socket: 8 x 1452 B TX ring, 4 KiB RX ring; the hooks' socket);
-  399 296 B left for the main stack. PSRAM: the four frame buffers, 5 144 576 B, then the
-  encoder's three output buffers, 6 291 456 B.
+  interrupts are on core 0 too. The send task sends each chunk beside smoltcp
+  (`net/chunk.rs`): `FrameChunk::encode_header` writes the chunk's header after the Ethernet,
+  IPv6 and UDP headers in a TX descriptor's buffer, PIE copies the bytes from PSRAM after it
+  (`Pie::copy`, any alignment), the one CPU copy of the pixels or of the JPEG file (RAW10
+  sent as RAW8 is reduced to its high bits in that place instead), and PIE sums the payload
+  for the UDP checksum. Until a frame from the host was received (its MAC unknown), chunks go
+  through the socket, PIE copying the bytes into its ring. Core 1 stays off (below: the
+  two-core attempt hung).
+- **RAM** (boot log, 2026-11-11): 134 272 B of internal RAM static, of which the network's
+  DMA rings and esp-hal's storage are 53 376 B and the service's sockets and buffers 22 740 B
+  (camera socket: 8 x 1452 B TX ring, 4 KiB RX ring; the hooks' socket); 447 296 B left for
+  the main stack. PSRAM: the four frame buffers, 5 144 576 B, then the encoder's three output
+  buffers, 6 291 456 B.
 
 ### JPEG
 
@@ -286,7 +299,7 @@ a RAW8 frame; no CPU pass over the pixels. `src/stream/jpeg.rs`.
    the link was busy (`counters.frames_skipped`). So the link never waits for an encode, and
    the send task always gets the newest file. The send task sends it like a raw frame: the
    chunks on the 1409-byte grid, `frame_len` the file's length, each chunk copied once from
-   PSRAM into the socket's ring.
+   PSRAM into a TX descriptor's buffer.
 
 **Buffers.** Three output buffers (one being sent, one waiting, one being encoded into) of
 `JPEG_FRAME_MAX` = 2 MiB each in PSRAM after the receiver's buffers, 128-byte aligned (the
@@ -928,6 +941,102 @@ checked), against this build: 0 failed checks (`s2-stream.board.txt`).
   (1 000 a second at the wire rate instead of 8 100).
 - smoltcp's `tx_stack` is unchanged (its copy and checksum; step 3).
 
+### Measured: step 3, chunk datagrams beside smoltcp, 2026-11-11
+
+Plan steps 7.3 and 7.4. `net/chunk.rs` sends the stream's chunks and the bench's datagrams
+straight onto the TX ring of `net/eth.rs`, beside smoltcp, which keeps answers, neighbour
+discovery, ping and the RX path:
+
+- **Peer.** smoltcp does not expose its neighbour cache: the driver records the source
+  address and MAC of every IPv6 frame it receives (4 entries, most recent first). The board
+  only sends to the source of a request it received; until a frame from it came, datagrams
+  go through the socket as before.
+- **One copy.** The headers (Ethernet, IPv6, UDP: 62 bytes, written per datagram), the head
+  (the chunk's header from `FrameChunk::encode_header`, the bench's 16 bytes) and a PIE copy of
+  the body go into a TX descriptor's own buffer in internal RAM; one write-back, one
+  descriptor. Before: PIE copied into smoltcp's ring, smoltcp copied into the DMA buffer and
+  summed the datagram.
+- **Checksum.** The pseudo-header as scalar words, the UDP header, head and copied body by
+  `Pie::sum16_be` from internal RAM; a computed 0 goes out as 0xFFFF. The bench service
+  checks it against smoltcp's `UdpPacket::fill_checksum` and `verify_checksum` at boot, on
+  4096 random datagrams (heads 0-40 bytes, bodies 0-1440 bytes at any alignment, random,
+  all-0xFF and all-zero): 0 failed (`s5-bench.log`).
+- **Sharing the ring.** A datagram waits until 4 descriptors more than its own are free, so
+  smoltcp always finds room; the waiter is woken by the TX completion interrupt (every 8th
+  frame; a waiter needs more than 11 frames in flight, so one of them asks for it).
+- **TX errors.** The driver now reads the status the DMA wrote back into each TX descriptor
+  before it reuses it, and counts errors and underflows (`tx_errors`, `tx_underflows` in the
+  bench's report, `emac_tx_errors`, `emac_tx_underflows` in the stream's `R`).
+
+Same session, same flags: the step 2 build (`64d4b17`) against this one; logs
+`s5-base-bench.*`, `s5-bench.*`, `s5-base-stream.*`, `s5-stream.*` in
+`/tmp/p4perf-logs/StreamSend/`. Bench, 20 s per source; "net + TX" is the runner and the TX
+task, cycles per datagram:
+
+| Source, build | Datagrams | Host MB/s (datagrams/s) | Lost, dup., reordered, bad | CPU busy (`busy_all`) | Runner | TX task | Net + TX | `direct_cyc` (headers and sum) | Token requests per datagram x `token_cyc` |
+|---|---|---|---|---|---|---|---|---|---|
+| Internal, step 2 | 163 772 | 11.795 (8187) | 0, 0, 0, 0 | 36.5 % (37.1 %) | 14 731 | 2 946 | 17 677 | — | 1.51 x 158 |
+| Internal, step 3 | 163 767 | 11.797 (8188) | 0, 0, 0, 0 | 13.0 % (13.7 %) | 246 | 6 071 | 6 317 (-64 %) | 3 889 (1 773) | 0.13 x 209 |
+| PSRAM, step 2 | 162 770 | 11.799 (8136) | 0, 0, 0, 0 | 45.6 % (46.2 %) | 15 775 | 6 331 | 22 106 | — | 1.98 x 194 |
+| PSRAM, step 3 | 162 760 | 11.801 (8137) | 0, 0, 0, 0 | 19.7 % (20.4 %) | 279 | 9 336 | 9 615 (-57 %) | 7 146 (1 796) | 0.13 x 233 |
+| Camera, step 2 | 162 707 | 11.801 (8138) | 0, 0, 0, 0 | 45.9 % (46.6 %) | 15 639 | 6 686 | 22 325 | — | 1.86 x 190 |
+| Camera, step 3 | 162 686 | 11.800 (8137) | 0, 0, 0, 0 | 21.0 % (21.7 %) | 310 | 9 940 | 10 250 (-54 %) | 7 609 (1 813) | 0.13 x 272 |
+
+Host to board, unpaced 20 s, every byte checked: 162 609 sent, 162 609 received, 0 bad, 0
+lost; EMAC missed frames, TX errors and underflows 0 in every bench run.
+
+Stream (`jrx`, 10 s windows; net and send are the tasks' cycles per datagram; JPEG link-bound
+ran twice, the second figures in brackets):
+
+| Run, build | Host | Core 0 busy (`busy_all`) | net task | send task | Net + send | `direct_cyc` (headers and sum) |
+|---|---|---|---|---|---|---|
+| Raw 1280x800 RAW8 (link), step 2 | 90.00 Mbit/s, 10.99 fps | 63.7 % (64.2 %) | 23 138 | 8 038 | 31 176 | — |
+| Raw 1280x800 RAW8 (link), step 3 | 89.96 Mbit/s, 10.98 fps | 24.4 % (25.2 %) | 605 | 10 903 | 11 508 (-63 %) | 8 110 (1 206) |
+| JPEG q90, 15.5x, 153.98 Hz (link), step 2 | 92.69 (92.78) Mbit/s | 71.3 % (71.8 %) | 22 587 | 10 165 | 32 752 (32 789) | — |
+| JPEG q90, 15.5x, 153.98 Hz (link), step 3 | 92.57 (92.48) Mbit/s | 31.0 % (32.0 %) | 525 | 12 231 | 12 756 (12 744), -61 % | 8 936 (1 195) |
+| JPEG q90, 2x, 120 Hz, step 2 | 13.55 Mbit/s, 120.06 fps | 9.4 % (9.6 %) | 20 123 | 7 499 | 27 622 | — |
+| JPEG q90, 2x, 120 Hz, step 3 | 13.62 Mbit/s, 120.06 fps | 4.0 % (4.2 %) | 385 | 10 090 | 10 475 (-62 %) | 7 452 (1 140) |
+
+Every stream run: 0 incomplete or bad frames, 0 lost polls, 0 capture errors, 0 EMAC missed
+frames, TX errors or underflows; request round trips 1.36 ms (2x) and 4.9-5.1 ms (link full;
+4.6-4.9 ms before). Link-bound JPEG came out at 74.0 and 73.5 fps against 79.3 and 76.3: the
+same Mbit/s, larger files (156 kB a file against 145 kB, from `encoded_bytes`) [INFERENCE:
+the noise at gain 15.5x grows as the sensor warms, and this build ran after the baseline;
+the baseline's own second run was slower too]. `poc-viewer`'s whole board test against this
+build: 0 failed checks (`s5-stream.board.txt`), 0 EMAC TX errors in its reports.
+
+- **Kept.** About 11 000 to 20 000 cycles a datagram less in every case; at the wire rate
+  core 0 is 24-31 % busy instead of 64-71 %. smoltcp's TX path (17 000 cycles a datagram with
+  the driver's part and the token requests) is off the stream's datagrams.
+- The send task is now the cost: `chunk::send` takes 8 100-8 900 cycles a chunk from PSRAM,
+  of which 1 200 the headers and the sum (from internal RAM); the rest is mostly the PIE copy
+  reading PSRAM [INFERENCE: from `direct_cyc` less `direct_hdr_cyc`; the copy itself is not
+  timed apart]. More runner wakes (10 700 against 7 200 in 10 s raw): the send task now waits
+  for room on the ring, woken by the completion interrupt.
+
+**Tried and dropped: the body sent from where it lies** (plan 7.3's zero-copy: the headers in
+the first descriptor's buffer, a second descriptor pointing the EMAC's DMA at the bytes in
+PSRAM; 32 TX descriptors; logs `s3-*`, `s4-*`). The EMAC's DMA reads PSRAM: the bench's
+datagrams built whole in PSRAM and sent from there, 162 173 datagrams in 20 s, every byte
+right (`s3-bench.psramdma.txt`). It was not kept:
+
+- No CPU gain over the copy: the checksum then read the body from PSRAM, and cost what the
+  copy costs (`direct_hdr_cyc` 5 600-7 000 against 1 100-1 800). Net + send per datagram, same
+  session as its own step 2 baseline (`s3-*`): raw 11 316, link-bound JPEG 12 946, 2x 10 385;
+  bench net + TX: internal 6 840, PSRAM 10 367, camera 11 590.
+- A body must stay unchanged until the DMA has read it, up to 16 frames after it was queued.
+  Without a wait, the board test's 1280x64 RAW8 at 1000 Hz had 66 incomplete frames
+  (`s3-stream.board.txt`) [INFERENCE: the receiver wrote the next frame into the buffer
+  before the last chunks went out, and the host dropped them on their checksum]. Waiting for
+  the last chunk's completion before giving the buffer back fixed that
+  (`s4-stream.board.txt`) and cost 0.4 % of the camera bench's rate.
+- TX underflows: with the JPEG encoder working in PSRAM, the EMAC's DMA fell behind the
+  wire. Link-bound JPEG at 153.98 Hz: 3 underflows in 10 s (`emac_tx_underflows`), 2
+  incomplete frames, and one failed board-test check (`auto off, the scene at gain 15.5x,
+  longest exposure: 1 incomplete frames`, `s4-stream.board.txt`). A 256-byte TX threshold
+  (code 3 instead of 64 bytes) to ride it out: the host received no stream at all
+  (`s5-ttc256-stream.*`, `jrx`: `no window` in all four runs); not pursued.
+
 ## The Ethernet driver (esp-hal 1.2.2 `ethernet` for the bring-up, this crate's DMA rings)
 
 Read in the registry source and measured here. The first three needed workarounds in this
@@ -999,8 +1108,11 @@ multicast, the EMAC's PTP clock and timestamps.
   frame period and cost an occasional frame (counted in `encoder.frames_skipped`). Running the
   encode task in an interrupt-priority executor would remove the wake-up wait behind the
   network's polls [INFERENCE: not tried; that the wait is the cause is not measured].
-- **CPU**: at the wire rate core 0 is 99 % busy, almost all per datagram (about 46 000 cycles:
-  smoltcp, the driver, the chunk copy). Core 1 is off ([the two-core attempt](#the-two-core-attempt)).
+- **CPU**: at the wire rate core 0 is 24-31 % busy (raw, link-bound JPEG), 11 500-12 800
+  cycles a datagram: mostly the send task's PIE copy from PSRAM, the headers and the checksum
+  ([step 3](#measured-step-3-chunk-datagrams-beside-smoltcp-2026-11-11)). Core 1 is off
+  ([the two-core attempt](#the-two-core-attempt)). Sending the bytes from PSRAM without the
+  copy failed on TX underflows (step 3).
 - Not verified: an encoder timeout (never seen; the path is the same as the driver's errors),
   the encoder's codec and DMA errors on this firmware (only `OutputTooSmall` was provoked),
   quality below 20 on the camera, a scene in daylight (the room was dark for every run).

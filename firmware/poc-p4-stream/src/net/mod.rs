@@ -27,6 +27,7 @@
 //! PHY address 1: strap PHY_AD0 (pin 11) high through R65 (5.1 k to PHY_3V3), PHY_AD3 (pin 12)
 //! low through R63. RMII mode: strap COL/RMII (pin 4) high through R49.
 
+pub mod chunk;
 mod device;
 mod eth;
 mod ip101;
@@ -189,6 +190,7 @@ fn bring_up(p: Pins) -> Option<(Stack<'static>, Runner<'static, Driver>)> {
     };
     let (eth, opmode) = eth::Eth::take_over(hal);
     log_opmode(opmode);
+    chunk::set_source(mac, ADDRESS);
     let r = report();
     info!(
         "net: EMAC up, MAC {:02x?}, PHY at MDIO {PHY_ADDRESS} id {:#06x} {:#06x}, own DMA rings: {RX_DESCRIPTORS} RX + {TX_DESCRIPTORS} TX descriptors ({RING_BYTES} B), TX completion interrupt every {IC_EVERY} frames",
@@ -236,6 +238,10 @@ pub struct EmacRegs {
     pub missed: u32,
     /// `EMACDEBUG`: MAC and FIFO states.
     pub debug: u32,
+    /// TX frames the DMA reported with an error since boot, and of those the underflows
+    /// (`eth::tx_errors`).
+    pub tx_errors: u32,
+    pub tx_underflows: u32,
 }
 
 /// Reads [`EmacRegs`].
@@ -243,10 +249,13 @@ pub fn emac_regs() -> EmacRegs {
     // SAFETY: reads of status registers; `DMAMISSEDFR` clears on read and nothing else reads it.
     let dma = unsafe { &*esp32p4::EMAC_DMA::ptr() };
     let mac = unsafe { &*esp32p4::EMAC_MAC::ptr() };
+    let (tx_errors, tx_underflows) = eth::tx_errors();
     EmacRegs {
         status: dma.dmastatus().read().bits(),
         missed: dma.dmamissedfr().read().bits(),
         debug: mac.emacdebug().read().bits(),
+        tx_errors,
+        tx_underflows,
     }
 }
 

@@ -33,14 +33,14 @@
 //!   ([`Eth::capabilities`]). RX checksums stay with the EMAC: frames its checksum engine
 //!   flags in RDES4 are dropped here, as esp-hal does.
 //!
-//! The TX ring is shared state (a [`critical_section::Mutex`]): the runner's TX tokens take
-//! descriptors from it. Every user of the ring runs in core 0's thread-mode executor, and a
-//! user takes, fills and hands over its descriptors in one poll, so the descriptors of one
-//! frame are always consecutive and handed over in ring order.
+//! The TX ring is shared state (a [`critical_section::Mutex`]) with two users: the runner's TX
+//! tokens (smoltcp) and [`super::chunk`] (datagrams sent beside smoltcp). Both run in core 0's
+//! thread-mode executor and take, fill and hand over a frame's descriptor in one poll, so
+//! frames are handed over in ring order.
 
 use core::cell::{Cell, UnsafeCell};
 use core::mem::offset_of;
-use core::sync::atomic::{Ordering, fence};
+use core::sync::atomic::{AtomicU32, Ordering, fence};
 use core::task::Context;
 
 use critical_section::Mutex;
@@ -76,6 +76,10 @@ const TDES0_LS: u32 = 1 << 29;
 const TDES0_FS: u32 = 1 << 28;
 /// Second address chained: word 3 is the next descriptor ("must be set to 1" on TX).
 const TDES0_TCH: u32 = 1 << 20;
+/// Error summary, written back with the frame's status (in its last descriptor).
+const TDES0_ES: u32 = 1 << 15;
+/// Underflow: the DMA did not deliver the frame's bytes to the TX FIFO in time.
+const TDES0_UF: u32 = 1 << 1;
 
 // RX descriptor words 0, 1 and 4 (TRM p.3234-3239).
 const RDES0_OWN: u32 = 1 << 31;
@@ -189,29 +193,50 @@ static TX: Mutex<Cell<TxState>> = Mutex::new(Cell::new(TxState { head: 0, frames
 static RUNNER: AtomicWaker = AtomicWaker::new();
 
 /// `true` when the `n` descriptors from the head are the CPU's (the DMA finished with them).
-fn tx_room(n: usize) -> bool {
+pub(super) fn tx_room(n: usize) -> bool {
     let head = critical_section::with(|cs| TX.borrow(cs).get().head);
     (0..n).all(|k| Desc::tx((head + k) % TX_DESCRIPTORS).read(0) & TDES0_OWN == 0)
 }
 
-/// Takes the `n` descriptors at the head for one frame: returns the first one's index and
-/// whether the frame asks for the completion interrupt. The caller checked [`tx_room`] in the
-/// same poll, and hands the frame over before its next await.
-fn tx_take(n: usize) -> (usize, bool) {
+/// Takes the descriptor at the head for one frame: returns its index and whether the frame
+/// asks for the completion interrupt. The caller checked [`tx_room`] in the same poll, and
+/// hands the frame over before its next await.
+pub(super) fn tx_take() -> (usize, bool) {
     critical_section::with(|cs| {
         let mut s = TX.borrow(cs).get();
-        let first = s.head;
-        s.head = (s.head + n) % TX_DESCRIPTORS;
+        let i = s.head;
+        // The status the DMA wrote back for the frame this descriptor carried last.
+        let tdes0 = Desc::tx(i).read(0);
+        if tdes0 & TDES0_ES != 0 {
+            TX_ERRORS.fetch_add(1, Ordering::Relaxed);
+            if tdes0 & TDES0_UF != 0 {
+                TX_UNDERFLOWS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        s.head = (i + 1) % TX_DESCRIPTORS;
         s.frames = s.frames.wrapping_add(1);
         let ic = s.frames.is_multiple_of(IC_EVERY);
         TX.borrow(cs).set(s);
-        (first, ic)
+        (i, ic)
     })
+}
+
+/// TX frames the DMA reported with an error, since boot (counted when their descriptors are
+/// taken again), and of those the underflows.
+static TX_ERRORS: AtomicU32 = AtomicU32::new(0);
+static TX_UNDERFLOWS: AtomicU32 = AtomicU32::new(0);
+
+/// `(errors, underflows)` of the TX frames since boot (see [`TX_ERRORS`]).
+pub fn tx_errors() -> (u32, u32) {
+    (
+        TX_ERRORS.load(Ordering::Relaxed),
+        TX_UNDERFLOWS.load(Ordering::Relaxed),
+    )
 }
 
 /// Hands a one-descriptor frame of `len` bytes at DMA address `buf` to the DMA through
 /// descriptor `i`, and wakes the TX DMA. The buffer is already written back.
-fn tx_queue(i: usize, buf: usize, len: usize, ic: bool) {
+pub(super) fn tx_queue(i: usize, buf: usize, len: usize, ic: bool) {
     let d = Desc::tx(i);
     d.write(2, buf as u32);
     d.write(1, len as u32);
@@ -248,6 +273,9 @@ fn eth_isr() {
     dma().dmastatus().write(|w| unsafe { w.bits(status) });
     if status & (STATUS_RI | STATUS_TI) != 0 {
         RUNNER.wake();
+    }
+    if status & STATUS_TI != 0 {
+        super::chunk::ROOM.wake();
     }
 }
 
@@ -470,6 +498,7 @@ impl RxToken for Rx<'_> {
         // SAFETY: the CPU owns this RX buffer (its descriptor's OWN is clear) until
         // `rx_recycle`; no other reference to it exists.
         let buf = unsafe { core::slice::from_raw_parts_mut(addr as *mut u8, self.len) };
+        super::chunk::learn(buf);
         let r = f(buf);
         // Drop the lines the stack read (or wrote), so none is cached while the DMA owns the
         // buffer again.
@@ -485,7 +514,7 @@ impl TxToken for Tx {
         F: FnOnce(&mut [u8]) -> R,
     {
         let len = len.min(MTU);
-        let (i, ic) = tx_take(1);
+        let (i, ic) = tx_take();
         let addr = tx_buf_addr(i);
         // SAFETY: descriptor `i` was the CPU's (`tx_room` in this poll) and is now taken; its
         // buffer has no other user until the DMA gets it below.

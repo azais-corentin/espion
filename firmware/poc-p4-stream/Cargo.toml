@@ -56,6 +56,9 @@ embassy-net = { version = "0.9.1", features = [
 # The driver trait the network driver (`src/net/eth.rs`) implements, the one embassy-net 0.9.1
 # takes.
 embassy-net-driver = "0.2.0"
+# embassy-net's smoltcp, for its UDP checksum routine: the reference of the chunk path's
+# checksum in the bench service's boot self-test (`src/net/chunk.rs`).
+smoltcp = { version = "0.13.1", default-features = false, features = ["proto-ipv6"] }
 # `select` of the stream service's tasks; channels and signals between them (the versions
 # esp-hal 1.2.2 and embassy-net 0.9.1 use).
 embassy-futures = "0.1.2"

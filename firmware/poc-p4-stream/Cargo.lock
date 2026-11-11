@@ -1415,6 +1415,7 @@ dependencies = [
  "espion-proto",
  "log",
  "ov9281",
+ "smoltcp",
  "static_cell",
 ]
 

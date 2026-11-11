@@ -8,9 +8,10 @@
 //!   the interrupt handlers' share, the part of it outside executor passes, the wake path and
 //!   the busy share with them (`crate::irq`); with the `idle-counter` feature the idle share
 //!   and the sleep path;
-//!   the stream counters, bad datagrams on the camera port, the receiver's counters and the
-//!   EMAC's missed-frame count. A core whose executor did not run in the window gets only its
-//!   busy share.
+//!   the stream counters, bad datagrams on the camera port, the receiver's counters, the
+//!   EMAC's missed-frame count and the TX frames it reported with an error since boot (of
+//!   which underflows). A core whose executor did not run in the window gets only its busy
+//!   share.
 //!   Without the `accounting` feature the CPU and network fields are replaced by
 //!   `accounting=off`. Nothing is logged.
 //! - `I`: per core, each wrapped interrupt handler's calls and mean own cycles per call since
@@ -86,6 +87,7 @@ struct Mark {
     irq: [irq::Snapshot; cpu::CORES],
     net: net::Stats,
     copies: send::Copies,
+    chunk: net::chunk::Stats,
     sent: u32,
 }
 
@@ -171,6 +173,7 @@ fn set_mark() {
             irq: [irq::snapshot(0), irq::snapshot(1)],
             net: net::stats(),
             copies: send::copies(),
+            chunk: net::chunk::stats(),
             sent: shared(|s| s.counters.datagrams_sent),
         });
     });
@@ -225,9 +228,10 @@ fn write_report(w: &mut BufWriter<'_>) {
         counters.datagrams_sent,
         BAD_DATAGRAMS.load(Ordering::Relaxed),
     );
+    let emac = net::emac_regs();
     let _ = write!(
         w,
-        " csi_done={} csi_dropped={} csi_overwritten={} csi_last_bytes={} dma_err={} host_err={} host_main={:#x} bridge_err={} bridge_bits={:#x} emac_missed={}",
+        " csi_done={} csi_dropped={} csi_overwritten={} csi_last_bytes={} dma_err={} host_err={} host_main={:#x} bridge_err={} bridge_bits={:#x} emac_missed={} emac_tx_errors={} emac_tx_underflows={}",
         csi.frames_done,
         csi.frames_dropped,
         csi.frames_overwritten,
@@ -237,7 +241,9 @@ fn write_report(w: &mut BufWriter<'_>) {
         csi.host_error_main,
         csi.bridge_errors,
         csi.bridge_error_bits,
-        net::emac_regs().missed,
+        emac.missed,
+        emac.tx_errors,
+        emac.tx_underflows,
     );
     let _ = write!(
         w,
@@ -359,16 +365,23 @@ fn write_irq(w: &mut BufWriter<'_>) {
     }
 }
 
-/// The `N` reply: the chunk encodings and the driver wrapper's counts since the mark.
+/// The `N` reply: the chunk encodings, the datagrams sent beside smoltcp (`direct`: cycles from
+/// the room found to the frame queued, of which the headers and the checksum, and how many
+/// waited for room) and the driver wrapper's counts since the mark.
+#[allow(
+    clippy::large_stack_frames,
+    reason = "on demand, outside the frame path, on the main stack: the counts are about 120 B"
+)]
 #[inline(never)]
 fn write_net(w: &mut BufWriter<'_>) {
-    let (at, n, c) = critical_section::with(|cs| {
+    let (at, n, c, d) = critical_section::with(|cs| {
         let m = MARK.borrow_ref(cs);
         let m = m.as_ref().expect("marked at start");
         (
             m.at,
             net::stats().since(&m.net),
             send::copies().since(&m.copies),
+            net::chunk::stats().since(&m.chunk),
         )
     });
     let per = |a: u64, b: u32| a / u64::from(b.max(1));
@@ -381,6 +394,14 @@ fn write_net(w: &mut BufWriter<'_>) {
         per(c.bytes, c.count),
         c.unlike4,
         c.unlike16,
+    );
+    let _ = write!(
+        w,
+        " direct={} direct_cyc={} direct_hdr_cyc={} direct_waits={}",
+        d.datagrams,
+        per(d.cycles, d.datagrams),
+        per(d.header_cycles, d.datagrams),
+        d.waits,
     );
     let _ = write!(
         w,

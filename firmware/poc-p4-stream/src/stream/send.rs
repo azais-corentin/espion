@@ -1,7 +1,10 @@
-//! The send task: the only sender on the camera socket. Answers go first; the frame in flight
-//! (a raw frame or a JPEG file) goes out chunk by chunk on the protocol's grid, each chunk
-//! encoded straight into the socket's ring: `espion_proto` writes the chunk's header, and PIE
-//! copies the bytes from PSRAM (one copy; smoltcp makes the second into the DMA buffer).
+//! The send task: the only sender on the camera port. Answers go first, through the socket;
+//! the frame in flight (a raw frame or a JPEG file) goes out chunk by chunk on the protocol's
+//! grid, each chunk beside smoltcp (`net::chunk`): `espion_proto` writes the chunk's header
+//! into a TX descriptor's buffer and PIE copies the bytes from PSRAM after it (the one copy).
+//! A RAW10 frame sent as RAW8 has its 8-bit pixels written after the header instead. Until a
+//! frame from the peer was received (its MAC unknown), chunks go through the socket: the
+//! header written into the socket's ring, PIE copying the bytes.
 
 use core::cell::RefCell;
 use core::future::{Future, poll_fn};
@@ -13,10 +16,11 @@ use embassy_net::IpEndpoint;
 use embassy_net::udp::{SendError, UdpSocket};
 use embassy_time::Instant;
 use esp32p4_pie::Pie;
-use espion_proto::cam::{CHUNK_MAX, FrameChunk, MAX_DATAGRAM};
+use espion_proto::cam::{CAM_PORT, CHUNK_MAX, FrameChunk, MAX_DATAGRAM};
 
 use super::{JOB, Job, Outgoing, RESPONSES, SEND_BUSY_US, shared};
 use crate::cpu::{self, Counter64};
+use crate::net::chunk;
 
 #[embassy_executor::task]
 pub(super) async fn task(sock: &'static RefCell<UdpSocket<'static>>, pie: &'static Pie) {
@@ -136,13 +140,18 @@ async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job) {
         let Some(to) = to else {
             return;
         };
-        let n = (len - offset).min(CHUNK_MAX as u32);
-        if send(sock, to, |buf| {
-            encode(pie, job, len, offset, n as usize, buf)
-        })
-        .await
-        .is_err()
-        {
+        let n = (len - offset).min(CHUNK_MAX as u32) as usize;
+        let body: &[u8] = if job.high_bits {
+            &[]
+        } else {
+            &job.data[offset as usize..][..n]
+        };
+        let head = |buf: &mut [u8]| head(job, len, offset, n, buf);
+        let sent = match chunk::send(pie, to, CAM_PORT, head, body).await {
+            Ok(()) => Ok(()),
+            Err(_) => send(sock, to, |buf| encode(pie, job, len, offset, n, buf)).await,
+        };
+        if sent.is_err() {
             shared(|s| {
                 if s.epoch == job.epoch {
                     s.sending = false;
@@ -151,7 +160,7 @@ async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job) {
             return;
         }
         shared(|s| s.counters.datagrams_sent = s.counters.datagrams_sent.wrapping_add(1));
-        offset += n;
+        offset += n as u32;
     }
     shared(|s| {
         if s.epoch == job.epoch {
@@ -161,17 +170,9 @@ async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job) {
     });
 }
 
-/// Encodes the chunk at `offset` (`n` bytes) of `job` into `buf`; returns its length.
-/// `espion_proto` writes the header, then PIE copies the bytes from the frame (any alignment):
-/// the one CPU copy of the pixels. A RAW10 frame sent as RAW8 has its 8-bit pixels written
-/// straight into the datagram instead.
-fn encode(pie: &Pie, job: &Job, frame_len: u32, offset: u32, n: usize, buf: &mut [u8]) -> usize {
-    let c0 = cpu::mcycle();
-    // RAW10 as RAW8: `data` only gives the header the chunk's length (`n` bytes of the packed
-    // frame, never read as such).
-    let start = if job.high_bits { 0 } else { offset as usize };
-    let data = &job.data[start..][..n];
-    let Ok(h) = FrameChunk {
+/// The chunk at `offset` of `job`, with `data` (only its length counts for the header).
+fn chunk<'a>(job: &Job, frame_len: u32, offset: u32, data: &'a [u8]) -> FrameChunk<'a> {
+    FrameChunk {
         frame: job.number,
         generation: job.generation,
         encoding: job.encoding,
@@ -182,7 +183,40 @@ fn encode(pie: &Pie, job: &Job, frame_len: u32, offset: u32, n: usize, buf: &mut
         offset,
         data,
     }
-    .encode_header(buf) else {
+}
+
+/// The head of the chunk at `offset` (`n` bytes) of `job` for `net::chunk::send`: the chunk's
+/// header, and for a RAW10 frame sent as RAW8 its 8-bit pixels after it (the body is then
+/// empty). Returns its length.
+fn head(job: &Job, frame_len: u32, offset: u32, n: usize, buf: &mut [u8]) -> usize {
+    // RAW10 as RAW8: `data` only gives the header the chunk's length (`n` bytes of the packed
+    // frame, never read as such).
+    let start = if job.high_bits { 0 } else { offset as usize };
+    let Ok(h) = chunk(job, frame_len, offset, &job.data[start..][..n]).encode_header(buf) else {
+        return 0;
+    };
+    if !job.high_bits {
+        return h;
+    }
+    let c0 = cpu::mcycle();
+    high_bits(&job.data, offset as usize, &mut buf[h..h + n]);
+    if cfg!(feature = "accounting") {
+        count_copy(cpu::mcycle().wrapping_sub(c0), n, 0);
+    }
+    h + n
+}
+
+/// Encodes the chunk at `offset` (`n` bytes) of `job` into `buf` (the socket's ring); returns
+/// its length. `espion_proto` writes the header, then PIE copies the bytes from the frame (any
+/// alignment). A RAW10 frame sent as RAW8 has its 8-bit pixels written straight into the
+/// datagram instead.
+fn encode(pie: &Pie, job: &Job, frame_len: u32, offset: u32, n: usize, buf: &mut [u8]) -> usize {
+    let c0 = cpu::mcycle();
+    // RAW10 as RAW8: `data` only gives the header the chunk's length (`n` bytes of the packed
+    // frame, never read as such).
+    let start = if job.high_bits { 0 } else { offset as usize };
+    let data = &job.data[start..][..n];
+    let Ok(h) = chunk(job, frame_len, offset, data).encode_header(buf) else {
         return 0;
     };
     let dst = &mut buf[h..h + n];
