@@ -605,11 +605,9 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         if c.area < self.min_area || c.area > self.max_area {
             return;
         }
-        let sw = c.sw as u64;
-        let q5 = |s: u64| ((s * 32 + sw / 2) / sw).min(u16::MAX as u64) as u16;
         let blob = Blob {
-            x: q5(c.swx),
-            y: q5(c.swy),
+            x: q5(c.swx, c.sw),
+            y: q5(c.swy, c.sw),
             area: c.area.min(u16::MAX as u32) as u16,
             peak: (c.peak >> self.peak_shift) as u8,
         };
@@ -620,6 +618,63 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
             self.stats.overflow += 1;
         }
     }
+}
+
+/// The weighted mean `s / sw` in 1/32 pixel, rounded to nearest and saturated:
+/// `min((32 s + sw / 2) / sw, u16::MAX)`, without a 64-bit division (on RV32 a call to
+/// `__udivdi3` for each coordinate of each blob).
+///
+/// A quotient of 2^16 or more is `n >= sw * 2^16`, a compare. Below that, `n < 2^32` takes
+/// one 32-bit division, the rest [`div_q16`]. `sw == 0` (only if the `u32` sum wrapped)
+/// falls back to the 64-bit division, as before.
+#[inline]
+fn q5(s: u64, sw: u32) -> u16 {
+    let n = s * 32 + u64::from(sw / 2);
+    let d = u64::from(sw);
+    if sw == 0 {
+        return (n / d).min(u16::MAX as u64) as u16;
+    }
+    if n >= d << 16 {
+        return u16::MAX;
+    }
+    match u32::try_from(n) {
+        Ok(n) => (n / sw) as u16,
+        Err(_) => div_q16(n, sw),
+    }
+}
+
+/// `n / d` for `n < d * 2^16` (a quotient below 2^16) and `n >= 2^32` (so `d > 2^16`), with
+/// 32-bit operations: one step of long division in base `B = 2^16` (Knuth, TAOCP vol. 2,
+/// 4.3.1, algorithm D, steps D1 to D3), exact for a divisor of two digits.
+///
+/// Proof. Normalise: `k = d.leading_zeros()`, `dn = d << k` has its top bit set, so its
+/// high digit `v1 = dn >> 16 >= B / 2`; `nn = n << k` has the same quotient and
+/// `nn < dn * B < 2^48`. Write `nn = u * B + u0` (`u0 < B`) and `dn = v1 * B + v0`
+/// (`v0 < B`); `u < dn` because `nn < dn * B`, so `u` fits in 32 bits. Start from
+/// `q = min(u / v1, B - 1)` and `r = u - q * v1`. For any `q`,
+/// `nn - q * dn = (u - q * v1) * B + u0 - q * v0 = r * B + u0 - q * v0`, so `q * dn <= nn`
+/// exactly when `q * v0 <= r * B + u0`: the loop lowers `q` by one (and raises `r` by `v1`)
+/// while `q * dn > nn`, and ends on the largest `q <= q_start` with `q * dn <= nn`. That is
+/// the quotient, because the quotient is at most `u / v1` (`q * dn <= nn` implies
+/// `q * v1 <= u`) and below `B`. No overflow: `q < B` and `v0 < B` make `q * v0 < 2^32`;
+/// `r < B` is tested first, so `r * B + u0 < 2^32`; once `r >= B`, `r * B + u0 >= 2^32`,
+/// above `q * v0`, and the test fails as it must. With `v1 >= B / 2`, `q_start` is at most 2
+/// above the quotient (Knuth's theorem B): two passes at most.
+fn div_q16(n: u64, d: u32) -> u16 {
+    const B: u32 = 1 << 16;
+    let k = d.leading_zeros();
+    let dn = d << k;
+    let nn = n << k;
+    let (v1, v0) = (dn >> 16, dn & (B - 1));
+    let u = (nn >> 16) as u32;
+    let u0 = nn as u32 & (B - 1);
+    let mut q = (u / v1).min(B - 1);
+    let mut r = u - q * v1;
+    while r < B && q * v0 > (r << 16 | u0) {
+        q -= 1;
+        r += v1;
+    }
+    q as u16
 }
 
 /// Blob detector state with fixed capacities: `RUNS` runs per row, `COMPS` components
@@ -1205,6 +1260,71 @@ mod tests {
         let mut out = [Blob::default(); 4];
         assert_eq!(det.process_frame(&f, W as u16, 1, &mut out), 0);
         assert_eq!(det.stats(), Stats::default());
+    }
+
+    /// [`q5`] against the 64-bit division it replaces, on random and extreme sums.
+    #[test]
+    fn q5_matches_u64_division() {
+        let want = |s: u64, sw: u32| {
+            let sw = u64::from(sw);
+            ((s * 32 + sw / 2) / sw).min(u16::MAX as u64) as u16
+        };
+        let mut long = 0;
+        let mut check = |s: u64, sw: u32| {
+            let n = s * 32 + u64::from(sw / 2);
+            long += (n >> 32 != 0 && n < u64::from(sw) << 16) as u32;
+            assert_eq!(q5(s, sw), want(s, sw), "s {s} sw {sw}");
+        };
+        // An all-bright 1280x800 frame, RAW8 and RAW10: the largest sums the board sees.
+        let (w, h) = (1280u64, 800u64);
+        let (sx, sy) = (w * (w - 1) / 2 * h, h * (h - 1) / 2 * w);
+        for v in [255u64, 1023] {
+            let sw = (v * w * h) as u32;
+            for s in [
+                v * sx,
+                v * sy,
+                0,
+                1,
+                u64::from(sw) * 2047,
+                u64::from(sw) * 2048,
+            ] {
+                check(s, sw);
+            }
+        }
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut sws: std::vec::Vec<u32> = std::vec![1, 2, 3, 255, 65535, 65536, 65537];
+        sws.extend([1 << 31, (1 << 31) + 1, u32::MAX - 1, u32::MAX]);
+        for bits in 1..=32 {
+            for _ in 0..40 {
+                sws.push((rnd() as u32 >> (32 - bits)) | 1 << (bits - 1));
+            }
+        }
+        for &sw in &sws {
+            let d = u64::from(sw);
+            // Both ends of each path: the saturation edge `n = d * 2^16`, the 32-bit edge
+            // `n = 2^32`, then centroids anywhere in 0..4096 pixels (2048 and up saturate).
+            let edges = [(d << 16) - d / 2, 1 << 32];
+            for e in edges {
+                for delta in 0..64u64 {
+                    let s = (e / 32).wrapping_add(delta).wrapping_sub(32);
+                    if s < 1 << 58 {
+                        check(s, sw);
+                    }
+                }
+            }
+            for _ in 0..2000 {
+                let px = rnd() % (4096 * 32);
+                let s = d * px / 32 + rnd() % (d + 1);
+                check(s, sw);
+            }
+        }
+        assert!(long > 10_000, "the 32-bit-step path ran {long} times");
     }
 
     #[test]
