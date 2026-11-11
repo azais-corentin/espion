@@ -62,6 +62,7 @@ impl Pie {
     /// 16-byte-aligned middle by the vector kernel (the start of the 64-byte block, or of
     /// the last 16-byte step, that holds the bright byte). Never reads outside `bytes`.
     /// Overwrites `q0`-`q4`.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     pub fn first_bright(&self, bytes: &[u8], threshold: u8) -> usize {
         let head = ((bytes.as_ptr() as usize).wrapping_neg() & 15).min(bytes.len());
         let (head_bytes, rest) = bytes.split_at(head);
@@ -122,6 +123,7 @@ impl Pie {
     /// tail of fewer than 80 bytes is scanned one group at a time. A hit in the head or tail
     /// gives the offset of the group; a hit in the vector part gives the start of the
     /// 80-byte pass. Overwrites `q0`-`q7`.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     pub fn first_bright10(&self, bytes: &[u8], threshold_top8: u8) -> usize {
         split::first_bright10(bytes, threshold_top8, |mid, t| {
             // SAFETY: the split passes a 16-byte-aligned `mid` of whole 80-byte passes
@@ -332,6 +334,7 @@ fn chip_revision() -> (u8, u8) {
 /// `p` is 16-byte aligned, `p[..len]` is readable, `len` is a multiple of 16, and PIE is
 /// enabled on this core with no other user.
 #[inline(never)]
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 unsafe fn skip_dark(p: *const u8, len: usize, threshold: u8) -> usize {
     let start = p as usize;
     let end16 = start + len;
@@ -438,6 +441,7 @@ static MASKS10: Aligned<{ split::RAW10_BLOCK }> = {
 /// `p` is 16-byte aligned and starts a RAW10 group, `p[..len]` is readable, `len` is a
 /// multiple of 80, and PIE is enabled on this core with no other user.
 #[inline(never)]
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 unsafe fn skip_dark10(p: *const u8, len: usize, threshold: u8) -> usize {
     let start = p as usize;
     let end = start + len;

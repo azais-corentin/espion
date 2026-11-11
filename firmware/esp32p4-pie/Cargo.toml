@@ -10,6 +10,11 @@ publish      = false
 # No .cargo/config.toml: the encoders and the scalar reference build and test on the host.
 # Build for the P4 with `--target riscv32imafc-unknown-none-elf`.
 
+[features]
+# The dark-skip kernels (`first_bright`, `first_bright10` and their vector loops) in RAM
+# (`.rwtext`, placed in internal RAM by esp-hal's linker script) instead of flash.
+ram = []
+
 # Only the chip-revision check needs a register block, so the PAC (not esp-hal) is enough.
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 # Same version and features as esp-hal 1.2.2 uses (firmware/esp32p4-csi/Cargo.toml).

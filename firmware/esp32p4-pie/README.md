@@ -83,6 +83,13 @@ Standard objdump (and `llvm-objdump`) mis-decodes them: opcodes with low bits `0
 look like the start of a 48-bit instruction. The unit test in `src/encode.rs` compares every
 encoder with words from `riscv32-esp-elf-as -march=rv32imafcb_zicsr_zifencei_xesploop_xespv`.
 
+## Cargo feature `ram`
+
+Puts `Pie::first_bright`, `Pie::first_bright10` and their vector loops (`skip_dark`,
+`skip_dark10`) in `.rwtext`, which esp-hal's linker script places in internal RAM (about
+0.5 KB). `espion-vision`'s `ram` feature turns it on. Measured in
+`firmware/poc-p4-eth/README.md`, "Hot code in RAM and Zb/Zcb".
+
 ## Kernels
 
 | kernel | what | measured on the board |
