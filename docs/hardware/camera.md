@@ -39,14 +39,14 @@ FFC pin table (drawing), which J4 copies one to one:
 
 | Pin | Module | J4 net | Pin | Module | J4 net |
 |---|---|---|---|---|---|
-| 1 | GND | GND | 9 | MCP | CAM_CLK_P |
-| 2 | MDN0 | CAM_D0_N | 10 | GND | GND |
-| 3 | MDP0 | CAM_D0_P | 11 | PWDN | CAM_EN |
+| 1 | GND | GND | 9 | MCP | CSI_CLK_P |
+| 2 | MDN0 | CSI_D0_N | 10 | GND | GND |
+| 3 | MDP0 | CSI_D0_P | 11 | PWDN | CAM_EN |
 | 4 | GND | GND | 12 | GPIO | — (no-connect) |
-| 5 | MDN1 | CAM_D1_N | 13 | SIO-C | SCCB_SCL |
-| 6 | MDP1 | CAM_D1_P | 14 | SIO-D | SCCB_SDA |
-| 7 | GND | GND | 15 | 3.3V | CAM_3V3 |
-| 8 | MCN | CAM_CLK_N | | | |
+| 5 | MDN1 | CSI_D1_N | 13 | SIO-C | SCCB_SCL |
+| 6 | MDP1 | CSI_D1_P | 14 | SIO-D | SCCB_SDA |
+| 7 | GND | GND | 15 | 3.3V | +3V3 |
+| 8 | MCN | CSI_CLK_N | | | |
 
 ### Position
 
@@ -80,7 +80,7 @@ Distances are measured from the board's bottom face, toward the back of the prod
 J4 is a JUSHUO AFA07-S15FCA-00. It is a 15-pin, 1.0 mm, ZIF, right-angle connector
 with **bottom (lower) contacts**: the cable's contacts face the board (JUSHUO drawing AFA07-S\*\*F\*\*,
 Rev A, note 4 "F: Lower"). It is on the top side, centred on the lens axis, rotated 180°, with its
-opening facing north into the FFC notch. Pad 1 (GND) is the east end. Pad 15 (CAM_3V3) is the west
+opening facing north into the FFC notch. Pad 1 (GND) is the east end. Pad 15 (+3V3) is the west
 end. The silkscreen marks "1" at the east end and "CONTACTS DOWN" below the connector.
 
 ### The cable
@@ -101,7 +101,7 @@ meets J4 pin n.** The module end of the cable mates with the module connector's 
 the J4 end, the opposite-face contacts face down, onto J4's lower contacts.
 
 - **Never twist the cable.** A half-twist about its long axis mirrors the pin order, so pin n goes
-  to pin 16 − n. J4.15 (CAM_3V3) then lands on module pin 1 (GND), which shorts CAM_3V3 to GND.
+  to pin 16 − n. J4.15 (+3V3) then lands on module pin 1 (GND), which shorts +3V3 to GND.
 - **A same-face cable makes no contact.** Its J4-end contacts face up, away from J4's lower contacts.
 - **The quick check:** plug the cable into the module and lay it out straight. The contacts at the
   free end must face the same way as the lens. If a replacement cable has them facing the back of
@@ -133,41 +133,35 @@ are unused.
 
 The P4 can't remap lanes or swap P and N. Register 42.2 CSI_HOST_N_LANES offers only "lane 0" or
 "lanes 0 and 1" (ESP32-P4 TRM v0.7 p.2611), and §42.5.3.2 (p.2603) documents no remap control. So
-the schematic wires lane to lane and P to P:
+the schematic wires lane to lane and P to P, each lane one net from U6 to J4:
 
-| U6 pin | U6 net | Link | J4 net | J4 pin | Module signal |
-|---|---|---|---|---|---|
-| U6.28 | CSI_D0_N | R51 | CAM_D0_N | 2 | MDN0 |
-| U6.29 | CSI_D0_P | R47 | CAM_D0_P | 3 | MDP0 |
-| U6.30 | CSI_CLK_P | R45 | CAM_CLK_P | 9 | MCP |
-| U6.31 | CSI_CLK_N | R49 | CAM_CLK_N | 8 | MCN |
-| U6.32 | CSI_D1_N | R50 | CAM_D1_N | 5 | MDN1 |
-| U6.33 | CSI_D1_P | R46 | CAM_D1_P | 6 | MDP1 |
+| U6 pin | Net | J4 pin | Module signal |
+|---|---|---|---|
+| U6.28 | CSI_D0_N | 2 | MDN0 |
+| U6.29 | CSI_D0_P | 3 | MDP0 |
+| U6.30 | CSI_CLK_P | 9 | MCP |
+| U6.31 | CSI_CLK_N | 8 | MCN |
+| U6.32 | CSI_D1_N | 5 | MDN1 |
+| U6.33 | CSI_D1_P | 6 | MDP1 |
 
 The physical order differs at the two ends:
 
 - U6 pads, west to east: D0_N, D0_P, CLK_P, CLK_N, D1_N, D1_P.
 - J4 pins, west to east: CLK_P (9), CLK_N (8), D1_P (6), D1_N (5), D0_P (3), D0_N (2).
 
-The copper reorders them on B.Cu between J4 and the link row. The crossing is planar: the D0 and D1
+The copper reorders them on B.Cu between J4 and U6. The crossing is planar: the D0 and D1
 pairs each make a U-turn, which mirrors the pair, and the clock pair swaps its two lines once round a
 via. Details are in [layout](layout.md#camera-and-csi-2).
 
-### 0 Ω links R45–R47, R49–R51
+### No series-resistor positions
 
-Each lane passes through two 0 Ω links.
-
-- Espressif's ESP32-P4 hardware design guidelines (§1.3.15, p.23) recommend reserving series
-  resistors on the MIPI lines, fitted with 0 Ω at first. A series resistor can then be added if the
-  first boards need one.
-- They give each line a probe and cut point.
-- They split each lane into a camera half (CAM_\* nets, J4 to link) and a P4 half (CSI_\* nets, link
-  to U6). Each half has its own length and skew check.
-
-The links sit at the J4 end in one row, in U6 order from west to east: R51, R47, R45, R49, R50, R46.
-The planes stay solid under the link pads and J4's MIPI pads, except where the MIPI via antipads reach
-under them ([layout](layout.md#csi-bus-and-the-plane-neck)). That adds a little pad capacitance (design
-review estimate, not measured). The first-board full-rate test covers it.
+Espressif's ESP32-P4 hardware design guidelines (§1.3.15, p.23) recommend reserving series resistors
+on the MIPI lines, fitted with 0 Ω at first, so one can be added if the first boards need it. The
+board has none (user decision 2026-11-11, board simplification): each lane is one pair from U6 to
+J4, without the pad capacitance of the link pads. The In1/In2 antipads of the CSI vias north and south of the former
+link row stay and serve those vias; the straight F.Cu runs between them lie over solid In1/In2. If the first
+boards show CSI errors, there is no place to add a resistor without a new board revision; the
+remedies are on the firmware side (lane rate, [first-board checks](#first-board-checks)).
 
 ### Geometry and impedance
 
@@ -187,14 +181,12 @@ review estimate, not measured). The first-board full-rate test covers it.
 
 The lengths are measured pad to pad on the routed board, with each via counted at its own length
 (`kicad_query` gives them). Both members of a pair carry the same number of vias (TI SPRAAR7J §3.9
-p.12), held by the `viaParity` entries "CSI lanes, P4 side" and "CAM lanes, FPC side" in
-`.omp/kicad.json`.
+p.12), held by the `viaParity` entry "CSI lanes" in `.omp/kicad.json`.
 
-- **P/N skew:** Espressif's guidelines (§1.4.6) allow 10 mil per lane. Each lane is two routed halves
-  in series, so each half gets half of that. Held by DRC rule "MIPI_CSI intra-pair skew".
-- **Lane-to-lane:** the guidelines allow 30 mil end to end, so half of that per half. Held by the
-  `lengthGroups` entries "CSI pairs, P4 side" and "CAM pairs, FPC side" in `.omp/kicad.json`, on the
-  pair means.
+- **P/N skew:** Espressif's guidelines (§1.4.6) allow 10 mil per lane, a lane being one pair from U6
+  to J4. Held by DRC rule "MIPI_CSI intra-pair skew".
+- **Lane-to-lane:** the guidelines allow 30 mil end to end. Held by the `lengthGroups` entry
+  "CSI lanes" in `.omp/kicad.json`, on the pair means.
 - **Compensation:** the skew bumps are trapezoids with 45° legs, so the copper path equals the
   measured net length.
 - **Not counted:** the traces inside the ESP32-P4-Core module (unpublished) and inside the camera
@@ -238,7 +230,7 @@ p.12), held by the `viaParity` entries "CSI lanes, P4 side" and "CAM lanes, FPC 
   p.14). So the module stays in its PWDN-low state until the firmware drives the pin.
 - What pin 11 does, and its polarity, are unknown. It may be the sensor's active-low XSHUTDOWN, an
   active-high regulator enable or an active-high power-down. Low means "off" in the first two cases
-  and "on" in the third. With XSHUTDOWN, holding it low until CAM_3V3 is stable is the order the
+  and "on" in the third. With XSHUTDOWN, holding it low until the module's 3.3 V supply is stable is the order the
   OV9281 asks for. The firmware learns the polarity on the first module
   ([firmware-rules](firmware-rules.md#rules)).
 
@@ -250,17 +242,18 @@ p.12), held by the `viaParity` entries "CSI lanes, P4 side" and "CAM lanes, FPC 
   that needs pin 12 driven with pin 11. It was removed with its net CAM_IO1 (user decision
   2026-11-11, board simplification); such a module now needs a board change.
 
-### CAM_3V3
+### Camera supply
 
-- The module's 3.3 V input (pin 15) is CAM_3V3. It comes from +3V3 through R53, a 0 Ω 0402 jumper. R53 is
-  the one place the camera supply can be opened, to measure the module's current or to power it
-  separately.
-- C32 decouples CAM_3V3 at J4 pin 15; the small extra C30 and the test pad TP10 were removed (user
-  decision 2026-11-11, board simplification). Probe CAM_3V3 on C32.1.
+- The module's 3.3 V input (pin 15) sits straight on +3V3. There is no link in the camera supply
+  (user decision 2026-11-11, board simplification): the supply can't be opened on the board, so the
+  module's current is measured as a difference at the board input ([First-board checks](#first-board-checks))
+  and the module can't be powered separately.
+- C32 decouples +3V3 at J4 pin 15; the small extra C30 and the test pad TP10 were removed (user
+  decision 2026-11-11, board simplification). Probe the camera supply on C32.1.
 - **Load:** the OV9281's typical supply currents are IDD-A 24 mA, IDD-IO 2.5 mA and IDD-D 52 mA
   (datasheet Table 8-3). The module's regulators add their own losses. The camera budget is in
   [+3V3 loads](power.md#3v3-loads).
-- **Supply drop:** the +3V3 feed to this corner has a small track resistance (L2.2 to R53.1). Its drop
+- **Supply drop:** the +3V3 feed to this corner has a small track resistance (L2.2 to J4.15). Its drop
   with the camera and the other north-west loads is worked out in [layout](layout.md#power).
 - There is no camera power switch. CAM_EN is the only control.
 
@@ -314,8 +307,8 @@ Options, by module I/O level (R40 and R44 are the only parts that change):
 
 Until the first module shows what CAM_EN does, the module may be unpowered at either CAM_EN level. The
 fitted divider's high level on an unpowered I/O ring exceeds the abs max ("DOVDD + 1 V" is then 1 V). So
-the firmware keeps XVS (GPIO7) low, RMT idle level low, whenever CAM_EN is in its off state and until
-CAM_3V3 is up. Until the CAM_EN polarity is measured, it treats both CAM_EN levels as possibly off and
+the firmware keeps XVS (GPIO7) low, RMT idle level low, whenever CAM_EN is in its off state (the
+module's 3.3 V input is +3V3 itself, up whenever the firmware runs). Until the CAM_EN polarity is measured, it treats both CAM_EN levels as possibly off and
 starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules)).
 
 ## STROBE
@@ -347,7 +340,7 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
   - C31 decouples U7's supply at pin 5 with the 0.1 µF TI asks for this function (SCLS743E §9).
     U7 pin 1 is NC.
 - **Output:** U7 drives STROBE to GPIO12 (U6.14), which the P4 captures with an ETM event. STROBE also
-  feeds the LED driver's hardware timeout through R54
+  feeds the LED driver's hardware timeout, straight into C33
   ([led](led.md#strobe-gating-and-timeout)). U7 drives one way only, camera to board. TP9 ("STB") is
   the test pad.
 
@@ -390,14 +383,14 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
   ±20 % track-width tolerance puts the extremes outside Espressif's limit (§1.4.6). The first boards
   must pass the full-rate test before the design is released.
 - **CSI clock pairs without a GND guard**, 2W to their neighbours (user decision, 2026-11-01).
-- **Reference-plane edges near the CSI and CAM pairs**, under the 90 mil of TI SPRAAR7J (p.9):
+- **Reference-plane edges near the CSI pairs**, under the 90 mil of TI SPRAAR7J (p.9):
   - The CSI bus crosses the In2 neck between the lens cutout and J1 closer than 90 mil to a plane edge on
     each side, on a 45° crossing (user decision, 2026-11-01: "Use 45°, accept 71.7 mil").
-  - At the FFC notch, CAM_D1_P runs closer than 90 mil to the In1/In2 plane edge over part of its
-    length (user decision, 2026-11-01: "Pull planes to 0.3 mm").
+  - At the FFC notch, CSI_D1_P runs closer than 90 mil to the In1/In2 plane edge over part of its
+    length under J4 (user decision, 2026-11-01: "Pull planes to 0.3 mm").
 
   See [layout](layout.md#accepted-deviations).
-- **Planes under the link and J4 pads**, solid except where the via antipads reach (a small pad
+- **Planes under J4's MIPI pads**, solid except where the via antipads reach (a small pad
   capacitance, estimated). Accepted in design review, 2026-11-01.
 - **FFC loop may stick out** past the north board edge, depending on the cable's stiffener and J4's
   insertion depth (unknown).
@@ -426,9 +419,14 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
    reaches 3.3 V, and the ETM capture time-stamps each edge.
 5. **CSI at full rate.** Run 2 lanes at the full lane rate (800 Mbit/s per lane) with a frame-error
    count before the design is released. This covers the impedance spread, the pad capacitance and the
-   unknown module-internal lengths. If errors show, try a lower lane rate first.
-6. **Camera current.** Lift R53 (0402) and fit a 0.1 Ω 0402 shunt, or measure across it, with the
-   sensor streaming. Compare with the camera budget in [+3V3 loads](power.md#3v3-loads).
+   unknown module-internal lengths. If errors show, try a lower lane rate first: the board has no
+   series-resistor positions ([No series-resistor positions](#no-series-resistor-positions)).
+6. **Camera current.** With the board on USB alone (LEDs off, Ethernet linked), measure the VBUS
+   current with the sensor streaming, then with the FFC unplugged and the firmware otherwise in the
+   same state. The camera's share at +3V3 is ΔI(VBUS) × V(VBUS) × η / V(+3V3), with η the buck's
+   efficiency at that load (SLVSDG1C p.1 efficiency curve). The board has no shunt position (no link in
+   the camera supply, user decision 2026-11-11). Compare with the camera budget in
+   [+3V3 loads](power.md#3v3-loads).
 7. **Mechanics.** Measure the module connector's real height (2.1 or 2.5 mm). Check the enclosure
    puts the module's front face 2.1–9.3 mm behind the board, with the lens tip no more than 5.4 mm
    below the top face. Measure J4's insertion depth and the cable's stiffener, and check the FFC loop

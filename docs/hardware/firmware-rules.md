@@ -31,22 +31,22 @@ signal below is a 3.3 V signal (P4 DS Table 2-1 pp.14–16; Waveshare module sch
 | GPIO9 | 11 | `SCCB_SCL` | I²C controller B, SCL | out, open drain | R42 ↑; internal off | Held low while the camera is off (FW-17) |
 | GPIO10 | 12 | `CAM_EN` | Camera module PWDN (FFC pin 11) | out | R43 ↓ | Polarity unknown until measured (FW-17) |
 | GPIO11 | 13 | `LED_EN` | LED gate enable (U9 input) | out | R56 ↓ | Default low. TP11 |
-| GPIO12 | 14 | `STROBE` | GPIO ETM event: STROBE edge capture | in | none (driven push-pull by U7) | Never an output: U7 drives the net, which also feeds the STROBE timeout (R54). TP9 |
-| GPIO13 | 15 | `STATUS_LED` | RMT TX: D1 data (through R30) | out | R26 ↓ at D1's DIN | Timing and byte order: FW-21 |
+| GPIO12 | 14 | `STROBE` | GPIO ETM event: STROBE edge capture | in | none (driven push-pull by U7) | Never an output: U7 drives the net, which also feeds the STROBE timeout (C33). TP9 |
+| GPIO13 | 15 | `STATUS_LED` | RMT TX: D1 data (straight to DIN) | out | R26 ↓ at D1's DIN | Timing and byte order: FW-21 |
 | GPIO22 | 18 | `PHY_RST_N` | IP101G RESET_N | out, push-pull | none on the board; the IP101G's internal 222 kΩ ↑ | Low = PHY in reset. Reset pulse before the EMAC starts (FW-11). TP1 |
 | GPIO23 | 19 | `LED_K_SENSE` | ADC1 channel 7: LED sink drain (`LED_K`, Q1) | analog | R70 from `LED_K`, R76 to GND, C48 at the pin | V(`LED_K`) = V(pin) × (R70 + R76)/R76. Sampled late in each LED pulse (FW-22) |
 | — | 28–33 | `CSI_D0_N`, `CSI_D0_P`, `CSI_CLK_P`, `CSI_CLK_N`, `CSI_D1_N`, `CSI_D1_P` | MIPI CSI-2 receiver, 2 lanes (dedicated pins) | in | — | Fixed lane order, no remapping or P/N swap in the P4 ([camera.md](camera.md#csi-2-link)) |
 | GPIO24 | 37 | `USB_D_N` | USB Serial/JTAG D− (USB 1.1 FS PHY) | I/O | R32 series | Keep in USB function (FW-1) |
 | GPIO25 | 38 | `USB_D_P` | USB Serial/JTAG D+ | I/O | R31 series; internal D+ pull-up | D+ pull-up stays on: the board has no VBUS sense (user decision 2026-11-11; accepted risk in [power.md](power.md#accepted-risks)) |
-| GPIO28 | 40 | `RMII_CRS_DV` | EMAC RMII CRS_DV (IO MUX function 3) | in | none (R15 at the PHY); internal **off** | Shares the IP101G FX_HEN strap: no internal pull while the PHY leaves reset (FW-11) |
-| GPIO29 | 41 | `RMII_RXD0` | EMAC RMII RXD0 (function 3) | in | none (R11 at the PHY) | |
-| GPIO30 | 42 | `RMII_RXD1` | EMAC RMII RXD1 (function 3) | in | none (R12 at the PHY) | |
+| GPIO28 | 40 | `RMII_CRS_DV` | EMAC RMII CRS_DV (IO MUX function 3) | in | none (straight from the PHY); internal **off** | Shares the IP101G FX_HEN strap: no internal pull while the PHY leaves reset (FW-11) |
+| GPIO29 | 41 | `RMII_RXD0` | EMAC RMII RXD0 (function 3) | in | none (straight from the PHY) | |
+| GPIO30 | 42 | `RMII_RXD1` | EMAC RMII RXD1 (function 3) | in | none (straight from the PHY) | |
 | GPIO31 | 43 | `MDC` | EMAC MDC through the GPIO matrix | out | none | |
 | GPIO32 | 44 | `PPS` | EMAC PTP PPS output (matrix signal `emac_ptp_pps_pad_out`) | out | none; R34 link to GPIO33, TP6 | Never select its EMAC function-3 RMII clock |
 | GPIO33 | 45 | `PPS_IN` | GPIO ETM event: PPS edge capture | in | none | Input only: R34 ties it to GPIO32. Never select its EMAC function-3 TX_EN |
-| GPIO34 | 46 | `RMII_TXD0_MCU` | EMAC RMII TXD0 (function 3) | out | none; R35 series | Strap (JTAG source). No firmware pulls ([Straps](#straps)) |
-| GPIO35 | 47 | `RMII_TXD1_MCU` | EMAC RMII TXD1 (function 3) | out | internal pull-up at reset, no board pull; R36 series; R39 to SW2 BOOT | Boot strap. No firmware pulls. SW2 is not a runtime button (FW-3) |
-| GPIO49 | 67 | `RMII_TX_EN_MCU` | EMAC RMII TX_EN (function 3) | out | none; R37 series | |
+| GPIO34 | 46 | `RMII_TXD0` | EMAC RMII TXD0 (function 3) | out | none; no series resistor | Strap (JTAG source). No firmware pulls ([Straps](#straps)) |
+| GPIO35 | 47 | `RMII_TXD1` | EMAC RMII TXD1 (function 3) | out | internal pull-up at reset, no board pull; no series resistor; R39 to SW2 BOOT | Boot strap. No firmware pulls. SW2 is not a runtime button (FW-3) |
+| GPIO49 | 67 | `RMII_TX_EN` | EMAC RMII TX_EN (function 3) | out | none; no series resistor | |
 | GPIO50 | 68 | `RMII_REF_CLK` | EMAC RMII clock input (`EMAC_CLK_EXT_IN`), 50 MHz from the PHY | in | none (R13 at the PHY) | Never an output |
 | GPIO51 | 69 | `IMU_INT1` | GPIO interrupt from the accelerometer | in | none (sensor INT1 is push-pull); internal off | Active low by default |
 | GPIO52 | 70 | `MDIO` | EMAC MDIO through the GPIO matrix | I/O | R14 ↑ | PHY address 1 |
@@ -83,8 +83,8 @@ and TXD0 already do; that is harmless because TXEN has the PHY's internal pull-d
 
 | Strap | U6 pin / net | Board | Level at reset | Meaning |
 |---|---|---|---|---|
-| GPIO34 | 46 `RMII_TXD0_MCU` | no pull; the IP101G TXD0 input is high impedance | floating | JTAG source select, ignored while EFUSE_JTAG_SEL_ENABLE = 0 (the default; P4 DS Table 3-7 p.39) |
-| GPIO35 | 47 `RMII_TXD1_MCU` | internal pull-up only (R38 removed, user decision 2026-11-11); the IP101G TXD1 input is high impedance with no pull (IP101G p.16); SW2 pulls it through R39 | 1; below VIL with SW2 held (formulas below) | 1 = SPI boot; 0 with GPIO36 = 1 = joint download boot (USB Serial/JTAG download included) |
+| GPIO34 | 46 `RMII_TXD0` | no pull; the IP101G TXD0 input is high impedance | floating | JTAG source select, ignored while EFUSE_JTAG_SEL_ENABLE = 0 (the default; P4 DS Table 3-7 p.39) |
+| GPIO35 | 47 `RMII_TXD1` | internal pull-up only (R38 removed, user decision 2026-11-11); the IP101G TXD1 input is high impedance with no pull (IP101G p.16); SW2 pulls it through R39 | 1; below VIL with SW2 held (formulas below) | 1 = SPI boot; 0 with GPIO36 = 1 = joint download boot (USB Serial/JTAG download included) |
 | GPIO36 | 48, not connected | 10 kΩ ↑ on the module (Waveshare schematic p.1) | 1 | Makes GPIO35 = 0 a valid download combination |
 | GPIO37, GPIO38 | 49, 50, not connected | none | floating | Don't care in SPI and joint download boot (TRM p.1220) |
 
@@ -103,7 +103,7 @@ The PHY latches its straps when RESET_N rises (IP101G datasheet p.17, p.47 Table
 PHY address 1 (LED0/LED3 pins: R1, and LED3's internal pull-down), RMII mode (COL/RMII, R10),
 LED mode 1 (CRS/LEDMOD, the PHY's internal pull-down) and twisted-pair mode (RXDV/CRS_DV/FX_HEN,
 the PHY's internal pull-down). Only the last
-one is shared with a P4 pin: GPIO28 through R15, with no board strap resistor. A P4 pull-up
+one is shared with a P4 pin: GPIO28, joined straight to it, with no board strap resistor. A P4 pull-up
 there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Details:
 [ethernet.md](ethernet.md#straps).
 
@@ -301,7 +301,7 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
 - **FW-15** `XVS` = GPIO7 on an RMT TX channel (frame-trigger edge schedule). The camera sees
   V(GPIO7) × R44/(R40 + R44) through the divider; the camera module's I/O level is not known yet
   ([camera.md](camera.md#xvs-level-options)). Keep `XVS` low, RMT idle level low, whenever
-  `CAM_EN` is in its off state and until `CAM_3V3` is up: the OV9281 allows its I/O at most
+  `CAM_EN` is in its off state (the module's 3.3 V input is `+3V3` itself, up whenever the firmware runs): the OV9281 allows its I/O at most
   1 V above its I/O supply (OV9281 datasheet v1.1 Table 8-1), and nothing on the board gates
   `XVS` by `CAM_EN`. Until the `CAM_EN` polarity is measured (FW-17), treat both `CAM_EN`
   levels as possibly off and start triggers only after an SCCB ACK.
@@ -316,7 +316,7 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   - Drive GPIO8 and GPIO9 low from boot until the camera is powered, and again whenever the
     firmware turns it off: R41/R42 would otherwise hold both lines at +3V3 against an unpowered
     I/O ring, above the OV9281's DOVDD + 1 V limit (OV9281 datasheet v1.1 Table 8-1;
-    [camera.md](camera.md#sccb)). Release SCL first, then SDA (a STOP), once `CAM_3V3` is up and
+    [camera.md](camera.md#sccb)). Release SCL first, then SDA (a STOP), once
     `CAM_EN` is at its on level; until the polarity is measured, release them only while trying
     a level for an SCCB ACK (FW-15).
 - **FW-18** The ESP32-P4-Core powers its MIPI PHY from `ESP_LDO_VO3`, which is 0 V by default:
@@ -338,8 +338,8 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
 
 ### Status LED
 
-- **FW-21** `STATUS_LED` = GPIO13 on an RMT TX channel, driving D1 (Yongyu
-  YY-0807BRGK26) through R30. One LED, no chain (DOUT open). From its datasheet A.0:
+- **FW-21** `STATUS_LED` = GPIO13 on an RMT TX channel, driving D1's DIN (Yongyu
+  YY-0807BRGK26) directly. One LED, no chain (DOUT open). From its datasheet A.0:
   - Bit times (p.6): T0H 0.3 µs, T1H 0.6 µs, T0L 0.6 µs, T1L 0.3 µs, each ± 0.05 µs; reset
     (latch) low ≥ 80 µs.
   - The datasheet contradicts itself on speed: its switching table gives 800 kHz typical,

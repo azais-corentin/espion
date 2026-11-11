@@ -8,8 +8,8 @@ supplies the 50 MHz RMII clock.
 |---|---|---|---|
 | RMII_CRS_DV | U6.40 | GPIO28 | RMII receive data valid (PHY strap FX_HEN) |
 | RMII_RXD0 / RXD1 | U6.41 / U6.42 | GPIO29 / GPIO30 | RMII receive data |
-| RMII_TXD0_MCU / TXD1_MCU | U6.46 / U6.47 | GPIO34 / GPIO35 | RMII transmit data (P4 straps) |
-| RMII_TX_EN_MCU | U6.67 | GPIO49 | RMII transmit enable |
+| RMII_TXD0 / TXD1 | U6.46 / U6.47 | GPIO34 / GPIO35 | RMII transmit data (P4 straps) |
+| RMII_TX_EN | U6.67 | GPIO49 | RMII transmit enable |
 | RMII_REF_CLK | U6.68 | GPIO50 | 50 MHz clock input from the PHY |
 | MDC / MDIO | U6.43 / U6.70 | GPIO31 / GPIO52 | PHY management (GPIO matrix) |
 | PHY_RST_N | U6.18 | GPIO22 | PHY reset, active low |
@@ -100,7 +100,7 @@ Placement:
     before it uses it: PHY_RST_N low ≥ 10 ms with the crystal running, release, wait ≥ 2.5 ms
     (FW-11, [firmware-rules](firmware-rules.md#rules)).
   - Between power-up and that pulse the PHY drives 50 MHz (50M_CLKO, through R13) into GPIO50 and
-    its receive lines (RXD0, RXD1, CRS_DV, through R11, R12, R15) into GPIO28–30. None of these is a
+    its receive lines (RXD0, RXD1, CRS_DV, straight from its pins) into GPIO28–30. None of these is a
     P4 strap (the straps are GPIO34–38, ESP32-P4 datasheet §3 p.36), and all have input and pulls off
     at reset (p.15–16).
   - The straps are static resistors (R1, R10) or the PHY's own pulls ([Straps](#straps)), so the
@@ -140,8 +140,8 @@ side at the east edge, soldered by hand ([layout](layout.md#assembly)).
   planes. There is no RC network to GND (user decision 2026-11-09, "replace R2, R3 and C1 by a
   wire"); the Bob-Smith termination stays inside the jack (HanRun p.1). Cable-shield and ESD
   currents return through board GND ([Accepted risks](#accepted-risks)).
-- **Hand-soldering trial.** J1's lands are close to two reflowed parts: R46 (a CSI link) and C3.
-  J1's hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over both.
+- **Hand-soldering trial.** J1's lands are close to a reflowed part, C3. J1's hand-assembly note
+  asks for a conical tip ≤ 1 mm and Kapton over it.
 
 ### MDI pairs crossed at J1
 
@@ -214,7 +214,7 @@ vias to keep P on P. Consequences:
     makes that impossible. ISET (pin 25), REGOUT (pin 28) and AVDD33 (pin 31) sit next to the MDI pads,
     so only the default clearance applies there. This is an accepted deviation; the datasheet grants no
     exception.
-  - Outside it the closest pads (J1.13/J1.14, R46.2) stay just above the rule's limit
+  - Outside it the closest pads (J1.13/J1.14) stay just above the rule's limit
     (`kicad_query distance`); pours keep the rule's clearance.
   - The TX and RX pairs keep 3W from each other outside the same U1 exemption (DRC rule "MDI pair to
     pair"). The closest spot is the RD_P–TD_N diagonal pair west of R6, which the DRC passes.
@@ -246,19 +246,34 @@ This is the datasheet's internal-clock topology (Fig. 8, p.44) and the one on Es
 ESP32-P4-Function-EV-Board. Its buffer (Fig. 10, p.45) is needed only for a third clock load, which
 this board doesn't have.
 
-### Series resistors
+### RMII drive and termination
 
-All seven are series resistors, one at each driver.
+R13 on REF_CLK is the only series resistor: Espressif's design guidelines recommend one on the RMII
+clock (§1.3.14, p.20); it sits at the PHY's 50M_CLKO (`near` entry R13 → U1).
 
-- **PHY outputs** (Ethernet sheet): R11 (RXD0), R12 (RXD1), R15 (CRS_DV) and R13 (REF_CLK).
-- **MAC outputs** (MCU sheet): R35 (TXD0), R36 (TXD1) and R37 (TX_EN). Espressif's design guidelines
-  also recommend a series resistor on the RMII clock (§1.3.14, p.20).
-- Each sits close to its driving pin: `near` entries R35/R36/R37 → U6 and R11/R12/R13/R15 → U1. The
-  distance is far shorter than any edge of 0.5 ns or more can see, so the resistor works as a lumped
-  source termination.
-- TXD0/TXD1 are also the P4's strapping pins GPIO34/GPIO35. The BOOT button through R39 sits on the
-  MCU side of R36 ([mcu](mcu.md#reset-and-boot)); GPIO35 has only its internal pull-up. The `paths`
-  entry "BOOT stub" keeps R39's stub short.
+- **No series terminations on the data lines** (user decision 2026-11-11, board simplification; R13
+  stays). RXD0, RXD1 and CRS_DV run from U1 straight to U6, TXD0, TXD1 and TX_EN from U6 straight to
+  U1, each one net from driver pin to receiver pin.
+- **The drivers set the edge.** Without a source resistor the edge at the receiver, and any overshoot,
+  depend on the driver alone:
+  - PHY outputs: the IP101G pad drive registers on page 16 register 26, RXD0_DRIVE (bits 2:0),
+    RXD1_DRIVE (bits 5:3) and RXDV_DRIVE (bits 14:12, the RXDV/CRS_DV pad), default 3'b001 =
+    3.24 mA, settable from 1.62 to 22.68 mA (p.39–40).
+  - MAC outputs: the P4 pad drive strength, 20 mA by default (ESP32-P4 datasheet p.17 note 3), up to
+    IOH 40 mA at PAD_DRIVER = 3 (Table 5-4 p.89).
+  - Neither datasheet gives an edge rate or an output impedance (no IBIS model), so overshoot and
+    ringing at the receivers are a first-board check ([First-board checks](#first-board-checks)).
+    Remedies, without a board change: lower RXD0/RXD1/RXDV_DRIVE on the PHY, a lower pad drive on
+    the P4.
+- **Line lengths** are held by the [Timing](#timing) budget ([Data line lengths](#data-line-lengths)).
+- **BOOT tap.** TXD0/TXD1 are also the P4's strapping pins GPIO34/GPIO35. The BOOT button through R39
+  taps the TXD1 line where R36 used to sit ([mcu](mcu.md#reset-and-boot)); GPIO35 has only its
+  internal pull-up. The branch to R39 is unterminated, so its round trip stays within a tenth of the
+  fastest RMII edge: 2 × L × v ≤ 0.1 × 1 ns, with the 1 ns edge from RMII 1.2 §7.4.3, the factor of one
+  tenth the project's heuristic for a stub that can be treated as lumped, and v the propagation delay per mm
+  below ([REF_CLK branches](#ref_clk-branches)). No pad sits at the tap, so the `paths` entry "BOOT
+  stub" measures U6.47 → tap → R39.1, longer than the branch itself; its limit therefore holds for
+  the branch.
 
 ### REF_CLK branches
 
@@ -283,9 +298,9 @@ GND return vias sit at the RMII layer changes wherever one fits
 
 ### Data line lengths
 
-The long segments, from the series resistor to the receiving pin, are limited by the `lengthGroups`
-entry "RMII data, long segments" (RXD0, RXD1, CRS_DV after the PHY resistors; TXD0, TXD1, TX_EN after
-the MAC resistors). Its derivation is the [Timing](#timing) budget below.
+The data lines, driver pin to receiver pin, are limited by the `lengthGroups` entry "RMII data lines"
+(RXD0, RXD1, CRS_DV, TXD0, TXD1, TX_EN, each measured whole). Its derivation is the
+[Timing](#timing) budget below.
 
 TI SNLA387's 50 mil matching inside the RX and TX groups is a generic checklist value. The timing
 below gives no matching need: that skew is picoseconds against margins of nanoseconds. So the lines
@@ -307,9 +322,9 @@ Inputs:
 
 | Path | Formula | Board input |
 |---|---|---|
-| RX setup (PHY → MAC) | T + Δ − Td,max − t_flight − Tsu | longest RX line, stub included |
+| RX setup (PHY → MAC) | T + Δ − Td,max − t_flight − Tsu | longest RX line |
 | RX hold | Td,min + t_flight − Δ − Th | shortest RX line |
-| TX setup (MAC → PHY) | T − Δ − Tco,max − t_flight − Ts | longest TX line, stub included |
+| TX setup (MAC → PHY) | T − Δ − Tco,max − t_flight − Ts | longest TX line |
 | TX hold | Δ + Tco,min + t_flight − Th | shortest TX line |
 
 The lines are found with `kicad_query`.
@@ -317,7 +332,7 @@ The lines are found with `kicad_query`.
 - RX has margin of nanoseconds on setup and hold.
 - TX depends on the P4's output delay Tco. The board takes a budget of 5 % of the 20 ns period (a
   heuristic) for the MAC clock branch plus one TX line: (L_MAC,max + L_data,max) × v. That budget sets
-  the `paths` entry "REF_CLK MAC branch" and the `lengthGroups` entry "RMII data, long segments". The
+  the `paths` entry "REF_CLK MAC branch" and the `lengthGroups` entry "RMII data lines". The
   routed board stays inside it.
 
 **Open item: RMII TX timing.** The board can't be proven by calculation until Espressif publishes the
@@ -387,6 +402,9 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 - **RMII TX timing unproven.** The P4 EMAC output delay is unpublished, so the 5 % board budget is a
   heuristic. The 50M_CLKO edge rate is unknown too, so the `paths` entry "REF_CLK MAC branch" rests on
   the 1 ns fastest-edge assumption. See the open item under [Timing](#timing).
+- **No series terminations on the RMII data lines** (user decision 2026-11-11; R13 on REF_CLK stays,
+  HDG §1.3.14). The edges reach the receivers as the drivers make them; overshoot is checked on the
+  first boards and lowered with the drive registers ([RMII drive and termination](#rmii-drive-and-termination)).
 - **MDI relies on auto-MDIX.** The pairs are crossed at J1, so a firmware that disables auto-MDIX
   without setting FORCE_MDIX gets no link.
 - **MDI spacing inside U1's escape** falls short of the "three times space" (rule "MDI spacing"),
@@ -409,7 +427,7 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   [layout](layout.md#ethernet-and-poe-isolation)).
 - **PHY_RST_N inside the LED ring**, close to the ring pads over part of its length; held only by
   the PHY's internal pull-up until the firmware drives it.
-- **J1 lands close to reflowed parts** (R46, C3), to be checked in the
+- **J1 lands close to a reflowed part** (C3), to be checked in the
   hand-soldering trial.
 - **Shield tied straight to GND** (user decision 2026-11-09): cable-shield and ESD currents return
   through board GND, and a cable whose far end grounds its shield closes a ground loop.
@@ -440,9 +458,16 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
    TSX-3225 p.1) and REF_CLK stays within ± 50 ppm; if not, lower the LED current or duty, or pull
    the east edge of the Q1 drain copper on B.Cu back from Y1
    ([layout](layout.md#thermal)).
-8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect R46 and C3 for
-   bridges and shifted parts.
+8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect C3 for
+   bridges and a shifted part.
 9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source.
 10. **REGOUT.** With the link up at 100 Mbit/s and traffic running, scope REGOUT at C6 (short ground
     spring to C6.2): it must stay inside 1.07–1.18 V, ripple included (IP101G DS p.57). The path from
     U1.28 to C6 runs through vias ([REGOUT and ISET](#regout-and-iset)).
+11. **RMII edges.** With traffic running both ways at 100 Mbit/s, scope RXD0, RXD1 and CRS_DV at
+    U6.40–U6.42 and TXD0, TXD1 and TX_EN at U1.9, U1.8 and U1.5 (short ground spring): overshoot
+    and undershoot must stay within the receivers' input ratings (IP101G input −0.3 to 3.63 V, p.57;
+    ESP32-P4 VIH max VDD + 0.3 V and VIL min −0.3 V, Table 5-4 p.89) and the ringing must settle before the
+    sampling edge. If not, lower RXD0/RXD1/RXDV_DRIVE (page 16 register 26, p.40) on the PHY side or
+    the P4 pad drive strength on the MAC side
+    ([RMII drive and termination](#rmii-drive-and-termination)).

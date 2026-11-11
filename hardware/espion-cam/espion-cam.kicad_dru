@@ -7,10 +7,9 @@
 # MIPI CSI-2: >= 2W (W: the pair's track width, net class MIPI_CSI) to everything except the pair's own partner (Espressif ESP32-P4 HDG, PCB layout,
 # MIPI: "maintain a minimum spacing of 2W between MIPI trace pairs"; the 3W to other high-speed and clock signals is the
 # rule 'MIPI_CSI to clocks and high-speed'). It also keeps the GND pour 2W away, the spacing the 100 ohm
-# geometry (net class MIPI_CSI) is calculated with (docs/hardware/layout.md, Impedance). The two pads of each 0 ohm link
-# R45-R47, R49-R51 carry the two halves of one lane and are exempt. Design: docs/hardware/layout.md, Camera and CSI-2.
+# geometry (net class MIPI_CSI) is calculated with (docs/hardware/layout.md, Impedance). Design: docs/hardware/layout.md, Camera and CSI-2.
 (rule "MIPI_CSI spacing"
-	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair() && !(A.memberOfFootprint('R45') && B.memberOfFootprint('R45')) && !(A.memberOfFootprint('R46') && B.memberOfFootprint('R46')) && !(A.memberOfFootprint('R47') && B.memberOfFootprint('R47')) && !(A.memberOfFootprint('R49') && B.memberOfFootprint('R49')) && !(A.memberOfFootprint('R50') && B.memberOfFootprint('R50')) && !(A.memberOfFootprint('R51') && B.memberOfFootprint('R51'))")
+	(condition "A.NetClass == 'MIPI_CSI' && !A.isCoupledDiffPair()")
 	(constraint clearance (min 0.36mm)))
 
 # Ethernet MDI: IP101G datasheet 6.2 p.56 asks for 'three times space' between an MDI pair and other signals;
@@ -30,9 +29,8 @@
 # sideways). Distances: docs/hardware/layout.md, Ethernet and PoE isolation.
 (rule "PoE isolation" (condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J1') && B.memberOfFootprint('J1'))") (constraint clearance (min 2mm)))
 
-# MIPI CSI-2: Espressif ESP32-P4 HDG 1.4.6 allows 10 mil (0.254 mm) P/N skew per lane. Each lane is two pairs in series
-# (U6 -> 0 ohm link -> J4), so each segment gets half.
-(rule "MIPI_CSI intra-pair skew" (condition "A.NetClass == 'MIPI_CSI'") (constraint skew (max 0.127mm) (within_diff_pairs)))
+# MIPI CSI-2: Espressif ESP32-P4 HDG 1.4.6 allows 10 mil (0.254 mm) P/N skew per lane. A lane is one pair from U6 to J4.
+(rule "MIPI_CSI intra-pair skew" (condition "A.NetClass == 'MIPI_CSI'") (constraint skew (max 0.254mm) (within_diff_pairs)))
 
 # MEMSensing MSA3S02 LGA-12 2x2 mm: the project's land pattern (derived from the datasheet V1.0 p. 31 package drawing;
 # the datasheet gives no land pattern) leaves less than the class clearance between neighbouring pads of different nets
@@ -49,9 +47,9 @@
 (rule "LED_PWR pad spacing" (condition "A.Type == 'Pad' && (A.NetClass == 'LED_PWR' || A.NetName == '/LED driver/BST_SW') && B.NetClass != 'POE_CABLE' && B.NetClass != 'MDI' && !(A.memberOfFootprint('U10') && B.memberOfFootprint('U10')) && !(A.memberOfFootprint('D4') && B.memberOfFootprint('D4')) && !(A.memberOfFootprint('D5') && B.memberOfFootprint('D5')) && !(A.memberOfFootprint('D6') && B.memberOfFootprint('D6')) && !(A.memberOfFootprint('D7') && B.memberOfFootprint('D7')) && !(A.memberOfFootprint('D8') && B.memberOfFootprint('D8')) && !(A.memberOfFootprint('D9') && B.memberOfFootprint('D9')) && !(A.memberOfFootprint('D10') && B.memberOfFootprint('D10')) && !(A.memberOfFootprint('D11') && B.memberOfFootprint('D11')) && !(A.memberOfFootprint('D12') && B.memberOfFootprint('D12')) && !(A.memberOfFootprint('D13') && B.memberOfFootprint('D13')) && !(A.memberOfFootprint('D14') && B.memberOfFootprint('D14')) && !(A.memberOfFootprint('D15') && B.memberOfFootprint('D15'))") (constraint clearance (min 0.4mm)))
 
 # Espressif ESP32-P4 HDG, MIPI PCB layout: keep MIPI pairs >= 3W from other high-speed and fast signals
-# (W: the MIPI_CSI track width). Includes USB, MDI, all PHY/MAC RMII nets, XVS and STROBE on both sides of their series links.
+# (W: the MIPI_CSI track width). Includes USB, MDI, the RMII nets, and XVS and STROBE on both sides of the XVS series resistor R40 and the STROBE buffer U7.
 # Design: docs/hardware/layout.md, Camera and CSI-2.
-(rule "MIPI_CSI to clocks and high-speed" (condition "A.NetClass == 'MIPI_CSI' && (B.NetClass == 'USB' || B.NetClass == 'MDI' || B.NetName == '/Camera/XVS' || B.NetName == '/Camera/XVS_CAM' || B.NetName == '/Camera/STROBE' || B.NetName == '/Camera/STROBE_CAM' || B.NetName == '/Ethernet/RMII_*' || B.NetName == '/MCU/RMII_*')") (constraint clearance (min 0.54mm)))
+(rule "MIPI_CSI to clocks and high-speed" (condition "A.NetClass == 'MIPI_CSI' && (B.NetClass == 'USB' || B.NetClass == 'MDI' || B.NetName == '/Camera/XVS' || B.NetName == '/Camera/XVS_CAM' || B.NetName == '/Camera/STROBE' || B.NetName == '/Camera/STROBE_CAM' || B.NetName == '/Ethernet/RMII_*')") (constraint clearance (min 0.54mm)))
 
 # JLCPCB capabilities (2026-10-31): inner-layer PTH pad hole to copper 0.3 mm; PTH to track min 0.28 mm.
 (rule "PTH hole to copper" (condition "A.Type == 'Pad' && A.Pad_Type == 'Through-hole'") (constraint hole_clearance (min 0.3mm)))

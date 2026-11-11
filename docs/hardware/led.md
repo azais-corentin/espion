@@ -16,7 +16,7 @@ decisions, the accepted risks and the checks.
 | [LED supply](#led-supply) | – (no switch) | – | – |
 | [Boost converter](#boost-converter) | U10 TPS61170, L3, D3, C36, C39, C41, C43, C45, C46, C47, R62, R65, R66 | `BST_EN` GPIO53 (U6.71), PWM | TP13 `+32V` |
 | [Current sink](#current-sink) | U11 TLV9061, Q1 HL2310A, R69, NT1, R60, R61, R63, R64, R67, R68, C40, C42, C44 | – | TP12 `LED_ON`, TP14 `ISNS` |
-| [STROBE gating and timeout](#strobe-gating-and-timeout) | U9 SN74LVC1G97, C33, R54, R55, R56, R58, C37 | `LED_EN` GPIO11 (U6.13), STROBE GPIO12 (U6.14) | TP11 `LED_EN`, TP9 `STB` |
+| [STROBE gating and timeout](#strobe-gating-and-timeout) | U9 SN74LVC1G97, C33, R55, R56, R58, C37 | `LED_EN` GPIO11 (U6.13), STROBE GPIO12 (U6.14) | TP11 `LED_EN`, TP9 `STB` |
 | [LED ring](#led-ring) | D4–D15 A-SC880IR3C | – | – |
 | Sense | R70, R76, C48 (`LED_K_SENSE`) | GPIO23 ADC1_CH7 (U6.19) | – |
 
@@ -517,12 +517,12 @@ STROBE is the sensor's exposure output, buffered by U7. The P4 also captures it 
 A one-shot high-pass network makes the LEDs go dark even if STROBE sticks high or a wrong sensor
 setting gives a long exposure:
 
-1. STROBE drives R54 into C33.
+1. STROBE drives C33 directly (no series resistor, user decision 2026-11-11, board simplification).
 2. R55 pulls the far side, `STROBE_HP`, to GND.
 3. R58 feeds `STROBE_HP` to U9's In2.
 
-A rising STROBE edge lifts `STROBE_HP` to V0 = VOH × R55 / (R54 + R55). It then decays with
-τ = C33 × (R54 + R55). When it falls below U9's VT−, `LED_ON` drops. The LED pulse
+A rising STROBE edge lifts `STROBE_HP` to V0 = VOH, the STROBE buffer's high level. It then decays
+with τ = C33 × R55. When it falls below U9's VT−, `LED_ON` drops. The LED pulse
 therefore ends at the earlier of STROBE falling and
 
 $$t = \tau \cdot \ln\frac{V_0}{V_{T-}}$$
@@ -568,7 +568,11 @@ Further checks:
 - **Negative swing:** when STROBE falls after a timed-out pulse, `STROBE_HP` swings to about
   −V0. R58 limits U9's input clamp current to about V0 / R58, against the −50 mA IIK rating.
   The datasheet allows a negative input while the clamp current is respected (p.4 note 2).
-- **Edge current:** R54 limits the edge current from the STROBE buffer to VOH / R54.
+- **Buffer current:** C33 is in series, so the STROBE buffer charges only what hangs on
+  `STROBE_HP`: R55 (V0 / R55 on a rising edge) and, on a falling edge, the clamp current through
+  R58 as well; both stay far below U7's ±25 mA continuous output current (TP74LV1T34 p.2). VOH is
+  specified at −20 µA (VCC − 0.1 V, p.3); the extra drop at V0 / R55 follows from the −5.5 mA row
+  (output resistance ≤ (VCC − VOH,min) / 5.5 mA) and is counted in V0.
 
 The timeout is a backstop. Firmware keeps the exposure, and so the LED pulse, at ≤ 0.5 ms per
 frame at ≤ 120 fps ([firmware rules](firmware-rules.md#rules)). A fault that only the hardware

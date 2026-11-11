@@ -5114,6 +5114,16 @@
 		)
 		(uuid "52ddad57-eb87-416a-9bc7-eeaa5c982e4b")
 	)
+	(wire
+		(pts
+			(xy 217.17 127) (xy 224.79 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "52e6642f-c61c-4a8e-9af3-a11cfee84581")
+	)
 	(bus
 		(pts
 			(xy 114.3 99.06) (xy 114.3 101.6)
@@ -5226,6 +5236,16 @@
 	)
 	(wire
 		(pts
+			(xy 217.17 96.52) (xy 224.79 96.52)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "67f3fd77-ad57-4431-b836-76108dd28503")
+	)
+	(wire
+		(pts
 			(xy 111.76 73.66) (xy 124.46 73.66)
 		)
 		(stroke
@@ -5286,6 +5306,16 @@
 	)
 	(wire
 		(pts
+			(xy 110.49 121.92) (xy 118.11 121.92)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "75c42403-da59-455c-8c24-c224c8f57484")
+	)
+	(wire
+		(pts
 			(xy 149.86 132.08) (xy 144.78 132.08)
 		)
 		(stroke
@@ -5333,6 +5363,16 @@
 			(type default)
 		)
 		(uuid "88f913df-1927-46c2-92c6-bc76dc2879fd")
+	)
+	(wire
+		(pts
+			(xy 217.17 88.9) (xy 224.79 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "89a8c5a9-1c47-413b-8d3c-bff0ef37f775")
 	)
 	(bus
 		(pts
@@ -6024,26 +6064,6 @@
 		)
 		(uuid "0275ffae-8846-4f58-b5af-d1c02f068fce")
 	)
-	(label "RMII_TXD1_MCU"
-		(at 196.85 91.44 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "0b6c227f-13d5-4f63-a6df-f580f37aaed7")
-	)
-	(label "RMII_TXD1_MCU"
-		(at 276.86 91.44 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right bottom)
-		)
-		(uuid "0c9b44c5-a2c2-43d0-bc22-9a449a4c9456")
-	)
 	(label "USB_C_D_N"
 		(at 125.73 68.58 180)
 		(effects
@@ -6093,26 +6113,6 @@
 			(justify right bottom)
 		)
 		(uuid "22325e2b-b0cb-4b00-8ffc-9702b92d3f74")
-	)
-	(label "STATUS_LED_DIN"
-		(at 90.17 121.92 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "26374a5a-e172-4b1c-b364-d2d480d47f9e")
-	)
-	(label "RMII_TXD0_MCU"
-		(at 196.85 88.9 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "29816092-91af-40c1-afd3-4115b2a2eee3")
 	)
 	(label "{LEDCTL}"
 		(at 203.2 144.78 0)
@@ -6173,6 +6173,16 @@
 			(justify left bottom)
 		)
 		(uuid "47c4b96e-dfb0-4d8b-8f13-d5ec55f58573")
+	)
+	(label "RMII_TXD1"
+		(at 276.86 91.44 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "486af59c-5122-4081-bd65-6bacf24da769")
 	)
 	(label "RMII_RXD1"
 		(at 135.89 144.78 0)
@@ -6403,16 +6413,6 @@
 			(justify left bottom)
 		)
 		(uuid "c004c700-ff12-4510-83aa-a0963b4a0fa9")
-	)
-	(label "RMII_TX_EN_MCU"
-		(at 196.85 127 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "c0c71a30-9dc2-4fb7-ad48-a9f38df181f1")
 	)
 	(label "CC1"
 		(at 55.88 50.8 0)
@@ -9629,119 +9629,6 @@
 	)
 	(symbol
 		(lib_id "Device:R")
-		(at 220.98 127 90)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "96990eaa-b090-4413-867d-9105af8fee43")
-		(property "Reference" "R37"
-			(at 220.98 121.539 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "22 1%"
-			(at 220.98 124.079 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 220.98 127 90)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
-			(at 220.98 127 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 220.98 127 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "UNI-ROYAL"
-			(at 220.98 127 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "0402WGF220JTCE"
-			(at 220.98 127 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C25092"
-			(at 220.98 127 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "0f3dcb7b-aaa9-4bbb-9264-b957d4e0a25e")
-		)
-		(pin "2"
-			(uuid "71e3add6-b4c3-4887-9430-2a1fc4d274e5")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
-					(reference "R37")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
 		(at 88.9 127 0)
 		(unit 1)
 		(body_style 1)
@@ -9850,119 +9737,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
 					(reference "R26")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
-		(at 220.98 88.9 90)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "9bcf88c2-79fb-473f-890c-9753fa4df1fc")
-		(property "Reference" "R35"
-			(at 220.98 83.439 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "22 1%"
-			(at 220.98 85.979 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 220.98 88.9 90)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
-			(at 220.98 88.9 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 220.98 88.9 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "UNI-ROYAL"
-			(at 220.98 88.9 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "0402WGF220JTCE"
-			(at 220.98 88.9 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C25092"
-			(at 220.98 88.9 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "69dde7c3-ab44-4bb2-9d11-11d0f1cf2ba1")
-		)
-		(pin "2"
-			(uuid "2b6df888-eac3-4387-9fd6-58da054db25e")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
-					(reference "R35")
 					(unit 1)
 				)
 			)
@@ -10353,119 +10127,6 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:R")
-		(at 114.3 121.92 90)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "aa70a0d2-6057-4a31-b275-0ede83d84ae2")
-		(property "Reference" "R30"
-			(at 114.3 116.459 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "220 1%"
-			(at 114.3 118.999 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 114.3 121.92 90)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
-			(at 114.3 121.92 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 114.3 121.92 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "UNI-ROYAL"
-			(at 114.3 121.92 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "0402WGF2200TCE"
-			(at 114.3 121.92 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C25091"
-			(at 114.3 121.92 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "05ad9fbe-c661-4c99-beea-8e8cf175bc9c")
-		)
-		(pin "2"
-			(uuid "a4107ba6-db48-47a9-aba1-99f0c82465a7")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
-					(reference "R30")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
 		(lib_id "MCU_Module_Waveshare:ESP32-P4-Core")
 		(at 172.72 96.52 0)
 		(unit 1)
@@ -10771,119 +10432,6 @@
 			(project "espion-cam"
 				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
 					(reference "U6")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Device:R")
-		(at 220.98 96.52 90)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "af72c626-d36a-47a3-8228-38004aa9788b")
-		(property "Reference" "R36"
-			(at 220.98 91.059 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "22 1%"
-			(at 220.98 93.599 90)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 220.98 96.52 90)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/0a975aaa49b7c97f38a963127be4a823.pdf"
-			(at 220.98 96.52 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Resistor"
-			(at 220.98 96.52 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Manufacturer" "UNI-ROYAL"
-			(at 220.98 96.52 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "MPN" "0402WGF220JTCE"
-			(at 220.98 96.52 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C25092"
-			(at 220.98 96.52 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "1"
-			(uuid "a1343933-e742-4c14-bb7d-6331e0f9cd33")
-		)
-		(pin "2"
-			(uuid "2352a9a4-b1c9-42d9-ab8f-c07736a0bcfc")
-		)
-		(instances
-			(project "espion-cam"
-				(path "/6c2ac6d3-fc29-423f-b8b3-ded6190f8eb6/47a28d83-e0ce-4ad4-b1d6-38d30e135c0b"
-					(reference "R36")
 					(unit 1)
 				)
 			)

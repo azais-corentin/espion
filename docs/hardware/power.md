@@ -335,7 +335,7 @@ U3 is turned 180° against TI's Fig. 20 (SLVSDG1C p.13), with the same loops:
 |---|---|
 | U6 ESP32-P4-Core | Espressif HDG: 380 mA minimum operating supply current (incl. flash/PSRAM) + MIPI PHY 50 mA + USB PHY 20 mA |
 | U1 IP101G | < 0.15 W (IP101G DS p.1) |
-| Camera module (CAM_3V3, through R53) | ≤ 100 mA, estimate; the module has no datasheet |
+| Camera module (J4.15 on `+3V3`) | ≤ 100 mA, estimate; the module has no datasheet |
 | D1 status LED | 5 mA per colour (Yongyu YY-0807BRGK26 DS p.2, p.4) |
 | J1 link/activity LEDs | Two LEDs, current set by R4/R5: (V(`+3V3`) − VF) / R |
 | U12, U7, U9, pull-ups, dividers | Small, from the schematic |
@@ -461,8 +461,10 @@ below the string's conduction ([LED driver](led.md#led-supply)).
    on PoE.
 6. **USB-alone current.** Measure the VBUS current on USB alone while streaming 640 × 400 at
    120 fps with Ethernet linked (LEDs off): must be ≤ 0.5 A, and compared with the buck-input
-   estimate from [+5V loads](#5v-loads). Measure the camera's share by replacing R53 (0402) with a
-   0.1 Ω 0402 shunt. Also scope the VBUS current at USB attach (PoE absent): the soft-start inrush
+   estimate from [+5V loads](#5v-loads). Measure the camera's share as the drop in VBUS current
+   when the FFC is unplugged, the firmware otherwise in the same state, referred to `+3V3` through
+   the buck's efficiency (camera.md first-board check 6); the camera supply has no link to fit a
+   shunt in (user decision 2026-11-11). Also scope the VBUS current at USB attach (PoE absent): the soft-start inrush
    SR × C(`+5V`) (C21's slew rate and the capacitance the ramp charges, including the LED output
    bank through L3 and D3, [Current limit and soft start](#current-limit-and-soft-start)) plus the
    pre-boot load (the buck input while the P4 boots, LEDs off, +32V idle), against the port's

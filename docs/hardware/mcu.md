@@ -31,9 +31,9 @@ not the reflow variant:
 **Soldering.** U6 is soldered after JLCPCB's top-side reflow, with an iron, pad by pad, from
 the bottom. No hot air and no second reflow on U6 (user decision 2026-11-01: "Iron only, pad
 by pad"). Reason: many top-side parts lie directly over or beside U6's pads (among them
-C27, C29, C46, C47, C50, U12, R29, R31–R34, R36, R37 and SW1), and heating the whole
-module area from below would reflow them; some even join a U6 pad through a via (R37 to
-U6.67, C29 to U6.74–76).
+C27, C29, C46, C47, C50, U12, R29, R31–R34 and SW1), and heating the whole
+module area from below would reflow them; some even join a U6 pad through a via (C29 to
+U6.74–76).
 
 **Provisional land pattern.** Waveshare publishes the outline and the pad pitch but not the
 pad size. The pad length and width are an estimate; check them against a real module before
@@ -114,11 +114,11 @@ recommendation "R = 10 kΩ and C = 1 µF" (ESP32-P4 HDG, chip power-up and reset
 - A contact discharge to SW1 (IEC 61000-4-2, 8 kV × 150 pF) lands on C27: step ΔV = Q / C27
   with Q = 150 pF × 8 kV.
 
-**Boot (SW2).** GPIO35 is the boot-mode strap and also RMII TXD1 (`RMII_TXD1_MCU`):
+**Boot (SW2).** GPIO35 is the boot-mode strap and also RMII TXD1 (`RMII_TXD1`):
 
 - GPIO35's internal pull-up, on from reset (ESP32-P4 datasheet Table 2-1 p.16), makes it 1:
   SPI boot. The board adds no pull-up: R38 was removed (user decision 2026-11-11, board
-  simplification). The other load, the IP101G TXD1 input through R36, is high impedance with
+  simplification). The other load, the IP101G TXD1 input (on the same net, no series resistor), is high impedance with
   no pull (IP101G datasheet p.16), so GPIO35 sits at VDD − I_leak × R_pu, with I_leak the
   P4 pad's input current (IIH ≤ 50 nA, Table 5-4 p.89) plus the IP101G input's leakage (not
   specified, p.57); that must stay above VIH = 0.75 × VDD (Table 5-4 p.89).
@@ -130,9 +130,11 @@ recommendation "R = 10 kΩ and C = 1 µF" (ESP32-P4 HDG, chip power-up and reset
   release BOOT. The host can also reset into download mode over USB (CDC RTS/DTR), without
   buttons.
 - R39 sits at the strap, so the long `BOOT_SW` line hangs off the 50 MHz TXD1 net only
-  through R39 (path "BOOT stub" in `.omp/kicad.json`). Its load (the line) behind R39 gives a
-  time constant of (R39 + R_pu) × C_line, nothing like the large strap capacitor the HDG
-  warns about.
+  through R39 (path "BOOT stub" in `.omp/kicad.json`: the unterminated branch from the TXD1 line
+  to R39 stays within a tenth of the fastest RMII edge, the project's heuristic for a lumped stub,
+  [ethernet](ethernet.md#rmii-drive-and-termination)).
+  Its load (the line) behind R39 gives a time constant of (R39 + R_pu) × C_line, nothing like the
+  large strap capacitor the HDG warns about.
 - **No clamp on SW2** (user decision 2026-11-09: D16 removed). A discharge to the brass button
   reaches `BOOT_SW` and goes through R39 into GPIO35's pad protection, which limits that current
   to the discharge voltage over R39; the P4 datasheet gives no injection limit for the pad.
@@ -151,15 +153,17 @@ YY-0807BRGK26-07-FI"; JLCPCB part page for the LED read 2026-11-01: "SMT Assembl
 and Standard"). Same package, pinout (1 DOUT, 2 VDD, 3 DIN, 4 GND) and suggested pad (datasheet
 A.0 p.2), so the footprint `LED_SMD_Yongyu:LED_Yongyu_YY-0807_2.0x1.7mm` stayed.
 
-**Circuit.** VDD on +3V3 with decoupling C24 (datasheet application circuit p.7). Data: GPIO13 →
-R30 series resistor → DIN, with R26 to GND holding DIN low while GPIO13 floats
-through reset (the pad has no reset pull). DOUT is open: one LED, no chain.
+**Circuit.** VDD on +3V3 with decoupling C24 (datasheet application circuit p.7). Data: GPIO13
+drives DIN directly, with no series resistor (user decision 2026-11-11, board simplification), and
+R26 to GND holds DIN low while GPIO13 floats through reset (the pad has no reset pull). DOUT is
+open: one LED, no chain.
 
 **Levels and timing** (datasheet A.0, https://datasheet.lcsc.com/datasheet/pdf/f10321733b2b8242740cb1ad891264de.pdf):
 
-- DIN VIH 0.7 × VDD (p.4) at the top of the +3V3 set-point range, against the P4's
-  VOH ≥ 0.8 × VDD on the same rail (ESP32-P4 datasheet Table 5-4 p.89); logic input
-  ≤ 5.5 V (p.3).
+- DIN VIH 0.7 × VDD and VIL 0.3 × VDD (p.4) at the top of the +3V3 set-point range, against the
+  P4's VOH ≥ 0.8 × VDD and VOL ≤ 0.1 × VDD on the same rail (ESP32-P4 datasheet Table 5-4 p.89,
+  specified into a high-impedance load; R26 adds VDD / R26, small against the pad's drive); logic
+  input −0.5 to 5.5 V (p.3).
 - Bit times T0H 0.3 / T1H 0.6 / T0L 0.6 / T1L 0.3 µs ± 0.05 µs, reset ≥ 80 µs (p.6). The
   datasheet contradicts itself on speed: 800 kHz typical, 1100 kHz maximum (p.5), against
   0.90 µs (1.11 MHz) for the nominal bit times; the firmware uses 0.95 µs bits inside both
@@ -216,10 +220,9 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
   branch and B.Cu pours); +32V was routed out from under the module (user decision
   2026-11-03, [layout](layout.md#32v-and-the-ring)), so a mask or tenting fault there can't put
   the LED supply on the module.
-- **Tall capacitors beside small parts.** R37 and R34 (both 0402) sit closer to C47 (R37)
-  and to C46 (R34) than the small-part spacing allows next to a tall electrolytic capacitor: possible
-  reflow shadowing; JLCPCB's spacing table has no electrolytic row (find the pairs with
-  `kicad_query distance`).
+- **Tall capacitors beside small parts.** R34 (0402) sits closer to C46 than the small-part
+  spacing allows next to a tall electrolytic capacitor: possible reflow shadowing; JLCPCB's
+  spacing table has no electrolytic row (find the pair with `kicad_query distance`).
 - **D1 on +3V3** (user decision 2026-11-02): green and blue may be dim at the low end of the
   rail. D1's byte order G, R, B (datasheet p.7) contradicts its name and is confirmed on the
   first board.
@@ -242,7 +245,7 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
 
 1. **U6 pads:** before ordering, lay a real module on a printout of the footprint; at assembly
    check every castellation wets its pad.
-2. **U6 soldering heat:** after soldering U6 pad by pad, inspect R37, C29, C50, U12, SW1
+2. **U6 soldering heat:** after soldering U6 pad by pad, inspect C29, C50, U12, SW1
    and the 0402s over the module ring for reflowed or shifted joints. If any moved, lower the
    iron temperature or dwell, or heat-sink the top side.
 3. **Module underside:** inspect it before soldering; if it has exposed pads or test points
@@ -255,8 +258,8 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
 6. **USB-C:** plug in each cable in use (charger, flashing cable): it latches fully and
    enumerates. Check the panel left J2's shell and the board edge in front of it undamaged.
 7. **D1:** set full red, then green, then blue at +3V3 and judge brightness; confirm the byte
-   order G, R, B; scope DIN at the chosen 0.95 µs bit timing and check all three colours latch
-   correctly.
+   order G, R, B; scope DIN at the chosen 0.95 µs bit timing (DIN is driven straight from GPIO13:
+   undershoot within D1's −0.5 V input rating, p.3) and check all three colours latch correctly.
 8. **PPS:** scope TP6, with a short ground lead to C46.2 or C47.2 ([Test points](#test-points));
    check the ETM capture on GPIO33.
-9. **AOI/visual:** R37 and R34 joints next to C46/C47.
+9. **AOI/visual:** R34 joint next to C46.

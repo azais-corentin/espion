@@ -17,7 +17,7 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   FFC (MIPI CSI-2, 2 lanes) through a notch in the board edge into J4 (AFA07 family, bottom
   contact). XVS (GPIO7) and STROBE come from the module's pads over a JST-SH 4-pin pigtail into J3:
   XVS through the R40/R44 divider, an assembly option; STROBE through U7 Tech Public TP74LV1T34 to the LED
-  gate and GPIO12 (ETM capture). A 0 Ω link on each CSI line at the FFC end (R45–R47, R49–R51).
+  gate and GPIO12 (ETM capture). The CSI lanes run straight from J4 to U6, with no series-resistor positions.
   [camera](../../docs/hardware/camera.md)
 - **LED:** 850 nm ring D4–D15, 12 × A-SC880IR3C in one string around the lens cutout. U10
   TPS61170 boost straight from +5V (`BST_EN`, GPIO53; PWM sets the

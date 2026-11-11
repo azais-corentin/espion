@@ -686,20 +686,8 @@
         "pattern": "+3V3"
       },
       {
-        "netclass": "PWR_3V3",
-        "pattern": "/Camera/CAM_3V3"
-      },
-      {
         "netclass": "MIPI_CSI",
         "pattern": "/Camera/CSI_*"
-      },
-      {
-        "netclass": "MIPI_CSI",
-        "pattern": "/Camera/CAM_CLK_?"
-      },
-      {
-        "netclass": "MIPI_CSI",
-        "pattern": "/Camera/CAM_D?_?"
       },
       {
         "netclass": "MDI",

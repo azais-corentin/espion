@@ -108,7 +108,7 @@ a STOP and soft-resets the sensor (register 0x00, p.20) at init
   between a chip part and a QFN-type package
   (https://jlcpcb.com/help/article/minimum-spacing-for-smd-components, read 2026-10-31). R74
   can't move further away: turned, it hits C50's GND via or L2. Accepted in design review
-  (2026-11-01). C50 and R37 must meet the 1.0 mm and R73 stays clear of it (find the pairs
+  (2026-11-01). C50 must meet the 1.0 mm and R73 stays clear of it (find the pairs
   with `kicad_query distance`).
 - **C50's ground path** has no GND via within 1 mm of its ground end, and its loop to U12.9
   runs through In1 and a second via (accepted in design review, 2026-11-01).
