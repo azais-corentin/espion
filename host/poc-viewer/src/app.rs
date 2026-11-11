@@ -867,19 +867,8 @@ impl App {
 
     fn timing_strip(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Pipeline timing")
-                    .font(theme::strong(BODY))
-                    .color(TEXT),
-            );
-            ui.label(
-                egui::RichText::new(
-                    "Median of the last 2 s, once a second. Solid: measured; dashed: computed \
-                     from the mode; whisker: slowest.",
-                )
-                .font(theme::sans(theme::SMALL))
-                .color(MUTED),
-            );
+            // The button first, from the right, so the caption gets what is left and is
+            // shortened in a narrow window instead of pushing the strip wider.
             widgets::from_right(ui, |ui| {
                 let text = if self.expanded {
                     "Collapse timing"
@@ -889,6 +878,24 @@ impl App {
                 if chip(ui, text, self.expanded).clicked() {
                     self.expanded = !self.expanded;
                 }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new("Pipeline timing")
+                            .font(theme::strong(BODY))
+                            .color(TEXT),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(
+                                "Median of the last 2 s, once a second. Solid: measured; \
+                                     dashed: computed from the mode; whisker: slowest.",
+                            )
+                            .font(theme::sans(theme::SMALL))
+                            .color(MUTED),
+                        )
+                        .truncate(),
+                    );
+                });
             });
         });
         ui.add_space(4.0);

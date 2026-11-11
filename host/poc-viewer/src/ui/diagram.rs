@@ -293,19 +293,23 @@ impl Diagram {
                 MUTED,
             );
         }
-        // Three frames, a period apart; frame labels over their exposures.
+        // Three frames, a period apart; frame labels over their exposures where they fit
+        // (the bars carry the frame's number anyway).
+        let label_room = s.period_us * scale >= 56.0;
         for (k, alpha) in [(0usize, 1.0f32), (1, 0.55), (2, 0.35)] {
             let offset = k as f32 * s.period_us;
             if x(offset) > right {
                 break;
             }
-            painter.text(
-                pos2(x(offset) + 2.0, rect.top() + 4.0),
-                Align2::LEFT_TOP,
-                format!("Frame {}", k + 1),
-                theme::sans(SMALL),
-                theme::fade(MUTED, alpha.max(0.6)),
-            );
+            if k == 0 || label_room {
+                painter.text(
+                    pos2(x(offset) + 2.0, rect.top() + 4.0),
+                    Align2::LEFT_TOP,
+                    format!("Frame {}", k + 1),
+                    theme::sans(SMALL),
+                    theme::fade(MUTED, alpha.max(0.6)),
+                );
+            }
             for (i, st) in self.shown.iter().enumerate() {
                 let y = top + i as f32 * pitch + (pitch - bar_h) / 2.0;
                 let x0 = x(st.start_us + offset);
