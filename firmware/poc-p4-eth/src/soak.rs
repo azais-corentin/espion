@@ -2,7 +2,8 @@
 //! executor (and core) that receives the frames.
 //!
 //! Per mode, with the sensor free-running and the three capture buffers in PSRAM:
-//! - a live run: `process_frame` over every delivered frame, then the frame is given back;
+//! - a live run: `process_frame_with` (the dark skip chosen by `SOAK_SKIP` in `main.rs`)
+//!   over every delivered frame, then the frame is given back;
 //! - synthetic runs: frames are still waited for and given back at the sensor's rate, but the
 //!   detector processes a `synth` frame of the mode's size, held in PSRAM outside the capture
 //!   buffers and written back and invalidated from the caches before every pass, so each pass
@@ -18,7 +19,7 @@ use log::info;
 use static_cell::ConstStaticCell;
 
 use crate::modes::CamMode;
-use crate::{flush_cache, mcycle};
+use crate::{DarkSkip, flush_cache, mcycle};
 
 /// Foreground threshold.
 pub(crate) const THRESHOLD: u8 = 128;
@@ -191,12 +192,20 @@ impl Soak {
         }
     }
 
-    /// Live run, then one synthetic run per blob count, for the streaming `mode`.
-    pub async fn run_mode(&mut self, csi: &mut Csi<'static>, mode: &CamMode) {
-        self.run(csi, mode, Workload::Live, self.plan.live).await;
+    /// Live run, then one synthetic run per blob count, for the streaming `mode`, the
+    /// detector with `skip`.
+    pub async fn run_mode(&mut self, csi: &mut Csi<'static>, mode: &CamMode, skip: DarkSkip<'_>) {
+        self.run(csi, mode, Workload::Live, self.plan.live, skip)
+            .await;
         for &blobs in self.plan.blob_counts {
-            self.run(csi, mode, Workload::Synthetic(blobs), self.plan.synthetic)
-                .await;
+            self.run(
+                csi,
+                mode,
+                Workload::Synthetic(blobs),
+                self.plan.synthetic,
+                skip,
+            )
+            .await;
         }
     }
 
@@ -206,6 +215,7 @@ impl Soak {
         mode: &CamMode,
         work: Workload,
         window: Duration,
+        skip: DarkSkip<'_>,
     ) {
         let (width, height) = (mode.mode.width(), mode.mode.height());
         let len = usize::from(width) * usize::from(height);
@@ -228,7 +238,7 @@ impl Soak {
                     break;
                 }
             };
-            self.frame(&f, len, width, work);
+            self.frame(&f, len, width, work, skip);
             frame = Some(f);
         }
         drop(frame);
@@ -237,7 +247,7 @@ impl Soak {
 
     /// Processes one delivered frame (or the synthetic one) and adds it to the counters.
     #[inline(never)]
-    fn frame(&mut self, f: &Frame, len: usize, width: u16, work: Workload) {
+    fn frame(&mut self, f: &Frame, len: usize, width: u16, work: Workload, skip: DarkSkip) {
         let got = mcycle();
         let src: &[u8] = match work {
             Workload::Live => f,
@@ -247,7 +257,7 @@ impl Soak {
                 s
             }
         };
-        let (blobs, cycles) = detect(self.det, self.out, src, width);
+        let (blobs, cycles) = detect(skip, self.det, self.out, src, width);
         let sample = Sample {
             got,
             cycles,
@@ -299,11 +309,17 @@ impl Soak {
     }
 }
 
-/// Runs the detector over `src`; returns the blobs found and the cycles it took.
+/// Runs the detector over `src` with `skip`; returns the blobs found and the cycles it took.
 #[inline(never)]
-fn detect(det: &mut DefaultDetector, out: &mut [Blob], src: &[u8], width: u16) -> (u32, u32) {
+fn detect(
+    skip: DarkSkip,
+    det: &mut DefaultDetector,
+    out: &mut [Blob],
+    src: &[u8],
+    width: u16,
+) -> (u32, u32) {
     let t0 = mcycle();
-    let n = det.process_frame(src, width, THRESHOLD, out);
+    let n = with_skip!(skip, s => det.process_frame_with(s, src, width, THRESHOLD, out));
     (n as u32, mcycle().wrapping_sub(t0))
 }
 

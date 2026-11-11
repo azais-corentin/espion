@@ -147,6 +147,7 @@ All in constants at the top of `src/main.rs`; one plan per boot. The default sel
 | `SOAK` | `Soak::Frames` (default) | With `CAMERA_PLAN`: frame soak, whole frames in PSRAM (`SOAK_PLAN`), RAW8 modes only |
 | `SOAK` | `Soak::Strips` | With `CAMERA_PLAN`: strip soak, strips in internal RAM (`STRIP_SOAK_PLAN`) |
 | `SOAK` | `Soak::None` | With `CAMERA_PLAN`: capture only, then the detector check per mode |
+| `SOAK_SKIP` | `SkipChoice::Pie` (default) / `SkipChoice::Scalar` | The dark skip of the frame soak and the strip soak: PIE on core 0 (the token is made once in `app`; `Scalar` if `Pie::enable` refuses) or the portable one. The benchmark always runs both |
 
 Every plan that uses the strip path needs `RUN_BENCH = false` (checked at compile time).
 `camera::Plan` holds the modes (indexes into `modes::MODES`) or the requests, the sensor
@@ -627,6 +628,8 @@ from code layout alone; instructions are the firm part. All figures with the `Sc
 | lean row entry (`29f50b7`) | `s3-lean.log` | 3144 / 1 257 727 / 628 317 | 4640 / 1 856 201 / 969 750 | 2685.0 / 1479.7 | 1720.2 / 942.4 | 9297 / 5288 (1 853 333) | kept |
 | centroid without 64-bit division (`757a3b6`) | `s4-div.log` | 3145 / 1 258 015 / 628 315 | 4601 / 1 840 714 / 964 276 | 2702.5 / 1485.7 | 1700.8 / 928.1 | 9010 / 5200 (1 835 137) | kept |
 | component table without bounds checks (`0c6888c`) | `s5-slot.log` | 3145 / 1 258 221 / 628 569 | 4578 / 1 831 278 / 960 042 | 2672.5 / 1473.9 | 1700.6 / 927.1 | 8844 / 5132 (1 825 062) | kept |
+| PIE skip (`esp32p4_pie::Pie`, this commit), same build as its `Scalar` row | `s6-pie.log` | 986 / 394 642 / 117 154 | 2675 / 1 070 360 / 518 910 | 2069.6 / 1222.4 | 677.4 / 346.8 | 10 870 / 6549 (1 091 228) | kept |
+| `Scalar` in that build | `s6-pie.log` | 3170 / 1 268 214 / 628 881 | 4616 / 1 846 724 / 969 048 | 2683.6 / 1483.9 | 1709.0 / 934.3 | 8858 / 5246 (1 835 522) | - |
 
 - **One skip interface** alone: the dark frame 1.4 % fewer cycles and 8.7 % fewer
   instructions (the 64-byte OR loop), but the row overhead rose (dark-row fit 428.8 → 546.1
@@ -653,6 +656,20 @@ from code layout alone; instructions are the firm part. All figures with the `Sc
   (2 039 229 → 1 831 278 cycles, -10.2 %); column row 2626.8 → 2672.5 cycles (+1.7 %) with
   1548.7 → 1473.9 instructions (-4.8 %); every-8th row -20.3 %; the radius-4 blob frame
   -10.7 %, the radius-12 blob frame 2 816 617 → 2 780 264 cycles (-1.3 %).
+- **PIE skip** (`impl Skip for Pie`, crate feature `espion-vision/pie`; the bench runs
+  every case with both skips in one build): against `Scalar` in the same build the dark
+  frame takes 68.9 % fewer cycles (986 us; the plan projected about 1 ms), the 64-blob
+  frame 42.0 % fewer (2675 us; projected 2.2 to 2.7 ms), the column row 22.9 % fewer, the
+  every-8th row 60.4 % fewer, the radius-4 blob frame 40.5 % and the radius-12 blob frame
+  21.7 % (2 800 681 → 2 193 761). Dark-row fit with PIE: 2.0 + 0.313 cycles per pixel warm,
+  0 + 0.408 cold (the spike: 0.29 and 0.41). PIE did not lose on any row or frame case;
+  its per-blob figure is higher only because its dark frame, the reference, is cheaper.
+  Boot equivalence check in the same session: `detector skip equivalence (scalar against
+  pie, 320 RAW8 and 320 RAW10 random frames, random strip splits): 0 mismatches of 640
+  frames; 51639 blobs, 115 frames with overflow, 6235 ms`. The committed bench adds busy
+  rows with 4, 16 and 64 one-pixel runs per row, to find the run density where PIE's two
+  calls per run stop paying; they have not run on the board yet (the board was taken by
+  another measurement).
 
 ### Camera capture (whole frames in PSRAM)
 

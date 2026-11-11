@@ -20,7 +20,7 @@ use ov9281::{DeviceError, Exposure, Format, Gain, Mode, Ov9281, Readout, TestPat
 use static_cell::StaticCell;
 
 use crate::modes::{self, CamMode};
-use crate::{jpeg_bench, requests, soak, strip_soak};
+use crate::{DarkSkip, jpeg_bench, requests, soak, strip_soak};
 
 /// The sensor on the camera's I2C bus.
 pub type Cam = Ov9281<I2c<'static, esp_hal::Async>>;
@@ -77,18 +77,22 @@ pub struct Plan {
 /// of the largest mode for the synthetic frames); its start is cache-line aligned (PSRAM
 /// maps at 0x4800_0000). `internal` (internal RAM, cache-line aligned) holds the strip soak's
 /// synthetic strip. `STRIPS` must be `plan.strips.is_some()`: a constant, so a build without
-/// the strip soak does not link its ring (320 KiB of internal RAM).
+/// the strip soak does not link its ring (320 KiB of internal RAM). The frame soak and the
+/// strip soak run the detector with `skip`.
 pub async fn run<const STRIPS: bool>(
     cam: &mut Cam,
     vdma: VDMA_CH0<'static>,
     psram: &'static mut [u8],
     internal: &'static mut [u8],
     plan: &Plan,
+    skip: DarkSkip<'_>,
 ) {
     if power_up().await {
         match plan.strips {
-            Some(strips) => strip_modes::<STRIPS>(cam, vdma, psram, internal, plan, strips).await,
-            None => run_frames(cam, vdma, psram, internal, plan).await,
+            Some(strips) => {
+                strip_modes::<STRIPS>(cam, vdma, psram, internal, plan, strips, skip).await;
+            }
+            None => run_frames(cam, vdma, psram, internal, plan, skip).await,
         }
     }
     note("done");
@@ -107,6 +111,7 @@ async fn run_frames(
     psram: &'static mut [u8],
     internal: &'static mut [u8],
     plan: &Plan,
+    skip: DarkSkip<'_>,
 ) {
     let split = (BUFFERS * BUFFER_LEN).min(psram.len());
     let (buffers, rest) = psram.split_at_mut(split);
@@ -128,7 +133,8 @@ async fn run_frames(
     };
     for &index in plan.modes {
         let mode = &MODES[index];
-        capture_mode(cam, csi, mode, plan, soak.as_deref_mut(), check.as_mut()).await;
+        let (s, c) = (soak.as_deref_mut(), check.as_mut());
+        capture_mode(cam, csi, mode, plan, s, c, skip).await;
     }
     if let Some(s) = &soak {
         s.log_table();
@@ -279,6 +285,7 @@ async fn capture_mode(
     plan: &Plan,
     soak: Option<&mut soak::Soak>,
     check: Option<&mut DetectorCheck>,
+    skip: DarkSkip<'_>,
 ) {
     if start_mode(cam, csi, mode, &plan.sensor).await {
         measure(csi, mode, plan.measure).await;
@@ -300,7 +307,7 @@ async fn capture_mode(
             detector_check(csi, mode, c).await;
         }
         match soak {
-            Some(s) if !mode.raw10() => s.run_mode(csi, mode).await,
+            Some(s) if !mode.raw10() => s.run_mode(csi, mode, skip).await,
             Some(_) => note("soak skipped: RAW8 modes only"),
             None => {}
         }
@@ -801,6 +808,7 @@ async fn strip_modes<const ON: bool>(
     internal: &'static mut [u8],
     plan: &Plan,
     strips: strip_soak::Plan,
+    skip: DarkSkip<'_>,
 ) {
     // Before the first await: with `ON` false the compiler drops the set-up below, and with it
     // every reference to the ring.
@@ -844,7 +852,7 @@ async fn strip_modes<const ON: bool>(
             (rx, group, slot - n)
         };
         if let Some(rx) = rx {
-            strip_group(cam, rx, &mut job, group, first_slot, plan).await;
+            strip_group(cam, rx, &mut job, group, first_slot, plan, skip).await;
         }
     }
     job.log_table();
@@ -984,6 +992,7 @@ async fn strip_group(
     group: &[usize],
     slot: usize,
     plan: &Plan,
+    skip: DarkSkip<'_>,
 ) {
     let pattern = matches!(job, StripJob::Check(_));
     for (k, &index) in group.iter().enumerate() {
@@ -996,7 +1005,7 @@ async fn strip_group(
                 && match (&mut rx, &mut *job) {
                     (Rx::Frames(csi), StripJob::Check(c)) => reference_frames(csi, c, slot).await,
                     (Rx::Frames(_), StripJob::Soak(_)) => true,
-                    (Rx::Strips(cs), StripJob::Soak(s)) => s.run_mode(cs, mode).await,
+                    (Rx::Strips(cs), StripJob::Soak(s)) => s.run_mode(cs, mode, skip).await,
                     (Rx::Strips(cs), StripJob::Check(c)) => c.run_mode(cs, slot).await,
                 };
             if let Err(e) = cam.stop().await {

@@ -41,6 +41,24 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
+/// Runs `$body` with `$s` bound to the skip of a [`DarkSkip`] as its concrete type, so the
+/// detector calls in `$body` are monomorphised per skip: one branch per use, none per skip
+/// call inside the detector.
+macro_rules! with_skip {
+    ($skip:expr, $s:ident => $body:expr) => {
+        match $skip {
+            $crate::DarkSkip::Scalar => {
+                let $s = &espion_vision::Scalar;
+                $body
+            }
+            $crate::DarkSkip::Pie(pie) => {
+                let $s = pie;
+                $body
+            }
+        }
+    };
+}
+
 mod bench;
 mod camera;
 mod jpeg_bench;
@@ -56,6 +74,36 @@ const LOG_BAUD: Option<u32> = Some(2_000_000);
 const RUN_BENCH: bool = false;
 /// Run the camera section after the boot report (and the benchmark, if on).
 const RUN_CAMERA: bool = true;
+/// The dark skip of the frame soak and the strip soak: [`SkipChoice::Pie`] (PIE on core 0,
+/// `Scalar` if `Pie::enable` refuses) or [`SkipChoice::Scalar`]. The benchmark runs both.
+const SOAK_SKIP: SkipChoice = SkipChoice::Pie;
+/// The choices of [`SOAK_SKIP`].
+#[allow(
+    dead_code,
+    reason = "the variant not selected by `SOAK_SKIP` is the documented alternative"
+)]
+enum SkipChoice {
+    Scalar,
+    Pie,
+}
+/// The dark skip a detector call runs with (`espion_vision::Skip`), passed down to the
+/// benchmark and the soaks. The PIE token is created once, in [`app`]; see the rule there.
+#[derive(Clone, Copy)]
+enum DarkSkip<'a> {
+    /// `espion_vision::Scalar`: SWAR tests on 32-bit words.
+    Scalar,
+    /// `esp32p4_pie::Pie`: 16-byte vector loads.
+    Pie(&'a esp32p4_pie::Pie),
+}
+
+impl DarkSkip<'_> {
+    fn name(self) -> &'static str {
+        match self {
+            DarkSkip::Scalar => "scalar",
+            DarkSkip::Pie(_) => "pie",
+        }
+    }
+}
 /// What the camera section runs after capture starts in each mode.
 #[allow(
     dead_code,
@@ -305,29 +353,40 @@ async fn app(
         error!("detector benchmark and camera need PSRAM, skipped");
         return;
     };
+    // PIE on this core (core 0) for the detector. Rule for the token: one PIE-using thread
+    // per core: this task's executor thread, the only code of this firmware that uses PIE;
+    // never in an interrupt handler; no vector state across an await (the kernels keep
+    // none between calls). Held until `app` returns.
+    let pie = esp32p4_pie::Pie::enable()
+        .inspect_err(|e| error!("PIE: {e}; the detector uses the scalar skip"))
+        .ok();
     if RUN_BENCH {
-        run_bench(mem);
+        run_bench(mem, pie.as_ref());
     }
+    let skip = match (&pie, SOAK_SKIP) {
+        (Some(p), SkipChoice::Pie) => DarkSkip::Pie(p),
+        _ => DarkSkip::Scalar,
+    };
     match address {
         Some(a) if RUN_CAMERA => {
             const STRIPS: bool = PLAN.strips.is_some();
             let cam = CAMERA.init(Ov9281::new(i2c, a));
-            camera::run::<STRIPS>(cam, vdma, mem, internal, PLAN).await;
+            camera::run::<STRIPS>(cam, vdma, mem, internal, PLAN, skip).await;
         }
         None if RUN_CAMERA => error!("camera section skipped: no OV9281"),
         _ => {}
     }
 }
 
-/// The bench build: PIE on this core and its kernel self-tests, then the detector benchmark.
-/// Not inlined, so its locals stay out of the `app` future.
+/// The bench build: the PIE kernel self-tests, then the detector benchmark (with both
+/// skips if `pie` is there). Not inlined, so its locals stay out of the `app` future.
 #[inline(never)]
-fn run_bench(mem: &mut [u8]) {
-    match esp32p4_pie::Pie::enable() {
-        Ok(pie) => bench::pie_self_tests(&pie),
-        Err(e) => error!("PIE: {e}; self-tests skipped"),
+fn run_bench(mem: &mut [u8], pie: Option<&esp32p4_pie::Pie>) {
+    match pie {
+        Some(p) => bench::pie_self_tests(p),
+        None => error!("PIE: off; self-tests skipped"),
     }
-    bench::run(mem);
+    bench::run(mem, pie);
 }
 
 fn log_chip() {

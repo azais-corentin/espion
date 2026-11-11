@@ -5,7 +5,8 @@
 //!
 //! Per mode, with the sensor free-running:
 //! - a live run: every strip from `wait_strip` goes through `begin_frame` or
-//!   `begin_frame_raw10` (row 0), `push_rows` and `finish` (last strip), then is given back;
+//!   `begin_frame_raw10` (row 0), `push_rows_with` (the dark skip chosen by `SOAK_SKIP` in
+//!   `main.rs`) and `finish` (last strip), then is given back;
 //! - synthetic runs: strips are still waited for and given back at the sensor's rate, but
 //!   `push_rows` reads a synthetic strip held in internal RAM instead, written back and
 //!   invalidated from the cache before every strip (as `wait_strip` does for a real one).
@@ -40,7 +41,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::modes::CamMode;
 use crate::soak::{Fps, THRESHOLD, take_detector};
-use crate::{flush_cache, mcycle};
+use crate::{DarkSkip, flush_cache, mcycle};
 
 /// Rows per strip unless the format needs more ([`lines`]). 64 is not a divisor of any mode
 /// height here (the driver needs a short last strip).
@@ -361,9 +362,15 @@ impl StripSoak {
         };
     }
 
-    /// The prepared run on the streaming `mode`. `false` if no whole frame arrived (the
-    /// caller prints the receiver state). Logs nothing: [`Self::log_last`] prints the result.
-    pub async fn run_mode(&mut self, cs: &mut CsiStrips<'_>, mode: &CamMode) -> bool {
+    /// The prepared run on the streaming `mode`, the detector with `skip`. `false` if no
+    /// whole frame arrived (the caller prints the receiver state). Logs nothing:
+    /// [`Self::log_last`] prints the result.
+    pub async fn run_mode(
+        &mut self,
+        cs: &mut CsiStrips<'_>,
+        mode: &CamMode,
+        skip: DarkSkip<'_>,
+    ) -> bool {
         let work = self.work;
         let window = match work {
             Workload::Live => self.plan.live,
@@ -388,7 +395,7 @@ impl StripSoak {
                     break;
                 }
             };
-            self.strip(&s, mode, work);
+            self.strip(&s, mode, work, skip);
             strip = Some(s);
         }
         self.giving_back();
@@ -410,7 +417,7 @@ impl StripSoak {
 
     /// Feeds one handed-out strip to the detector (or the synthetic strip in its place).
     #[inline(never)]
-    fn strip(&mut self, s: &Strip, mode: &CamMode, work: Workload) {
+    fn strip(&mut self, s: &Strip, mode: &CamMode, work: Workload, skip: DarkSkip) {
         let got = mcycle();
         let acc = &mut *self.acc;
         acc.held_since = Some((got, s.first_row()));
@@ -445,7 +452,7 @@ impl StripSoak {
             }
         };
         let t0 = mcycle();
-        self.det.push_rows(src, s.first_row());
+        with_skip!(skip, k => self.det.push_rows_with(k, src, s.first_row()));
         let pushed = mcycle();
         cycles = cycles.wrapping_add(pushed.wrapping_sub(t0));
         if !s.is_last() {

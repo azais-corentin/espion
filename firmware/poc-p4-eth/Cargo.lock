@@ -999,6 +999,9 @@ dependencies = [
 [[package]]
 name = "espion-vision"
 version = "0.1.0"
+dependencies = [
+ "esp32p4-pie",
+]
 
 [[package]]
 name = "find-msvc-tools"

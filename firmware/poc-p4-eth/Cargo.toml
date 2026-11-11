@@ -13,7 +13,7 @@ esp32p4-csi   = { path = "../esp32p4-csi" }
 esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
 esp32p4-perf  = { path = "../esp32p4-perf" }
 esp32p4-pie   = { path = "../esp32p4-pie" }
-espion-vision = { path = "../espion-vision" }
+espion-vision = { path = "../espion-vision", features = ["pie"] }
 ov9281        = { path = "../ov9281" }
 
 esp-hal = { version = "~1.2.2", features = ["esp32p4", "log-04", "unstable"] }
