@@ -60,15 +60,22 @@ sequenceDiagram
   time `T(k) = T0 + ⌊k · 10⁹ / 120⌋ ns`. Each packet carries `k` and the capture time
   ([timing.md](timing.md)).
 - **Vision budget:** 8.3 ms per frame (1/120 s), end to end on the P4. Capture DMA of the next
-  frame runs while the CPU processes the current one.
+  frame runs while the CPU processes the current one. Reference point on the ESP32-P4-ETH dev
+  board, 2026-11-11: with live 1280 × 800 RAW8 at 120 fps in 64-line strips, the detector took
+  2873 µs per frame on average (2916 µs at most) with the scalar dark skip and 762 µs (806 µs)
+  with the PIE one, in a scene with no blob (`firmware/poc-p4-eth/README.md`, "Live strip
+  soak, final configuration").
 - **Network load:** a few hundred bytes per frame at 120 fps, well under 1 Mbit/s per board on
   a 100 Mbit/s link.
 
 ### Memory
 
 The P4 has 768 KB of internal L2 memory, and the flash/PSRAM cache (128, 256 or 512 KB) is
-carved out of it. A full frame is 640 × 400 × 1 byte = 250 KiB, so frames don't fit. There is
-no heap on the P4: every buffer is static.
+carved out of it. A full frame is 640 × 400 × 1 byte = 250 KiB. With the 128 KiB L2 cache the
+bootloader sets, the application has 568 KiB of internal RAM, and one such frame fits beside
+`poc-p4-eth`'s other buffers; a 1280 × 800 frame (1000 KiB) is larger than all internal RAM
+(`firmware/poc-p4-eth/README.md`, "Chip and memory" and "Detector benchmark (synthetic
+frames)"). There is no heap on the P4: every buffer is static.
 
 | Data | Where | Why |
 |---|---|---|
@@ -81,26 +88,57 @@ no heap on the P4: every buffer is static.
   and sized to whole cache lines, and the CPU invalidates a buffer's lines before reading a
   new frame from it. Every cache operation of our crates goes through `firmware/esp32p4-cache`,
   which serialises the ROM calls of both cores with one lock; esp-hal's own cache calls
-  (Ethernet TX, DMA buffer helpers, `enable_direct`) are outside that lock.
-- **Measure first:** how fast one core reads PSRAM sequentially. Reported figures are about
-  200 MB/s (unverified), so one pass over a frame costs ≈ 1.3 ms of the 8.3 ms budget,
-  against ≈ 0.3 ms from internal memory.
+  (Ethernet TX, DMA buffer helpers, `enable_direct`) are outside that lock. `poc-p4-stream`
+  runs its own Ethernet DMA rings, which go through it.
+- **Measured** (replaces the unverified 200 MB/s assumed here; `firmware/poc-p4-eth/README.md`
+  unless named, ESP32-P4-ETH dev board, CPU at 400 MHz, PSRAM at 250 MHz, esp-hal 1.2.2's
+  default, with which 200 MHz fails to initialise: "Chip and memory", "PSRAM tuning attempts"):
+  - One core reads cold PSRAM at 163 MB/s at most (one load per 64-byte line) and at 120 MB/s
+    when it sums every word; internal RAM gives 1424 to 1598 MB/s ("Read speed, one core",
+    2026-11-10 and 2026-11-11).
+  - The blob detector with the scalar dark skip, frames of 0 to 64 synthetic blobs, no DMA
+    running, max of 50 passes ("Detector benchmark (synthetic frames)", 2026-11-10): 640 × 400
+    takes 2.7–3.8 ms as a whole frame from PSRAM and 1.3–2.3 ms from 64-line strips in internal
+    RAM; 1280 × 800 takes 10.0–10.9 ms from PSRAM and 4.3–5.2 ms from strips. A dark
+    1280 × 800 frame costs about 3.8 cycles per pixel from cold PSRAM (about 104 MB/s) against
+    1.65 from strips. The PSRAM path runs the same instructions at 0.23 instructions per cycle
+    against 0.53 from strips: it waits for memory ("Detector benchmark with counters",
+    2026-11-11).
+  - Live, 1280-wide whole frames from PSRAM were processed at 85–106 fps instead of 120;
+    strips held 120 fps in all four 120 fps modes ("Findings for the camera board").
+  - With the L1 data and L2 cache autoload, a whole 1280 × 800 frame from PSRAM took 4.6 ms
+    dark and 5.4 ms with 64 blobs, against 9.9 and 10.8 ms without; no DMA ran, and this
+    whole-frame autoload has not run under live capture (`firmware/esp32p4-cache/README.md`,
+    "Prefetch", 2026-11-11).
+  - The detector of 2026-11-11 (span skip, PIE dark skip, hot code in RAM, L1 autoload per
+    strip) is measured from strips only: 762 µs per live dark 1280 × 800 RAW8 frame ("Live
+    strip soak, final configuration").
+
+  What this means for the two options: at 640 × 400 RAW8, the frame size of this section,
+  whole frames in PSRAM fit the 8.3 ms budget without prefetch (2.7–3.8 ms), and strips take
+  1.3–2.3 ms. At 1280 × 800 whole frames in PSRAM fit only with prefetch, which is untested
+  under live capture; strips fit. Every detector figure above except the last is from the
+  scalar detector before the changes of 2026-11-11.
 - **Fallback if that pass is too slow:** CSI DMA into a ring of line strips in internal memory
   (e.g. 64 lines, 40 KiB), processed strip by strip as the frame arrives. This also cuts
-  latency. It needs a per-block interrupt from the CSI DMA (check the TRM).
+  latency. Built: the CSI bridge ends a DMA block after a set number of bursts, and
+  `esp32p4-csi`'s `CsiStrips` delivers strips from a ring in internal RAM. In `poc-p4-eth` all
+  four 120 fps modes ran on 64-line strips with every pixel processed, the centroids ready
+  0.1–0.4 ms after the end of the frame ("Findings for the camera board").
 
 ## Firmware
 
 | Crate | Chip / target | Runs |
 |---|---|---|
 | `firmware/cam-p4` | ESP32-P4, `riscv32imafc-unknown-none-elf` | One core runs the vision loop. The other runs embassy tasks: sensor control over SCCB, the XVS edge schedule (RMT), the PPS servo (ETM capture), Ethernet and embassy-net (DHCP, UDP), PTP (statime), the LED gate, and the accelerometer (bump detection, gravity) on a second I2C bus |
-| `firmware/esp32p4-cache` | ESP32-P4 (no_std library) | Cache maintenance (invalidate, write-back) through the ROM, every call behind one cross-core spinlock held with interrupts masked on the calling core, because both cores share one set of cache-sync registers; and the hardware prefetch set-up (L1 data and L2 autoload, manual L1 data preload) on the `esp32p4` PAC. No esp-hal, esp-rtos or critical section, so a bare second core can call it. esp-hal's own cache calls (Ethernet TX buffers and descriptors, DMA buffer helpers, `enable_direct`) are not covered. Used by `esp32p4-csi` and `esp32p4-jpeg` |
-| `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, written in esp-hal style. Used by `cam-p4` |
+| `firmware/esp32p4-cache` | ESP32-P4 (no_std library) | Cache maintenance (invalidate, write-back) through the ROM, every call behind one cross-core spinlock held with interrupts masked on the calling core, because both cores share one set of cache-sync registers; and the hardware prefetch set-up (L1 data and L2 autoload, manual L1 data preload) on the `esp32p4` PAC. No esp-hal, esp-rtos or critical section, so a bare second core can call it. esp-hal's own cache calls (Ethernet TX buffers and descriptors, DMA buffer helpers, `enable_direct`) are not covered. Used by `esp32p4-csi`, `esp32p4-jpeg` and `poc-p4-stream`'s Ethernet rings; its prefetch by `poc-p4-eth` (L1 autoload per strip) and `poc-p4-stream` (L1 preload of the next datagram's bytes) |
+| `firmware/esp32p4-csi` | ESP32-P4 (no_std library) | MIPI CSI-2 receiver driver on the `esp32p4` PAC, written in esp-hal style: ISP in bypass, a DW-GDMA (VDMA) channel into whole frames (`Csi`) or a ring of line strips in internal RAM (`CsiStrips`). Used by `cam-p4`, `poc-p4-eth` and `poc-p4-stream` |
 | `firmware/esp32p4-jpeg` | ESP32-P4 (no_std library) | Hardware JPEG encoder driver (greyscale, baseline) and the 2D-DMA registers it needs, on the `esp32p4` PAC, in esp-hal style. Tested and measured in `poc-p4-eth` (`JPEG_PLAN`); streams the camera's frames in `poc-p4-stream` |
 | `firmware/esp32p4-perf` | ESP32-P4 (no_std library) | Performance counters of the HP cores: cycles, instructions, conditional branches and their mispredictions, stores (CSRs), and the L1/L2 cache hit and miss counters. No esp dependency and no lock, so a bare second core can call it. Used by the benchmarks of `poc-p4-eth` |
-| `firmware/esp32p4-pie` | ESP32-P4 (no_std library), encoders host-testable | PIE (Xespv 2.2) vector kernels without compiler support: `const fn` encoders produce the instruction words, `asm!` emits them with `.insn`. `Pie::enable` turns PIE on for the calling core and hands out one token per core; esp-rtos saves no PIE state, so one thread per core may use it and no interrupt handler. First kernel: the dark-skip scan (first 64-byte block with a byte at or above a threshold) |
-| `firmware/espion-vision` | no_std library, host-testable | The blob detector: threshold, runs per row, 8-connected components with union-find, intensity-weighted centroids in 1/32 pixel, area and peak; RAW8 and CSI-2 RAW10, whole frames or strips of rows. Its tests compare it with a flood-fill reference on random frames. For `poc-p4-eth` (benchmarks and soaks) and `cam-p4` |
-| `firmware/poc-p4-stream` | ESP32-P4 on the Waveshare ESP32-P4-ETH, `riscv32imafc-unknown-none-elf` | Throwaway proof of concept, not part of the product: Ethernet (esp-hal EMAC, IP101GRI) with IPv6 link-local only, and the `espion-proto` camera stream service on UDP 5009: the OV9281 through `ov9281` and `esp32p4-csi`, frames sent raw or encoded by `esp32p4-jpeg`, every setting taken from the host. Viewed with `host/poc-viewer` |
+| `firmware/esp32p4-pie` | ESP32-P4 (no_std library), encoders host-testable | PIE (Xespv 2.2) vector kernels without compiler support: `const fn` encoders produce the instruction words, `asm!` emits them with `.insn`. `Pie::enable` turns PIE on for the calling core and hands out one token per core; esp-rtos saves no PIE state, so one thread per core may use it and no interrupt handler. Four kernels, each with a scalar reference and a self-test that passed on the board: the dark-skip scan for RAW8 and for RAW10, a copy at any alignment, the Internet-checksum sum. Feature `ram` puts the skip kernels in internal RAM. Used by `espion-vision`, `poc-p4-eth` and `poc-p4-stream` |
+| `firmware/espion-vision` | no_std library, host-testable | The blob detector: threshold, runs per row, 8-connected components with union-find, intensity-weighted centroids in 1/32 pixel, area and peak; RAW8 and CSI-2 RAW10, whole frames or strips of rows. The dark skip is a `Skip` trait passed to each call: `Scalar` (the reference) or, with feature `pie`, `esp32p4-pie`'s token; feature `ram` puts the hot functions in internal RAM. Its tests compare it with a flood-fill reference on random frames. For `poc-p4-eth` (benchmarks and soaks) and `cam-p4` |
+| `firmware/poc-p4-eth` | ESP32-P4 on the Waveshare ESP32-P4-ETH, `riscv32imafc-unknown-none-elf` | Throwaway proof of concept, not part of the product, without Ethernet: OV9281 capture in 12 modes (whole frames in PSRAM or strips in internal RAM) and soaks, the detector's benchmarks, the JPEG encoder's test |
+| `firmware/poc-p4-stream` | ESP32-P4 on the Waveshare ESP32-P4-ETH, `riscv32imafc-unknown-none-elf` | Throwaway proof of concept, not part of the product: Ethernet with IPv6 link-local only (esp-hal brings the EMAC and the IP101GRI PHY up; the crate's own EMAC DMA rings carry the data, and the stream's datagrams go straight onto the TX ring beside smoltcp, the body copied by PIE), and the `espion-proto` camera stream service on UDP 5009: the OV9281 through `ov9281` and `esp32p4-csi`, frames sent raw or encoded by `esp32p4-jpeg`, every setting taken from the host. Viewed with `host/poc-viewer` |
 | `firmware/ov9281` | no_std library, host-testable | OV9281 sensor driver: the mode solver (format, size, crop or binning, frame rate → clock, HTS, VTS and registers, refusing what the measured limits do not allow) and SCCB control over `embedded-hal-async` I2C. For `poc-p4-eth` and `cam-p4` |
 
 `cam-p4` uses `esp-hal` and `esp-rtos` (embassy executor). The XVS edge schedule reuses the
@@ -131,16 +169,18 @@ RMT technique from the private
 
 ## Pinned versions
 
-Checked on 2026-10-28. The firmware crates commit their `Cargo.lock`.
+Checked on 2026-10-28; the `esp-rom-sys` row and the notes on PIE, cache calls and `memcpy`
+added on 2026-11-11. The firmware crates commit their `Cargo.lock`.
 
 | Component | Version | Notes |
 |---|---|---|
-| Rust | 1.99.1 (stable) | `rust-toolchain.toml`; esp-hal needs ≥ 1.95 |
-| esp-hal | ~1.2.2 | `unstable` feature needed for RMT, DMA, PSRAM and Ethernet |
-| esp-rtos | 0.4.0 | embassy integration (replaces esp-hal-embassy) |
+| Rust | 1.99.1 (stable) | `rust-toolchain.toml`; esp-hal needs ≥ 1.95. rustc's LLVM knows no PIE instructions: `esp32p4-pie` emits encoded words |
+| esp-hal | ~1.2.2 | `unstable` feature needed for RMT, DMA, PSRAM and Ethernet. Its ROM cache calls take no cross-core lock (see `esp32p4-cache`) |
+| esp-rom-sys | 0.1.5 | Through esp-hal. Binds `memcpy` to the ROM routine, which copies byte by byte when source and destination differ modulo 4 ([gaps](#esp-hal-support-and-gaps)) |
+| esp-rtos | 0.4.0 | embassy integration (replaces esp-hal-embassy). Saves no PIE state on a thread switch (see `esp32p4-pie`) |
 | esp-bootloader-esp-idf | 0.6.0 | App descriptor for the ESP-IDF second-stage bootloader |
 | esp-println / esp-backtrace | 0.18.0 / 0.20.0 | |
-| esp32p4 (PAC) | 0.3.x | Same major as esp-hal 1.2.2; used by the CSI driver, ETM and the EMAC PTP clock |
+| esp32p4 (PAC) | 0.3.x | Same major as esp-hal 1.2.2; used by the CSI driver, ETM, the EMAC PTP clock, and the cache, JPEG and PIE crates |
 | embassy-executor / embassy-time / embassy-net | 0.10.0 / 0.5.1 / 0.9.1 | embassy-net with `dhcpv4`, `udp`, `multicast`, `medium-ethernet` (`cam-p4`); `poc-p4-stream`: `proto-ipv6`, `udp`, `medium-ethernet`, `auto-icmp-echo-reply` |
 | embassy-sync / embassy-futures / embassy-net-driver | 0.8.0 / 0.1.2 / 0.2.0 | `poc-p4-stream`; the versions esp-hal 1.2.2 and embassy-net 0.9.1 use |
 | static_cell | 2.1.1 | Static task and buffer storage (`poc-p4-stream`) |
@@ -160,11 +200,11 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 | Need | esp-hal 1.2.2 | Plan |
 |---|---|---|
 | MIPI CSI-2 receiver | ❌ | Own driver in `firmware/esp32p4-csi` on the `esp32p4` PAC. Written like an esp-hal driver (`Config`, typed pins, DMA buffers, blocking and async APIs, HIL-testable), but not meant for upstream. On the ESP32-P4-Core the MIPI PHY runs from `ESP_LDO_VO3`, which is 0 V by default: the driver sets it to 2.5 V before starting the CSI host |
-| ISP | ❌ | Bypassed: RAW8 goes straight to memory. Blob detection needs no demosaicing (mono sensor). Check in the TRM that the CSI → memory path can skip the ISP |
-| DMA for CSI | ⚒ (DMA partial) | Find out which DMA engine the CSI bridge uses and whether esp-hal drives it; if not, it goes in the CSI driver. It writes frames into PSRAM, and the driver does the cache invalidation (esp-hal has none for this path). Also check for a per-block-of-lines interrupt (strip fallback, see [Memory](#memory)) |
+| ISP | ❌ | Bypassed: RAW8 goes straight to memory. Blob detection needs no demosaicing (mono sensor). `esp32p4-csi` disables the ISP pipeline; its header and tail stay in the CSI → memory path. Captures worked so in all 12 modes of `poc-p4-eth` |
+| DMA for CSI | ⚒ (DMA partial) | The CSI bridge feeds a DW-GDMA ("VDMA") channel. esp-hal has the `VDMA_CH0`..`VDMA_CH3` singletons but no driver for this path, so `esp32p4-csi` programs it: one block per frame into PSRAM, or blocks of strips that the bridge ends after a set number of bursts (see [Memory](#memory)). The driver does the cache invalidation |
 | I2C master (SCCB, accelerometer) | ✔ | Two buses: SCCB to the camera, and the accelerometer on its own pins |
-| Ethernet (EMAC, RMII) | ⚒ `unstable` ([esp-hal#5556](https://github.com/esp-rs/esp-hal/pull/5556), "basic") | `esp_hal::ethernet::Ethernet` with an `RmiiPinBundle`, `ExternalRefClock` on GPIO50 and its embassy-net driver. **Verified on the ESP32-P4-ETH** (`firmware/poc-p4-stream`, IP101GRI PHY, 100 Mbit/s full duplex, IPv6 only): board to host at the wire limit (11.80 MB/s of 1452-byte UDP datagrams, from internal RAM and from cold PSRAM, none lost or wrong); host to board at the wire limit for 60 s with every byte checked (RX-buffer cache maintenance works) and 100 small datagrams/s beside full-rate TX, none lost. Needs three workarounds in the firmware, each a defect to take upstream: (1) TX store-and-forward, which the driver turns on, breaks frames above a few hundred bytes on the P4 (lost, wrong checksums): switch the DMA to threshold mode, as ESP-IDF does; (2) then the EMAC inserts no checksums (the driver sets CIC 3 and tells smoltcp to skip them), so smoltcp computes the UDP and ICMPv6 checksums (`Checksum::Tx`); (3) the driver's DMA-buffer check takes esp-metadata's DRAM range, which assumes a 256 KiB L2 cache: with the 128 KiB the bootloader sets, statics below 0x4FF40000 panic, so the DMA storage goes in a linker section at or above it. `GenericPhy` wakes the runner on every poll and reads three MDIO registers each time: use a PHY driver that polls the link on a timer. smoltcp 0.13 (embassy-net 0.9) can panic in `send_to_with` when a socket's TX metadata ring is the limit: size it above the payload ring. Not verified: 10 Mbit/s and half duplex, link loss and re-negotiation, multicast, PTP |
-| EMAC IEEE 1588 (PTP clock, timestamps, PPS) | ❌ | The clock (sub-second increment, addend, time update) and PPS are EMAC registers at the MAC base + 0x700. The `esp32p4` 0.3 PAC has no block for them (only `EMAC_MAC` and `EMAC_DMA`), so `cam-p4` writes them through raw pointers, with the offsets from ESP-IDF. The TRM does not document the PPS control and auxiliary snapshot fields that ESP-IDF's register struct has: check them on the first board. The RX/TX timestamps sit in the DMA descriptors that esp-hal's driver owns, and it ignores descriptor words 4–7. That needs an esp-hal change: carry it as a `[patch.crates-io]` fork and upstream it |
+| Ethernet (EMAC, RMII) | ⚒ `unstable` ([esp-hal#5556](https://github.com/esp-rs/esp-hal/pull/5556), "basic") | `esp_hal::ethernet::Ethernet` with an `RmiiPinBundle`, `ExternalRefClock` on GPIO50 and its embassy-net driver. **Verified on the ESP32-P4-ETH** (`firmware/poc-p4-stream`, IP101GRI PHY, 100 Mbit/s full duplex, IPv6 only): board to host at the wire limit (11.80 MB/s of 1452-byte UDP datagrams, from internal RAM and from cold PSRAM, none lost or wrong); host to board at the wire limit for 60 s with every byte checked (RX-buffer cache maintenance works) and 100 small datagrams/s beside full-rate TX, none lost. Needs three workarounds in the firmware, each a defect to take upstream: (1) TX store-and-forward, which the driver turns on, breaks frames above a few hundred bytes on the P4 (lost, wrong checksums): switch the DMA to threshold mode, as ESP-IDF does; (2) then the EMAC inserts no checksums (the driver sets CIC 3 and tells smoltcp to skip them), so smoltcp computes the UDP and ICMPv6 checksums (`Checksum::Tx`); (3) the driver's DMA-buffer check takes esp-metadata's DRAM range, which assumes a 256 KiB L2 cache: with the 128 KiB the bootloader sets, statics below 0x4FF40000 panic, so the DMA storage goes in a linker section at or above it. Since 2026-11-11 `poc-p4-stream` uses esp-hal's driver only to bring the EMAC and the PHY up, then starts the DMA on its own rings (`net/eth.rs`, no esp-hal change): threshold mode from the start, one cache call per frame through `esp32p4-cache` where esp-hal's rings made one or two ROM cache calls per token request (about 1 200 cycles), and a TX completion interrupt on every 8th frame instead of every frame; the runner went from 27 100–27 400 to 14 700–15 800 cycles per datagram in the bench (`firmware/poc-p4-stream/README.md`, "Measured: step 2, the Ethernet ring" and "The Ethernet driver"). Workaround (3) then covers only the 3 200 B descriptor storage `Ethernet::new` still needs. `GenericPhy` wakes the runner on every poll and reads three MDIO registers each time: use a PHY driver that polls the link on a timer. smoltcp 0.13 (embassy-net 0.9) can panic in `send_to_with` when a socket's TX metadata ring is the limit: size it above the payload ring. Not verified: 10 Mbit/s and half duplex, link loss and re-negotiation, multicast, PTP |
+| EMAC IEEE 1588 (PTP clock, timestamps, PPS) | ❌ | The clock (sub-second increment, addend, time update) and PPS are EMAC registers at the MAC base + 0x700. The `esp32p4` 0.3 PAC has no block for them (only `EMAC_MAC` and `EMAC_DMA`), so `cam-p4` writes them through raw pointers, with the offsets from ESP-IDF. The TRM does not document the PPS control and auxiliary snapshot fields that ESP-IDF's register struct has: check them on the first board. The RX/TX timestamps sit in the DMA descriptors that esp-hal's driver owns, and it ignores descriptor words 4–7. That needs an esp-hal change: carry it as a `[patch.crates-io]` fork and upstream it. Measured alternative: `poc-p4-stream` owns its descriptor rings (32-byte enhanced format) after esp-hal's bring-up, without changing esp-hal ("The Ethernet driver" in its README) |
 | Per-packet timestamps to statime | n/a | embassy-net sockets carry no per-packet metadata. The driver matches PTP event frames (UDP 319) to their descriptor timestamps by message type and `sequenceId` and hands them to statime |
 | RMT | ⚒ | XVS edge schedule, as in esp-wifi-sync `wave.rs` (TX channel 0), the status LED (WS2812-type protocol, channel 2 or 3) and the 50 kHz `BST_EN` PWM that sets the LED boost's output (a third TX channel in loop mode, [hardware/firmware-rules.md](hardware/firmware-rules.md) FW-8) |
 | ETM | ❌ | Needed from day one: the PPS edge and the STROBE edge (GPIO events) trigger timer capture tasks. PAC-level code in `cam-p4`. Per the TRM, SYSTIMER has no capture task; timer 0 of each timer group has one (TG0's is taken by esp-rtos, so TG1 timer 0), and MCPWM capture (three registers per unit, 6.25 ns) is the alternative ([timing.md](timing.md) section 2). The VDMA, the CSI host and bridge, the ISP, the EMAC and RMT have no ETM event or task, so strip and frame completion stay interrupts or polls. Still to measure on the board: ETM latency, and whether a GPIO event fires on a pad the EMAC drives as PPS output (the board also loops PPS into a second GPIO through R34, so either way works) |
@@ -176,6 +216,11 @@ Status from the esp-hal 1.2.2 support table and `esp-metadata` (✔ supported, �
 | Chip revision | v3.0+ only | The ESP32-P4-Core carries an ESP32-P4NRW32X, rev v3.x |
 | JPEG codec (hardware encoder) | ❌ (the PAC has the `JPEG` block, but marks the quantisation-table registers `T0QNR`..`T3QNR` read-only, which the TRM and ESP-IDF write) | Own driver in `firmware/esp32p4-jpeg` on the PAC: greyscale baseline JPEG from a frame in PSRAM or internal RAM, header and IJG quality tables built by the CPU, async wait on the `JPEG` interrupt, cache maintenance and error recovery in the driver. Colour formats, decoding and restart markers are not covered |
 | 2D-DMA | ❌ (no driver; no register block in the `esp32p4` 0.3 PAC; its interrupt sources 104..=108, 133, 134 are missing from the PAC's `Interrupt` enum, so esp-hal cannot bind them) | Register offsets from ESP-IDF `hw_ver3/soc/dma2d_reg.h` (TRM chapter 8) in `esp32p4-jpeg` (`dma2d` module): TX channel 0 (2D, macroblock reordering) and RX channel 1 (1D) connected to the JPEG codec, nothing else. Its own interrupts are not used: the driver polls their raw bits after the codec's interrupt. PPA and memory-to-memory transfers are not covered |
+| PIE (Xespv 2.2 SIMD) | n/a (rustc's LLVM knows no PIE instructions) | `firmware/esp32p4-pie`: `const fn` encoders, the words emitted with `.insn` in `asm!` on stable Rust, checked against Espressif's assembler. Nothing saves PIE state: not the trap entry (riscv-rt, esp-riscv-rt), not esp-rtos 0.4.0's thread switch. So one PIE-using thread per core and none in an interrupt handler; the per-core token enforces the first part |
+| Cache maintenance from two cores | ❌ (the ROM cache calls run without a lock; both cores share one set of cache-sync registers) | `firmware/esp32p4-cache`: every call behind one cross-core spinlock, as ESP-IDF does. esp-hal's own calls stay outside it (see [Memory](#memory)) |
+| Cache prefetch (L1 data and L2 autoload, L1 data preload) | ❌ (no config key on the P4) | `esp32p4-cache`'s `prefetch` module writes the `CACHE` registers through the PAC. Run under live DMA in `poc-p4-eth` (per strip) and `poc-p4-stream` (per datagram); see its README |
+| Performance counters | ❌ (esp-hal 1.2.2 has no API; its source does not touch `mhpmevent`, `minstret` or `mcountinhibit`) | `firmware/esp32p4-perf`: `mcycle`, `minstret`, the branch, misprediction and store counters (their selectors `mhpmevent8/9/13` are 0 at boot, so they count nothing until written) and the `CACHE` block's L1 and L2 hit and miss counters |
+| `memcpy` | n/a (esp-rom-sys 0.1.5 binds it to the ROM routine by a plain assignment, `memcpy = 0x4fc0026c;`, so a definition in a crate does not replace it; only a link option could) | The ROM routine copies byte by byte when source and destination differ modulo 4: 9.06 cycles per byte against 1.71 aligned (`firmware/esp32p4-pie/README.md`, "Kernels"). Hot copies use `Pie::copy`: the stream bench's datagram copy from internal RAM went from 13 041 to 1 349 cycles (`firmware/poc-p4-stream/README.md`, "Measured: step 1, the datagram copy through PIE") |
 
 Tooling: esp-generate 1.4.0 has no ESP32-P4 template. `cam-p4` was adapted from the C9 template
 and the esp-hal 1.2.2 examples.

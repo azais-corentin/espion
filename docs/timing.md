@@ -89,8 +89,10 @@ board's state. To check in statime: changing clockClass and priority2 at runtime
 - The P4 converts `T(k)` to local time with the PPS fit and schedules XVS edges with its RMT (a linear edge
   schedule in SYSTIMER time, refreshed on every fit update, as in esp-wifi-sync's `wave.rs`).
 - The OV9281 runs in external trigger mode: each XVS edge starts one exposure, after a latency `L` that is
-  constant per sensor setup. The P4 measures `L` by ETM-timestamping STROBE's rising edge (also flags XVS edges
-  with no exposure); a scope on XVS and STROBE cross-checks it.
+  constant per sensor setup. The P4 measures `L` by capturing STROBE's rising edge through ETM (also flags XVS
+  edges with no exposure); a scope on XVS and STROBE cross-checks it. The capture counters are those of
+  section 2: on TG1 timer 0 the STROBE and PPS captures share its one latch, and one overwrites the other
+  unless the CPU reads between them; MCPWM capture has three registers per unit.
 - **Capture time** in each packet is the network time of mid-exposure: `T(k) + L + exposure / 2`.
 - Until both the PTP clock and the PPS servo are locked, packets carry `SyncState::Acquiring` and the host
   doesn't use them for triangulation.
