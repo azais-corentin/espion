@@ -149,19 +149,23 @@ The physical order differs at the two ends:
 - U6 pads, west to east: D0_N, D0_P, CLK_P, CLK_N, D1_N, D1_P.
 - J4 pins, west to east: CLK_P (9), CLK_N (8), D1_P (6), D1_N (5), D0_P (3), D0_N (2).
 
-The copper reorders them on B.Cu between J4 and U6. The crossing is planar: the D0 and D1
-pairs each make a U-turn, which mirrors the pair, and the clock pair swaps its two lines once round a
-via. Details are in [layout](layout.md#camera-and-csi-2).
+The copper reorders them between J4 and U6, without crossings: the D1 pair makes a U-turn, which
+mirrors the pair; the D0 pair turns back on itself through vias at the former link row (B.Cu north,
+F.Cu south), which mirrors it; and the clock pair swaps its two lines once round a via. Details are
+in [layout](layout.md#camera-and-csi-2).
 
 ### No series-resistor positions
 
 Espressif's ESP32-P4 hardware design guidelines (§1.3.15, p.23) recommend reserving series resistors
-on the MIPI lines, fitted with 0 Ω at first, so one can be added if the first boards need it. The
-board has none (user decision 2026-11-11, board simplification): each lane is one pair from U6 to
-J4, without the pad capacitance of the link pads. The In1/In2 antipads of the CSI vias north and south of the former
-link row stay and serve those vias; the straight F.Cu runs between them lie over solid In1/In2. If the first
-boards show CSI errors, there is no place to add a resistor without a new board revision; the
-remedies are on the firmware side (lane rate, [first-board checks](#first-board-checks)).
+on the MIPI lines, fitted with 0 Ω at first, "to reduce drive current, adjust timing, and improve
+interference resistance". The board has none (user decision 2026-11-11, board simplification): each
+lane is one pair from U6 to J4, without the pad capacitance of the link pads. Where the links stood
+(the former link row), CLK and D1 run straight and coupled on B.Cu; D0 keeps its vias there and runs
+on F.Cu between them, coupled where the via spacing allows (user decision 2026-11-13,
+[layout](layout.md#lane-order)). Without the positions, the drive-current and interference-resistance
+remedies are gone on this revision. If the first boards show CSI frame errors, only those have a
+remedy, on the firmware side (lower lane rate, [first-board checks](#first-board-checks)); anything
+else needs a new board revision.
 
 ### Geometry and impedance
 
@@ -181,7 +185,9 @@ remedies are on the firmware side (lane rate, [first-board checks](#first-board-
 
 The lengths are measured pad to pad on the routed board, with each via counted at its own length
 (`kicad_query` gives them). Both members of a pair carry the same number of vias (TI SPRAAR7J §3.9
-p.12), held by the `viaParity` entry "CSI lanes" in `.omp/kicad.json`.
+p.12), held by the `viaParity` entries "CSI D0", "CSI CLK" and "CSI D1" in `.omp/kicad.json`, one per
+pair. The lanes differ: D0 keeps its vias at the former link row for its turn-back there, which CLK
+and D1 no longer have, and its length is matched to theirs with the via heights counted.
 
 - **P/N skew:** Espressif's guidelines (§1.4.6) allow 10 mil per lane, a lane being one pair from U6
   to J4. Held by DRC rule "MIPI_CSI intra-pair skew".

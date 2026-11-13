@@ -4632,7 +4632,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "100k 1%"
+		(property "Value" "47k 1%"
 			(at 160.02 62.23 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4687,7 +4687,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF1003TCE"
+		(property "MPN" "0402WGF4702TCE"
 			(at 157.48 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -4698,7 +4698,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25741"
+		(property "LCSC" "C25792"
 			(at 157.48 60.96 0)
 			(hide yes)
 			(show_name no)
@@ -5289,7 +5289,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "33k 1%"
+		(property "Value" "15.0k 1%"
 			(at 160.02 73.66 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5344,7 +5344,7 @@
 				)
 			)
 		)
-		(property "MPN" "0402WGF3302TCE"
+		(property "MPN" "0402WGF1502TCE"
 			(at 157.48 72.39 0)
 			(hide yes)
 			(show_name no)
@@ -5355,7 +5355,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25779"
+		(property "LCSC" "C25756"
 			(at 157.48 72.39 0)
 			(hide yes)
 			(show_name no)

@@ -118,8 +118,11 @@ recommendation "R = 10 kΩ and C = 1 µF" (ESP32-P4 HDG, chip power-up and reset
 
 - GPIO35's internal pull-up, on from reset (ESP32-P4 datasheet Table 2-1 p.16), makes it 1:
   SPI boot. The board adds no pull-up: R38 was removed (user decision 2026-11-11, board
-  simplification). The other load, the IP101G TXD1 input (on the same net, no series resistor), is high impedance with
-  no pull (IP101G datasheet p.16), so GPIO35 sits at VDD − I_leak × R_pu, with I_leak the
+  simplification). This departs from Espressif's HDG §1.3.8 p.18 ("It is recommended to reserve a
+  pull-up resistor at the GPIO35"): no position is reserved, so a strap problem on the first
+  boards has no fix on this board (first-board check 5). The other load, the IP101G TXD1 input
+  (on the same net, no series resistor), is high impedance with no pull (IP101G datasheet p.16),
+  so GPIO35 sits at VDD − I_leak × R_pu, with I_leak the
   P4 pad's input current (IIH ≤ 50 nA, Table 5-4 p.89) plus the IP101G input's leakage (not
   specified, p.57); that must stay above VIH = 0.75 × VDD (Table 5-4 p.89).
 - SW2 pulls it through R39 against the internal pull-up (R_pu, 45 kΩ typical; the datasheet
@@ -240,6 +243,9 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
   discharged).
 - **No clamp on the BOOT button** (user decision 2026-11-09: D16 removed). A discharge to
   SW2's brass keystake reaches GPIO35 through R39 only ([Reset and boot](#reset-and-boot)).
+- **GPIO35 strap on the P4's internal pull-up only** (R38 removed, user decision 2026-11-11). No
+  pull-up position is reserved, although Espressif's HDG §1.3.8 p.18 recommends reserving one;
+  boot is checked by first-board check 5 ([Reset and boot](#reset-and-boot)).
 
 ## First-board checks
 
@@ -260,6 +266,8 @@ they can be probed from the bottom. Rail test points: [power.md](power.md).
 7. **D1:** set full red, then green, then blue at +3V3 and judge brightness; confirm the byte
    order G, R, B; scope DIN at the chosen 0.95 µs bit timing (DIN is driven straight from GPIO13:
    undershoot within D1's −0.5 V input rating, p.3) and check all three colours latch correctly.
+   If the undershoot goes past −0.5 V, lower GPIO13's pad drive strength (IO MUX FUN_DRV); there
+   is no series-resistor position.
 8. **PPS:** scope TP6, with a short ground lead to C46.2 or C47.2 ([Test points](#test-points));
    check the ETM capture on GPIO33.
 9. **AOI/visual:** R34 joint next to C46.

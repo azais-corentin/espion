@@ -94,22 +94,31 @@ Placement:
   2026-11-11, board simplification; the reset pulse moved to firmware).
   - RESET_N has an internal 222 kΩ pull-up (p.12). GPIO22 has no pull and its input is disabled
     at and after reset (ESP32-P4 datasheet v0.7 p.15). So RESET_N rises with the supply at
-    power-up, and the PHY runs from then on, through the whole P4 boot.
-  - That rise is not a complete reset: the IP101G wants RESET_N low ≥ 10 ms (p.54) with the
-    25 MHz clock running ≥ 10 cycles before the rising edge (p.18). So the firmware resets the PHY
-    before it uses it: PHY_RST_N low ≥ 10 ms with the crystal running, release, wait ≥ 2.5 ms
-    (FW-11, [firmware-rules](firmware-rules.md#rules)).
-  - Between power-up and that pulse the PHY drives 50 MHz (50M_CLKO, through R13) into GPIO50 and
-    its receive lines (RXD0, RXD1, CRS_DV, straight from its pins) into GPIO28–30. None of these is a
-    P4 strap (the straps are GPIO34–38, ESP32-P4 datasheet §3 p.36), and all have input and pulls off
-    at reset (p.15–16).
-  - The straps are static resistors (R1, R10) or the PHY's own pulls ([Straps](#straps)), so the
-    PHY latches the same values at its power-up and at the firmware's pulse. FX_HEN (on CRS_DV)
-    latches at power-up with GPIO28 high impedance (the P4 in reset or booting, no pull).
+    power-up, before the supplies have been ready for Tpwr_lead (≥ 11 ms) and the crystal valid
+    for Tclk_lead (≥ 10 ms), the lead times of Table 15 (p.59). The datasheet names no internal
+    power-on reset, so the PHY's state from power-up until the firmware's pulse is unspecified; it
+    may run from then on, through the whole P4 boot.
+  - That rise is not a complete reset: the IP101G wants RESET_N low ≥ 10 ms (p.54; Trst, Table 15
+    p.59) with the 25 MHz clock running ≥ 10 cycles before the rising edge (p.18). So the firmware
+    resets the PHY before it uses it: PHY_RST_N low ≥ 10 ms with the crystal running, release, wait
+    ≥ 10 ms (FW-11, [firmware-rules](firmware-rules.md#rules)).
+  - Between power-up and that pulse the PHY can drive 50 MHz (50M_CLKO, through R13) into GPIO50
+    and its receive lines (RXD0, RXD1, CRS_DV, straight from its pins) into GPIO28–30. None of these
+    is a P4 strap (the straps are GPIO34–38, ESP32-P4 datasheet §3 p.36), and all have input and
+    pulls off at reset (p.15–16).
+  - The straps are static resistors (R1, R10) or the PHY's own pulls ([Straps](#straps)), and
+    FW-11's pulse latches them again. A wrong latch before it is harmless: TXD0/TXD1 (pins 9/8) are
+    inputs in every mode (p.16), so the PHY can't drive the P4 straps GPIO34/GPIO35; the worst
+    mis-latch, MII mode (COL/RMII = 0), makes pin 10 (TXCLK/50M_CLKI) a 25 MHz output (p.16) that
+    fights 50M_CLKO through R13 at the pads' drive current (TXC_DRIVE and RXC_DRIVE, pp.39–40).
+    FX_HEN (on CRS_DV) latches at power-up with GPIO28 high impedance (the P4 in reset or booting,
+    no pull).
 - TP1 (silkscreen "PRST") is on the net.
 - **Firmware order.** While in reset, the PHY drives no 50 MHz clock (50M_CLKO is Hi-Z), and the
-  EMAC has no other clock. So after the reset pulse the firmware waits ≥ 2.5 ms before it touches
-  the EMAC or MDIO ([firmware-rules](firmware-rules.md#rules)).
+  EMAC has no other clock. The clock output is ready up to 10 ms after the release (Tclk_MII_rdy
+  max, Table 15 p.59; the 2.5 ms of p.18 is when the chip can operate). So after the reset pulse
+  the firmware waits ≥ 10 ms, or until REF_CLK runs, before it touches the EMAC or MDIO
+  ([firmware-rules](firmware-rules.md#rules)).
 - PHY_RST_N is a long net with several vias. It runs round the lens inside the LED ring, partly close
   to the ring pads. Until the firmware drives it, only the PHY's 222 kΩ pull-up holds it high, while
   the LEDs are still off (their enables default off, [led](led.md#bst_en)). Once driven it
@@ -140,8 +149,8 @@ side at the east edge, soldered by hand ([layout](layout.md#assembly)).
   planes. There is no RC network to GND (user decision 2026-11-09, "replace R2, R3 and C1 by a
   wire"); the Bob-Smith termination stays inside the jack (HanRun p.1). Cable-shield and ESD
   currents return through board GND ([Accepted risks](#accepted-risks)).
-- **Hand-soldering trial.** J1's lands are close to a reflowed part, C3. J1's hand-assembly note
-  asks for a conical tip ≤ 1 mm and Kapton over it.
+- **Hand-soldering trial.** J1's lands are close to reflowed parts, C3, C2 and R44. J1's
+  hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over all three; inspect them after.
 
 ### MDI pairs crossed at J1
 
@@ -240,7 +249,8 @@ puts out 50 MHz (p.45). The path:
 
 - 50M_CLKO → R13 → net RMII_REF_CLK.
 - At R13.2 the net splits in a star to U1.10 (50M_CLKI, the PHY's own timing reference, p.16) and to
-  U6.68 (GPIO50, EMAC_CLK_EXT_IN). GPIO50 is input only, so the MAC can't drive the clock.
+  U6.68 (GPIO50, EMAC_CLK_EXT_IN). GPIO50 takes the clock through its EMAC function
+  GMAC_RMII_CLK_PAD (IO MUX function 3), which is an input, so the MAC doesn't drive the clock.
 
 This is the datasheet's internal-clock topology (Fig. 8, p.44) and the one on Espressif's
 ESP32-P4-Function-EV-Board. Its buffer (Fig. 10, p.45) is needed only for a third clock load, which
@@ -258,13 +268,17 @@ clock (§1.3.14, p.20); it sits at the PHY's 50M_CLKO (`near` entry R13 → U1).
   depend on the driver alone:
   - PHY outputs: the IP101G pad drive registers on page 16 register 26, RXD0_DRIVE (bits 2:0),
     RXD1_DRIVE (bits 5:3) and RXDV_DRIVE (bits 14:12, the RXDV/CRS_DV pad), default 3'b001 =
-    3.24 mA, settable from 1.62 to 22.68 mA (p.39–40).
+    3.24 mA, settable from 1.62 to 22.68 mA (p.39–40). The default is one step above the lowest
+    setting, so one step down (3'b000) is all the room there is to soften these edges.
   - MAC outputs: the P4 pad drive strength, 20 mA by default (ESP32-P4 datasheet p.17 note 3), up to
     IOH 40 mA at PAD_DRIVER = 3 (Table 5-4 p.89).
   - Neither datasheet gives an edge rate or an output impedance (no IBIS model), so overshoot and
     ringing at the receivers are a first-board check ([First-board checks](#first-board-checks)).
-    Remedies, without a board change: lower RXD0/RXD1/RXDV_DRIVE on the PHY, a lower pad drive on
-    the P4.
+    Remedies, without a board change: one step lower RXD0/RXD1/RXDV_DRIVE on the PHY, a lower pad
+    drive on the P4 (its pad drive range). The PHY's output delay Td is specified only at the
+    default drive (Table 19 p.61), so a lowered PHY setting repeats the throughput check (first-board
+    check 2) at that setting. If one step is not enough on the RX lines, the remedy is a board
+    change: series resistors at the PHY (U1.17–U1.19).
 - **Line lengths** are held by the [Timing](#timing) budget ([Data line lengths](#data-line-lengths)).
 - **BOOT tap.** TXD0/TXD1 are also the P4's strapping pins GPIO34/GPIO35. The BOOT button through R39
   taps the TXD1 line where R36 used to sit ([mcu](mcu.md#reset-and-boot)); GPIO35 has only its
@@ -368,7 +382,8 @@ U1.10, the remedies, in order:
 
 ## Straps
 
-The IP101G latches its straps when RESET_N rises (pp.16–18):
+The IP101G latches its straps when RESET_N rises (pp.16–18), with a setup time Tlat_s before the
+release and a hold time Tlat_h after it (Table 15 p.59):
 
 - Internal pull-downs are 104 kΩ and pull-ups 222 kΩ (p.12). The external straps R1 and R10 use the
   datasheet latch resistor, 5.1 kΩ (Table 13, p.58). PHY_AD3 and LEDMOD have no board resistor: R7
@@ -392,8 +407,9 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 | RESET_N | 32 | internal 222 kΩ pull-up only; GPIO22 high impedance at reset | 1 from power-up | PHY runs from power-up; FW-11's pulse gives it the complete reset ([Reset](#reset)) |
 
 - The firmware addresses the PHY at MDIO address 1.
-- The firmware must not enable GPIO28's internal pull-up while RESET_N rises: it fights the 104 kΩ
-  pull-down and can latch FX_HEN = 1 (fiber mode).
+- The firmware must not enable GPIO28's internal pull-up from before RESET_N rises until ≥ 2.63 ms
+  after it (Tlat_h, Table 15 p.59; FW-11): it fights the 104 kΩ pull-down and can latch FX_HEN = 1
+  (fiber mode).
 
 ## Accepted risks
 
@@ -404,7 +420,11 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   the 1 ns fastest-edge assumption. See the open item under [Timing](#timing).
 - **No series terminations on the RMII data lines** (user decision 2026-11-11; R13 on REF_CLK stays,
   HDG §1.3.14). The edges reach the receivers as the drivers make them; overshoot is checked on the
-  first boards and lowered with the drive registers ([RMII drive and termination](#rmii-drive-and-termination)).
+  first boards. The PHY's drive registers leave one step below the default on the RX lines
+  (pp.39–40), and the PHY's Td is specified only at the default drive (p.61), so a lowered setting
+  repeats the throughput check; if one step is not enough, the remedy is a board change (series
+  resistors at the PHY). The P4 side has its pad drive range
+  ([RMII drive and termination](#rmii-drive-and-termination)).
 - **MDI relies on auto-MDIX.** The pairs are crossed at J1, so a firmware that disables auto-MDIX
   without setting FORCE_MDIX gets no link.
 - **MDI spacing inside U1's escape** falls short of the "three times space" (rule "MDI spacing"),
@@ -427,7 +447,13 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
   [layout](layout.md#ethernet-and-poe-isolation)).
 - **PHY_RST_N inside the LED ring**, close to the ring pads over part of its length; held only by
   the PHY's internal pull-up until the firmware drives it.
-- **J1 lands close to a reflowed part** (C3), to be checked in the
+- **PHY not held in reset at power-up** (R8 removed, user decision 2026-11-11): the hardware no
+  longer meets the IP101G's power-up reset timing (Tpwr_lead, Tclk_lead, Table 15 p.59), and the
+  datasheet names no internal power-on reset, so the PHY's state until FW-11's reset pulse is
+  unspecified. Every start relies on that pulse: a firmware that skips it, or a P4 that hangs
+  before it, leaves the PHY without a complete reset. A wrong latch before the pulse is harmless
+  ([Reset](#reset)).
+- **J1 lands close to reflowed parts** (C3, C2 and R44), to be checked in the
   hand-soldering trial.
 - **Shield tied straight to GND** (user decision 2026-11-09): cable-shield and ESD currents return
   through board GND, and a cable whose far end grounds its shield closes a ground loop.
@@ -449,7 +475,7 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
 4. **Straps and LEDs.** The PHY answers on MDIO address 1, the EMAC gets its clock in RMII mode, the
    green LED shows link, and the yellow LED lights at 100 Mbit/s only and blinks with traffic.
 5. **Reset order.** With the firmware's reset pulse (PHY_RST_N low ≥ 10 ms, then released
-   ≥ 2.5 ms before the EMAC starts, FW-11), Ethernet comes up on every boot, also after a power
+   ≥ 10 ms before the EMAC starts, FW-11), Ethernet comes up on every boot, also after a power
    cycle and after a reset of the P4 alone (RESET button).
 6. **LED interference.** Run the LEDs at 0.5 ms, 120 fps. Scope TP1: PHY_RST_N stays above
    0.6 × VDDIO. Watch the link: it never drops while the LEDs pulse.
@@ -458,16 +484,21 @@ The IP101G latches its straps when RESET_N rises (pp.16–18):
    TSX-3225 p.1) and REF_CLK stays within ± 50 ppm; if not, lower the LED current or duty, or pull
    the east edge of the Q1 drain copper on B.Cu back from Y1
    ([layout](layout.md#thermal)).
-8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect C3 for
-   bridges and a shifted part.
+8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect C3, C2 and R44
+   for bridges and shifted parts.
 9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source.
 10. **REGOUT.** With the link up at 100 Mbit/s and traffic running, scope REGOUT at C6 (short ground
     spring to C6.2): it must stay inside 1.07–1.18 V, ripple included (IP101G DS p.57). The path from
     U1.28 to C6 runs through vias ([REGOUT and ISET](#regout-and-iset)).
 11. **RMII edges.** With traffic running both ways at 100 Mbit/s, scope RXD0, RXD1 and CRS_DV at
-    U6.40–U6.42 and TXD0, TXD1 and TX_EN at U1.9, U1.8 and U1.5 (short ground spring): overshoot
-    and undershoot must stay within the receivers' input ratings (IP101G input −0.3 to 3.63 V, p.57;
-    ESP32-P4 VIH max VDD + 0.3 V and VIL min −0.3 V, Table 5-4 p.89) and the ringing must settle before the
-    sampling edge. If not, lower RXD0/RXD1/RXDV_DRIVE (page 16 register 26, p.40) on the PHY side or
-    the P4 pad drive strength on the MAC side
+    U6.40–U6.42 on the bottom side, with a short ground lead to U6.34 (bottom) or the ground clip on
+    H4: no GND pad there is within a spring's reach, and the lead's inductance limits the overshoot
+    reading. Scope TXD0, TXD1 and TX_EN at U1.9, U1.8 and U1.5 with a short ground spring to C5.2
+    or U1.6/U1.7. Overshoot and undershoot must stay within the receivers' input ratings (IP101G
+    input −0.3 to 3.63 V, p.57; ESP32-P4 VIH max VDD + 0.3 V and VIL min −0.3 V, Table 5-4 p.89)
+    and the ringing must settle before the sampling edge. If not, lower RXD0/RXD1/RXDV_DRIVE
+    (page 16 register 26, p.40) on the PHY side by its one step below the default and repeat check
+    2 at that setting (Td is specified only at the default drive, p.61), or the P4 pad drive
+    strength on the MAC side. If one step is not enough on the RX lines, the remedy is a board
+    change: series resistors at the PHY (U1.17–U1.19)
     ([RMII drive and termination](#rmii-drive-and-termination)).

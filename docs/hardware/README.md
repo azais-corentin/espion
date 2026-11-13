@@ -52,8 +52,8 @@ and margins are worked out from the schematic by the formulas in the block docum
 | `POE_VA1`, `POE_VA2`, `POE_VB1`, `POE_VB2` (cable side, isolated) | J1.7–J1.10 centre taps (both pair sets) | 37–57 V at the PD input (IEEE 802.3af; DP1435 p.5). Current per pair at most J1's rating, 350 mA per centre tap (HR871150C p.1); input power at most the 802.3af PD limit, 12.95 W | U2.1–U2.4 only, no capacitors |
 | `+5V_POE` | U2 DP1435-5V output | Within the DP1435's ±5 % regulation term (p.5); the datasheet gives no set-point accuracy. At most 5.5 V, the input limit of U3 and U11 (datasheets) | C11, C13, C15, U4 IN1, R18/R19 |
 | `VBUS` | J2 USB-C | 4.40–5.5 V (USB 2.0 Table 7-7 p.178, §7.2.1.3 p.173: low-power port 4.40 V minimum, a conservative floor for this high-power function, which the spec requires to run fully from 4.75 V, §7.2.1.4 p.174; USB Type-C R2.0 §4.4.2 p.141: up to 5.5 V at light load). Port current at most 500 mA | U4 IN2, C16, D2, R24 |
-| `+5V` | U4 TPS2121 OUT (PoE first) | Within the input range of every load (TLV62569, TLV9061, TPS61170 datasheets); steady value is the selected input minus I × RON(U4) (TPS2121 datasheet). During a PoE → USB switchover it dips by I × tSW / C(`+5V`) (TPS2121 internal-reference mode, 100 µs) | U3, U10 VIN, L3, C36, U11, R63, C10, C20, C22, C44, TP5 |
-| `+3V3` | U3 TLV62569 | DC set point VOUT = VFB × (1 + R16/R17) (SLVSDG1C Eq. 2 p.9), VFB 0.588–0.612 V (p.4), resistors ±1 %; every calculation uses this set point. Logic-level checks use the generic 3.3 V ± 5 % envelope and name it as such. With the LEDs off, stays above every load's minimum supply during a PoE → USB switchover ([power](power.md#priority-and-hysteresis)); with the ceramics derated for DC bias the IP101G's minimum may be missed, an accepted risk ([power](power.md#accepted-risks)) | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, J4.15 (camera module straight on the rail, no link; its load is an estimate, no module datasheet) with C32, pull-ups, TP4 |
+| `+5V` | U4 TPS2121 OUT (PoE first) | Within the input range of every load (TLV62569, TLV9061, TPS61170 datasheets); steady value is the selected input minus I × RON(U4) (TPS2121 datasheet). During a PoE → USB switchover it falls with `+5V_POE` to the PoE → USB threshold (or to within VCOMP of VBUS, where that is lower), then dips by I × tSW / C(`+5V`) (TPS2121 internal-reference mode, 100 µs) | U3, U10 VIN, L3, C36, U11, R63, C10, C20, C22, C44, TP5 |
+| `+3V3` | U3 TLV62569 | DC set point VOUT = VFB × (1 + R16/R17) (SLVSDG1C Eq. 2 p.9), VFB 0.588–0.612 V (p.4), resistors ±1 %; every calculation uses this set point. Logic-level checks use the generic 3.3 V ± 5 % envelope and name it as such. With the LEDs off, stays above every load's minimum supply during a PoE → USB switchover ([power](power.md#priority-and-hysteresis)) | U6, U1, U12, U7, U9, D1, U5.5, J1 LEDs, J4.15 (camera module straight on the rail, no link; its load is an estimate, no module datasheet) with C32, pull-ups, TP4 |
 | `+32V` | U10 TPS61170 boost (BST_EN) | Full scale (`BST_EN` steady high): VOUT = VREF × (1 + R65/R66) (TPS61170 SLVS789D p.5), VREF 1.204–1.254 V. In operation the headroom loop sets it by `BST_EN` PWM duty, V_FB = duty × 1.229 V ([led](led.md#headroom-control)). Droop over a pulse follows from the pulse charge and the storage capacitors (formula in led.md). With the boost off it idles at `+5V` minus D3's drop ([led](led.md#led-supply)) | LED string D4–D15, C43, C45, C46, C47, R65/R66, TP13; R70/R76 through the string |
 
 Formulas: [power.md](power.md) for the first five rows, [led.md](led.md#boost-converter)
@@ -81,7 +81,7 @@ for `+32V`. Current budgets: [power.md](power.md), [led.md](led.md).
   |---|---|---|
   | U6 ESP32-P4-Core | bottom | Hand-soldering footprint without paste; iron only, pad by pad, no hot air (user decision 2026-11-01) — [mcu](mcu.md#module) |
   | U2 DP1435-5V | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C11 and C16, inspect them after — [layout](layout.md#assembly) |
-  | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C3 — [layout](layout.md#assembly) |
+  | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C3, C2 and R44, inspect them after — [layout](layout.md#assembly) |
 
   J2 (USB-C) is machine-placed with its shell overhanging the top edge by HRO's recommended
   amount (user decision 2026-11-04); the RESET and BOOT buttons sit on the bottom edge (user
@@ -95,7 +95,7 @@ Power:
   rated or tested (user decision 2026-11-02) — [power](power.md#poe-input),
   [layout](layout.md#ethernet-and-poe-isolation).
 - DP1435 output set-point tolerance and maximum capacitive load not specified — [power](power.md#poe-input).
-- Mux in internal-reference mode (user decision 2026-11-11): the PoE → USB switchover takes 100 µs; with the LEDs off `+3V3` sags below its set point and, with the ceramics derated, below the IP101G's minimum; with the LEDs running the board may reset — [power](power.md#accepted-risks).
+- Mux in internal-reference mode (user decision 2026-11-11): the PoE → USB switchover takes 100 µs (typical, the only figure); with the LEDs off `+3V3` can sag below its set point; with the LEDs running the board may reset — [power](power.md#accepted-risks).
 - No input filter on `+5V_POE` (user decision 2026-11-11): the DP1435's ripple reaches `+5V` — [power](power.md#accepted-risks).
 - No VBUS sense (user decision 2026-11-11): the USB D+ pull-up stays on without VBUS; USB is a bench port only — [power](power.md#usb-vbus).
 - USB current limited by a firmware rule only (user decision 2026-10-31); the USB-alone estimate sits against the 500 mA port limit — [power](power.md#usb-vbus).
@@ -138,6 +138,7 @@ MCU:
 - USB-C shell overhangs the top edge, nearer the routed edge than JLCPCB's part-to-edge limit: order note, no tab or rail at J2 (user decision 2026-11-04) — [layout](layout.md#assembly).
 - RESET/BOOT buttons on the bottom edge; the enclosure must reach them (user decision 2026-11-01) — [mcu](mcu.md#reset-and-boot).
 - BOOT button SW2 without a clamp: a discharge reaches GPIO35 through R39 only (user decision 2026-11-09, D16 removed) — [mcu](mcu.md#reset-and-boot).
+- GPIO35 boot strap on the P4's internal pull-up only, without the pull-up Espressif's HDG §1.3.8 p.18 recommends reserving (R38 removed, user decision 2026-11-11); boot checked on the first boards — [mcu](mcu.md#reset-and-boot).
 - U6 lies under C47, C50 and U12: iron only (user decision 2026-11-01) — [mcu](mcu.md#module).
 - USB connector-side lines: one via without a GND return via, a short stretch over the In1 PoE gap (USB full speed) — [mcu](mcu.md#usb-c).
 
@@ -148,11 +149,12 @@ Ethernet:
 - MDI spacing below 3× inside U1's escape — [ethernet](ethernet.md#magjack-and-mdi).
 - ISET resistor R6's ±1 % band ends slightly above the IP101G's 6.19 kΩ ±1 % (user decision 2026-11-09, fee-free value) — [ethernet](ethernet.md#regout-and-iset).
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
-- No series terminations on the RMII data lines (user decision 2026-11-11; R13 on REF_CLK stays): the drivers' edges reach the receivers unterminated, overshoot checked on the first boards — [ethernet](ethernet.md#rmii-drive-and-termination).
+- No series terminations on the RMII data lines (user decision 2026-11-11; R13 on REF_CLK stays): the drivers' edges reach the receivers unterminated, overshoot checked on the first boards. The PHY side has one drive step below its default, and its output delay is specified only at the default drive, so the soak test is repeated at any lowered setting; beyond that step the RX lines need a board change (series resistors at the PHY). The P4 side has its pad drive range — [ethernet](ethernet.md#rmii-drive-and-termination).
 - P4 → PHY logic high (TXD, TX_EN, MDC, MDIO) at zero datasheet margin, VOH and VIH both 0.8 × the shared `+3V3`; relies on the PHY's µA CMOS load (design review 2026-11-09) — [ethernet](ethernet.md#mdc-and-mdio).
 - No GND guard between the crystal and the LED supply copper (IP101G asks for one "if possible") — [ethernet](ethernet.md#phy).
 - REGOUT reaches C6 through a long track, two vias and a short pour, because pin 28 lies between the MDI pairs — [layout](layout.md#phy-side-decoupling).
-- J1's lands close to reflowed C3 — [layout](layout.md#assembly).
+- J1's lands close to reflowed C3, C2 and R44 — [layout](layout.md#assembly).
+- PHY not held in reset at power-up (R8 removed, user decision 2026-11-11): the IP101G's power-up reset timing (datasheet Table 15, p.59) is not met by the hardware; every start relies on FW-11's reset pulse — [ethernet](ethernet.md#reset).
 - J1's shield tied straight to board GND, without the RC network: cable-shield and ESD currents return through board GND, and a cable whose far end grounds its shield closes a ground loop (user decision 2026-11-09, "replace R2, R3 and C1 by a wire") — [ethernet](ethernet.md#j1).
 - C4 (0805 MLCC) close to the east edge: ordered without mouse bites there (user decision 2026-11-04, "Note only") — [layout](layout.md#assembly).
 
@@ -166,11 +168,11 @@ Power ([power](power.md#first-board-checks)):
 1. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V, the input limit of U3 and U11.
 2. PoE cold start: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses; the module's ripple on `+5V_POE` and `+5V` (no input filter).
 3. Mux thresholds with a bench supply on `+5V_POE`: to USB and back to PoE inside the bands from the R18/R19/R75 formulas in power.md, worked out from the schematic.
-4. PoE pull with USB attached: with the LEDs off no reset, the Ethernet link and USB stay up, the `+5V` dip and the `+3V3` minimum; during LED pulses whether the board resets, and the firmware latency `PWR_SRC` → LED_EN, BST_EN low.
+4. PoE pull with USB attached: with the LEDs off no reset, the Ethernet link and USB stay up, the `+5V` dip and the `+3V3` minimum; during LED pulses whether the board resets, and the firmware latency `PWR_SRC` → LED_EN, BST_EN low. Whenever the board does not reset, the Ethernet link returns and MDIO still answers at address 1; if not, a firmware rule follows (stop the EMAC, repeat FW-11's pulse and timing, restart). With PoE and USB both attached and the LEDs at 0.5 ms / 120 fps, `PWR_SRC` stays high (no handover to USB on the module's load-step dip); unplugging and replugging PoE with USB attached gives one clean return to PoE.
 5. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W (802.3af) and ≤ 350 mA per pair (J1), else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
 6. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A (USB port limit); camera share as the drop in VBUS current with the FFC unplugged, referred to `+3V3` through the buck's efficiency (no shunt position); the VBUS current at attach (soft-start inrush SR × C(`+5V`), the LED bank included, plus the pre-boot load) against the port's 0.5 A.
 7. `+3V3` load step from light load to the estimated maximum load (power.md budget): overshoot ≤ 5 %.
-8. Thermal camera on U4 and its vias, U3, U2 at the LED design point and during `+32V` start-up.
+8. Thermal camera on U4 and its vias, U3, U2 and C13's case (directly on U2's output since the input filter went; its ripple-current share unknown) at the LED design point and during `+32V` start-up.
 9. XVS and SCCB edges at J4 and USB enumeration and transfer at the PoE peak load, against USB power alone (B.Cu under U2's magnetics) — [layout](layout.md#bcu-under-u2).
 
 LED ([led](led.md#first-board-checks)):
@@ -185,13 +187,13 @@ Camera ([camera](camera.md#first-board-checks)):
 16. FFC with the supplied cable: pin 1 mapping, insertion depth, loop and stiffener clear of the board edge — [camera](camera.md#ffc-orientation).
 
 MCU ([mcu](mcu.md#first-board-checks)):
-17. D1: each colour's brightness at 3.3 V and the colour byte order — [mcu](mcu.md#status-led).
+17. D1: each colour's brightness at 3.3 V and the colour byte order; scope DIN for undershoot (no series resistor; remedy: a lower pad drive strength on GPIO13) — [mcu](mcu.md#status-led).
 18. USB-C: the cables in use (charger, flashing cable) latch and enumerate — [mcu](mcu.md#usb-c).
 19. U6 soldered with an iron only, pad by pad — [mcu](mcu.md#module).
 
 Ethernet ([ethernet](ethernet.md#first-board-checks)):
-20. J1 iron trial with a ≤ 1 mm conical tip and Kapton over C3; inspect it after — [layout](layout.md#assembly).
-21. Link at 10 and 100 Mbit/s with a straight and a crossover cable (auto-MDIX), auto-negotiated at full duplex at both speeds (half duplex means the reversed link pulses weren't recognised); page 16 register 18 bit 8 POLARITY must read 1 on the 10 Mbit/s links and is recorded at 100 Mbit/s (receive pair inverted on purpose); an RMII soak test (P4 timing unpublished); overshoot and ringing at the RMII data receivers (no series terminations; remedies: the IP101G's RXD/RXDV drive registers, the P4's pad drive strength) — [ethernet](ethernet.md#first-board-checks), [ethernet](ethernet.md#rmii).
+20. J1 iron trial with a ≤ 1 mm conical tip and Kapton over C3, C2 and R44; inspect them after — [layout](layout.md#assembly).
+21. Link at 10 and 100 Mbit/s with a straight and a crossover cable (auto-MDIX), auto-negotiated at full duplex at both speeds (half duplex means the reversed link pulses weren't recognised); page 16 register 18 bit 8 POLARITY must read 1 on the 10 Mbit/s links and is recorded at 100 Mbit/s (receive pair inverted on purpose); an RMII soak test (P4 timing unpublished); overshoot and ringing at the RMII data receivers (no series terminations; remedies: the IP101G's RXD/RXDV drive registers, one step below the default, with the soak test repeated at any lowered setting as the PHY's output delay is specified only at the default drive, and beyond that a board change on the RX lines, series resistors at the PHY; the P4's pad drive strength) — [ethernet](ethernet.md#first-board-checks), [ethernet](ethernet.md#rmii).
 22. REGOUT ripple at C6 with the link at 100 Mbit/s: inside the IP101G's REGOUT range, 1.07–1.18 V (the REGOUT path to C6 has vias) — [ethernet](ethernet.md#regout-and-iset).
 
 IMU ([imu](imu.md#first-board-checks)):

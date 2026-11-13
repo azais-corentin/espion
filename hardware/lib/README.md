@@ -341,7 +341,8 @@ Aluminium SMD can footprints for `Device:C_Polarized` (pad 1 = +): AISHI VZ poly
 (JVE16V330M8X10, LCSC C48615108).
 
 - **Not used by espion-cam any more** (2026-11-09): C13 now shares C22's part on stock
-  `Capacitor_SMD:CP_Elec_6.3x5.8`, and C14 shares C46/C47's on stock `Capacitor_SMD:CP_Elec_10x10`.
+  `Capacitor_SMD:CP_Elec_6.3x5.8`; C14, which then shared C46/C47's on stock
+  `Capacitor_SMD:CP_Elec_10x10`, was removed on 2026-11-11.
 - Sources: [AISHI VZ](https://datasheet.lcsc.com/datasheet/pdf/aabe05a1d48507568d8975f1e7578509.pdf),
   [JIERR JVE](https://datasheet.lcsc.com/datasheet/pdf/3ad662ff0f7907637937f3fa823d20da.pdf).
 - Neither vendor publishes a land pattern. The pads are the Nichicon land KiCad uses for the

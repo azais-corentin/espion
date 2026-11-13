@@ -125,7 +125,9 @@ divider from `+3V3` and its filter capacitor were removed. The price is the slow
 tSW 100 µs typical instead of the 5 µs fast switchover with CP2 ≥ VREF (p.7)
 ([Accepted risks](#accepted-risks)).
 
-- **PR1** senses IN1 through the divider R18 (top) / R19 (bottom).
+- **PR1** senses IN1 through the divider R18 (top) / R19 (bottom). User decision 2026-11-13: R18
+  and R19 were changed so that the PoE → USB threshold sits as high as "PoE always wins back"
+  (below) allows.
 - **R75** from ST to PR1 adds the hysteresis: while IN1 is selected, ST is high (`+3V3` through
   R29) and pushes PR1 up; on IN2, ST is low.
 - OV1 and OV2 are tied to GND: over-voltage cut-off is not used ("Connect to GND if not
@@ -160,9 +162,14 @@ Requirements:
 
 - **PoE always wins back:** the USB → PoE maximum (VREF max, resistor tolerances) stays below the
   lowest `+5V_POE`, 5.15 V minus one 5 % regulation term ([Output](#output)).
-- **PoE → USB as high as that allows**, so the mux hands over while `+5V` still feeds the buck.
-  With the LEDs off, `+3V3` may leave its set point during the switchover (U3 in 100 % mode) but
-  must stay above the minimum supply voltage of every `+3V3` load (user decision 2026-11-11):
+- **PoE → USB as high as that allows** (the R18/R19 decision above), so the mux hands over while
+  `+5V` still feeds the buck. The worst-case band reaches above the VBUS minimum: where VBUS is
+  below the threshold, PR1 < VREF selects the higher input (Table 9-3 p.18), so the mux stays on
+  IN1 until `+5V_POE` comes within VCOMP of VBUS (IN2 wins on inputs equal within VCOMP, p.7,
+  §9.3.8 p.17) and hands over there, never below VBUS and so above V_trip,min, which the chain
+  below takes. With the LEDs off, `+3V3` may leave its set point during the switchover (U3
+  in 100 % mode) but must stay above the minimum supply voltage of every `+3V3` load (user
+  decision 2026-11-11):
   - `+5V` at U4 OUT = V_trip,min − I × RON(U4) − I × tSW / C(`+5V`) (switchover dip, SLVSEA3F
     Eq. 3–4 p.15), with I the buck input current ([+5V loads](#5v-loads)), RON ≤ 85 mΩ at 85 °C
     (p.7), tSW 100 µs (typical, the only figure, p.7) and C(`+5V`) the capacitors right on `+5V`
@@ -182,13 +189,13 @@ Requirements:
     no minimum. The camera module has no datasheet: its regulators are unknown, and the OV9281's
     highest rail, AVDD, needs 2.7 V (OV9281 datasheet p.21 note 2) plus that regulator's unknown
     dropout.
-  - The IP101G's 3.135 V is the binding minimum. It holds at both set-point corners with the
-    ceramics nominal; with them derated it does not ([Accepted risks](#accepted-risks)).
+  - The IP101G's 3.135 V is the binding minimum. It holds at both set-point corners, with the
+    ceramics nominal and derated.
 - **With the LEDs running** the same dip with I = the +5V peak takes `+5V` far below what U3
   needs: the board may reset on a PoE pull with USB attached ([Accepted risks](#accepted-risks)).
 - No chatter: after a PoE loss `+5V_POE` bleeds through R18 + R19 into C11, C13 and C15 (time
-  constant (R18 + R19) × (C11 + C13 + C15)) downward from the trip point and never re-crosses the
-  return threshold.
+  constant (R18 + R19) × (C11 + C13 + C15)) downward from the handover point and never re-crosses
+  the return threshold.
 - At power-up PoE alone or PoE + USB select IN1 and USB alone IN2, so there is no glitch.
 
 ### ST → PWR_SRC
@@ -211,14 +218,16 @@ in [firmware rules](firmware-rules.md#rules) (FW-7).
   the minimum ILM above the +5V peak. It does not limit a USB-only load to a port's 500 mA: that
   is left to firmware (see [USB VBUS](#usb-vbus)).
 - **Soft start:** C21 sets the output slew rate SR (Table 9-1, p.13, interpolated in 1/C between
-  its rows). Inrush = SR × C(`+5V`) and ramp time = VOUT / SR, with C(`+5V`) everything the ramp
-  charges: C10, C20, C22, C36, C44 and, through L3 and D3 (nothing isolates them), the LED output
-  bank C43, C45, C46, C47. Requirements: the inrush stays about 0.3 A at nominal values, because a
-  USB port supplies 500 mA and the buck starts during the ramp; at the tolerance limits (C21 low,
-  the bank high) it exceeds that but stays under the port's 0.5 A, accepted (user decision
-  2026-11-11). `+3V3` reaches its set point before `ESP_EN` (R33 × C27,
-  [firmware rules](firmware-rules.md#esp32-p4)) crosses 0.75 × VDD. C21's rating covers the SS
-  pin's 4 V maximum (p.6). A VBUS attach sees only C16 before that.
+  its rows). Inrush I_INRUSH = SR × C(`+5V`) (SR_ON = I_INRUSH / C_L, SLVSEA3F Eq. 10 p.24) and
+  ramp time = VOUT / SR, with C(`+5V`) everything the ramp charges: C10, C20, C22, C36, C44 and,
+  through L3 and D3 (nothing isolates them), the LED output bank C43, C45, C46, C47.
+  Requirements: at nominal values the inrush leaves room under a USB port's 0.5 A for the load the
+  buck draws when it starts during the ramp. At the tolerance limits (C21 low, the bank high) the
+  inrush is higher but itself stays under the port's 0.5 A, accepted (user decision 2026-11-11).
+  The total at attach, inrush plus pre-boot load, is measured against the port's 0.5 A in
+  [first-board check 6](#first-board-checks). `+3V3` reaches its set point before
+  `ESP_EN` (R33 × C27, [firmware rules](firmware-rules.md#esp32-p4)) crosses 0.75 × VDD. C21's
+  rating covers the SS pin's 4 V maximum (p.6). A VBUS attach sees only C16 before that.
 - **Capacitors:** C15 at IN1, C16 at IN2, C20 (ceramic) + C22 (polymer) on OUT. The small OUT
   bypass C23 was removed (user decision 2026-11-11, board simplification).
 
@@ -251,14 +260,16 @@ The boost runs at its switch current limit whenever it recharges `+32V`
 
 U4's periphery follows TI's layout example (SLVSEA3F §12.2 p.33): OUT pins 1 and 8 tied across,
 C20 on the OUT side, C16 at IN2, C15 at IN1, C21 and R22 straight off SS/ILIM, the divider
-row R18, R75, R19 beside PR1, and CP2 tied to the GND pins beside it. TI draws two vias per IN pin and four on OUT and marks
-a via in each of pads 1, 2, 7 and 8 (land pattern p.39). The board has two vias on IN1 and two on
-OUT (a larger OUT via would break the clearance to C15 or U4.9) and one on IN2 (USB current only),
-about one via per ampere; the via counts are enforced by `.omp/kicad.json` `copperArea` entries
-"U4 IN1 vias", "U4 IN2 vias" and "U4 OUT vias". The `PWR_5V` tracks neck down inside U4's
-courtyard to reach its fine-pitch pads (rule `Power neck-down at fine-pitch pads`); the neck's
-resistance and dissipation at the module's 2.4 A follow from R = ρ × length / (width × thickness).
-Probe `+5V` at TP5; `+5V_POE` at C11 or C15, VBUS at C16.
+row R18, R75, R19 beside PR1, and CP2 tied to the GND pins beside it. TI draws two vias per IN pin
+and four on OUT and marks a via in each of pads 1, 2, 7 and 8 (land pattern p.39). The board
+follows it at about one via per ampere of each pin's current (IN2 carries USB current only); the
+OUT vias can't be larger, as a larger via would break the clearance to C15 or U4.9. The via
+counts are enforced by `.omp/kicad.json` `copperArea` entries "U4 IN1 vias", "U4 IN2 vias" and
+"U4 OUT vias". The `PWR_5V` tracks neck down inside U4's courtyard to reach its fine-pitch pads
+(rule `Power neck-down at fine-pitch pads`); the neck's resistance and dissipation at the
+module's 2.4 A follow from R = ρ × length / (width × thickness). Probe `+5V` at TP5, grounded with
+a short lead to R76.2, the nearest top-side GND pad (the board has no GND test point,
+[MCU test points](mcu.md#test-points)); `+5V_POE` at C11 or C15, VBUS at C16.
 
 ### Thermal
 
@@ -404,25 +415,30 @@ below the string's conduction ([LED driver](led.md#led-supply)).
   200 mVpp ripple at 250 kHz (DP1435 p.5) reaches `+5V` damped only by the capacitors on
   `+5V_POE` and `+5V`, and every `+5V` load sees what is left. First-board check 2.
 - **Slow switchover in internal-reference mode** (user decision 2026-11-11, board
-  simplification). tSW is 100 µs typical (SLVSEA3F p.7) instead of 5 µs, and `+5V` dips by
-  I × tSW / C(`+5V`) ([Priority and hysteresis](#priority-and-hysteresis)). With the LEDs off,
-  U3 drops out and `+3V3` sags below its set point: by the chain there, with the ceramics derated
-  for DC bias, `+3V3` can fall below the IP101G's 3.135 V minimum (IP101G DS p.57), so the Ethernet
-  link may drop for the dip. With the LEDs running, `+5V` falls far below what U3 needs and the
-  board may reset. Both on a PoE pull with USB attached only; first-board check 4.
+  simplification). tSW is 100 µs typical, the only figure (SLVSEA3F p.7), instead of 5 µs, and
+  `+5V` dips by I × tSW / C(`+5V`) ([Priority and hysteresis](#priority-and-hysteresis)). With the
+  LEDs off, U3 drops out and `+3V3` can sag below its set point; by the chain there it stays above
+  every load's minimum, the IP101G's included, but that rests on the typical tSW. With the LEDs
+  running, `+5V` falls far below what U3 needs and the board may reset. Both on a PoE pull with
+  USB attached only; first-board check 4.
 - **USB D+ pull-up without VBUS** (user decision 2026-11-11, board simplification): see
   [USB VBUS](#usb-vbus). An unpowered host on the cable is back-driven through its D+ line.
 - **USB current is limited by firmware, not hardware** (user decision 2026-10-31: LEDs off on USB
   by a firmware rule only). The USB-only load, from the buck input, is at the 500 mA port limit; a
   firmware fault that enables the LED supply on USB draws more than a port supplies.
-- **PoE loss with USB attached.** The TPS2121 switches to IN2 at once, so the host port briefly
-  sees up to the current limit while `+5V` recharges (time ≈ C(`+5V`) × ΔV / I_limit, idle and with
-  the LEDs running), and with the LEDs running up to the `+5V` peak until firmware sees `PWR_SRC`
-  low and drops LED_EN and BST_EN. With no switch on the boost input, `+5V` is VBUS after the
-  switchover, so the port also carries the boost for the firmware latency plus the 180 µs t_REF
-  filter after `BST_EN` drops (SLVS789D §8.4.2 p.11); the TPS61170 shuts down once CTRL has been
-  low for t_off, more than 2.5 ms (p.5, §8.3.5 p.10). A host whose port trips fast may cut VBUS
-  and reset the board.
+- **PoE loss with USB attached.** IN1 stays selected while PR1 ≥ VREF, so `+5V` first follows the
+  collapsing `+5V_POE` down to the PoE → USB threshold (or to within VCOMP of VBUS, where that is
+  lower), and only then does the TPS2121 switch to IN2, dipping by I × tSW / C(`+5V`)
+  ([Priority and hysteresis](#priority-and-hysteresis)). The host port then briefly sees up to the
+  current limit while `+5V` recharges (time ≈ C(`+5V`) × ΔV / I_limit, idle and with the LEDs
+  running; with the boost off, when VBUS is above the `+5V_POE` the board ran on before, the LED
+  output bank C43, C45, C46, C47 also charges through L3 and D3, adding
+  C(bank) × (VBUS − that `+5V_POE`) / I_limit), and with the LEDs running up to the `+5V` peak
+  until firmware sees `PWR_SRC` low and drops LED_EN and BST_EN. With no switch on the boost
+  input, `+5V` is VBUS after the switchover, so the port also carries the boost for the firmware
+  latency plus the 180 µs t_REF filter after `BST_EN` drops (SLVS789D §8.4.2 p.11); the TPS61170
+  shuts down once CTRL has been low for t_off, more than 2.5 ms (p.5, §8.3.5 p.10). A host whose
+  port trips fast may cut VBUS and reset the board.
 - **PoE power budget rests on an unpublished efficiency.** DP1435 p.5 item 7 gives 84 % as the
   maximum efficiency only. At the `+5V` peak, which recurs while the boost recharges `+32V`
   ([+5V loads](#5v-loads)), the PD draws at least P_out / 0.84 and P_in / 37 V per pair
@@ -441,19 +457,26 @@ below the string's conduction ([LED driver](led.md#led-supply)).
 
 1. **DP1435 output.** `+5V_POE` (at C11) at no load and at full load, with an 802.3af PSE at 44 V
    and at 57 V: must stay ≤ 5.5 V.
-2. **PoE start-up.** Scope `+5V_POE` and `+5V` at PoE plug-in (cold start): monotonic rise,
-   no hiccup; the module stays up through 0.5 ms / 120 fps LED pulses. Record the module's ripple
-   on `+5V_POE` and on `+5V` (no input filter).
+2. **PoE start-up.** Scope `+5V_POE` and `+5V` (TP5, grounded with a short lead to R76.2) at PoE
+   plug-in (cold start): monotonic rise, no hiccup; the module stays up through 0.5 ms / 120 fps
+   LED pulses. Record the module's ripple on `+5V_POE` and on `+5V` (no input filter).
 3. **Switchover thresholds.** With U2 not fitted, a bench supply on `+5V_POE` (C15) and USB on
    J2: ramp the supply down and up and read `PWR_SRC`. Expected: to USB inside the PoE → USB worst
    case band and back to PoE inside the USB → PoE band, both from the R18/R19/R75 formulas in
    [Priority and hysteresis](#priority-and-hysteresis), worked out from the schematic.
 4. **PoE pull with USB attached.** On a laptop port and on a bench port, unplug PoE (a) with the
-   LEDs off and (b) during 0.5 ms / 120 fps LED pulses. Scope VBUS, `+5V`, `+3V3` and `PWR_SRC`.
-   (a): no reset, the Ethernet link and USB stay up; record the `+5V` dip and the `+3V3` minimum
-   against the chain in [Priority and hysteresis](#priority-and-hysteresis). (b): record whether
-   the board resets (accepted risk) and the firmware latency from the `PWR_SRC` falling edge to
-   LED_EN and BST_EN low.
+   LEDs off and (b) during 0.5 ms / 120 fps LED pulses. Scope VBUS, `+5V` (TP5, grounded with a
+   short lead to R76.2), `+3V3` and `PWR_SRC`. (a): no reset, the Ethernet link and USB stay up;
+   record the `+5V` dip and the `+3V3` minimum against the chain in
+   [Priority and hysteresis](#priority-and-hysteresis). (b): record whether the board resets
+   (accepted risk) and the firmware latency from the `PWR_SRC` falling edge to LED_EN and BST_EN
+   low. Whenever the board does not reset, confirm the Ethernet link returns and MDIO still answers
+   at address 1; if not, a firmware rule follows (stop the EMAC, repeat FW-11's pulse and timing,
+   restart), as the PHY has no recovery path once the MAC is up
+   ([firmware rules](firmware-rules.md#ethernet-and-ptp), FW-11). (c): with PoE and USB both
+   attached and the LEDs at 0.5 ms / 120 fps, `PWR_SRC` stays high (no handover to USB on the
+   module's load-step dip, which SDAPO does not publish); unplugging and replugging PoE with USB
+   attached gives one clean return to PoE.
 5. **PoE input power at peak load.** On a 44 V PSE, with the LEDs at 0.5 ms / 120 fps, the camera
    streaming and Ethernet up: measure the PD input power and the pair current, and scope the
    `+5V` current through a frame (does the boost recharge at its 1.44 A switch limit?). Limits:
@@ -472,7 +495,9 @@ below the string's conduction ([LED driver](led.md#led-supply)).
 7. **`+3V3` load step.** 0.1 → 0.6 A at 5 V input: settles without ringing, overshoot ≤ 5 %. If
    not, reduce C18 or remove C17.
 8. **Temperatures.** At PoE with the LEDs at 0.5 ms / 120 fps (and once during `+32V` start-up),
-   a thermal camera on U4 and its IN1/OUT vias, U3 and U2.
+   a thermal camera on U4 and its IN1/OUT vias, U3 and U2, and C13's case temperature (C13 sits
+   directly on U2's output since the input filter went; its share of the ripple current is
+   unknown).
 9. **B.Cu under U2.** At the `+5V` peak on PoE (LEDs at 0.5 ms / 120 fps, camera streaming,
    Ethernet up), scope XVS and SCCB_SCL/SDA at J4 for ringing or extra edges, and run USB
    enumeration and a bulk transfer; repeat on USB power alone as the reference. VBUS, the USB pair,

@@ -36,8 +36,8 @@
       "assembly": {
         "hand": {
           "U6": "Waveshare ESP32-P4-Core module: hand-solder footprint, no LCSC part (user decision 2026-10-31); iron only, pad by pad (docs/hardware/layout.md, Assembly; docs/hardware/mcu.md, Module)",
-          "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31); lands close to reflowed C3 (`kicad_query distance` gives the gap): conical tip ≤ 1 mm, Kapton over it, inspect it after (docs/hardware/layout.md, Assembly)",
-          "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31); pad 6 close to reflowed C11 (courtyards touching) and pad 5 near reflowed C16 (`kicad_query distance` gives the gaps): conical tip ≤ 1 mm, Kapton over C11 and C16, inspect them after (docs/hardware/layout.md, Assembly)"
+          "J1": "through-hole RJ45 MagJack: hand-soldered (user decision 2026-10-31); lands close to reflowed C3, C2 and R44 (`kicad_query distance` gives the gaps): conical tip ≤ 1 mm, Kapton over C3, C2 and R44, inspect them after (docs/hardware/layout.md, Assembly)",
+          "U2": "through-hole PoE PD module: hand-soldered (user decision 2026-10-31); pad 6 nearest reflowed C11 and pad 5 near reflowed C16 (`kicad_query distance` gives the gaps): conical tip ≤ 1 mm, Kapton over C11 and C16, inspect them after (docs/hardware/layout.md, Assembly)"
         },
         "corrections": {
           "Connector_FFC-FPC_JUSHUO:JUSHUO_AFA07-S15FCA-00_1x15-1MP_P1.0mm_Horizontal": { "offset": [0, -1.99] },
@@ -127,7 +127,9 @@
           {"name": "BOOT stub", "from": "U6.47", "to": ["R39.1"], "maxLength": 7, "why": "docs/hardware/layout.md, MCU and USB: the BOOT strap R39 hangs on the 50 MHz RMII_TXD1 line as an unterminated branch from a tap at the former R36 pad position; its round trip 2 × L × (propagation delay per mm) stays within one tenth of the fastest RMII edge (the 1 ns edge from RMII 1.2 §7.4.3; the factor of one tenth is the project's heuristic for a stub that can be treated as lumped; delay per mm from docs/hardware/ethernet.md, REF_CLK branches), which gives this path's `maxLength`, rounded down. No pad sits at the tap, so the entry measures driver → tap → R39.1, which is longer than the branch itself; the bound therefore holds for the branch"}
         ],
         "viaParity": [
-          {"name": "CSI lanes", "nets": ["/Camera/CSI_D0_P", "/Camera/CSI_D0_N", "/Camera/CSI_D1_P", "/Camera/CSI_D1_N", "/Camera/CSI_CLK_P", "/Camera/CSI_CLK_N"], "why": "docs/hardware/layout.md, Camera and CSI-2: TI SPRAAR7J §3.9 p.12 equal via count on both members of a pair; each lane runs from J4 under its body, does the lane-order crossing on B.Cu (the ESP32-P4 cannot remap lanes or swap P/N: TRM v0.7 Register 42.2 p.2611) and changes layer in via fields, each via with a GND return via beside it"}
+          {"name": "CSI D0", "nets": ["/Camera/CSI_D0_P", "/Camera/CSI_D0_N"], "why": "docs/hardware/layout.md, Camera and CSI-2: TI SPRAAR7J §3.9 p.12 equal via count on both members of a pair; D0 changes layer under J4 and keeps its vias at the former link row, where its F.Cu return over its own B.Cu run mirrors the pair into U6's order (the ESP32-P4 cannot remap lanes or swap P/N: TRM v0.7 Register 42.2 p.2611); each via with a GND return via beside it"},
+          {"name": "CSI CLK", "nets": ["/Camera/CSI_CLK_P", "/Camera/CSI_CLK_N"], "why": "docs/hardware/layout.md, Camera and CSI-2: TI SPRAAR7J §3.9 p.12 equal via count on both members of a pair; CLK changes layer under J4 only and runs on B.Cu from there to U6, each via with a GND return via beside it"},
+          {"name": "CSI D1", "nets": ["/Camera/CSI_D1_P", "/Camera/CSI_D1_N"], "why": "docs/hardware/layout.md, Camera and CSI-2: TI SPRAAR7J §3.9 p.12 equal via count on both members of a pair; D1 changes layer under J4 only and runs on B.Cu from there to U6, each via with a GND return via beside it"}
         ],
         "copperArea": [
           {"name": "U4 IN1 vias", "net": "/Power/+5V_POE", "layers": ["F.Cu"], "minVias": 2, "near": "U4", "within": 0.5, "why": "docs/hardware/layout.md, Power: TPS2121 SLVSEA3F §12.1 vias under the input and output pins, §12.2 layout example p.33 draws two vias per IN pin; land pattern p.39 'VIA TYP' in pads 1, 2, 7, 8; one via per ampere of the input current"},

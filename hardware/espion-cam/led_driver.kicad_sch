@@ -2870,16 +2870,6 @@
 	)
 	(wire
 		(pts
-			(xy 17.78 124.46) (xy 49.53 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "03f34ef9-2312-4c82-8af8-52dea42813d3")
-	)
-	(wire
-		(pts
 			(xy 124.46 68.58) (xy 124.46 69.85)
 		)
 		(stroke
@@ -2900,13 +2890,13 @@
 	)
 	(wire
 		(pts
-			(xy 41.91 143.51) (xy 43.18 143.51)
+			(xy 24.13 124.46) (xy 25.4 124.46)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
-		(uuid "09ddea68-534e-4bd5-9f12-402da8db7015")
+		(uuid "0cbbe615-ea32-4591-8e16-4bb305b4d20f")
 	)
 	(wire
 		(pts
@@ -2997,6 +2987,16 @@
 			(type default)
 		)
 		(uuid "28df8b91-d88a-4f3d-9d0c-2290ab608525")
+	)
+	(wire
+		(pts
+			(xy 33.02 124.46) (xy 49.53 124.46)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2a99d02f-6ea6-4809-8acd-a6c836decf2c")
 	)
 	(wire
 		(pts
@@ -3110,16 +3110,6 @@
 	)
 	(wire
 		(pts
-			(xy 17.78 143.51) (xy 34.29 143.51)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "4859b30c-4546-43b9-b840-537325cc1f17")
-	)
-	(wire
-		(pts
 			(xy 190.5 147.32) (xy 162.56 147.32)
 		)
 		(stroke
@@ -3137,16 +3127,6 @@
 			(type default)
 		)
 		(uuid "4b8ad86f-6acf-47f5-b84c-d6744e89c3e4")
-	)
-	(wire
-		(pts
-			(xy 17.78 133.35) (xy 17.78 143.51)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "4e713582-102c-4c80-aeb0-a557f4c7701f")
 	)
 	(wire
 		(pts
@@ -3530,16 +3510,6 @@
 	)
 	(wire
 		(pts
-			(xy 17.78 125.73) (xy 17.78 124.46)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ae684376-37b8-40a7-84a6-46daeedd35b2")
-	)
-	(wire
-		(pts
 			(xy 228.6 45.72) (xy 228.6 46.99)
 		)
 		(stroke
@@ -3800,16 +3770,6 @@
 	)
 	(wire
 		(pts
-			(xy 34.29 143.51) (xy 41.91 143.51)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ed04faa1-b87a-45f1-8be1-a0133694b2b1")
-	)
-	(wire
-		(pts
 			(xy 46.99 134.62) (xy 46.99 135.89)
 		)
 		(stroke
@@ -4012,14 +3972,14 @@
 	)
 	(hierarchical_label "STROBE"
 		(shape input)
-		(at 43.18 143.51 0)
+		(at 24.13 124.46 180)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify left)
+			(justify right)
 		)
-		(uuid "c0596666-ac71-4b40-a2a9-c48d148601f5")
+		(uuid "c032007b-c384-4b01-a955-31cc8057652c")
 	)
 	(hierarchical_label "LED_K_SENSE"
 		(shape passive)
@@ -4724,7 +4684,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 17.78 129.54 180)
+		(at 29.21 124.46 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -4735,29 +4695,27 @@
 		(fields_autoplaced yes)
 		(uuid "248f374b-6a63-4e18-9d91-ecedf922f491")
 		(property "Reference" "C33"
-			(at 21.59 128.27 0)
+			(at 29.21 117.983 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
 			)
 		)
 		(property "Value" "10nF X7R 50V"
-			(at 21.59 130.81 0)
+			(at 29.21 120.523 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
-			(at 17.78 129.54 0)
+			(at 29.21 124.46 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4768,7 +4726,7 @@
 			)
 		)
 		(property "Datasheet" "https://datasheet.lcsc.com/datasheet/pdf/09fe2daf22580a99fa7fea93ccb20fb7.pdf"
-			(at 17.78 129.54 0)
+			(at 29.21 124.46 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4779,7 +4737,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 17.78 129.54 0)
+			(at 29.21 124.46 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4790,7 +4748,7 @@
 			)
 		)
 		(property "Manufacturer" "FH"
-			(at 17.78 129.54 0)
+			(at 29.21 124.46 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4801,7 +4759,7 @@
 			)
 		)
 		(property "MPN" "0603B103K500NT"
-			(at 17.78 129.54 0)
+			(at 29.21 124.46 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -4812,7 +4770,7 @@
 			)
 		)
 		(property "LCSC" "C57112"
-			(at 17.78 129.54 0)
+			(at 29.21 124.46 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)

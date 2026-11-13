@@ -156,23 +156,44 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
     ([power.md](power.md#accepted-risks), "PoE loss with USB attached").
   - **Power-up** (on PoE only, FW-6): `BST_EN` steady high (FW-8); with `LED_EN` still low, wait
     until the `LED_K_SENSE` reading (channel 7, FW-10; with `LED_EN` low this is the
-    between-pulse reading) has left the zero band and then stopped rising, or until the timeout;
-    then `LED_EN`, the strobe pulses and the headroom loop (FW-22).
-    - **Zero band:** V_ADC < 15 mV, the ADC error (P4 DS Table 5-6 p.90). The reading sits there
-      from the idle level until +32V passes about 12 × VF at µA currents, while the bank is still
-      charging, so a reading in the band never counts as "stopped rising": keep waiting.
-    - **Stopped rising**, counted only once the reading is above the zero band: two readings Δt
-      apart differ by less than twice the ADC error, V_ADC(t) − V_ADC(t − Δt) < 2 × 15 mV, with
-      Δt long enough that a rail still charging at the boost's lowest output current moves the pin
-      by more than that: Δt ≥ 2 × 15 mV × (R70 + R76)/R76 × C_bank,max / Iout_min, Iout_min the
-      lower bound of [led.md](led.md#output-capability) at Vout max and C_bank,max the bank at its
-      tolerance. Start comparing only after the TPS61170's reference ramp, 32 × 213 µs (SLVS789D
-      §8.3.1 p.10).
+    between-pulse reading) has reached the floor and then stopped rising, or until the timeout;
+    then `LED_EN`, the strobe pulses and the headroom loop (FW-22). The same wait holds on a warm
+    start (a reset of the P4 alone) with the bank still charged.
+    - **Floor:** FW-22's between-pulse floor, V(`LED_K`) = 1 V: V_ADC ≥ 1 V × R76/(R70 + R76).
+      Below it a reading never counts as "stopped rising": keep waiting. The zero band is the
+      lower part of that range: V_ADC < 15 mV, the ADC error (P4 DS Table 5-6 p.90). The reading
+      sits there from the idle level until +32V passes about 12 × VF at µA currents, while the
+      bank is still charging. Just above the band the string carries µA, its incremental
+      resistance is far above R70 + R76, and `LED_K` rises at only a fraction of +32V's rate, so
+      a slow reading there doesn't mean the rail has stopped.
+    - **Stopped rising**, counted only at or above the floor: two readings Δt apart differ by
+      less than twice the ADC error, V_ADC(t) − V_ADC(t − Δt) < 2 × 15 mV. Δt must be long enough
+      that a rail still charging moves the pin by more than that at every point from the floor
+      upward. The pin moves at dV(+32V)/dt × k × R76/(R70 + R76), with dV(+32V)/dt = Iout / C_bank
+      and k = (R70 + R76)/(R70 + R76 + r_string) the string's share: r_string = 12 × n_id × V_th
+      / I_string, its incremental resistance at I_string = V(`LED_K`)/(R70 + R76), with n_id the
+      LEDs' ideality factor and V_th = k_B × T / q the thermal voltage at the LED junction
+      temperature T (not FW-22's coarse target V_T). k is lowest at the floor, k_floor = 1 V /
+      (1 V + 12 × n_id × V_th) whatever the string's VF, and rises toward 1 above it; Iout is
+      lowest at the top of the ramp. Both at their low ends:
+      Δt ≥ 2 × 15 mV × (R70 + R76)/R76 × C_bank,max / (Iout_min × k_floor), Iout_min the lower
+      bound of [led.md](led.md#output-capability) at Vout max, C_bank,max the bank at its
+      tolerance and the divider ratio (R70 + R76)/R76 at its tolerance high. k_floor takes the
+      ends that make it smallest: n_id = 2, the top of an assumed 1.5–2 (a diode-law estimate:
+      the Amicc datasheet gives VF only at 1 A, p.3, and no ideality factor), and V_th at
+      T = 85 °C. That T is above the board's 15–30 °C ambient
+      ([README](README.md#espion-cam-board-design)) because a warm start can follow a run that
+      heated the LEDs; 85 °C is the top of Amicc's DC derating curve (ADE-880-017 p.4 Fig. 1),
+      the curve [led.md](led.md#led-current) keeps the LEDs on. First-board check 4 in
+      [led.md](led.md#first-board-checks) measures the slope ratio at the floor, which confirms
+      or replaces this estimate. Start comparing only after the TPS61170's reference ramp,
+      32 × 213 µs (SLVS789D §8.3.1 p.10).
     - **Timeout:** the upper end of the start-up time range in
       [led.md](led.md#recovery-and-start-up).
-    - **Fault:** a reading still in the zero band at the timeout means a dead boost or an open
+    - **Fault:** a reading still below the floor at the timeout means a dead boost or an open
       string; the two can't be told apart (accepted risk, [led.md](led.md#accepted-risks)). Keep
-      `LED_EN` low, `BST_EN` low, and report.
+      `LED_EN` low, `BST_EN` low, and report. It is the floor FW-22 applies between pulses once
+      the wait has passed.
 - **FW-8** `BST_EN` (GPIO53, TPS61170 CTRL) is both the boost's enable and its output set point,
   in the TPS61170's PWM mode: V_FB = duty × 1.229 V (TI TPS61170 SLVS789D §8.4.2 p.11;
   [led.md](led.md#headroom-control)).
@@ -270,14 +291,17 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   decision 2026-11-11): the IP101G leaves reset on its internal pull-up at power-up and runs
   through the P4 boot without a complete reset. Before using the PHY, drive `PHY_RST_N` low for
   ≥ 10 ms with the 25 MHz crystal running, release it (drive it high and keep driving it) and
-  wait ≥ 2.5 ms before installing the EMAC driver or any MDC/MDIO access: the PHY supplies the
-  EMAC's only RMII clock (50M_CLKO, high impedance in reset), and the MAC needs that clock
-  stable during any MAC/PHY access. Do this on every start, also after a reset of the P4 alone,
-  which doesn't reset the PHY. The PHY driver must not reset the PHY again once the MAC is up
-  (in ESP-IDF terms `phy_config.reset_gpio_num = -1`). A later reset pulse is low ≥ 10 ms with
-  the 25 MHz crystal running, then ≥ 2.5 ms before use. No internal pull on GPIO28 (CRS_DV /
-  FX_HEN strap) while RESET_N rises (IP101G datasheet p.16, p.17, p.18, p.54; ESP-IDF ESP32-P4
-  Ethernet guide, read 2026-11-01).
+  wait ≥ 10 ms, or until REF_CLK runs, before installing the EMAC driver or any MDC/MDIO access:
+  the PHY supplies the EMAC's only RMII clock (50M_CLKO, high impedance in reset), its clock
+  output is ready only up to 10 ms after the release (Tclk_MII_rdy max, IP101G Table 15 p.59; the
+  2.5 ms of p.18 is when the chip can operate, not when the clock is ready), and the MAC needs that
+  clock stable during any MAC/PHY access. Do this on every start, also after a reset of the P4
+  alone, which doesn't reset the PHY. The PHY driver must not reset the PHY again once the MAC is
+  up (in ESP-IDF terms `phy_config.reset_gpio_num = -1`). A later reset pulse is low ≥ 10 ms with
+  the 25 MHz crystal running, then ≥ 10 ms before use. No internal pull on GPIO28 (CRS_DV /
+  FX_HEN strap) from before RESET_N rises until ≥ 2.63 ms after it, the strap hold time Tlat_h
+  (IP101G datasheet p.16, p.17, p.18, p.54, Table 15 p.59; ESP-IDF ESP32-P4 Ethernet guide, read
+  2026-11-01).
 - **FW-12** EMAC RMII on IO MUX function 3: CRS_DV GPIO28, RXD0 GPIO29, RXD1 GPIO30, TXD0
   GPIO34, TXD1 GPIO35, TX_EN GPIO49. The RMII clock is an input on GPIO50
   (`EMAC_CLK_EXT_IN`) from the PHY's 50 MHz output; never select GPIO32/GPIO44 as the clock

@@ -70,12 +70,15 @@ a summary of it. `PWR_SRC` comes from the [power mux](power.md#power-mux); low m
 
 **Power-up (on PoE only)**
 1. `BST_EN` steady high.
-2. Wait until the between-pulse `LED_K_SENSE` reading has left the zero band (the ADC error) and
-   then stopped rising, or for the start-up time's upper bound
-   ([Recovery and start-up](#recovery-and-start-up)). There is no +32V sense: the reading follows
-   +32V minus the string's µA forward voltage ([LED_K sense](#led_k-sense)), so it stays at zero
-   until +32V passes about 12 × VF at µA currents. A reading still in the zero band at the
-   timeout is a fault: a dead boost and an open string look the same.
+2. Wait until the between-pulse `LED_K_SENSE` reading has reached FW-22's between-pulse floor
+   (V(`LED_K`) ≥ 1 V) and then stopped rising, or for the start-up time's upper bound
+   ([Recovery and start-up](#recovery-and-start-up)); also on a warm start with the bank still
+   charged. There is no +32V sense: the reading follows +32V minus the string's µA forward voltage
+   ([LED_K sense](#led_k-sense)), so it stays at zero (the zero band, the ADC error) until +32V
+   passes about 12 × VF at µA currents, and just above that it rises only by the string's share k
+   of +32V's rise. Below the floor a reading never counts as stopped rising; FW-7's comparison
+   interval Δt holds from the floor up. A reading still below the floor at the timeout is a
+   fault: a dead boost and an open string look the same.
 3. `LED_EN` pulses.
 
 **Normal power-down**
@@ -260,7 +263,10 @@ rises the duty runs from near 0 up to the operating duty, and Fig. 4 shows a cur
 typical over the middle of that range.
 
 Firmware waits on the between-pulse `LED_K_SENSE` reading, with this range's upper bound as the
-timeout (FW-7).
+timeout (FW-7). The reading rises only by the string's share k of +32V's rise
+([LED_K sense](#led_k-sense)), least at FW-22's between-pulse floor, so FW-7 times its "stopped
+rising" comparison from the lower delivery bound of [Output capability](#output-capability) at
+Vout max and k at that floor.
 
 ### Output capacitors C46, C47
 
@@ -480,6 +486,7 @@ C48 sit next to U6.19.
 | Conversion | V(`LED_K`) = V(pin) × (R70 + R76) / R76 |
 | In a pulse | The loop's band at the pin is the band edges × R76 / (R70 + R76); at duty 1 the pin sees the highest V(`LED_K`), which is Vout max minus the string minimum and the other drops |
 | Between pulses | `LED_K` sits at +32V minus the string's forward voltage at the divider's current, ≈ 12 × VF at µA currents (an inference: the Amicc datasheet gives VF only at 1 A; first-board check 7). The bound is +32V itself: Vout max × R76 / (R70 + R76), with R70 low and R76 high within tolerance, must stay inside ATTEN3's 0–3300 mV (P4 DS Table 5-6 p.90) |
+| Rising rail | While +32V charges, V(`LED_K`) rises by k × ΔV(+32V), k = (R70 + R76)/(R70 + R76 + r_string): r_string = 12 × n_id × V_th / I_string is the string's incremental resistance at I_string = V(`LED_K`)/(R70 + R76), with n_id the LEDs' ideality factor and V_th = k_B × T / q the thermal voltage at the LED junction temperature T (not the coarse target V_T of [Headroom control](#headroom-control)). So k = V(`LED_K`)/(V(`LED_K`) + 12 × n_id × V_th), whatever the string's VF. Near zero the string carries µA and k is far below 1; it rises toward 1 as V(`LED_K`) grows. n_id is assumed 1.5–2 and the µA behaviour follows the diode law: an estimate, since the Amicc datasheet gives VF only at 1 A and no ideality factor. FW-7's power-up wait uses k at FW-22's floor with n_id = 2 and T = 85 °C, the top of the DC derating curve ([LED current](#led-current)), above the board's 15–30 °C ambient because a warm start can follow a run that heated the LEDs; first-board check 4 measures k there |
 | Error | ±15 mV at the ADC × (R70 + R76) / R76, plus the two resistor tolerances as a share of the reading. Espressif specifies the ±15 mV with 100 nF at the pin (P4 DS p.90); with C48 and this source impedance the sampling error is unverified, so first-board check 7 measures it |
 | Source impedance, settling | R70 ∥ R76 with C48: τ = R × C48, with C48 at its tolerance and the X7R temperature coefficient (±15 %, FH MLCC datasheet p.5). From the off level to within 1 mV takes τ × ln(V_off / 1 mV), so a sample ≥ 0.1 ms into the pulse has settled. The droop slews `LED_K` at I_LED max / C_bank; the pin lags that by τ × slew |
 | R70 | Working voltage and power of its 0402 package must exceed Vout max across it and Vout max² / (R70 + R76) (UNI-ROYAL chip-resistor datasheet p.4, p.5) |
@@ -778,8 +785,8 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
   `BST_EN` (U10's internal pull-down) and `LED_EN` (R56), and the string cannot conduct at that
   rail ([LED supply](#led-supply)).
 - **No independent +32V reading** (user decision 2026-11-11, board simplification). A dead boost
-  and an open LED string both show as a between-pulse `LED_K_SENSE` reading at zero; firmware
-  treats both as one fault (FW-7) and cannot tell which.
+  and an open LED string both show as a between-pulse `LED_K_SENSE` reading at zero, below FW-7's
+  floor; firmware treats both as one fault (FW-7) and cannot tell which.
 - **The hardware timeout cuts only within its window.** The ≤ 0.5 ms limit is a firmware rule.
   U9's threshold spread and C33's X7R tolerance set the window, so it can't cut closer. A firmware
   fault could run the LEDs up to the window's upper end per frame, a duty of t_max × fps (user
@@ -816,15 +823,16 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
    - **Other parts:** C46 must stay well under its rated maximum temperature. Y1 must stay 5 °C
      under its 85 °C rating; if it doesn't, lower the LED current (R61) or the duty, or pull the
      east edge of the B.Cu zone "Q1 drain B.Cu" back ([layout](layout.md#thermal)).
-2. **LED current.** Measure the voltage across R69 at TP14 during a pulse: expect I_LED × R69 at
-   nominal rails (+3V3 3.3 V, +5V 5.0 V; the [LED current](#led-current) formula), flat over the pulse. Measure it on
+2. **LED current.** Measure the voltage across R69 at TP14 (short ground lead to C44.2, the
+   nearest GND pad) during a pulse: expect I_LED × R69 at nominal rails (+3V3 3.3 V, +5V 5.0 V;
+   the [LED current](#led-current) formula), flat over the pulse. Measure it on
    the unit with the highest +3V3 together with the thermal test, because a ground offset between
    R69.2 and U11's reference shifts the current by δV / R69. U11 holds V(R69) at the setpoint, so
    the reading gives the current only through R69's resistance at its own temperature (TCR row in
    [LED current](#led-current)): take it in the first seconds of the run, with R69 at the board
    temperature, and log R69's case temperature at the end of the run with the reading there.
-3. **Current-loop response.** Scope `ISNS` (TP14) against `LED_ON` (TP12) at both edges. Expect
-   < 10 % overshoot, no ringing and a µs-scale rise.
+3. **Current-loop response.** Scope `ISNS` (TP14, short ground lead to C44.2) against `LED_ON`
+   (TP12) at both edges. Expect < 10 % overshoot, no ringing and a µs-scale rise.
 4. **Boost stability.** Scope +32V (TP13) and `BST_SW` (at L3.2/D3.2) at start-up and during
    0.5 ms / 120 fps pulses, at duty 1 for the start-up burst only (FW-22) and at every set point
    down to the loop's lowest (on a low-VF unit), including the loop's duty steps. Expect:
@@ -836,11 +844,17 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
    - recovery before the next frame (droop ≤ I_LED × t_pulse / C_bank, back within
      Q / Iout_max at duty 1, [Recovery and start-up](#recovery-and-start-up));
    - a start-up time in the range of [Recovery and start-up](#recovery-and-start-up), with no
-     EasyScale entry or shutdown when the 50 kHz PWM follows the soft start.
-   Log the between-pulse `LED_K_SENSE` reading through the start-up against TP13: it must stop
-   rising when +32V reaches its set point, which FW-7's power-up wait relies on. Scope `+5V` (at
-   C36) during the recovery to see whether the boost runs at its current limit there, as
-   [estimated](#recovery-and-start-up).
+     EasyScale entry or shutdown when the 50 kHz PWM follows the soft start. Scope `BST_EN` for
+     this at U6.71's land on the bottom side, which reaches past the module body (no test pad,
+     user decision 2026-11-13), with a short ground spring to U6.73, the GND land beside it.
+   On a low-VF and a high-VF unit, log the between-pulse `LED_K_SENSE` reading through the
+   start-up against TP13, from cold and once more after a reset of the P4 alone with the bank
+   still charged: the reading must pass FW-22's between-pulse floor while +32V is still rising and
+   stop rising only when +32V reaches its set point, which FW-7's power-up wait relies on. At the
+   floor, work out the slope ratio, the slope of `LED_K_SENSE` × (R70 + R76)/R76 over the slope
+   of TP13: it must be at least FW-7's k_floor; if it is lower, FW-7's Δt grows by the same factor.
+   Scope `+5V` (at C36) during the recovery to see whether the boost runs at its current limit
+   there, as [estimated](#recovery-and-start-up).
 5. **Timeout.** With `LED_EN` high:
    - a 0.5 ms STROBE must give a whole 0.5 ms `LED_ON` pulse;
    - a STROBE held high (a long exposure) must end `LED_ON` within the window of
@@ -853,9 +867,9 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
    `BST_EN` (U10's internal pull-down) and `LED_EN` (R56); R68 also holds Q1's gate low. Then +32V
    must sit at `+5V` minus D3's drop (no switching), `LED_ON` low and the ring dark. On USB power
    alone, firmware must hold `BST_EN` low: check that +32V stays at that idle level. Pulling PoE
-   must drop `LED_EN` and `BST_EN` in that order.
-7. **Headroom loop.** With probes on Q1's drain (R70.1) and on `ISNS` (TP14), on one unit unless
-   a step names two:
+   must drop `LED_EN` (TP11) and `BST_EN` (at U6.71's land, as in check 4) in that order.
+7. **Headroom loop.** With probes on Q1's drain (R70.1) and on `ISNS` (TP14, short ground lead to
+   C44.2), on one unit unless a step names two:
    - `LED_K_SENSE` × (R70 + R76) / R76 must match the drain at the end of a pulse within the
      [LED_K sense](#led_k-sense) reading error;
    - step the duty down until the current at the end of the pulse starts to sag, and record

@@ -26,15 +26,13 @@ it is not a source value.
 | Outline | 64 × 64 mm, (100, 100)–(164, 164), corners r 1 mm | Smallest outline that fits the floorplan the user approved (user decisions 2026-10-31: 64 × 64 mm, J1 on the right, DP1435 on the left, J4 at an edge) |
 | FFC notch | Top edge, 18 mm wide, 3 mm deep, centred on the lens axis, inner corners rounded | The camera FFC wraps round the top edge into J4 (user decision 2026-10-31: "J4 at an edge", no slot); a 16 mm cable has 1 mm each side |
 | Lens cutout | Ø16 mm round cutout; lens axis at (129.7, 130.3) | The camera module sits behind the board (bottom side) with its lens on this axis; see [Camera and CSI-2](#camera-and-csi-2) |
-| Mounting holes H1–H4 | M3, Ø3.2 mm plated, Ø6.4 mm GND pad, 3.5 mm in from both edges at the four corners; no via ring round the hole (the plated barrel joins the pads and planes) | User decision 2026-10-31: "4 × M3 corners"; via ring dropped for JLCDFM's via-to-PTH spacing (user decision 2026-11-10) |
+| Mounting holes H1–H4 | M3, Ø3.2 mm plated, GND pad exposed on both sides, 3.5 mm in from both edges at the four corners; no via ring round the hole (the plated barrel joins the pads and planes) | User decision 2026-10-31: "4 × M3 corners"; via ring dropped for JLCDFM's via-to-PTH spacing (user decision 2026-11-10) |
 | Tooling holes TOOL1–TOOL3 | Ø1.152 mm NPTH, 0.148 mm mask expansion, in three corners | Required for Economic PCBA; see [Assembly](#assembly) |
 | Other NPTH | J1 and J2 locating pegs | Part datasheets |
 
 M3 washer clearance: no copper other than GND within the ISO 7089 M3 washer radius (Ø7.0 mm, r 3.5 mm) plus 0.3 mm, so
 r 3.8 mm, of a mounting hole's centre. Parts keep their courtyards outside it too. H1 is the tight one: the +3V3 loop
-at J2's west shield pads runs closest to it, which is why that loop is routed where it is ([Power](#power)). H2–H4 were
-first held to a larger r 4.6 mm radius clear of non-GND copper (an earlier design margin beyond the washer); H3 does not
-keep that larger radius, and only r 3.8 mm is required.
+at J2's west shield pads runs closest to it, which is why that loop is routed where it is ([Power](#power)).
 
 The board carries "espion-cam" with its revision and `${ISSUE_DATE}` on the bottom silkscreen. The date text follows the
 title block's date, which `kicad_edit` `set_board_setup {date}` sets to the release date before the fab output is made.
@@ -93,15 +91,14 @@ with `kicad_query rules` and `kicad_query stats`.
 
 Vias next to pads: the quote page turns "tented" into "plugged" for free, but JLCPCB plugs a via with ink only if it
 is ≥ 0.35 mm from any pad opening (https://jlcpcb.com/help/article/pcb-via-covering). Signal, power and decoupling vias
-are never placed in pads. Where a via must sit closer than that, its drilled hole stays outside the pad opening by at
-least the mask bridge (`solder_mask_min_width`); the vias that do this (C15.2, C37.2, C40.2/U11.2, U6.55 beside C47.2 and
-C6.2) are GND vias on the same net as the pad.
+are never placed in pads. Where a via must sit closer than that and touches a pad of its own net, its drilled hole stays
+outside that pad's mask opening by at least the minimum mask web (`solder_mask_min_width`).
 
 A via beside a pad of its own net, but not touching it, keeps a copper gap of at least 0.1 mm to that pad (user
 decision 2026-11-10). JLCDFM flags a narrower gap under pad spacing and via to pad: it may not etch, and the sliver
 left between the pad opening and the tented via is too thin. Three vias don't keep it, because no site nearby holds
 the clearances: C18.2's, held in by a USB_C_D_P B.Cu track and the copper round it; the GND via shared by U9.1 and
-U6.27 (B.Cu), which the MIPI_CSI spacing to U6.28 and R56.1 (LED_EN) hold in place; and the C40.2/U11.2 via above.
+U6.27 (B.Cu), which the MIPI_CSI spacing to U6.28 and R56.1 (LED_EN) hold in place; and the via between C40.2 and U11.2.
 
 Thermal vias are the exception: they sit inside the pads they cool, open (unfilled, unplugged) on the pad side and tented
 on the far side. They are in U1's exposed pad (GND) and U10's exposed pad (GND; TPS61170 DRV0006A land pattern p.35 draws
@@ -243,7 +240,9 @@ routed when R8 was removed, user decision 2026-11-11), RMII_REF_CLK on B.Cu
 (+3V3), RMII_TX_EN (U6.67 drops south on B.Cu to its via, whose place U6's pad field forces, and comes back north-east
 on F.Cu; kept when R37 was removed, user decision 2026-11-11), RMII_TXD1 (its via sits east of where the line turns
 north and TXD0's via blocks the straight way up, so the F.Cu leg steps back west to the R39 tap before turning north;
-kept when R36 was removed, user decision 2026-11-11), and the length-matched diff pairs.
+kept when R36 was removed, user decision 2026-11-11), CSI_D0 at the former link row (it turns north to its vias and
+comes back south on F.Cu over its own B.Cu run; that reversal puts D0_N west, as U6's lane order needs,
+[Lane order](#lane-order)), and the length-matched diff pairs.
 
 The MDI pin escapes at U1 are 45°-only ([Ethernet and PoE isolation](#ethernet-and-poe-isolation)); the CSI bus crosses
 its narrowest plane neck at 45° rather than the ideal 58° ([Camera and CSI-2](#camera-and-csi-2)).
@@ -322,8 +321,8 @@ rises use the fit in [Net classes](#net-classes); the currents are in [power](po
 | +5V_POE B.Cu leg, from the U2.6 feed to U4's IN1 vias (and west of it the C13 spur to its vias) | Narrower than the class | The class width does not pass the VBUS IN2 via at U4 ([Accepted deviations](#accepted-deviations)) |
 | +5V into U3: the B.Cu trunk ends at a via; the F.Cu pour "C10/U3 +5V" joins it, the via of the U11/R63 branch, C10.1 and U3.4 | Pour | Buck input peak |
 | +5V B.Cu branch to R63/C44/U11 | Narrow | Only U11's supply and the R63 divider |
-| +5V common node where the LED-supply switch was: the trunk vias and TP5.1 in the F.Cu pour "+5V pour 100", joined through a class-width track across the switch's site to the boost-input pour "U10/C36/L3 +5V" (user decision 2026-11-11); the B.Cu pour "+5V pour 105" brings the common trunk to the via pair | Pours | Boost and buck together, the highest +5V current |
-| From "+5V pour 100" east to the buck trunk vias (pours "+5V pour 101"/"+5V pour 104" round them) and the B.Cu trunk toward U3.4 | Class width; narrower between the east via pair and leaving "+5V pour 100" | Buck branch peak only |
+| +5V common node where the LED-supply switch was: the trunk vias and TP5.1 in the F.Cu pour "+5V pour 100", joined through a class-width track across the switch's site to the boost-input pour "U10/C36/L3 +5V" (user decision 2026-11-11); the B.Cu pour "+5V pour 105" brings the common trunk to the via pair | Pours; the short B.Cu link from the common trunk to the via pair inside "+5V pour 105" is narrower than the class | Boost and buck together, the highest +5V current; the pour round the link carries it |
+| From "+5V pour 100" east to the buck trunk vias (pours "+5V pour 101"/"+5V pour 104" round them) and the B.Cu trunk toward U3.4 | Class width; narrower between the east via pair | Buck branch peak only |
 | +3V3 trunks | PWR_3V3 class | |
 | Necks inside the U4 and U10 courtyards | The minimum of rule "Power neck-down at fine-pitch pads" | Short; their resistance and heat are negligible |
 | Branches carrying no load current (enable pins, dividers, FB sense, op-amp supply, pull-up feeds, short stubs into pins) | Narrow | µA–mA |
@@ -474,8 +473,7 @@ Rule areas in the board file (`kicad_query` lists them with their regions):
 | FFC notch | F.Cu, B.Cu | Tracks, vias, pours | Cable wrap at the edge |
 | FFC notch inner | In1, In2 | Tracks, vias | Same; the In1/In2 GND pours run to the board-edge clearance (user decision 2026-11-01: "Pull planes to 0.3 mm") |
 | Lens cutout | All copper | Tracks, vias, pads, pours, footprints | The Ø16 cutout plus margin; the planes end at the board-edge clearance from the cutout |
-| CSI link vias south | F.Cu | Footprints | Keeps the CSI via field south of the former link row free (name from the links removed by user decision 2026-11-11) |
-| CSI link vias north | F.Cu | Footprints | Keeps the J4-side via-2 corner free |
+| CSI D0 vias south | F.Cu | Footprints | Keeps D0's via pair south of the former link row and their GND return vias free of top-side parts; D0's north via pair lies inside J4's courtyard (the CLK and D1 row vias and their rule area went with the re-route, user decision 2026-11-13) |
 
 ### Lens view cone
 
@@ -501,29 +499,32 @@ camera's lane order at J4 differs from U6's:
 
 Each lane is one pair, CSI_*, from J4 to U6, with no series-resistor positions (user decision 2026-11-11, board
 simplification; Espressif's HDG §1.3.15 recommends reserving them, [camera](camera.md#no-series-resistor-positions)).
-The lanes pass in U6 order, west → east D0_N, D0_P, CLK_P, CLK_N, D1_N, D1_P, through a short straight F.Cu run where
-the links stood (the former link row). The reordering is done on B.Cu between J4 and that row, without crossings:
+The lanes pass in U6 order, west → east D0_N, D0_P, CLK_P, CLK_N, D1_N, D1_P, through the former link row (where the
+links stood). CLK and D1 run through it straight and coupled on B.Cu; D0 changes to F.Cu there and back (user decision
+2026-11-13). The reordering is done between J4 and U6, without crossings:
 
-- D1 runs north of J4's pads, east under J4 and back south into the row; the U-turn mirrors the pair, so P (west at J4)
-  arrives east, as U6's order needs.
+- D1 runs north of J4's pads, east under J4 and back south through the row; the U-turn mirrors the pair, so P (west at
+  J4) arrives east, as U6's order needs.
 - CLK runs on F.Cu north under J4 to its vias; on B.Cu N wraps west of the P via to swap sides, then the pair runs east
-  and south into the row.
-- D0 goes south of J4's pads as a B.Cu serpentine (west and back); the U-turn mirrors the pair, so D0_N (east at J4)
-  arrives west, as U6's order needs.
+  and south through the row.
+- D0 goes south of J4's pads as a B.Cu serpentine (west and back) and reaches the row heading east. There it turns
+  north to its vias and comes back south on F.Cu over its own B.Cu run, then down to B.Cu again; that reversal puts
+  D0_N (east at J4) west, as U6's order needs. A B.Cu turn south instead would leave D0_N east.
 
 ### Via fields and return vias
 
-Via counts are equal within each pair (`viaParity` entry "CSI lanes", TI SPRAAR7J §3.9 p.12):
+Via counts are equal within each pair (`viaParity` entries "CSI D0", "CSI CLK" and "CSI D1", one per pair, TI SPRAAR7J
+§3.9 p.12). They differ between lanes: D0 keeps its vias at the former link row for the reversal above.
 
 | Stretch | Vias per leg | Where |
 |---|---|---|
-| J4 → the former link row | The same on every leg | One under J4's body north of its pad, on the pad axis; one north of the row. The lane-order crossing happens on this stretch |
-| The former link row → U6 | The same on every leg | One south of the row (D0_N's via is fed west from the row, because the PoE lane leaves no legal spot for its return via on the row's own axis) |
+| J4 → the former link row | The same on every leg | One under J4's body north of its pad: on the pad axis for D0 and D1; CLK's at the end of its F.Cu run under J4 ([Lane order](#lane-order)). The lane-order crossing happens on this stretch |
+| The former link row (D0 only) | The same on both D0 legs | One north of the row, where D0 rises to F.Cu, and one south of it, back to B.Cu (D0_N's via is fed west from the row, because the PoE lane leaves no legal spot for its return via on the row's own axis). CLK and D1 pass the row on B.Cu without vias |
 
 Every signal via has a GND through via within 1.0 mm centre to centre (`via_return` limit; the D0/D1 via-1s sit on J4's
 pad axes; TI SPRAAR7J §3.9 p.12: a return via at each transition, p.8: stitching vias "within 200 mils" of the signal
-vias). Neighbouring legs share one where the in-row spots are taken. The GND vias under J4 have F.Cu stubs to J4's GND
-pads 10/7/4/1.
+vias). D0's two north vias share one. The GND vias that served the CLK and D1 row vias stay as stitching beside the B.Cu
+pairs. The GND vias under J4 have F.Cu stubs to J4's GND pads 10/7/4/1.
 
 ### CSI bus and the plane neck
 
@@ -544,9 +545,10 @@ SPRAAR7J p.9's 90 mil from that plane edge; the D1 pair is the one materially sh
 its run under J4), the CLK pair is close to the limit. Meeting it needs a new crossing plan under J4. Accepted with the
 user decision above.
 
-The J1 antipads in In2 are voids, not plane edges, and SPRAAR7J p.9 asks for ≥ 1.5 W from voids. CSI_D1_P's via antipad
-joins J1.3's ETH_CT void on In1 and In2 (the web between them is under the pour's minimum width, so it is not filled): the
-leg leaves its via inside that void. Further on it passes J1.5's, J1.7's and J1.9's antipads at increasing distance.
+The J1 antipads in In2 are voids, not plane edges, and SPRAAR7J p.9 asks for ≥ 1.5 W from voids. D1 passes J1's
+antipads on B.Cu over solid In2, at least 1.5 W from each void (SPRAAR7J p.9); the row via whose antipad joined J1.3's
+ETH_CT void went with the re-route (user decision 2026-11-13). Further on it passes J1.5's, J1.7's and J1.9's antipads
+at increasing distance.
 
 The planes stay solid under J4's MIPI pads except where the MIPI via antipads reach under them, against TI
 SPRAAR7J §3.10 p.13 ("voiding the SMD mounting pads of the reference plane by 100%"):
@@ -554,9 +556,10 @@ SPRAAR7J §3.10 p.13 ("voiding the SMD mounting pads of the reference plane by 1
 - J4's MIPI pads 2, 3, 5, 6, 8, 9: the via-1 antipads take a sliver off pads 2, 3, 5 and 6.
 - Adjacent antipads join into one slot void along each via row.
 
-The link pads went with the links (user decision 2026-11-11). The In1/In2 voids there are the antipads of the CSI vias
-north and south of the former link row; they stay and serve those vias, and the straight F.Cu runs between them lie over
-solid In1/In2.
+The link pads went with the links (user decision 2026-11-11), and the CLK and D1 row vias with the re-route (user
+decision 2026-11-13), so CLK and D1 cross the former link row on B.Cu over solid In2. The In1/In2 voids left there are
+the antipads of D0's vias north and south of the row; D0's F.Cu legs between them run over In1, coupled at the class gap
+where the spacing to the partner's via allows.
 
 The excess capacitance of a voided pad is estimated with the parallel-plate approximation C = ε₀ · Dk · backed area /
 dielectric height (Dk and height of the 7628 prepreg in the stack-up), as the part of the pad that is still backed. The
@@ -570,6 +573,11 @@ of straight track between same-sense bends, no copper overlap), placed next to t
 path equals the net length. Lengths count via heights; pad to pad equals net length on every MIPI net. Rule "MIPI_CSI
 intra-pair skew" holds each pair; read the lengths with `kicad_query lengths`.
 
+D0 keeps its via transitions at the former link row (its reversal there), which CLK and D1 no longer have, so its B.Cu
+serpentine south of J4 is drawn shorter to bring its pair mean, via heights counted, to the other lanes'. D0_N's skew
+bump sits on the serpentine's inner, shorter leg; it is smaller than the U-turn alone needs, because D0_N's F.Cu leg at
+the row is the longer one.
+
 CSI_CLK_P takes up its length difference on F.Cu between J4 and its via by a detour north of CSI_CLK_N, so the pair runs
 uncoupled there instead of coupled with bumps (user decision 2026-11-04: "Accept + record"; re-coupling needs trapezoid
 bumps drawn in pcbnew; [Accepted deviations](#other-accepted-deviations)).
@@ -579,8 +587,9 @@ limit (30 mil end to end).
 
 ### Other parts near the former link row
 
-C3 (ETH_CT) ties its GND end to a GND via by a short F.Cu track; ETH_CT runs on F.Cu from C3.1 to J1.3. J4 is marked "1"
-and "CONTACTS DOWN" on the top silk.
+C3 (ETH_CT) ties its GND end to a GND via by a short F.Cu track; ETH_CT runs on F.Cu from C3.1 to J1.3. The other GND
+vias at the row are stitching beside the CLK and D1 pairs ([Via fields and return vias](#via-fields-and-return-vias)).
+J4 is marked "1" and "CONTACTS DOWN" on the top silk.
 
 First-board check: full-rate CSI frame-error test ([Impedance](#impedance)); FFC fit, bend and insertion depth
 ([camera](camera.md#ffc-orientation)).
@@ -882,12 +891,12 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
 - Order: JLCPCB reflows the top side; then the hand parts are soldered:
   - U6: iron only, pad by pad, no hot air (user decision 2026-11-01), with the hand-solder footprint variant that has no
     paste apertures ([mcu](mcu.md#module)); top-side parts above its pads must not reflow again.
-  - J1: through-hole from the bottom, soldered from the top. Its lands are close to a reflowed SMD pad (C3;
-    `kicad_query distance`); JLCPCB gives no through-hole-to-SMD figure. Use a conical tip ≤ 1 mm and Kapton over C3,
-    then inspect it for bridges and a shifted part. If that fails, open the gap to ≥ 1.0 mm in the next
-    revision.
+  - J1: through-hole from the bottom, soldered from the top. Its lands are close to reflowed SMD pads (C3 nearest, then
+    C2 and R44; `kicad_query distance`); JLCPCB gives no through-hole-to-SMD figure. Use a conical tip ≤ 1 mm and
+    Kapton over C3, C2 and R44, then inspect them for bridges and shifted parts. If that fails, open the gap to
+    ≥ 1.0 mm in the next revision.
   - U2: through-hole from the bottom, soldered from the top. Its pads 5 and 6 are close to reflowed SMD pads (C11
-    nearest, courtyards touching; then C16.2; `kicad_query distance`). Pads 1–4 have no SMD part nearby since the
+    nearest, then C16.2; `kicad_query distance`). Pads 1–4 have no SMD part nearby since the
     filter's aluminium can beside pad 4 was removed (user decision 2026-11-11). Use a conical tip ≤ 1 mm and Kapton over
     C11 and C16, then inspect both for bridges and shifted parts.
 - Tooling holes TOOL1–TOOL3: 1.152 mm round NPTH with 0.148 mm mask expansion, far apart in three corners, each with a
@@ -910,8 +919,8 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
   "POE 57V". Each keeps ≥ 0.15 mm (JLCPCB pad to silkscreen) from pads and mask openings ("PRST" from J1.14 and J1's NPTH
   opening is the tight one).
 
-First-board checks: J1 iron trial and inspection of C3; U2 iron soldering and inspection of C11 and C16; U6 iron
-soldering; visual/AOI of the joints of R5, C8 (beside C46); USB-C cables in use (charger,
+First-board checks: J1 iron trial and inspection of C3, C2 and R44; U2 iron soldering and inspection of C11 and C16; U6
+iron soldering; visual/AOI of the joints of R5, C8 (beside C46); USB-C cables in use (charger,
 flashing cable) latch and enumerate ([mcu](mcu.md#first-board-checks)); voids under U1's and U10's exposed pads, where
 the thermal vias are open ([Fabrication rules](#fabrication-rules)): X-ray if available, else check the
 backside fillets in the vias and U1/U10/Q1 temperatures in the thermal runs. U5, U7 and Q1 were checked in JLCPCB's
@@ -941,7 +950,7 @@ Tracks narrower than their net class, by reason:
 | +3V3 | U12.7's feed, the link under Y1, U5.5 → C25.1 round U5.4 | µA–mA (IMU, R14 pull-up, U5's clamp supply) |
 | +3V3 | R73.1 to its via | Pull-up |
 | +3V3 | U1's +3V3 pin stubs | Pin pitch |
-| +5V | Exit east from "+5V pour 100"; between the buck trunk vias | Buck branch peak only; the common node is poured ([Power](#power)) |
+| +5V | B.Cu link from the common trunk to the via pair inside "+5V pour 105"; between the buck trunk vias | The link lies in the poured common node; between the vias, buck branch peak only ([Power](#power)) |
 | +5V | Via of the U11/R63 branch → R63/C44/U11 | U11 supply and the R63 divider, < 1 mA |
 | +5V | U3 EN feed from the buck trunk via to U3.1; U11/R63 supply stub | Enable pin and op-amp supply, mA |
 | +5V_POE | B.Cu trunk from C13's vias and the U2.6 feed to U4's IN1 vias | The class width does not pass the VBUS IN2 via; sized by the fit in [Net classes](#net-classes) at the board-peak current |
@@ -959,7 +968,7 @@ Tracks narrower than their net class, by reason:
 | ISNS | The TP14 branch and the tap to NT1 | No load current; Q1.2 → R69.1 is the pour "ISNS pour 122" |
 | USB_C_D_P/N, narrower than the USB class | Connector side J2 → U5 → R31/R32 | Full speed is electrically short; impedance not controlled ([MCU and USB](#mcu-and-usb)) |
 | USB_D pair, coupled stretch | Into R31/R32 | Resistor pad pitch |
-| CSI_D1 pair, CSI_CLK pair | CSI_D1's bump flat and via approach; CSI_CLK_P's F.Cu tail into its via | Skew-compensation and via-entry geometry, not coupled runs |
+| CSI_D1 pair, CSI_CLK pair | CSI_D1's bump flat; CSI_CLK_P's F.Cu tail into its via | Skew-compensation and via-entry geometry, not coupled runs |
 | ETH_TD pair, ETH_RD pair | U1's MDI pin escapes | 0.4 mm pin pitch |
 | RMII_REF_CLK, RMII_REF_CLK_SRC | U1.10's pin stub and where the Default width does not fit | Pin pitch |
 | IMU_INT1 | From U12.5 to the via under U12 | Between 0.5 mm-pitch LGA pads |
@@ -1018,14 +1027,14 @@ moved; placement is unchanged.
 | C15–U4 and R74–U12 closer than JLCPCB's 1.0 mm QFN spacing | Design review | [Assembly](#assembly) |
 | Small parts beside big ones: R5/C8 at C46, U12 at L2 | Board review 2026-11-04: first-board inspection | [Assembly](#assembly) |
 | J1 lands close to reflowed SMD pads | First-board soldering trial | [Assembly](#assembly) |
-| U2.5/U2.6 close to reflowed C11/C16 pads (C11's courtyard touching) | First-board soldering trial | [Assembly](#assembly) |
+| U2.5/U2.6 close to reflowed C11/C16 pads (C11 nearest) | First-board soldering trial | [Assembly](#assembly) |
 | J2 overhangs the top edge, nearer the routed edge than JLCPCB's component-to-edge limit; order note | User decision 2026-11-04 | [MCU and USB](#usb), [Assembly](#assembly) |
 | Buttons on the bottom edge | User decision 2026-11-01 | [MCU and USB](#buttons-and-boot) |
 | B.Cu under U2's flyback magnetics: VBUS, USB_C_D_P/N, CAM_EN, SCCB_SDA/SCL, STROBE, STATUS_LED and a short XVS hop; XVS's long west run kept west of it | User decision 2026-11-04: "Partial + document"; first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
 | B.Cu under U2's flyback magnetics: the +3V3 west-edge loop down the west column (BOM change 2026-11-09; kept as routed when the can that forced it was removed, user decision 2026-11-11) | User decision 2026-11-09: "Accept" (no F.Cu way past the can then, no B.Cu lane west of XVS; decoupled DC rail); first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
 | CSI_CLK_P/N split on F.Cu between J4 and their vias: P detours north of N to take up the length, uncoupled for a stretch | User decision 2026-11-04: "Accept + record" (re-coupling needs trapezoid bumps drawn in pcbnew) | [Lengths and skew](#lengths-and-skew) |
 | C4 (0805 MLCC) pads close to the east edge; order without mouse bites beside it | User decision 2026-11-04: "Note only" | [Assembly](#assembly) |
-| Vias closer than 0.1 mm to a pad of their own net: C18.2's, the U9.1/U6.27 GND via, C40.2/U11.2's | User decision 2026-11-10: no site that holds the clearances | [Fabrication rules](#fabrication-rules) |
+| Vias beside (not touching) a pad of their own net with a copper gap under the Fabrication rules' minimum: C18.2's, the U9.1/U6.27 GND via, C40.2/U11.2's | User decision 2026-11-10: no site that holds the clearances | [Fabrication rules](#fabrication-rules) |
 
 ### JLCDFM
 
