@@ -433,7 +433,7 @@ The sense is Kelvin-connected:
 - **High side:** net tie NT1 sits next to R69.1. `ISNS_K` leaves through it to R64. The pulse
   reaches R69.1 from Q1.2 through the F.Cu ISNS pour; its lobe round the tap south of
   R69.1 carries no load current, so the pulse path is not in the measurement.
-- **Low side:** R69.2 returns the pulse to GND through the F.Cu GND pour with several vias, plus a
+- **Low side:** R69.2 returns the pulse to GND through the F.Cu GND pour with its GND vias, plus a
   short link to one more. The series resistance (via and copper, ρCu 1.72e-8 Ω·m, 35 µm copper)
   is a small fraction of R69, and it lowers the LED current by the same fraction, on the safe side.
 

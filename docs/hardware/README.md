@@ -161,6 +161,7 @@ Ethernet:
 IMU and board:
 - C50's GND via, R74 and IMU_SDA near U12 and L2 (distances and courtyard margins: `kicad_query distance`) — [imu](imu.md#accepted-risks).
 - Stock footprint silk kept closer to pads than rule 'Board silk to pads' allows (JLCPCB's pad-to-silkscreen limit); JLCPCB clips it (user decision 2026-11-02, "Keep stock silk, JLC clips it") — [layout](layout.md#accepted-deviations).
+- C47's can close to the bottom edge (nearer than JLCDFM's component-to-edge threshold, beyond JLCPCB's FAQ limit): ordered without mouse bites there (user decision 2026-11-13) — [layout](layout.md#assembly).
 
 ## First-board checks
 

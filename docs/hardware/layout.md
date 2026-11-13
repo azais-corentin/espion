@@ -96,9 +96,21 @@ outside that pad's mask opening by at least the minimum mask web (`solder_mask_m
 
 A via beside a pad of its own net, but not touching it, keeps a copper gap of at least 0.1 mm to that pad (user
 decision 2026-11-10). JLCDFM flags a narrower gap under pad spacing and via to pad: it may not etch, and the sliver
-left between the pad opening and the tented via is too thin. Three vias don't keep it, because no site nearby holds
-the clearances: C18.2's, held in by a USB_C_D_P B.Cu track and the copper round it; the GND via shared by U9.1 and
-U6.27 (B.Cu), which the MIPI_CSI spacing to U6.28 and R56.1 (LED_EN) hold in place; and the via between C40.2 and U11.2.
+left between the pad opening and the tented via is too thin. One via doesn't keep it, because no site nearby holds the
+clearances: the GND via shared by U9.1 and U6.27, beside U9.1 on F.Cu (on B.Cu copper joins it to U6.27), which the
+MIPI_CSI spacing to U6.28 and R56.1 (LED_EN) hold in place. C18.2's via and the via between C40.2 and U11.2 sit as
+close, but copper joins each of them to those pads, so no gap is left there.
+
+The same holds for vias and pour fills against any copper of their own net on an outer layer (another via, a pad, a
+track, another pour): they join, or they keep at least that gap. JLCDFM flags a narrower same-net gap under pad
+spacing (via to via, pad to pour) and, inside a pad opening, under solder mask opening exposing trace, for the same
+etching and mask-sliver reason; KiCad's DRC does not check gaps within one net. Its run of 2026-11-13 found four with
+no reason to stay: two GND vias beside each other near C44 (one removed: the F.Cu pour round them keeps its other GND
+vias), C41.2's GND via beside the "C36/C43/U10 GND" pour (joined to it by a short track; C41 is U10's COMP capacitor,
+so its ground now also meets U10's exposed-pad pour on the top layer, [Boost stage](#boost-stage)), C4.2 beside the
+pour round C6.2's GND via (the pour now reaches into C4.2), and C16.2's GND track, which ran along the pad's edge a
+hair from its mask opening round to an entry from the far side (its via now sits on the pad's axis, joined by one
+straight stub).
 
 Thermal vias are the exception: they sit inside the pads they cool, open (unfilled, unplugged) on the pad side and tented
 on the far side. They are in U1's exposed pad (GND) and U10's exposed pad (GND; TPS61170 DRV0006A land pattern p.35 draws
@@ -233,8 +245,7 @@ Joints and stubs:
 Hooks and detours (user instruction 2026-11-02, with example images of CC2 looping round J2's shield pad and XVS_CAM
 hooking into TP8): a track runs from its pad or via toward where it goes, never leaving the other way and looping back,
 and a via that only serves one stub sits on its pad's axis (or radial ray) so the stub is one straight segment. The
-loops that stay are forced, each with its reason: U5.5 → C25.1 (round U5.4), C16.2's GND via (+5V, VBUS and +5V_POE
-round it), the +5V EN feed into U3.1 (round C18.1),
+loops that stay are forced, each with its reason: U5.5 → C25.1 (round U5.4), the +5V EN feed into U3.1 (round C18.1),
 +32V from C46.1 (MDC), LED_K_SENSE (round C48.2), PHY_RST_N (round R8.2's former pad: kept as
 routed when R8 was removed, user decision 2026-11-11), RMII_REF_CLK on B.Cu
 (+3V3), RMII_TX_EN (U6.67 drops south on B.Cu to its via, whose place U6's pad field forces, and comes back north-east
@@ -878,9 +889,13 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
   placement, standard stack-up, parts ≥ 0402, IC pitch ≥ 0.4 mm, BGA ≥ 0.5 mm, fixed 255 ± 5 °C reflow peak, no
   castellated holes, edge plating or gold fingers, panels with mouse bites only (no V-cut), edge rails and fiducials not
   needed. Every machine-placed part is on the top side.
-- Order note: no mouse bites (no break-off tab) on the east edge beside C4 and the stretch next to U1. C4 (0805 MLCC) has
-  its pads close to that edge; a tab there would flex the board at the capacitor when it is snapped off (MLCC flex
-  cracking). C4 cannot move in: C6 abuts it on the west and U1 lies south (user decision 2026-11-04: "Note only").
+- Order note: no mouse bites (no break-off tab) on the east edge beside C4 and the stretch next to U1, nor on the bottom
+  edge beside C47. C4 (0805 MLCC) has its pads close to the east edge; a tab there would flex the board at the
+  capacitor when it is snapped off (MLCC flex cracking). C4 cannot move in: C6 abuts it on the west and U1 lies south
+  (user decision 2026-11-04: "Note only"). C47's can is nearer the bottom edge than JLCDFM's component-to-edge
+  threshold, though beyond JLCPCB's "more than 0.3mm" (PCBA FAQ part 2); moving it north would mean moving U6.55's GND
+  via and the REF_CLK track under the can, so it stays and its stretch of the edge gets the same note (user decision
+  2026-11-13).
 - References: fab layers only. No reference designator is on the silkscreen (user instruction 2026-11-04); the
   assembly drawings from `kicad_export` `drawings` (top and mirrored bottom, SVG and PDF, the hand parts highlighted)
   carry them and ship with every fab package, for JLCPCB's review and for the hand assembly and first-board checks. The
@@ -906,6 +921,9 @@ else lower the LED current or duty, or pull the B.Cu zone's east edge back from 
 - J2 overhangs the top edge ([USB](#usb)), nearer the routed edge than JLCPCB's ≥ 0.3 mm from depanel-routed edges
   (PCBA FAQ part 2). Order note: no mouse bites (no break-off tab), panel rail or neighbouring board within the overhang
   along J2's stretch of the top edge, so the shell clears the panel when it is routed and depanelled.
+- J4's body is nearer the FFC notch edge than JLCDFM's component-to-edge threshold, though beyond JLCPCB's "more than
+  0.3mm" (PCBA FAQ part 2). J4 is locked at the notch (user decision 2026-10-31: "J4 at an edge"), so it stays (user
+  decision 2026-11-13).
 - Part spacing: JLCPCB's 1.0 mm from a QFN to any part holds at U1 and U10. Exceptions: C15–U4 (TPS2121 bypass "as close
   as possible") and R74.2–U12.2 ([IMU](#imu)).
 - Small parts beside big ones (possible reflow shadowing; no source gives a number): R5 and C8 beside C46 (11.0 mm tall),
@@ -1034,23 +1052,31 @@ moved; placement is unchanged.
 | B.Cu under U2's flyback magnetics: the +3V3 west-edge loop down the west column (BOM change 2026-11-09; kept as routed when the can that forced it was removed, user decision 2026-11-11) | User decision 2026-11-09: "Accept" (no F.Cu way past the can then, no B.Cu lane west of XVS; decoupled DC rail); first-board check at the PoE peak | [B.Cu under U2](#bcu-under-u2) |
 | CSI_CLK_P/N split on F.Cu between J4 and their vias: P detours north of N to take up the length, uncoupled for a stretch | User decision 2026-11-04: "Accept + record" (re-coupling needs trapezoid bumps drawn in pcbnew) | [Lengths and skew](#lengths-and-skew) |
 | C4 (0805 MLCC) pads close to the east edge; order without mouse bites beside it | User decision 2026-11-04: "Note only" | [Assembly](#assembly) |
-| Vias beside (not touching) a pad of their own net with a copper gap under the Fabrication rules' minimum: C18.2's, the U9.1/U6.27 GND via, C40.2/U11.2's | User decision 2026-11-10: no site that holds the clearances | [Fabrication rules](#fabrication-rules) |
+| C47's can nearer the bottom edge than JLCDFM's component-to-edge threshold (beyond JLCPCB's FAQ limit); order without mouse bites beside it | User decision 2026-11-13 | [Assembly](#assembly) |
+| J4's body nearer the FFC notch edge than JLCDFM's component-to-edge threshold (beyond JLCPCB's FAQ limit) | User decision 2026-11-13 (J4 locked at the notch, "J4 at an edge", 2026-10-31) | [Assembly](#assembly) |
+| Via beside (not touching) a pad of its own net with a copper gap under the Fabrication rules' minimum: the U9.1/U6.27 GND via, beside U9.1 on F.Cu | User decision 2026-11-10: no site that holds the clearances | [Fabrication rules](#fabrication-rules) |
 
 ### JLCDFM
 
-JLCDFM's online check (https://jlcdfm.com, run 2026-11-10 on the `kicad_export` Gerbers, BOM and CPL) still reports
-these classes. Each one is a decision above or a check that doesn't apply to this board (user decision 2026-11-10).
+JLCDFM's online check (https://jlcdfm.com, run 2026-11-13 on the `kicad_export` Gerbers, BOM and CPL of the board with
+that day's same-net fixes, [Fabrication rules](#fabrication-rules)) still reports these classes. Each one is a decision
+above, a tool limit or a check that doesn't apply to this board (user decisions 2026-11-10 and 2026-11-13). The check
+does not cover everything: it lists only the 50 worst items per check and layer, its routing results cover F.Cu and
+B.Cu but not the inner layers, and the hand-assembled J1, U2 and U6 are not in the CPL it checks.
 
 | Finding | Cause | Why it stays |
 |---|---|---|
-| Pad spacing (warning) | U12's LGA pads, U1's and J2's pin pitch | Rule "U12 LGA pads"; manufacturers' land patterns |
-| Pad spacing, via to pad | The three vias in the row above | No site that holds the clearances |
+| Pad spacing (warning) | U12's LGA pads; U1's, J2's and D1's pin pitch; own-net vias beside pads at the Fabrication rules' minimum gap; own-net vias beside each other at or above that gap (the GND vias beside R17, B.Cu); zone fill and tracks at the board's clearance from pads of other nets; the CSI_CLK via pair under J4 at the pair gap | Rule "U12 LGA pads"; manufacturers' land patterns; the Fabrication rules' minimum and the board's clearances hold ([Fabrication rules](#fabrication-rules)) |
+| Pad spacing, via to pad (red) | The GND via shared by U9.1 and U6.27, reported at U9.1 on F.Cu | No site that holds the clearances ([Other accepted deviations](#other-accepted-deviations)) |
+| Pad spacing at U6.20 (red, B.Cu) | JLCDFM takes U6's rounded pads as rectangles, so it puts U6.20's own GND via under the Fabrication rules' minimum gap | Tool limit: `kicad_query distance` shows the via keeps the gap to the real pad |
 | Slot width | J2's plated shell slots | At or above JLCPCB's plated-slot minimum (rule "Plated slot width"); stock HRO land pattern |
+| PTH without pad | The NPTH holes: J1's and J2's locating pegs, TOOL1–TOOL3 | JLCDFM lists the NPTH drill file as plated; the holes are non-plated by design |
 | Lead to hole | The thermal vias in U1's and U10's exposed pads | User decision 2026-11-03 ([Fabrication rules](#fabrication-rules)) |
 | Silkscreen to pad, silkscreen to hole | Stock footprint silk | User decisions 2026-11-02 and 2026-11-10 ([Fabrication rules](#fabrication-rules)) |
-| Solder mask opening exposing trace | A track of the pad's own net next to the opening | Same net; KiCad's mask-to-copper clearance keeps other nets clear |
-| Negative solder mask expansion, soldermask bridge, silkscreen line width, annular ring, trace spacing | Openings 1:1 with pads, webs between fine-pitch pads, silk at the minimum line width, signal-via ring, diff-pair gaps | At JLCPCB's limits ([Fabrication rules](#fabrication-rules)) |
+| Solder mask opening exposing trace (warning) | Own-net vias beside pad openings at the Fabrication rules' minimum gap (at C27.1, C13.2 and C46.1) | Same net, at or above the Fabrication rules' minimum gap ([Fabrication rules](#fabrication-rules)); KiCad's mask-to-copper clearance keeps other nets clear |
+| Negative solder mask expansion, soldermask bridge, silkscreen line width, annular ring, trace spacing | J1's, U2's and the test points' openings against their pads; webs between U12's LGA pads; silk at the minimum line width; signal-via ring; the CSI pair gaps | Footprint land patterns and openings 1:1 with pads; at JLCPCB's limits ([Fabrication rules](#fabrication-rules)) |
 | Plated through-hole to trace | J2's locating pegs beside VBUS tracks | At the board's hole clearance |
 | Missing plated through-hole | Top-side parts over U6's bottom pads | Different parts on opposite sides; no hole intended |
-| Component to board edge, clipped by board outline | J2's overhang; C4 and the cans along the edges | J2 and C4: rows above; the rest stays inside JLCPCB's component-to-edge limit |
-| Pin edges, lead area overlapping pad, component through-hole | JLCDFM's part models against the land patterns (U10, U1, J2 in its examples) | Manufacturers' land patterns; checked in the placement preview ([Assembly](#assembly)) |
+| Component to board edge | C47 and J4 (red by JLCDFM's threshold); C4, SW1, SW2 and C46 (orange) | JLCDFM's thresholds are stricter than JLCPCB's PCBA FAQ limit, which every one of these parts keeps; rows above for C4, the buttons, C47 and J4 |
+| Component clipped by board outline | J2's overhang past the top edge | User decision 2026-11-04; row above for J2 ([MCU and USB](#usb), [Assembly](#assembly)) |
+| Pin inner, left and right edge; lead area overlapping pad; component through-hole alignment | JLCDFM's part models against the land patterns: pin edges at U1, U4 and U10, lead area at U1 and U10, J2's through-hole legs | Manufacturers' land patterns; checked in the placement preview ([Assembly](#assembly)) |
