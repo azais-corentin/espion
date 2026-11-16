@@ -52,7 +52,7 @@
 				)
 			)
 		)
-		(property "Description" "RJ45 jack with magnetics for 802.3at PoE+, 4x 1CT:1CT, 1000Base-T (10/100 uses pairs 1 and 2), four line-side centre taps brought out (VC1-VC4), Bob-Smith termination, green/yellow LEDs, shielded, THT right angle"
+		(property "Description" "RJ45 jack with magnetics for 802.3at PoE+, 4x 1CT:1CT, 1000Base-T (10/100 uses channels 1 and 2: RJ45 contacts 1-2 and 3-6), four line-side centre taps brought out (VC1-VC4), Bob-Smith termination, green/yellow LEDs, shielded, THT right angle"
 			(at 0 0 0)
 			(show_name no)
 			(do_not_autoplace no)
