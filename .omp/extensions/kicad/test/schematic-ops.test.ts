@@ -304,6 +304,44 @@ describe("schematic ops in memory", () => {
 		}
 	});
 
+	test("change_symbol refreshes from the library as lib_edit_symbol left it in the same call, the sheet's other copies with it; field texts stay unless place_fields is auto", async () => {
+		const ctx = await context(root);
+		const sch = ctx.project.sheet("Power").sch;
+		const u3 = () => ctx.project.findSymbol("U3").sym;
+		const u13 = () => ctx.project.findSymbol("U13").sym;
+		const places = () => children(u3(), "property").map(p => `${text(p)} ${print(child(p, "at")!)} ${print(child(p, "effects")!)}`);
+		// a second copy on the sheet, one of its library fields set by hand
+		await apply(ctx, "add_symbol", { sheet: "Power", lib_id: "Converter_DCDC_SDAPO:DP1435-5V", at: [127, 177.8], ref: "U13" });
+		await apply(ctx, "set_fields", { ref: "U13", fields: { Datasheet: "by hand" } });
+		// a field placed by hand, off its autoplace position
+		await apply(ctx, "set_symbol_field", { ref: "U3", field: "Value", offset: [7.62, -12.7], justify: ["right"] });
+		const before = places();
+		await apply(ctx, "lib_edit_symbol", {
+			library: "Converter_DCDC_SDAPO",
+			name: "DP1435-5V",
+			properties: { Description: "edited in this call", Datasheet: "edited datasheet" },
+			pins: [
+				{ number: "6", at: [10.16, 0], dir: "R" },
+				{ number: "99", name: "NEW", at: [10.16, 10.16], dir: "R", hidden: true },
+			],
+		});
+		await apply(ctx, "change_symbol", { ref: "U3" });
+		expect(sch.pins(u3()).find(p => p.num === "6")!.at).toEqual([71.12, 58.42]);
+		expect(propValue(u3(), "Description")).toBe("edited in this call");
+		expect(propValue(sch.libSymbol("Converter_DCDC_SDAPO:DP1435-5V")!, "Description")).toBe("edited in this call");
+		expect(places()).toEqual(before);
+		// the other copy follows the library where it held the old library's value, and keeps its own value
+		expect(propValue(u13(), "Description")).toBe("edited in this call");
+		expect(propValue(u13(), "Datasheet")).toBe("by hand");
+		expect(children(u13(), "pin").map(p => text(p))).toContain("99");
+		expect(ctx.notes.at(-1)).toContain("also refreshed U13 on Power");
+		const u13Fields = print(u13());
+		await apply(ctx, "change_symbol", { ref: "U13" });
+		expect(print(u13())).toBe(u13Fields);
+		await apply(ctx, "change_symbol", { ref: "U3", place_fields: "auto" });
+		expect(places()).not.toEqual(before);
+	});
+
 	test("set_fields with refs sets the same fields on each part; missing refs fail, naming them", async () => {
 		const ctx = await context(root);
 		const lcsc = (ref: string) => propValue(ctx.project.findSymbol(ref).sym, "LCSC");
@@ -509,6 +547,28 @@ describe.skipIf(!HAS_KICAD)("set_symbol_field through kicad_edit (kicad-cli)", (
 			expect(child(p.findSymbol("R24").sym, "fields_autoplaced")).toBeUndefined();
 			expect(child(field("R23", "Value"), "hide")).toBeDefined();
 			expect(child(p.findSymbol("R23").sym, "fields_autoplaced")).toBeDefined();
+		},
+		240_000,
+	);
+});
+
+describe.skipIf(!HAS_KICAD)("a library edit with its placed copy through kicad_edit (kicad-cli)", () => {
+	let root = "";
+	beforeAll(() => {
+		root = stageFixture();
+	});
+	afterAll(() => cleanup(root));
+
+	test(
+		"lib_edit_symbol and change_symbol in one call pass ERC: the sheet's copy equals the re-saved library part",
+		async () => {
+			const edit = { op: "lib_edit_symbol", library: "Converter_DCDC_SDAPO", name: "DP1435-5V", properties: { Description: "edited in this call" } };
+			const alone = await runEdit({ ops: [edit], dry_run: true }, root, undefined);
+			expect(alone.report).toContain("lib_symbol_mismatch");
+			const r = await runEdit({ ops: [edit, { op: "change_symbol", ref: "U3" }] }, root, undefined);
+			expect(r.report).toStartWith("Applied.");
+			expect(r.report).toContain("ERC: 0 violations after (0 new");
+			expect(propValue(Project.open(PROJECT, root).findSymbol("U3").sym, "Description")).toBe("edited in this call");
 		},
 		240_000,
 	);

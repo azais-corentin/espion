@@ -15,6 +15,7 @@ import { at, isHidden, type LabelKind, libGeom, newUuid, prop, propValue, type S
 import { child, children, clone, head, isList, L, type List, print, removeChild, setChild, str, text } from "../sexpr";
 import type { Field } from "../spec";
 import type { OpContext, OpDef } from "../types";
+import { transactionSymbol } from "./library";
 
 // ---- argument specs ----------------------------------------------------------------------------
 
@@ -161,20 +162,23 @@ function autoplace(sch: Sch, sym: List, grid: number): void {
 	if (fa) setChild(sym, L("fields_autoplaced", true));
 }
 
+/** Put field `p` where the library's field `lp` sits, for the symbol's pose. */
+function setLibPlace(sch: Sch, sym: List, p: List, lp: List): void {
+	const { x, y, rot, mirror } = sch.pose(sym);
+	const la = at(lp);
+	const q = xform(la.p[0], la.p[1], x, y, rot, mirror);
+	setAt(p, q[0], q[1], la.rot);
+	setJustify(p, justifyOf(lp));
+}
+
 /** The library's own field positions (power symbols: value above a rail, below a ground). */
 function libFields(sch: Sch, sym: List): void {
-	const { x, y, rot, mirror } = sch.pose(sym);
+	const { x, y } = sch.pose(sym);
 	const lib = sch.lib(sym);
 	for (const p of children(sym, "property")) {
 		const lp = prop(lib, text(p) ?? "");
-		if (!lp) {
-			setAt(p, x, y, at(p).rot);
-			continue;
-		}
-		const la = at(lp);
-		const q = xform(la.p[0], la.p[1], x, y, rot, mirror);
-		setAt(p, q[0], q[1], la.rot);
-		setJustify(p, justifyOf(lp));
+		if (lp) setLibPlace(sch, sym, p, lp);
+		else setAt(p, x, y, at(p).rot);
 	}
 }
 
@@ -793,10 +797,12 @@ const changeSymbol: OpDef = {
 	group: "schematic",
 	doc:
 		"Swap a placed part for another library symbol, or (without lib_id) refresh it from the current library: KiCad's Change / Update Symbol, on every unit. " +
+		"The library is read as the earlier ops of the same call left it, so lib_edit_symbol and the refresh of its placed copies go in one call. " +
 		"Reference, position, rotation, mirror, unit, attributes (dnp, in_bom, …) and the fields the new library part doesn't define (Manufacturer, MPN, LCSC, …) stay. " +
 		"On a swap, Value, Footprint, Datasheet, Description and any other field the new part defines come from it (one it leaves empty keeps the placed value); " +
-		"on a refresh a field follows the library only where it still held the old library's value. value/footprint/fields override. Fields are re-placed. " +
-		"The sheet's cached copy of the symbol is replaced, so other symbols of that lib_id on the sheet are refreshed too (the note names them). " +
+		"on a refresh a field follows the library only where it still held the old library's value. value/footprint/fields override. " +
+		"Field texts are re-placed on a swap and stay where they are on a refresh (place_fields). " +
+		"The sheet's cached copy of the symbol is replaced, so other symbols of that lib_id on the sheet are refreshed too, drawing and fields by the refresh rule (the note names them): one reference per sheet is enough. " +
 		"Nothing is rewired: the note lists wire ends, labels and no-connects left off a pin, pins with nothing on them, and the new pin positions.",
 	fields: {
 		ref: REF,
@@ -805,6 +811,11 @@ const changeSymbol: OpDef = {
 		value: { t: "string", doc: "Value (default: see above)" },
 		footprint: { t: "string", doc: "\"Library:Footprint\" (default: see above)" },
 		fields: { t: "object", doc: "{Name: value | null}: set or add fields (new ones hidden), null removes one (Reference: use rename_ref)" },
+		place_fields: {
+			t: "string",
+			values: ["auto", "keep"],
+			doc: "auto re-places the field texts; keep leaves each where it is, a field the library adds going where the library has it (default: auto on a swap, keep on a refresh)",
+		},
 	},
 	apply(ctx, args) {
 		const ref = String(args.ref);
@@ -814,7 +825,8 @@ const changeSymbol: OpDef = {
 		const oldId = placed[0]!.sheet.sch.libId(placed[0]!.sym);
 		const newId = args.lib_id === undefined ? oldId : textArg(args.lib_id, "lib_id");
 		const refresh = newId === oldId;
-		const fresh = ctx.libs.flatSymbol(newId);
+		const keepPlaces = ((args.place_fields as string | undefined) ?? (refresh ? "keep" : "auto")) === "keep";
+		const fresh = transactionSymbol(ctx, newId);
 		const nUnits = describeLibSymbol(fresh).units;
 		const unitArg = args.unit as number | undefined;
 		if (unitArg !== undefined) {
@@ -854,9 +866,48 @@ const changeSymbol: OpDef = {
 			const sharers = cached && print(cached) !== print(libCopy) ? sch.symbols().filter(s => !targets.includes(s) && sch.libId(s) === newId) : [];
 			const affected = [...targets, ...sharers];
 			const before = new Map(affected.map(s => [s, { ref: sch.refOf(s, inst.path), pins: sch.pins(s), box: symBox(sch, s) }]));
-			const oldLibs = new Map(targets.map(s => [s, sch.lib(s)]));
+			// each symbol's library copy before this edit: a later change_symbol on a sharer would see the new one
+			const oldLibs = new Map(affected.map(s => [s, sch.lib(s)]));
 			if (cached) sch.libSymbols().splice(sch.libSymbols().indexOf(cached), 1, libCopy);
 			else insertLib(sch, libCopy);
+			const libProps = new Map(children(libCopy, "property").map(p => [text(p) ?? "", p]));
+			const addField = (sym: List, n: List) => {
+				const last = children(sym, "property").at(-1);
+				sym.splice(last ? sym.indexOf(last) + 1 : sym.length, 0, n);
+			};
+			// library fields onto one symbol: a missing one added, one that still held the old library's value
+			// (on a refresh and for a sharer; any non-empty library value on a swap) updated, the rest kept;
+			// a sharer is refreshed here, so a later change_symbol on it finds nothing left to do
+			const syncLibFields = (sym: List, isTarget: boolean, changed: Set<string>, held: Set<string>) => {
+				const fromOld = refresh || !isTarget;
+				const place = keepPlaces || !isTarget;
+				const oldVals = new Map(children(oldLibs.get(sym)!, "property").map(p => [text(p) ?? "", text(p, 2) ?? ""]));
+				for (const [name, lp] of libProps) {
+					if (name === "Reference" || name.startsWith("ki_") || (isTarget && name in over)) continue;
+					const libVal = text(lp, 2) ?? "";
+					const p = prop(sym, name);
+					if (!p) {
+						const n = libFieldNode(lp, libVal, at(sym).p);
+						addField(sym, n);
+						if (place) setLibPlace(sch, sym, n, lp);
+						changed.add(`+${name}=${JSON.stringify(libVal)}`);
+						continue;
+					}
+					const cur = text(p, 2) ?? "";
+					if (cur === libVal) continue;
+					if (fromOld ? cur === (oldVals.get(name) ?? "") : libVal !== "") {
+						p[2] = str(libVal);
+						changed.add(`${name} ${JSON.stringify(cur)} → ${JSON.stringify(libVal)}`);
+					} else held.add(`${name}=${JSON.stringify(cur)}`);
+				}
+			};
+			// the symbol's pin entries from the library copy, each pin keeping its uuid
+			const setPins = (sym: List) => {
+				const keep = new Map(children(sym, "pin").map(n => [text(n) ?? "", text(child(n, "uuid")) ?? newUuid()]));
+				for (const n of children(sym, "pin")) sym.splice(sym.indexOf(n), 1);
+				const pinsAt = sym.findIndex(c => isList(c) && head(c) === "instances");
+				sym.splice(pinsAt >= 0 ? pinsAt : sym.length, 0, ...pinNodes(libCopy, sch.unit(sym), keep));
+			};
 
 			for (const sym of targets) {
 				setChild(sym, L("lib_id", str(newId)));
@@ -864,34 +915,10 @@ const changeSymbol: OpDef = {
 					setChild(sym, L("unit", unitArg));
 					for (const proj of children(child(sym, "instances") ?? [], "project")) for (const p of children(proj, "path")) setChild(p, L("unit", unitArg));
 				}
-				const keep = new Map(children(sym, "pin").map(n => [text(n) ?? "", text(child(n, "uuid")) ?? newUuid()]));
-				for (const n of children(sym, "pin")) sym.splice(sym.indexOf(n), 1);
-				const pinsAt = sym.findIndex(c => isList(c) && head(c) === "instances");
-				sym.splice(pinsAt >= 0 ? pinsAt : sym.length, 0, ...pinNodes(libCopy, sch.unit(sym), keep));
+				setPins(sym);
 
 				const origin = at(sym).p;
-				const addField = (n: List) => {
-					const last = children(sym, "property").at(-1);
-					sym.splice(last ? sym.indexOf(last) + 1 : sym.length, 0, n);
-				};
-				const oldVals = new Map(children(oldLibs.get(sym)!, "property").map(p => [text(p) ?? "", text(p, 2) ?? ""]));
-				const libProps = new Map(children(libCopy, "property").map(p => [text(p) ?? "", p]));
-				for (const [name, lp] of libProps) {
-					if (name === "Reference" || name.startsWith("ki_") || name in over) continue;
-					const libVal = text(lp, 2) ?? "";
-					const p = prop(sym, name);
-					if (!p) {
-						addField(libFieldNode(lp, libVal, origin));
-						changes.add(`+${name}=${JSON.stringify(libVal)}`);
-						continue;
-					}
-					const cur = text(p, 2) ?? "";
-					if (cur === libVal) continue;
-					if (refresh ? cur === (oldVals.get(name) ?? "") : libVal !== "") {
-						p[2] = str(libVal);
-						changes.add(`${name} ${JSON.stringify(cur)} → ${JSON.stringify(libVal)}`);
-					} else kept.add(`${name}=${JSON.stringify(cur)}`);
-				}
+				syncLibFields(sym, true, changes, kept);
 				for (const [name, v] of Object.entries(over)) {
 					const p = prop(sym, name);
 					if (v === null) {
@@ -903,7 +930,9 @@ const changeSymbol: OpDef = {
 						p[2] = str(v);
 					} else {
 						const lp = libProps.get(name);
-						addField(lp ? libFieldNode(lp, v, origin) : fieldNode(name, v, origin, true));
+						const n = lp ? libFieldNode(lp, v, origin) : fieldNode(name, v, origin, true);
+						addField(sym, n);
+						if (keepPlaces && lp) setLibPlace(sch, sym, n, lp);
 						changes.add(`+${name}=${JSON.stringify(v)}`);
 					}
 				}
@@ -913,7 +942,15 @@ const changeSymbol: OpDef = {
 						if (!MANDATORY[name] && !libProps.has(name) && !(name in over)) kept.add(`${name}=${JSON.stringify(text(p, 2) ?? "")}`);
 					}
 				}
-				placeFields(ctx, sch, sym);
+				if (!keepPlaces) placeFields(ctx, sch, sym);
+			}
+			for (const sym of sharers) {
+				const changed = new Set<string>();
+				const held = new Set<string>();
+				setPins(sym);
+				syncLibFields(sym, false, changed, held);
+				const parts = [changed.size ? `fields: ${[...changed].join(", ")}` : "", held.size ? `kept ${[...held].join(", ")} (they differ from the library)` : ""].filter(Boolean);
+				if (parts.length) notes.push(`refreshed ${sch.refOf(sym, inst.path)} on ${inst.name}: ${parts.join("; ")}`);
 			}
 			if (!refresh && !sch.symbols().some(s => sch.libId(s) === oldId)) {
 				const old = sch.libSymbol(oldId);
@@ -922,7 +959,7 @@ const changeSymbol: OpDef = {
 
 			const rep = pinReport(sch, inst, before, affected);
 			const dropped = dropStaleJunctions(sch, [], rep.oldPts);
-			if (sharers.length) notes.push(`also redrew ${sharers.map(s => sch.refOf(s, inst.path)).join(", ")} on ${inst.name} (they use the sheet's copy of ${newId})`);
+			if (sharers.length) notes.push(`also refreshed ${sharers.map(s => sch.refOf(s, inst.path)).join(", ")} on ${inst.name} (they use the sheet's copy of ${newId})`);
 			if (rep.offPin.length) notes.push(`left off a pin on ${inst.name}, not rewired: ${rep.offPin.join(", ")}`);
 			if (rep.bare.length) notes.push(`pins with nothing on them: ${rep.bare.join(", ")}`);
 			if (rep.midWire.length) notes.push(`pins on the middle of a wire (KiCad connects them): ${rep.midWire.join(", ")}`);

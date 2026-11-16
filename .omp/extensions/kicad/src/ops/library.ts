@@ -471,6 +471,18 @@ function sourceSymLib(ctx: OpContext, nick: string): List {
 	return st.symLibs.get(file) ?? ctx.libs.symLibTree(nick);
 }
 
+/**
+ * A library symbol flattened for a schematic's lib_symbols cache (as Libraries.flatSymbol), from
+ * the library as edited in this transaction: a placed symbol refreshed in the call that edits its
+ * library gets the edited part.
+ */
+export function transactionSymbol(ctx: OpContext, libId: string): List {
+	const [nick, name] = splitId(libId);
+	const s = flattenSymbol(sourceSymLib(ctx, nick), name, nick);
+	s[1] = str(libId);
+	return s;
+}
+
 const copySymbol: OpDef = {
 	op: "lib_copy_symbol",
 	group: "library",
@@ -513,7 +525,7 @@ const MANDATORY = ["Reference", "Value", "Footprint", "Datasheet", "Description"
 const editSymbol: OpDef = {
 	op: "lib_edit_symbol",
 	group: "library",
-	doc: "Change a project library symbol: set or remove properties; replace all graphics (shapes); add, remove, move, resize, restyle, hide, rename or retype pins (by number, every pin with that number in every unit). When shapes are replaced or pins are added, removed, moved, turned or resized, Reference and Value are re-placed above and below the new drawing as lib_draw_symbol places them (fields: \"keep\" leaves them). Placed symbols keep their cached copy until updated from the library.",
+	doc: "Change a project library symbol: set or remove properties; replace all graphics (shapes); add, remove, move, resize, restyle, hide, rename or retype pins (by number, every pin with that number in every unit). When shapes are replaced or pins are added, removed, moved, turned or resized, Reference and Value are re-placed above and below the new drawing as lib_draw_symbol places them (fields: \"keep\" leaves them). A placed symbol that differs from its library is an ERC violation (lib_symbol_mismatch), so when the part is placed, refresh it in the same call: change_symbol {ref} after this op, on one reference per sheet that uses the part (it refreshes the others on that sheet).",
 	fields: {
 		library: { t: "string", req: true, doc: "project symbol library nickname" },
 		name: { t: "string", req: true, doc: "symbol name" },

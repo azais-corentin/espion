@@ -79,7 +79,7 @@ export default function kicadToolkit(pi: ExtensionAPI) {
 			"- a changed board (KiCad refills its zones and the fills are kept in the file): no new KiCad DRC violation and no new schematic parity issue (counted like ERC, without coordinates). Not gated, but reported: routing in progress (unconnected items, dangling tracks and vias), violations inside footprints the edit put on the board from the libraries (the library footprint against the board's rules), and violations a board-rules-only change brings up.",
 			"Otherwise nothing is written and the report says why. Refuses while KiCad has the project open (lock files).",
 			"Every dry run and every refused (NOT APPLIED) result ends with the actual connectivity change as a JSON `expect` in exactly this input format. Read it against what the edit is meant to do before passing it back: pasting it blindly declares whatever the ops did, including a pin they moved by mistake.",
-			"Library changes (new symbols/footprints/libraries) and their use on a sheet need separate kicad_edit calls; so do schematic changes and update_from_schematic.",
+			"New library parts (symbols, footprints, libraries) and their use on a sheet need separate kicad_edit calls; so do schematic changes and update_from_schematic. An edit of a library symbol that is already placed goes with change_symbol {ref} in the same call, for one reference on each sheet that uses it.",
 			CONVENTIONS,
 			"Ops (each item of `ops` is {op: name, ...fields}):",
 			opsDoc(),
