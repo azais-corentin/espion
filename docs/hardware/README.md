@@ -33,7 +33,7 @@ flowchart LR
 | PoE PD, power mux, 3.3 V buck, USB VBUS | Power (`power.kicad_sch`) | [power.md](power.md) |
 | ESP32-P4-Core module, USB-C, reset/boot, status LED, test points | MCU (`mcu.kicad_sch`) | [mcu.md](mcu.md) |
 | OV9281 module FFC, CSI-2 lanes, SCCB, XVS/STROBE | Camera (`camera.kicad_sch`) | [camera.md](camera.md) |
-| IP101G PHY (IP101GRI, industrial grade), HR871150C MagJack, RMII | Ethernet (`ethernet.kicad_sch`) | [ethernet.md](ethernet.md) |
+| IP101G PHY (IP101GRI, industrial grade), LPJG0926HENL MagJack, RMII | Ethernet (`ethernet.kicad_sch`) | [ethernet.md](ethernet.md) |
 | MSA3S02 accelerometer | IMU (`imu.kicad_sch`) | [imu.md](imu.md) |
 | LED supply straight from `+5V`, boost, current sink, STROBE gate | LED driver (`led_driver.kicad_sch`) | [led.md](led.md) |
 | 12 × Amicc A-SC880IR3C | LED ring (`led_ring.kicad_sch`) | [led.md](led.md#led-ring) |
@@ -49,7 +49,7 @@ and margins are worked out from the schematic by the formulas in the block docum
 
 | Rail | Source | Required range (basis) | Loads |
 |---|---|---|---|
-| `POE_VA1`, `POE_VA2`, `POE_VB1`, `POE_VB2` (cable side, isolated) | J1.7–J1.10 centre taps (both pair sets) | 37–57 V at the PD input (IEEE 802.3af; DP1435 p.5). Current per pair at most J1's rating, 350 mA per centre tap (HR871150C p.1); input power at most the 802.3af PD limit, 12.95 W | U2.1–U2.4 only, no capacitors |
+| `POE_VA1`, `POE_VA2`, `POE_VB1`, `POE_VB2` (cable side, isolated) | J1.11–J1.14 centre taps (both pair sets) | 37–57 V at the PD input (IEEE 802.3af; DP1435 p.5). Current per pair at most J1's rating, 720 mA per centre-tap pin (LPJG0926HENL p.1); input power at most the 802.3af PD limit, 12.95 W | U2.1–U2.4 only, no capacitors |
 | `+5V_POE` | U2 DP1435-5V output | Within the DP1435's ±5 % regulation term (p.5); the datasheet gives no set-point accuracy. At most 5.5 V, the input limit of U3 and U11 (datasheets) | C11, C13, C15, U4 IN1, R18/R19 |
 | `VBUS` | J2 USB-C | 4.40–5.5 V (USB 2.0 Table 7-7 p.178, §7.2.1.3 p.173: low-power port 4.40 V minimum, a conservative floor for this high-power function, which the spec requires to run fully from 4.75 V, §7.2.1.4 p.174; USB Type-C R2.0 §4.4.2 p.141: up to 5.5 V at light load). Port current at most 500 mA | U4 IN2, C16, D2, R24 |
 | `+5V` | U4 TPS2121 OUT (PoE first) | Within the input range of every load (TLV62569, TLV9061, TPS61170 datasheets); steady value is the selected input minus I × RON(U4) (TPS2121 datasheet). During a PoE → USB switchover it falls with `+5V_POE` to the PoE → USB threshold (or to within VCOMP of VBUS, where that is lower), then dips by I × tSW / C(`+5V`) (TPS2121 internal-reference mode, 100 µs) | U3, U10 VIN, L3, C36, U11, R63, C10, C20, C22, C44, TP5 |
@@ -81,7 +81,7 @@ for `+32V`. Current budgets: [power.md](power.md), [led.md](led.md).
   |---|---|---|
   | U6 ESP32-P4-Core | bottom | Hand-soldering footprint without paste; iron only, pad by pad, no hot air (user decision 2026-11-01) — [mcu](mcu.md#module) |
   | U2 DP1435-5V | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C11 and C16, inspect them after — [layout](layout.md#assembly) |
-  | J1 HR871150C | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C3, C2 and R44, inspect them after — [layout](layout.md#assembly) |
+  | J1 LPJG0926HENL | bottom | Through-hole, soldered from the top; conical tip ≤ 1 mm, Kapton over C3, C2 and R44, inspect them after — [layout](layout.md#assembly) |
 
   J2 (USB-C) is machine-placed with its shell overhanging the top edge by HRO's recommended
   amount (user decision 2026-11-04); the RESET and BOOT buttons sit on the bottom edge (user
@@ -100,7 +100,7 @@ Power:
 - No VBUS sense (user decision 2026-11-11): the USB D+ pull-up stays on without VBUS; USB is a bench port only — [power](power.md#usb-vbus).
 - USB current limited by a firmware rule only (user decision 2026-10-31); the USB-alone estimate sits against the 500 mA port limit — [power](power.md#usb-vbus).
 - PoE loss with USB attached loads the host port up to the mux limit until firmware drops LED_EN and BST_EN; with no switch on the boost input the port also carries the boost for that latency plus the TPS61170's t_REF filter, until its t_off shutdown — [power](power.md#accepted-risks).
-- PoE budget at the `+5V` peak: input power and pair current come from the peak load and the DP1435's 84 % maximum efficiency (p.5); a lower efficiency would reach the 12.95 W 802.3af limit and J1's 350 mA per centre tap (user decision 2026-11-02, "Accept, measure on first boards"; a firmware LED limit on PoE follows if a limit is exceeded) — [power](power.md#poe-input).
+- PoE budget at the `+5V` peak: input power and pair current come from the peak load and the DP1435's 84 % maximum efficiency (p.5); a lower efficiency would reach the 12.95 W 802.3af limit, and a still lower one J1's 720 mA per centre-tap pin (user decision 2026-11-02, "Accept, measure on first boards"; a firmware LED limit on PoE follows if a limit is exceeded) — [power](power.md#poe-input).
 - C15 closer to U4 than JLCPCB's 1.0 mm QFN spacing (`kicad_query distance`) — [power](power.md#accepted-risks).
 - `+3V3` capacitance outside TI's tested cells — [power](power.md#33-v-buck).
 - Parts whose datasheets state no rating for JLCPCB's 255 ± 5 °C reflow, or a lower one, are kept: C13, C22 (not stated), C46, C47 (255 °C peak for 5 s, GVZ datasheet p.2), J3 JST SH (250 + 5 °C) (user decision 2026-10-31, "Ignore reflow times and temperatures. Assume it will all work out.") — [power](power.md#accepted-risks), [layout](layout.md#assembly).
@@ -146,7 +146,9 @@ Ethernet:
 - IP101G has no maker MSL/reflow statement (user decision 2026-10-31, "Keep IP101GRI, accept risk") — [ethernet](ethernet.md#phy).
 - MDI pairs swapped at J1: link relies on the PHY's auto-MDIX (design review 2026-11-01) — [ethernet](ethernet.md#magjack-and-mdi).
 - MDI pairs P/N-inverted between U1 and J1 (no swap vias): link relies on the IP101G's polarity handling, at both ends of the cable (user decision 2026-11-04: "This obviously means that polarity reversion is supported.") — [ethernet](ethernet.md#mdi-pairs-crossed-at-j1).
-- MDI spacing below 3× inside U1's escape — [ethernet](ethernet.md#magjack-and-mdi).
+- MDI spacing below 3× inside U1's escape and between J1's own pins (2.54 mm pin stagger, the In1 PoE lane threading the pin field) — [ethernet](ethernet.md#mdi-routing).
+- MDI on B.Cu from J1 with one via per line near U1 (user decision 2026-11-16, LINK-PP LPJG0926HENL pinout: the PoE lane on In1 runs between J1's chip-side pins); one of the four layer changes has no GND return via within 1 mm — [layout](layout.md#mdi).
+- J1's cable-side pins J1.11/J1.14 close to its shield pads (GND); the "PoE isolation" rule exempts J1's pin field, LINK-PP rates the jack 1500 Vrms hipot (user decision 2026-11-16) — [ethernet](ethernet.md#j1).
 - ISET resistor R6's ±1 % band ends slightly above the IP101G's 6.19 kΩ ±1 % (user decision 2026-11-09, fee-free value) — [ethernet](ethernet.md#regout-and-iset).
 - ESP32-P4 RMII output timing unpublished; some RMII/strobe layer changes have no GND return via within 1.6 mm — [ethernet](ethernet.md#rmii).
 - No series terminations on the RMII data lines (user decision 2026-11-11; R13 on REF_CLK stays): the drivers' edges reach the receivers unterminated, overshoot checked on the first boards. The PHY side has one drive step below its default, and its output delay is specified only at the default drive, so the soak test is repeated at any lowered setting; beyond that step the RX lines need a board change (series resistors at the PHY). The P4 side has its pad drive range — [ethernet](ethernet.md#rmii-drive-and-termination).
@@ -170,7 +172,7 @@ Power ([power](power.md#first-board-checks)):
 2. PoE cold start: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses; the module's ripple on `+5V_POE` and `+5V` (no input filter).
 3. Mux thresholds with a bench supply on `+5V_POE`: to USB and back to PoE inside the bands from the R18/R19/R75 formulas in power.md, worked out from the schematic.
 4. PoE pull with USB attached: with the LEDs off no reset, the Ethernet link and USB stay up, the `+5V` dip and the `+3V3` minimum; during LED pulses whether the board resets, and the firmware latency `PWR_SRC` → LED_EN, BST_EN low. Whenever the board does not reset, the Ethernet link returns and MDIO still answers at address 1; if not, a firmware rule follows (stop the EMAC, repeat FW-11's pulse and timing, restart). With PoE and USB both attached and the LEDs at 0.5 ms / 120 fps, `PWR_SRC` stays high (no handover to USB on the module's load-step dip); unplugging and replugging PoE with USB attached gives one clean return to PoE.
-5. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W (802.3af) and ≤ 350 mA per pair (J1), else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
+5. PD input power and pair current at peak load (LEDs 0.5 ms / 120 fps, camera streaming, Ethernet up) on a 44 V PSE: ≤ 12.95 W (802.3af) and ≤ 720 mA per pair (J1), else a firmware LED limit on PoE; scope whether the boost recharges at its switch limit every frame.
 6. USB-alone current while streaming with Ethernet linked: ≤ 0.5 A (USB port limit); camera share as the drop in VBUS current with the FFC unplugged, referred to `+3V3` through the buck's efficiency (no shunt position); the VBUS current at attach (soft-start inrush SR × C(`+5V`), the LED bank included, plus the pre-boot load) against the port's 0.5 A.
 7. `+3V3` load step from light load to the estimated maximum load (power.md budget): overshoot ≤ 5 %.
 8. Thermal camera on U4 and its vias, U3, U2 and C13's case (directly on U2's output since the input filter went; its ripple-current share unknown) at the LED design point and during `+32V` start-up.

@@ -25,24 +25,25 @@ thermal cut-off, short-circuit, over-current and enhanced surge protection (p.1)
 inrush figure or soft-start time. It sits on the bottom side, through-hole, and is hand-soldered
 from the top after JLCPCB's assembly (user decision 2026-10-31: hand-assembly list).
 
-- **Both pair sets.** VA1/VA2 (U2.1/U2.2) take the centre taps of pairs 1/2 and 3/6 (J1.7/J1.8),
-  VB1/VB2 (U2.3/U2.4) the spare pairs 4/5 and 7/8 (J1.9/J1.10) (DP1435 p.2; HanRun HR871150C p.1
-  schematic). The module is not polarity sensitive, so mode A and mode B PSEs both work.
+- **Both pair sets.** VA1/VA2 (U2.1/U2.2) take the centre taps of pairs 1/2 and 3/6 (J1.11/J1.12),
+  VB1/VB2 (U2.3/U2.4) the spare pairs 4/5 and 7/8 (J1.13/J1.14) (DP1435 p.2; LINK-PP LPJG0926HENL
+  p.1 schematic). The module is not polarity sensitive, so mode A and mode B PSEs both work.
 - **Nothing on the cable side.** U2.1–U2.4 connect only to J1. SDAPO's typical application
   (p.4) wires them straight from the jack with no capacitor, and a capacitor from them to board
   GND would bridge the isolation barrier. The decoupling check exempts these four pins. The
   Bob-Smith termination (resistors, capacitors and the 2 kV capacitor to the shield) is inside J1
-  (HR871150C p.1).
+  (LPJG0926HENL p.1).
 - **Centre-tap current.** Requirement: the PD input stays within the 802.3af PD limit (12.95 W) and
-  J1's 350 mA per centre tap (HR871150C p.1). Formulas:
+  J1's 720 mA per centre-tap pin (LPJG0926HENL p.1, continuous at 57 V dc). Formulas:
   P_out = I(+5V peak) × VOUT(U2, 5.15 V typ), with I(+5V peak) from [+5V loads](#5v-loads);
   P_in = P_out / η; pair current = P_in / 37 V (the module's lowest input). DP1435 p.5 item 7 gives
   "Efficiency 84% max", the module's best case; no minimum is published. So P_in is **at least**
   P_out / 0.84, and the pair current at least that over 37 V. The 802.3af limit is reached at
-  η = P_out / 12.95 W and J1's rating at η = P_out / (37 V × 0.35 A); the real margin is unknown
-  ([Accepted risks](#accepted-risks)). The four PoE tracks (class `POE_CABLE`) run on In1; their
-  rise at 0.35 A comes from the external-layer IPC-2152 fit of
-  [layout](layout.md#net-classes) applied to In1's copper thickness.
+  η = P_out / 12.95 W and J1's rating at η = P_out / (37 V × 0.72 A), a lower efficiency: the
+  802.3af limit binds first. The real margin is unknown ([Accepted risks](#accepted-risks)). The four
+  PoE tracks (class `POE_CABLE`) run on In1; they are sized for the pair current at the 802.3af limit,
+  12.95 W / 37 V = 0.35 A, and their rise at that current comes from the external-layer IPC-2152 fit
+  of [layout](layout.md#net-classes) applied to In1's copper thickness.
 
 ### Isolation
 
@@ -50,14 +51,14 @@ The cable side is separated from the board by J1's magnetics and by U2's isolate
 board layout is meant to give some isolation between the PoE cable nets and the rest of the board;
 no isolation level is rated or tested (user decision 2026-11-02).
 
-On the board the four PoE nets run from J1.7–J1.10 to U2.1–U2.4 on In1, in a lane cut out of the
+On the board the four PoE nets run from J1.11–J1.14 to U2.1–U2.4 on In1, in a lane cut out of the
 In1 GND plane, with In2 GND unbroken below:
 
 - Rule `PoE isolation` (`.kicad_dru`): keeps `POE_CABLE` copper clear of any other net on the same
   layer. Copper on other layers is kept ≥ 1.0 mm sideways from the In1 PoE copper by hand
-  ([layout](layout.md#poe-isolation)). The rule is waived between J1's own pins, the jack's pin
-  field; J1's pads are trimmed so the chip-side to cable-side pin spacing and the pin 10 to shield
-  spacing fit the jack.
+  ([layout](layout.md#poe-isolation)). The rule is waived inside J1's own pin field (J1's pads
+  against each other and against the PoE lane where it threads them); J1's pads are trimmed so the
+  chip-side to cable-side pin spacing and the cable-side pin to shield spacing fit the jack.
 - F.Cu copper of other nets keeps ≥ 1.0 mm sideways from the In1 PoE copper, through the one thin
   7628 ply between F.Cu and In1. KiCad does not check copper across layers, so this is measured by
   hand (`kicad_query distance`). The tightest point is the F.Cu pour "R41/R42 +3V3" beside POE_VA1. The same-layer
@@ -104,11 +105,11 @@ bounds: P_in ≥ P_out / 0.84.
 | 802.3af PD limit | | 12.95 W in; out = 12.95 W × η |
 | DP1435 rating | 2.4 A nominal, 2.6 A max | 12.4 W out |
 
-The module's current rating covers the +5V peak. Whether the PD input stays under 12.95 W and
-the pair current under J1's 350 mA at that peak depends on the module's real efficiency, which is
-not published: accepted by user decision 2026-11-02 ("Accept, measure on first boards"), with a
-first-board measurement; if it is over, firmware limits the LEDs on PoE. The load breakdown is
-under [+5V loads](#5v-loads).
+The module's current rating covers the +5V peak. Whether the PD input stays under 12.95 W (and so
+the pair current under 0.35 A, well inside J1's 720 mA) at that peak depends on the module's real
+efficiency, which is not published: accepted by user decision 2026-11-02 ("Accept, measure on
+first boards"), with a first-board measurement; if it is over, firmware limits the LEDs on PoE. The
+load breakdown is under [+5V loads](#5v-loads).
 
 ## Power mux
 
@@ -442,8 +443,8 @@ below the string's conduction ([LED driver](led.md#led-supply)).
 - **PoE power budget rests on an unpublished efficiency.** DP1435 p.5 item 7 gives 84 % as the
   maximum efficiency only. At the `+5V` peak, which recurs while the boost recharges `+32V`
   ([+5V loads](#5v-loads)), the PD draws at least P_out / 0.84 and P_in / 37 V per pair
-  ([Centre-tap current](#module)); below some efficiency it reaches the 12.95 W 802.3af PD limit
-  and J1's 350 mA per centre tap. User decision 2026-11-02: "Accept, measure on first boards"; if
+  ([Centre-tap current](#module)); below some efficiency it reaches the 12.95 W 802.3af PD limit,
+  and at a lower one J1's 720 mA per centre-tap pin. User decision 2026-11-02: "Accept, measure on first boards"; if
   the measurement is over either limit, a firmware LED limit on PoE follows, with no design change
   now.
 - **C15 closer than JLCPCB's 1.0 mm QFN spacing** to U4 (`kicad_query distance`), kept at the
@@ -480,7 +481,7 @@ below the string's conduction ([LED driver](led.md#led-supply)).
 5. **PoE input power at peak load.** On a 44 V PSE, with the LEDs at 0.5 ms / 120 fps, the camera
    streaming and Ethernet up: measure the PD input power and the pair current, and scope the
    `+5V` current through a frame (does the boost recharge at its 1.44 A switch limit?). Limits:
-   12.95 W (802.3af PD) and 350 mA per pair (J1). If either is exceeded, firmware limits the LEDs
+   12.95 W (802.3af PD) and 720 mA per pair (J1). If either is exceeded, firmware limits the LEDs
    on PoE.
 6. **USB-alone current.** Measure the VBUS current on USB alone while streaming 640 × 400 at
    120 fps with Ethernet linked (LEDs off): must be ≤ 0.5 A, and compared with the buck-input

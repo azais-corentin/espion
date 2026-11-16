@@ -9,7 +9,8 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `MCU_Module_Waveshare.kicad_sym` | Symbols for Waveshare MCU modules |
 | `Module_Waveshare.pretty/` | Footprints for Waveshare modules |
 | `74xGxx_TI.kicad_sym` | TI single-gate logic with a fixed package |
-| `Connector_HanRun.kicad_sym` | HanRun connectors |
+| `Connector_HanRun.kicad_sym` | HanRun connectors (not used by espion-cam any more) |
+| `Connector_LinkPP.kicad_sym` | LINK-PP connectors |
 | `Converter_DCDC_SDAPO.kicad_sym`, `Converter_DCDC_SDAPO.pretty/` | SDAPO PoE PD modules |
 | `Interface_Ethernet_ICPlus.kicad_sym` | IC Plus Ethernet PHYs |
 | `Regulator_Switching_TI.kicad_sym` | TI switching regulators |
@@ -19,7 +20,8 @@ Project-local KiCad libraries shared by the boards in `hardware/`. They follow t
 | `Capacitor_SMD_AISHI.pretty/`, `Capacitor_SMD_JIERR.pretty/` | Aluminium SMD can capacitors (not used by espion-cam any more) |
 | `Connector_FFC-FPC_XFCN.pretty/` | XFCN FFC/FPC connectors (not used by espion-cam any more) |
 | `Connector_FFC-FPC_JUSHUO.pretty/` | JUSHUO FFC/FPC connectors |
-| `Connector_RJ_HanRun.pretty/` | HanRun RJ45 jacks |
+| `Connector_RJ_HanRun.pretty/` | HanRun RJ45 jacks (not used by espion-cam any more) |
+| `Connector_RJ_LinkPP.pretty/` | LINK-PP RJ45 jacks |
 | `Connector_USB_HRO.pretty/` | Korean Hroparts USB connectors |
 | `LED_SMD_Amicc.pretty/` | Amicc SMD LEDs |
 | `LED_SMD_Worldsemi.pretty/` | Worldsemi SMD LEDs (not used by espion-cam any more) |
@@ -162,8 +164,10 @@ hand-soldered).
 
 HanRun HR871150C RJ45 jack with magnetics (LCSC C19724786): 10/100BASE-T, 1CT:1CT
 transformers, PoE centre taps and spare pairs brought out, Bob-Smith termination, yellow and
-green LEDs, right angle. Used by espion-cam as J1 (bottom side, hand-soldered).
+green LEDs, right angle.
 
+- **Not used by espion-cam any more** (2026-11-16): out of stock at LCSC and JLCPCB; J1 is the
+  LINK-PP LPJG0926HENL below.
 - Source: [HanRun datasheet](https://datasheet.lcsc.com/datasheet/pdf/bae28869af3176e6a10bdf4859b444a5.pdf)
   (internal schematic, dimensions, recommended PCB layout).
 - Pin names come from the internal schematic: P3 is the shared chip-side centre tap, VC1±
@@ -177,6 +181,31 @@ green LEDs, right angle. Used by espion-cam as J1 (bottom side, hand-soldered).
   side) and pin 7 (PoE cable side) and 1.47 mm between pin 10 and the shield; now 1.09 mm and
   1.97 mm. The LED pins (Ø2.0 on Ø1.02) are unchanged.
 - 3D model: `Connector_RJ_HanRun.3dshapes/`, from `3d-src/`.
+
+### `Connector_LinkPP:LPJG0926HENL`, `Connector_RJ_LinkPP:RJ45_LinkPP_LPJG0926HENL_Horizontal`
+
+LINK-PP LPJG0926HENL RJ45 jack with magnetics for 802.3at PoE+ (LCSC C22457393): four 1CT:1CT
+channels (1000BASE-T; 10/100 uses channels 1 and 2), the four line-side centre taps brought out
+(VC1–VC4), Bob-Smith termination, green (left) and yellow (right) LEDs, shielded, right angle.
+Used by espion-cam as J1 (bottom side, hand-soldered).
+
+- Source: [LINK-PP datasheet LP18022610 rev. A](https://datasheet.lcsc.com/datasheet/pdf/7552303406281bb49415eef3754c6de8.pdf)
+  (p.1 internal schematic, electrical ratings and LED table; p.2 dimensions and suggested PCB
+  layout, which gives the holes only).
+- Symbol, footprint and 3D model drawn for this project (CERN-OHL-P-2.0). Pin names follow the
+  p.1 schematic: TD1±–TD4± (chip side), CT on pins 4 and 5 (one node inside the jack: two pins of
+  the same name, so a board may leave one unconnected), VC1–VC4, LEDG±/LEDY±, SH for both shield
+  tabs. All pins passive.
+- Pads: pins 1–10 Ø1.45 on the Ø0.90 holes, the cable-side pins 11–14 Ø1.25 on Ø0.90, the LED
+  pins Ø2.0 on Ø1.02, the shield tabs Ø2.10 on Ø1.70 (annular rings 0.275, 0.175, 0.49 and 0.20 mm,
+  all above JLCPCB's 0.15 mm minimum); two Ø3.20 NPTH pegs. Pins 11–14 and the shield tabs are
+  trimmed to open the jack's tightest gaps: 0.62 mm from pin 11 or 14 (cable side) to the nearer
+  shield tab, 1.47 mm from pin 2 to pin 11 (the closest used chip-side/cable-side pair), 1.17 mm
+  from the chip-side pin 10 to pin 14.
+- Origin at pin 1. Courtyard round the body, the shield tabs and the pegs; silkscreen with no line
+  across the open front.
+- 3D model: `Connector_RJ_LinkPP.3dshapes/`, from `3d-src/`, to the p.2 outline (15.93 × 21.25 mm
+  body).
 
 ### `Interface_Ethernet_ICPlus:IP101GRI`
 

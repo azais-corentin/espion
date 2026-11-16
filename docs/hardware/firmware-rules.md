@@ -228,7 +228,7 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   - **Pending (first-board measurement):** a firmware LED limit on PoE power. The PoE power
     budget was accepted to be measured on the first boards (user decision 2026-11-02: "Accept,
     measure on first boards"); if the measured PD input exceeds the IEEE 802.3af 12.95 W PD
-    limit or J1's 350 mA per pair, the firmware gets a lower LED duty or pulse limit on PoE.
+    limit or J1's 720 mA per pair, the firmware gets a lower LED duty or pulse limit on PoE.
     No number yet. [power.md](power.md#poe-input)
 - **FW-10** ADC1 (P4 DS Table 2-7 pp.24–25) at ATTEN3 (0–3300 mV effective range, ±15 mV total
   error after calibration, P4 DS Table 5-6 p.90), on one input:

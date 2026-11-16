@@ -1,6 +1,6 @@
 # Ethernet
 
-10/100 Ethernet for the P4's EMAC: an IP101G PHY (U1) on RMII, and a HanRun HR871150C MagJack
+10/100 Ethernet for the P4's EMAC: an IP101G PHY (U1) on RMII, and a LINK-PP LPJG0926HENL MagJack
 (J1) that also hands both PoE pair sets to the PD module ([power](power.md#poe-input)). The PHY
 supplies the 50 MHz RMII clock.
 
@@ -128,47 +128,57 @@ Placement:
 
 ### J1
 
-J1 is a HanRun HR871150C: an RJ45 with magnetics (1CT:1CT), PoE centre taps
-brought out, Bob-Smith termination, two LEDs and a shield. It is a through-hole part on the bottom
-side at the east edge, soldered by hand ([layout](layout.md#assembly)).
+J1 is a LINK-PP LPJG0926HENL: an RJ45 with magnetics (four 1CT:1CT channels, made for 1000BASE-T and
+802.3at PoE; 10/100 uses channels 1 and 2), the four line-side centre taps brought out, Bob-Smith
+termination, two LEDs and a shield. It is a through-hole part on the bottom side at the east edge,
+soldered by hand ([layout](layout.md#assembly)). Its 0–70 °C operating range (p.1) covers the board's
+indoor ambient ([power](power.md)).
 
-- **J1 pin field.** HanRun rates the jack at 2250 V dc from the cable side to the chip side (p.1),
-  which is why the "PoE isolation" rule exempts pad pairs inside J1
-  ([layout](layout.md#ethernet-and-poe-isolation)).
-  - The J1 lands are trimmed below the stock pad sizes, so the gaps between the chip-side pins, the
-    cable-side pins and the shield stay open (`kicad_query distance`).
-- **PoE.** J1.7–J1.10 (VC1+, VC1−, VC2+, VC2−) carry the cable voltage from both pair sets (mode A
-  and mode B) to U2 pins 1–4 (POE_VA1, POE_VA2, POE_VB1, POE_VB2). These four nets are class POE_CABLE:
-  tracks sized for the jack's 350 mA centre-tap rating (p.1), in a lane of their own on In1. The PD
-  side and the board's isolation (some isolation only, no level rated or tested) are in
-  [power](power.md#poe-input).
-- **Chip-side centre tap.** J1.3 (ETH_CT) goes only to C3, to GND. The IP101G has internal
-  terminations and wants no bias on the centre tap ("Do not connect to any power", p.7), and it asks
-  for decoupling there (p.56).
+- **J1 pin field.** LINK-PP gives a 1500 Vrms hipot from the cable side to the chip side (p.1),
+  which is why the "PoE isolation" rule exempts J1's own pin field: pad pairs inside J1, and PoE copper
+  inside J1's courtyard against J1's pads, since the PoE lane passes between the chip-side pins to
+  reach the centre taps ([layout](layout.md#ethernet-and-poe-isolation)).
+  - The J1 lands are kept small round the datasheet's holes (p.2), so the gaps between the chip-side
+    pins, the cable-side pins and the shield stay open (`kicad_query distance`;
+    [hardware/lib](../../hardware/lib/README.md)). J1.11 and J1.14 (cable side) sit next to the shield
+    pads (GND), a gap set by the jack's geometry.
+- **PoE.** J1.11–J1.14 (VC1–VC4) carry the cable voltage from both pair sets (mode A and mode B) to
+  U2 pins 1–4 (POE_VA1, POE_VA2, POE_VB1, POE_VB2). These four nets are class POE_CABLE, in a lane of
+  their own on In1. J1 rates its centre-tap pins 720 mA at 57 V dc, continuous (p.1); the current the
+  tracks are sized for is in [power](power.md#poe-input), with the PD side and the board's isolation
+  (some isolation only, no level rated or tested).
+- **Unused channels.** J1.7–J1.10 (TD3±, TD4±, the chip side of the 1000BASE-T channels 3 and 4)
+  are left unconnected: a 10/100 PHY has no use for them, and their line side still carries the
+  spare-pair centre taps (VC3, VC4) for mode B PoE.
+- **Chip-side centre tap.** J1.5 (CT) goes only to C3, to GND; J1.4, the same node inside the jack
+  (p.1 schematic), is left unconnected. The IP101G has internal terminations and wants no bias on the
+  centre tap ("Do not connect to any power", p.7), and it asks for decoupling there (p.56).
 - **Shield.** J1's shield (J1.SH) is tied straight to GND: its through-hole pads join the In1/In2 GND
   planes. There is no RC network to GND (user decision 2026-11-09, "replace R2, R3 and C1 by a
-  wire"); the Bob-Smith termination stays inside the jack (HanRun p.1). Cable-shield and ESD
-  currents return through board GND ([Accepted risks](#accepted-risks)).
+  wire"); the Bob-Smith termination (75 Ω and 22 nF per channel, 1000 pF / 2 kV to the shield) stays
+  inside the jack (LINK-PP p.1). Cable-shield and ESD currents return through board GND
+  ([Accepted risks](#accepted-risks)).
 - **Hand-soldering trial.** J1's lands are close to reflowed parts, C3, C2 and R44. J1's
   hand-assembly note asks for a conical tip ≤ 1 mm and Kapton over all three; inspect them after.
 
 ### MDI pairs crossed at J1
 
-The pairs are swapped at J1, and inside each pair P and N are inverted on purpose, so that both pairs
-route on F.Cu without crossing each other or themselves, and without vias:
+The pairs are swapped at J1, and inside each pair P and N are inverted on purpose, so that neither pair
+needs a P/N crossing (no swap vias) between U1 and J1:
 
 | U1 pin | PHY function | Net | J1 pin | Jack function |
 |---|---|---|---|---|
-| U1.30 | MDI_TP (transmit +) | ETH_RD_N | J1.5 | RD− (RJ45 6) |
-| U1.29 | MDI_TN (transmit −) | ETH_RD_P | J1.4 | RD+ (RJ45 3) |
-| U1.27 | MDI_RP (receive +) | ETH_TD_N | J1.2 | TD− (RJ45 2) |
-| U1.26 | MDI_RN (receive −) | ETH_TD_P | J1.1 | TD+ (RJ45 1) |
+| U1.30 | MDI_TP (transmit +) | ETH_RD_N | J1.6 | TD2− (RJ45 6) |
+| U1.29 | MDI_TN (transmit −) | ETH_RD_P | J1.3 | TD2+ (RJ45 3) |
+| U1.27 | MDI_RP (receive +) | ETH_TD_N | J1.2 | TD1− (RJ45 2) |
+| U1.26 | MDI_RN (receive −) | ETH_TD_P | J1.1 | TD1+ (RJ45 1) |
 
 - The PHY transmits on RJ45 pins 3/6. That is MDI-X wiring, and it works because the IP101G swaps its
   pairs itself.
 - The net names follow the J1 pin they reach. Each PHY + pin reaches the jack's − pin and each − pin
-  its + pin, so both pairs are P/N-inverted between U1 and J1. In each pair the U1 pin that leaves on
-  the west ends on the south lane at J1 (J1.5, J1.2), so the pair runs straight.
+  its + pin, so both pairs are P/N-inverted between U1 and J1. The inversion was chosen for the first,
+  F.Cu-only route (user decision 2026-11-04) and kept for the B.Cu route that the LINK-PP pinout
+  needs: with it neither pair crosses itself there either.
 
 IP101G register facts the wiring relies on:
 
@@ -207,33 +217,37 @@ vias to keep P on P. Consequences:
 
 ### MDI routing
 
-- **Geometry.** Net class MDI, on F.Cu over the In1 GND plane: the same geometry as the MIPI pairs,
-  100 Ω differential nominal ([layout](layout.md#impedance)). The MDI lines are short enough for
-  100BASE-TX that the impedance spread without impedance control doesn't matter.
+- **Geometry.** Net class MDI: the same geometry as the MIPI pairs, 100 Ω differential nominal
+  ([layout](layout.md#impedance)), on B.Cu over the In2 GND plane from J1, then on F.Cu over the In1
+  GND plane into U1. The MDI lines are short enough for 100BASE-TX that the impedance spread without
+  impedance control doesn't matter.
 - **Vias.** IP101G §6.2 (p.56) says "it is best not use via to place anywhere other than in close
-  proximity to device". The MDI lines have none: both pairs run on F.Cu only, from U1's pins to J1's,
-  with no P/N crossing.
+  proximity to device". Each MDI line has one via, near U1: the pairs leave J1's through-hole pins on
+  B.Cu (no via at J1) and change to F.Cu just north of U1's escape, with GND return vias beside the
+  layer changes ([layout](layout.md#mdi)). B.Cu keeps them off In1, which carries the PoE lane between
+  J1's pins.
 - **Length matching.** TI SNLA387 (p.2, "MDI Traces") asks for P/N matching within 50 mil for
-  100 Mbit/s; the DRC rule "MDI intra-pair skew" holds it. J1.1 and J1.5 sit further west than J1.2 and
-  J1.4, so TD_P and RD_N have the longer way to the jack; TD_N and RD_P carry 45° trapezoid bumps to
-  match them ([layout](layout.md#mdi)).
+  100 Mbit/s; the DRC rule "MDI intra-pair skew" holds it ([layout](layout.md#mdi)).
 - **Spacing.** IP101G §6.2 asks for "three times space" between an MDI pair and other signals. The DRC
   rule "MDI spacing" holds it (3 × the track width, rounded up).
   - Inside U1's escape area (the F.Cu rule area "U1 MDI escape" and U1's courtyard) the 0.4 mm pitch
     makes that impossible. ISET (pin 25), REGOUT (pin 28) and AVDD33 (pin 31) sit next to the MDI pads,
     so only the default clearance applies there. This is an accepted deviation; the datasheet grants no
     exception.
-  - Outside it the closest pads (J1.13/J1.14) stay just above the rule's limit
-    (`kicad_query distance`); pours keep the rule's clearance.
-  - The TX and RX pairs keep 3W from each other outside the same U1 exemption (DRC rule "MDI pair to
-    pair"). The closest spot is the RD_P–TD_N diagonal pair west of R6, which the DRC passes.
+  - At J1 the jack's 2.54 mm pin stagger puts its other chip-side pins (CT, the unused TD3/TD4) and the
+    In1 PoE lane between its pins next to the MDI pads, so these keep the default clearance too
+    (accepted deviation). J1's shield pads keep the rule.
+  - The inner GND planes and the GND return vias at the layer changes keep the default clearance: they
+    are the pairs' reference, not neighbouring signals.
+  - The TX and RX pairs keep 3W from each other outside U1's exemption and J1's pins (DRC rule "MDI
+    pair to pair").
 
 ### LEDs
 
 | LED | J1 pins | Driven by | Mode 1 meaning (Table 7, p.53) |
 |---|---|---|---|
-| Green | LEDG+ J1.13 = +3V3, LEDG− J1.14 → R4 → PHY_LED0 (U1.11) | LED0 sinks (active low) | Link |
-| Yellow | LEDY+ J1.11 ← R5 ← PHY_LED3 (U1.12), LEDY− J1.12 = GND | LED3 sources (active high) | 100 Mbit/s link, blinking with traffic |
+| Green | LEDG+ J1.15 = +3V3, LEDG− J1.16 → R4 → PHY_LED0 (U1.11) | LED0 sinks (active low) | Link |
+| Yellow | LEDY+ J1.17 ← R5 ← PHY_LED3 (U1.12), LEDY− J1.18 = GND | LED3 sources (active high) | 100 Mbit/s link, blinking with traffic |
 
 - The LED pad driver limits the current to its default 1.62 mA (LED_DRIVE, p.35). R4 and R5 limit it
   if the firmware raises the drive: I ≤ (+3V3 max − V_F)/R, with +3V3 at the top of its ±5 % envelope,

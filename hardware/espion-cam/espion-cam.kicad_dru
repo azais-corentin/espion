@@ -19,15 +19,27 @@
 # (it forbids pours only and F.Cu has none, so it only names the region), keep the Default
 # clearance; there only U1's own pin nets come closer than the rule's value (docs/hardware/layout.md, Ethernet and PoE isolation). A segment
 # that crosses the area edge is not exempt (enclosedByArea).
-(rule "MDI spacing" (condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !(A.intersectsCourtyard('U1') || A.enclosedByArea('U1 MDI escape'))") (constraint clearance (min 0.55mm)))
+# At J1: J1's own chip-side pads (centre taps, unused TD3/TD4 pins) keep the Default clearance too, and so do J1's MDI pads against
+# the In1 PoE lane inside J1's courtyard (the lane threads the pin field, as 'PoE isolation' allows): the jack's 2.54 mm pin stagger
+# leaves no room for 3W between its pins (deviation, docs/hardware/layout.md). J1's shield pads keep the rule.
+# MDI vias against GND vias keep the Default clearance: the return vias beside the B.Cu-to-F.Cu layer changes near U1
+# must sit within 1 mm of them (centre to centre), closer than 3W allows.
+# The inner GND planes (In1, In2) keep the Default clearance too: they are the pairs' reference planes, not
+# neighbouring signals, and 3W around the vias would cut them away under the pairs.
+(rule "MDI spacing"
+  (condition "A.NetClass == 'MDI' && B.NetClass != 'MDI' && !(A.intersectsCourtyard('U1') || A.enclosedByArea('U1 MDI escape')) && !(B.memberOfFootprint('J1') && B.NetClass != 'POE_CABLE' && B.NetName != 'GND') && !(A.memberOfFootprint('J1') && B.NetClass == 'POE_CABLE' && B.intersectsCourtyard('J1')) && !(A.Type == 'Via' && B.Type == 'Via' && B.NetName == 'GND') && !(B.Type == 'Zone' && B.NetName == 'GND' && !B.existsOnLayer('F.Cu') && !B.existsOnLayer('B.Cu'))")
+  (constraint clearance (min 0.55mm)))
 
 # PoE: keeps the cable side (POE_CABLE nets: J1's centre taps to U2.1-U2.4, on In1) apart from the rest of the board.
 # The layout is meant to give some isolation only; no isolation level is rated or tested (user decision 2026-11-02).
-# The same-layer gap is a chosen value, not derived from a rating. Pad pairs inside J1 are exempt: that pin field is the jack's own (HanRun HR871150C
-# p.1 rates it 2250 V dc, cable side to chip side); its pads are trimmed in the footprint to widen the gaps between cable-side and chip-side pins.
+# The same-layer gap is a chosen value, not derived from a rating. J1's own pin field is exempt: pad pairs inside J1, and PoE copper
+# touching J1's courtyard against J1's pads (the In1 lane threads J1's chip-side pins to reach the cable-side pins 11-14; LINK-PP
+# LPJG0926HENL p.1 hipot 1500 Vrms, cable side to chip side). Its cable-side and shield pads are trimmed in the footprint to widen those gaps.
 # Same-layer only: the In1 PoE lane's distance to copper on other layers is kept by hand (F.Cu >= 1.0 mm
 # sideways). Distances: docs/hardware/layout.md, Ethernet and PoE isolation.
-(rule "PoE isolation" (condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(A.memberOfFootprint('J1') && B.memberOfFootprint('J1'))") (constraint clearance (min 2mm)))
+(rule "PoE isolation"
+  (condition "A.NetClass == 'POE_CABLE' && B.NetClass != 'POE_CABLE' && !(B.memberOfFootprint('J1') && (A.memberOfFootprint('J1') || A.intersectsCourtyard('J1')))")
+  (constraint clearance (min 2mm)))
 
 # MIPI CSI-2: Espressif ESP32-P4 HDG 1.4.6 allows 10 mil (0.254 mm) P/N skew per lane. A lane is one pair from U6 to J4.
 (rule "MIPI_CSI intra-pair skew" (condition "A.NetClass == 'MIPI_CSI'") (constraint skew (max 0.254mm) (within_diff_pairs)))
@@ -78,9 +90,12 @@
 (rule "Silk to silk" (condition "A.Type != 'Pad' && B.Type != 'Pad' && A.Layer == B.Layer && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint silk_clearance (min 0mm)))
 
 # Ethernet MDI: IP101G datasheet 6.2 p.56 'three times space' also between the RX and TX pairs: 3W (W: the MDI track width, net class MDI).
-# Same U1 exemption as 'MDI spacing' (U1's 0.4 mm-pitch pins and the 'U1 MDI escape' area).
+# Same U1 exemption as 'MDI spacing' (U1's 0.4 mm-pitch pins and the 'U1 MDI escape' area), and J1's pins are exempt: the jack's
+# 2.54 mm pin stagger puts TD and RD pins next to each other (deviation, docs/hardware/layout.md).
 # Design: docs/hardware/layout.md, Ethernet and PoE isolation.
-(rule "MDI pair to pair" (condition "(A.NetName == '/Ethernet/ETH_RD_P' || A.NetName == '/Ethernet/ETH_RD_N') && (B.NetName == '/Ethernet/ETH_TD_P' || B.NetName == '/Ethernet/ETH_TD_N') && !(A.intersectsCourtyard('U1') || A.enclosedByArea('U1 MDI escape') || B.intersectsCourtyard('U1') || B.enclosedByArea('U1 MDI escape'))") (constraint clearance (min 0.54mm)))
+(rule "MDI pair to pair"
+  (condition "(A.NetName == '/Ethernet/ETH_RD_P' || A.NetName == '/Ethernet/ETH_RD_N') && (B.NetName == '/Ethernet/ETH_TD_P' || B.NetName == '/Ethernet/ETH_TD_N') && !(A.intersectsCourtyard('U1') || A.enclosedByArea('U1 MDI escape') || B.intersectsCourtyard('U1') || B.enclosedByArea('U1 MDI escape')) && !(A.memberOfFootprint('J1') || B.memberOfFootprint('J1'))")
+  (constraint clearance (min 0.54mm)))
 
 # Ethernet MDI: TI SNLA387 p.2 'MDI Traces': length-match the two lines of a pair within 50 mil (1.27 mm) for 100BASE-TX.
 # Design: docs/hardware/layout.md, Ethernet and PoE isolation.

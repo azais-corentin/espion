@@ -27,8 +27,8 @@ Licensed under CERN-OHL-P-2.0 (`../LICENSE`).
   +32V just above the string from a divider on Q1's drain (R70/R76, `LED_K_SENSE`, GPIO23), a
   required headroom loop: Q1 is not rated for full boost output.
   [led](../../docs/hardware/led.md)
-- **Ethernet:** U1 IP101G PHY on RMII (Y1 crystal; the PHY supplies the REF_CLK), J1 HR871150C
-  MagJack (bottom side, hand-soldered) with both centre taps and the spare pairs brought out,
+- **Ethernet:** U1 IP101G PHY on RMII (Y1 crystal; the PHY supplies the REF_CLK), J1 LINK-PP
+  LPJG0926HENL MagJack (bottom side, hand-soldered) with all four line-side centre taps brought out,
   its LEDs driven by the PHY, PPS and PHY reset test points. `PHY_RST_N` GPIO22.
   [ethernet](../../docs/hardware/ethernet.md)
 - **Power:** U2 DP1435-5V IEEE 802.3af PoE PD module (isolated, bottom side, hand-soldered)

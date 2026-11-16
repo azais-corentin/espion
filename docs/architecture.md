@@ -30,7 +30,7 @@ A baseboard for a Waveshare ESP32-P4-Core module.
 | [Waveshare ESP32-P4-Core](https://docs.waveshare.com/ESP32-P4-Core), 16 MB flash (SKU 36096) | ESP32-P4 (rev v3.x) with 32 MB PSRAM: camera control, capture, blob detection, trigger, LED gating, Ethernet MAC with PTP clock |
 | OV9281 camera module ([AliExpress](https://fr.aliexpress.com/item/1005012566040263.html)) | 1 MP mono global-shutter sensor, run at 640×400 (2×2 binned), RAW8, 120 fps, triggered on XVS |
 | IP101G | 10/100 Ethernet PHY on RMII; supplies the 50 MHz RMII clock |
-| HanRun HR871150C RJ45 MagJack | Ethernet jack with magnetics; passes both PoE pair sets to the PD |
+| LINK-PP LPJG0926HENL RJ45 MagJack | Ethernet jack with magnetics; passes both PoE pair sets to the PD |
 | SDAPO DP1435-5V | 802.3af PoE PD module, isolated |
 | TI TPS2121 | Picks PoE 5 V or USB-C VBUS, PoE first, no back-feed into USB |
 | TI TLV62569 | 3.3 V buck for the module, the PHY and the camera |
