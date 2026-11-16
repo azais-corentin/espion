@@ -84,7 +84,7 @@ Limits come from the datasheet (document, page, table/figure), a requirement in 
 ## ISO: isolation and clearance
 - **ISO-1** Every voltage domain has a clearance (and creepage where it applies) from IPC-2221 or the product safety standard, carried as a DRC rule; bare copper counts, mask doesn't (`rules`). **Auto:** `drc` (`clearance`, `creepage`). [ALT-HV][ALT-CL]
 - **ISO-2** Cable and shield copper meets board copper only at the bridge parts `layout.md` names, on every layer, with no overlapping planes (`distance {net}`, `zones`, V6). **Auto:** `drc` (`clearance` from the isolation rule). [TI-ETH][TI-HS]
-- **ISO-3** No copper under the cable-side pins and magnetics `layout.md` names (J1 pins 7–10, U2 pins 1–4) on any layer (`copper {box}`, `zones` rule areas, V6). [TI-ETH][AZ]
+- **ISO-3** No copper under the cable-side pins and magnetics `layout.md` names (J1's line-side centre taps J1.11–J1.14, U2 pins 1–4) on any layer, beyond what `layout.md` allows there (`copper {box}`, `zones` rule areas, V6). [TI-ETH][AZ]
 - **ISO-4** Each mounting hole's pad net matches its intent and keeps the isolation distance from other domains (`footprint {ref}`, `distance`). **Auto:** `drc`. [AZ]
 
 ## MEC: mechanical
