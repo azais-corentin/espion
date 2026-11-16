@@ -362,8 +362,9 @@ resistance (`kicad_query copper`) and those loads.
   class and custom rules still set the gap; KiCad fills to the larger), solid pad connection (no thermal reliefs),
   islands removed; names "<parts> <net>" or "<net> pour N". The In1/In2 planes keep their thermal reliefs.
 - 0402 parts get no solid pour pad beside a thin-track pad (tombstoning): rule "0402 pour pads thermal" gives C17.1 and
-  R17.2 reliefs; C21.2 and R22.2 join their shared GND via by two narrow tracks
-  (no pour); R16.1 takes +3V3 from the trunk ending on it and a narrow neck from "C17/R16 +3V3", which stops clear of the
+  R17.2 reliefs; C21.2 joins R22.2 by a narrow track and R22.2 runs to their shared GND via by another (no pour;
+  SCCB_SDA's via beside C21.2 leaves no 45° run from C21.2 to that via); R16.1 takes +3V3 from the trunk ending on it
+  and a narrow neck from "C17/R16 +3V3", which stops clear of the
   pad.
 - Where a rule is waived for parts' own pads, the pours are clipped to what the pads keep: "BST_SW pour 120" stays at the
   "LED_PWR pad spacing" distance off U10's other pads (pin 4 itself keeps TI's land gaps, 0.35 mm to pin 5 and 0.25 mm to the exposed pad), "U1 GND" keeps the exposed-pad
