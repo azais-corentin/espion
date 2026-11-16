@@ -134,10 +134,12 @@ termination, two LEDs and a shield. It is a through-hole part on the bottom side
 soldered by hand ([layout](layout.md#assembly)). Its 0–70 °C operating range (p.1) covers the board's
 indoor ambient ([power](power.md)).
 
-- **J1 pin field.** LINK-PP gives a 1500 Vrms hipot from the cable side to the chip side (p.1),
-  which is why the "PoE isolation" rule exempts J1's own pin field: pad pairs inside J1, and PoE copper
-  inside J1's courtyard against J1's pads, since the PoE lane passes between the chip-side pins to
-  reach the centre taps ([layout](layout.md#ethernet-and-poe-isolation)).
+- **J1 pin field.** The "PoE isolation" rule exempts J1's own pin field: pad pairs inside J1, and PoE
+  copper inside J1's courtyard against J1's pads, since the PoE lane passes between the chip-side pins
+  to reach the centre taps (user decision 2026-11-16). There the lane keeps only the net-class
+  clearance to the chip-side pads. LINK-PP gives "Hipot Test: 1500Vrms MIN" (p.1 item 8) without
+  naming the test points; it rates the jack, not the board copper between its pins
+  ([layout](layout.md#poe-isolation)).
   - The J1 lands are kept small round the datasheet's holes (p.2), so the gaps between the chip-side
     pins, the cable-side pins and the shield stay open (`kicad_query distance`;
     [hardware/lib](../../hardware/lib/README.md)). J1.11 and J1.14 (cable side) sit next to the shield
@@ -175,7 +177,8 @@ needs a P/N crossing (no swap vias) between U1 and J1:
 
 - The PHY transmits on RJ45 pins 3/6. That is MDI-X wiring, and it works because the IP101G swaps its
   pairs itself.
-- The net names follow the J1 pin they reach. Each PHY + pin reaches the jack's − pin and each − pin
+- The net names follow the RJ45 pair in MDI terms: ETH_TD_* on contacts 1/2 (J1's TD1±), ETH_RD_* on
+  contacts 3/6 (J1's TD2±). Each PHY + pin reaches the jack's − pin and each − pin
   its + pin, so both pairs are P/N-inverted between U1 and J1. The inversion was chosen for the first,
   F.Cu-only route (user decision 2026-11-04) and kept for the B.Cu route that the LINK-PP pinout
   needs: with it neither pair crosses itself there either.
@@ -235,8 +238,9 @@ vias to keep P on P. Consequences:
     so only the default clearance applies there. This is an accepted deviation; the datasheet grants no
     exception.
   - At J1 the jack's 2.54 mm pin stagger puts its other chip-side pins (CT, the unused TD3/TD4) and the
-    In1 PoE lane between its pins next to the MDI pads, so these keep the default clearance too
-    (accepted deviation). J1's shield pads keep the rule.
+    In1 PoE lane between its pins next to the MDI pads and their tails in the pin field, so inside
+    J1's courtyard these keep the default clearance too (accepted deviation). J1's shield pads keep
+    the rule.
   - The inner GND planes and the GND return vias at the layer changes keep the default clearance: they
     are the pairs' reference, not neighbouring signals.
   - The TX and RX pairs keep 3W from each other outside U1's exemption and J1's pins (DRC rule "MDI
@@ -471,6 +475,11 @@ release and a hold time Tlat_h after it (Table 15 p.59):
   hand-soldering trial.
 - **Shield tied straight to GND** (user decision 2026-11-09): cable-shield and ESD currents return
   through board GND, and a cable whose far end grounds its shield closes a ground loop.
+- **1000BASE-T PoE+ jack on a 10/100 PHY and an 802.3af PD.** J1 is judged from its own figures
+  (LINK-PP p.1: inductance with DC bias, insertion and return loss to 100 MHz, the line-side
+  22 nF / 75 Ω network per centre tap), not against IEEE 802.3's limits for 100BASE-TX magnetics
+  or for the PD detection signature, which were not compared (user decision 2026-11-16). Channels
+  3 and 4 carry mode B current with their chip side open. First-board checks 1, 2 and 9 cover it.
 
 ## First-board checks
 
@@ -500,7 +509,10 @@ release and a hold time Tlat_h after it (Table 15 p.59):
    ([layout](layout.md#thermal)).
 8. **J1 hand soldering.** After soldering J1 as its assembly note says, inspect C3, C2 and R44
    for bridges and shifted parts.
-9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source.
+9. **PoE.** Bring up the link on PoE power from a mode A and a mode B source: the PSE must detect,
+   classify and power the board in both modes. Repeat check 2 on mode A power at the PoE peak load
+   (LEDs 0.5 ms / 120 fps; the supply current flows through the data pairs' windings) and on mode B
+   power: zero CRC errors.
 10. **REGOUT.** With the link up at 100 Mbit/s and traffic running, scope REGOUT at C6 (short ground
     spring to C6.2): it must stay inside 1.07–1.18 V, ripple included (IP101G DS p.57). The path from
     U1.28 to C6 runs through vias ([REGOUT and ISET](#regout-and-iset)).

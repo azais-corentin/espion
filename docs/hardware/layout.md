@@ -79,7 +79,7 @@ with `kicad_query rules` and `kicad_query stats`.
 | Via types | Rule "Through vias only" | Microvias "only available for board thickness ≤1mm"; blind and buried vias are HDI only | |
 | Hole to copper | Board-setup minimum; rule "PTH hole to copper" for through-hole pads | Via hole to track 0.2 mm; inner-layer PTH hole to copper 0.3 mm (PTH to track 0.28 mm minimum) | |
 | Hole to hole | Board-setup minimum (DRC severity error); rule "Pad hole to hole" for pads | Via hole-to-hole 0.2 mm; pad hole-to-hole 0.45 mm | KiCad's hole-to-hole check skips milled (oval) holes, so J2's slots are not covered |
-| PTH annular ring | Rule "PTH annular ring"; the board-setup minimum covers vias | ≥ 0.15 mm absolute (1 oz multilayer), 0.20 mm recommended | J2's shell slots sit exactly at the rule's limit (stock HRO land pattern), under JLCPCB's recommended ring |
+| PTH annular ring | Rule "PTH annular ring"; the board-setup minimum covers vias | ≥ 0.15 mm absolute (1 oz multilayer), 0.20 mm recommended | J2's shell slots sit exactly at the rule's limit (stock HRO land pattern), and the lands of J1's cable-side pins J1.11–J1.14 are trimmed to open the jack's tightest gaps (J1.11 and J1.14 to the shield pads, J1.11 to J1.2, J1.14 to J1.10; [hardware/lib](../../hardware/lib/README.md)); both are under JLCPCB's recommended ring |
 | NPTH | Rules "NPTH hole size", "NPTH slot width" | Non-plated holes ≥ 0.50 mm; non-plated slots ≥ 1.0 mm | The board has no non-plated slot |
 | Plated slot | Rule "Plated slot width" | "Multi-layer: 0.35mm" and "The minimum plated slot width is 0.5mm"; slot length at least 2 × its width | J2's shell slots are over twice as long as wide. The board setting `min_groove_width` is KiCad's creepage groove width, not a slot check |
 | SMD pad to pad, different nets | The net classes; rule "U12 LGA pads" | 0.15 mm | |
@@ -98,8 +98,8 @@ A via beside a pad of its own net, but not touching it, keeps a copper gap of at
 decision 2026-11-10). JLCDFM flags a narrower gap under pad spacing and via to pad: it may not etch, and the sliver
 left between the pad opening and the tented via is too thin. One via doesn't keep it, because no site nearby holds the
 clearances: the GND via shared by U9.1 and U6.27, beside U9.1 on F.Cu (on B.Cu copper joins it to U6.27), which the
-MIPI_CSI spacing to U6.28 and R56.1 (LED_EN) hold in place. C18.2's via and the via between C40.2 and U11.2 sit as
-close, but copper joins each of them to those pads, so no gap is left there.
+MIPI_CSI spacing to U6.28 and R56.1 (LED_EN) hold in place. C18.2's via, the via between C40.2 and U11.2 and the GND
+return via beside J1.18 sit as close, but copper joins each of them to those pads, so no gap is left there.
 
 The same holds for vias and pour fills against any copper of their own net on an outer layer (another via, a pad, a
 track, another pour): they join, or they keep at least that gap. JLCDFM flags a narrower same-net gap under pad
@@ -131,12 +131,13 @@ neighbouring 0402/SOT outlines closer than KiCad's silk clearance, and KiCad wou
 ## Net classes
 
 Track widths and diff-pair geometry come from the net classes in `espion-cam.kicad_pro`; the spacing that depends on what
-is next to a net is in [Custom rules](#custom-rules). Where a width is sized for current, the temperature rise uses
+is next to a net is in [Custom rules](#custom-rules). Where a width is sized for current on an outer layer, the temperature rise uses
 Brooks & Adam's curve fit to the IPC-2152 data for an external layer, as coded in KiCad's source
 (`track_width_calculations.cpp`, coefficients `EXTERNAL_COEFFS {215.3, 2.0, −1.15, −1.0}`,
 https://docs.kicad.org/doxygen/track__width_calculations_8cpp_source.html, read 2026-11-01): ΔT = 215.3 · I² · W^−1.15 ·
 Th^−1, W and Th in mil, ΔT in °C. (The released KiCad 9 track-width calculator uses IPC-2221 instead, which gives lower
-rises; the fit is the more conservative of the two.)
+rises; the fit is the more conservative of the two.) The PoE lane on In1 uses IPC-2221's internal-conductor formula
+instead ([PoE isolation](#poe-isolation)).
 
 | Class | Nets | Reason |
 |---|---|---|
@@ -160,8 +161,8 @@ source of each. The JLCPCB fabrication rules are described in [Fabrication rules
 | Rule | Applies to | Purpose | Reason and source |
 |---|---|---|---|
 | MIPI_CSI spacing | MIPI_CSI copper against everything except its own partner | Clearance of 2W | HDG, PCB layout, MIPI: "maintain a minimum spacing of 2W between MIPI trace pairs". Keeps the GND pours 2W away too, which the 100 Ω geometry assumes |
-| MDI spacing | MDI copper against non-MDI copper | Clearance of 3W | IP101G datasheet §6.2 p.56 "three times space". Exempt: MDI items touching U1's courtyard or lying wholly inside the F.Cu rule area "U1 MDI escape", where U1's 0.4 mm pitch puts pins 25 (ISET), 28 (REGOUT) and 31 (AVDD33) next to the MDI pads ([Ethernet and PoE isolation](#ethernet-and-poe-isolation)); a segment crossing the area edge is not exempt. Also exempt: J1's own pads except its GND pads (shield, J1.18) and PoE pads, and J1's MDI pads against the In1 PoE lane inside J1's courtyard (the jack's 2.54 mm pin stagger); MDI vias against GND vias (return vias within 1 mm); the inner GND planes (In1, In2: the pairs' reference) |
-| PoE isolation | POE_CABLE copper against other nets, same layer | Same-layer gap | Keeps the PoE cable side (J1's centre taps to U2.1–U2.4) apart from the rest of the board. The layout is meant to give some isolation only; no isolation level is rated or tested (user decision 2026-11-02). The gap is a chosen value. J1's pin field exempt: pad pairs inside J1, and PoE copper touching J1's courtyard against J1's pads, where the In1 lane threads the chip-side pins to the centre taps (LINK-PP LPJG0926HENL p.1: 1500 Vrms hipot, cable side to chip side; user decision 2026-11-16). Copper across layers is not checked by KiCad: see [PoE isolation](#poe-isolation) |
+| MDI spacing | MDI copper against non-MDI copper | Clearance of 3W | IP101G datasheet §6.2 p.56 "three times space". Exempt: MDI items touching U1's courtyard or lying wholly inside the F.Cu rule area "U1 MDI escape", where U1's 0.4 mm pitch puts pins 25 (ISET), 28 (REGOUT) and 31 (AVDD33) next to the MDI pads ([Ethernet and PoE isolation](#ethernet-and-poe-isolation)); a segment crossing the area edge is not exempt. Also exempt: MDI copper touching J1's courtyard against J1's own pads except its GND pads (shield, J1.18) and PoE pads, and J1's MDI pads against the In1 PoE lane inside J1's courtyard (the jack's 2.54 mm pin stagger); MDI vias against GND vias (return vias within 1 mm); the inner GND planes (In1, In2: the pairs' reference) |
+| PoE isolation | POE_CABLE copper against other nets, same layer | Same-layer gap | Keeps the PoE cable side (J1's centre taps to U2.1–U2.4) apart from the rest of the board. The layout is meant to give some isolation only; no isolation level is rated or tested (user decision 2026-11-02). The gap is a chosen value. J1's pin field exempt: pad pairs inside J1, and PoE copper touching J1's courtyard against J1's pads, where the In1 lane threads the chip-side pins to the centre taps (user decision 2026-11-16). There the lane keeps only the net-class clearance to J1's chip-side pads; LINK-PP's "Hipot Test: 1500Vrms MIN" (LPJG0926HENL p.1 item 8, test points not stated) rates the jack, not this board copper. Copper across layers is not checked by KiCad: see [PoE isolation](#poe-isolation) |
 | MIPI_CSI intra-pair skew | Each MIPI_CSI pair | Maximum P/N skew | HDG §1.4.6 allows 10 mil P/N skew per lane; a lane is one pair from U6 to J4 |
 | U12 LGA pads | Pad pairs inside U12 | Clearance between neighbouring pads | MSA3S02 land pattern keeps JLCPCB's SMD pad-to-pad minimum between different-net pads (corner lands shortened at their inner end for it); JLCPCB's mask bridge sets the lower bound |
 | LED_PWR pad spacing | An exposed pad of LED_PWR or BST_SW against any other net (not POE_CABLE or MDI, which have stricter rules) | Pad clearance for the boost voltage | IPC-2221A Table 6-1, 31–50 V row: A6 (external component terminations, uncoated) for exposed pads; B4 (solder mask) 0.13 mm, so mask-covered tracks keep the class clearance. Exempt: pad pairs inside U10 (TI land pattern) and inside each LED D4–D15 (one forward voltage apart) |
@@ -256,7 +257,7 @@ comes back south on F.Cu over its own B.Cu run; that reversal puts D0_N west, as
 [Lane order](#lane-order)), and the length-matched diff pairs.
 
 The MDI pin escapes at U1 are 45°-only ([Ethernet and PoE isolation](#ethernet-and-poe-isolation)); the CSI bus crosses
-its narrowest plane neck at 45° rather than the ideal 58° ([Camera and CSI-2](#camera-and-csi-2)).
+the In2 plane edge at the lens cutout at 45° rather than the ideal 58° ([Camera and CSI-2](#camera-and-csi-2)).
 
 ## Power
 
@@ -537,19 +538,19 @@ pad axes; TI SPRAAR7J §3.9 p.12: a return via at each transition, p.8: stitchin
 vias). D0's two north vias share one. The GND vias that served the CLK and D1 row vias stay as stitching beside the B.Cu
 pairs. The GND vias under J4 have F.Cu stubs to J4's GND pads 10/7/4/1.
 
-### CSI bus and the plane neck
+### CSI bus and the plane edges
 
 The CSI legs run on B.Cu over In2 to U6.28–U6.33 as a three-pair bus, CLK between D0 and D1. Spacing: 2W to everything but
 the partner, 3W to USB, MDI, all RMII, XVS/XVS_CAM and STROBE/STROBE_CAM (rules "MIPI_CSI spacing" and "MIPI_CSI to
 clocks and high-speed"). The CLK pairs have no GND guard copper (HDG §1.4.6 p.28 asks for the MIPI CLK pair to be
-surrounded by ground copper); a B.Cu guard each side would widen the bus and leave less room at the neck below (user
+surrounded by ground copper); a B.Cu guard each side would widen the bus and bring it nearer the plane edge below (user
 decision 2026-11-01: "Accept 2W, no guard").
 
-The bus passes through a neck of the In2 reference between the lens plane edge and the antipad of J1.9. The neck is
-narrower than TI SPRAAR7J p.9's 90 mil from bus to plane edge on each side asks for. Widening it would mean moving J1
-(locked at the edge) or the lens and ring (approved floorplan). The bus crosses the neck at 45° (route rule) rather than
-the ideal 58°, which costs a little more plane-edge distance on each side (user decision 2026-11-01: "Use 45°, accept
-71.7 mil"; the ideal crossing gave more room).
+The bus passes the In2 plane edge round the lens cutout closer than TI SPRAAR7J p.9's 90 mil from bus to plane edge
+asks for. Widening the gap would mean moving the lens and ring (approved floorplan). The bus passes it at 45° (route
+rule) rather than the ideal 58°, which costs a little more plane-edge distance (user decision 2026-11-01: "Use 45°,
+accept 71.7 mil"; the ideal crossing gave more room). On the bus's other side the plane runs on to J1's pin field; only
+via and pin antipads lie there (below).
 
 At the FFC notch the In1/In2 planes end at the board-edge clearance. The pairs' B.Cu run under J4 keeps less than
 SPRAAR7J p.9's 90 mil from that plane edge; the D1 pair is the one materially short (CSI_D1_P over a few millimetres of
@@ -559,7 +560,7 @@ user decision above.
 The J1 antipads in In2 are voids, not plane edges, and SPRAAR7J p.9 asks for ≥ 1.5 W from voids. D1 passes J1's
 antipads on B.Cu over solid In2, at least 1.5 W from each void (SPRAAR7J p.9); the row via whose antipad joined J1.3's
 void (then ETH_CT) went with the re-route (user decision 2026-11-13). Further on it passes J1.5's, J1.7's and J1.9's antipads
-at increasing distance.
+at increasing distance, then the antipad of PHY_RST_N's via beside the lens, which keeps the same 1.5 W.
 
 The planes stay solid under J4's MIPI pads except where the MIPI via antipads reach under them, against TI
 SPRAAR7J §3.10 p.13 ("voiding the SMD mounting pads of the reference plane by 100%"):
@@ -621,7 +622,8 @@ hand-soldered; Y1 25 MHz crystal; U2 PoE PD module. Circuit: [ethernet](ethernet
   south peg and its LED pins; TD runs north round J1.11 and the shield pad, east, then south between J1's LED pins and
   the board edge strip. The LED pins sit between the two pairs.
 - The two pairs are swapped at J1 so they reach it without crossing, and each pair is P/N-inverted on purpose
-  (U1.30/29 → J1.6/3, U1.27/26 → J1.2/1; net names follow the J1 pin: U1.30 ETH_RD_N, U1.29 ETH_RD_P, U1.27
+  (U1.30/29 → J1.6/3, U1.27/26 → J1.2/1; net names follow the RJ45 pair, TD on contacts 1/2 (J1's TD1±) and RD on 3/6
+  (J1's TD2±): U1.30 ETH_RD_N, U1.29 ETH_RD_P, U1.27
   ETH_TD_N, U1.26 ETH_TD_P). This relies on the PHY's auto-MDIX, which firmware must never disable, and on its
   polarity handling (IP101G p.27, register 18 bit 8 POLARITY; user decision 2026-11-04)
   ([ethernet](ethernet.md#magjack-and-mdi), [firmware rules](firmware-rules.md#rules)). The inversion needs no swap vias.
@@ -632,8 +634,9 @@ hand-soldered; Y1 25 MHz crystal; U2 PoE PD module. Circuit: [ethernet](ethernet
   U1's courtyard, then 45°-only inside the F.Cu rule area "U1 MDI escape", where the rule "MDI spacing" is waived. Inside
   it only U1's own pin nets come closer than 3W: the pads (land pattern), the REGOUT track and its via, ISET's vertical,
   +3V3, the PHY_RST_N via. At J1 the 2.54 mm pin stagger makes 3W impossible too: J1's chip-side pads (CT, the unused
-  TD3/TD4 pins, the LED pins) keep the default clearance to the MDI pads, and so does the In1 PoE lane where it passes
-  between them; J1's shield pads and LED cathode (GND) keep the rule. Every other MDI point meets the rule (DRC). This is
+  TD3/TD4 pins, the LED pins) keep the default clearance to the MDI pads and to their tails inside J1's courtyard, and so
+  does the In1 PoE lane where it passes between the MDI pads; J1's shield pads and LED cathode (GND) keep the rule. Every
+  other MDI point meets the rule (DRC). This is
   a deviation from IP101G §6.2's "three times space", which has no exception.
 - Layer changes: each via has a GND return via within 1 mm (TI SNLA387 p.4), except ETH_RD_N's: the RD pair's other via,
   its B.Cu approach, the PHY_RST_N track and the +3V3 B.Cu feed leave no legal site for one, and the nearest GND via is a
@@ -644,7 +647,11 @@ hand-soldered; Y1 25 MHz crystal; U2 PoE PD module. Circuit: [ethernet](ethernet
   matched within TI SNLA387 p.2's 50 mil for 100 Mbit/s, which the rule "MDI intra-pair skew" enforces. RD_N carries a
   45° trapezoid bump on its B.Cu run east of J1 to match RD_P's longer way from J1.3.
 - Return path: In2 GND lies under every B.Cu MDI track, In1 GND under every F.Cu one, except where the tails at J1
-  cross J1's own antipads (`return_path` does not count a net's own pad and via clearances).
+  cross J1's own antipads (`return_path` does not count a net's own pad and via clearances). The RD pair keeps less than
+  TI SPRAAR7J p.9 asks from voids in In2 at two spots: between J1.12 and J1.13 it runs on the strip of plane left between
+  the two pads' antipads (the "PoE isolation" gap), nearer than 90 mil to both; beside J1's south peg ETH_RD_N keeps
+  less than 1.5 W from the peg's void, because J1.18 (GND, rule "MDI spacing") holds the pair from the other side and a
+  coupled 45° jog does not fit between the two limits ([Accepted deviations](#accepted-deviations)).
 
 ### RMII
 
@@ -752,8 +759,9 @@ Layer plan:
   where the lane widens round J1's chip-side pins to reach J1.11–J1.14 beyond them.
 - In1 GND keeps the rule distance from the PoE copper (rule "PoE isolation", DRC clean); PoE copper to other nets' via
   annular rings on In1 and to GND vias is also checked against it.
-- Every other net crosses the lane on B.Cu over In2, with vias at least the rule distance from the lane copper. +32V, +5V
-  and +3V3 never run on In1 or In2.
+- Every other net crosses the lane on B.Cu over In2, with vias at least the rule distance from the lane copper. Inside
+  J1's pin field the B.Cu MDI tails also run along lane tracks, not only across them, with the In2 GND plane between the
+  two layers. +32V, +5V and +3V3 never run on In1 or In2.
 - The "PoE U2 pins" rule area (all copper layers) keeps vias and pours away from U2's cable-side pins.
 
 Across layers (F.Cu over In1), which KiCad does not check: no F.Cu copper of another net lies over the In1 PoE copper or
@@ -763,8 +771,12 @@ U5.1–3, D6.1, D7.2, D5.1, R41.1, R43.2, C32.2, C3.2 and the F.Cu tracks RING_2
 track beside the lane. One 7628 ply lies between F.Cu and In1; a 2 mm sideways keep-off does not fit.
 
 J1: the rule exempts J1's own pin field: pad pairs inside J1, and PoE copper touching J1's courtyard against J1's pads,
-because the centre taps J1.11–J1.14 sit beyond the chip-side pins and the lane runs between them (LINK-PP rates the jack
-1500 Vrms hipot, cable side to chip side, LPJG0926HENL p.1; user decision 2026-11-16). J1's pads are trimmed in the
+because the centre taps J1.11–J1.14 sit beyond the chip-side pins and the lane runs between them (user decision
+2026-11-16). Inside the pin field the lane keeps only the net-class clearance to J1's chip-side pads (`kicad_query
+distance` on In1): the smallest cable-side to board-side distance on the board, held to IPC-2221A Table 6-1's spacing
+for internal conductors at the cable voltage (B1, 51–100 V row), not to the rule's gap. LINK-PP's "Hipot Test: 1500Vrms
+MIN" (LPJG0926HENL p.1 item 8; the test points are not stated) rates the jack; it does not cover board copper between
+its pins. J1's pads are trimmed in the
 footprint to widen the gaps between chip-side and cable-side pins and between J1.11/J1.14 and the shield pads, which the
 jack's geometry keeps closer than the rule's gap ([hardware/lib](../../hardware/lib/README.md)). F.Cu tracks of other
 nets into J1's pins come no nearer the lane than the pins themselves.
@@ -1003,7 +1015,7 @@ Tracks narrower than their net class, by reason:
 | USB_C_D_P/N, narrower than the USB class | Connector side J2 → U5 → R31/R32 | Full speed is electrically short; impedance not controlled ([MCU and USB](#mcu-and-usb)) |
 | USB_D pair, coupled stretch | Into R31/R32 | Resistor pad pitch |
 | CSI_D1 pair, CSI_CLK pair | CSI_D1's bump flat; CSI_CLK_P's F.Cu tail into its via | Skew-compensation and via-entry geometry, not coupled runs |
-| ETH_TD pair, ETH_RD pair | U1's MDI pin escapes | 0.4 mm pin pitch |
+| ETH_TD pair, ETH_RD pair | U1's MDI pin escapes; the RD pair's F.Cu legs leaving its two vias north of U1 | 0.4 mm pin pitch; the vias' pitch |
 | RMII_REF_CLK, RMII_REF_CLK_SRC | U1.10's pin stub and where the Default width does not fit | Pin pitch |
 | IMU_INT1 | From U12.5 to the via under U12 | Between 0.5 mm-pitch LGA pads |
 
@@ -1042,14 +1054,15 @@ moved; placement is unchanged.
 |---|---|---|
 | No impedance control ordered; MIPI outside the HDG's ± 10 % at the width extremes | User decision 2026-11-01 | [Impedance](#impedance) |
 | Stock silk closer to pads than the rule allows, and over tented vias; JLCPCB clips it | User decisions 2026-11-02 and 2026-11-10 | [Fabrication rules](#fabrication-rules) |
-| CSI In2 neck narrower than SPRAAR7J's 90 mil each side; short of it with the 45° crossing | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
+| CSI bus closer than SPRAAR7J's 90 mil to the In2 plane edge at the lens cutout; short of it with the 45° crossing | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | CSI pairs closer than 90 mil to the plane edge at the FFC notch | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | No GND guard round the MIPI CLK pairs | User decision 2026-11-01 | [Camera and CSI-2](#camera-and-csi-2) |
 | Planes solid under J4's pads except where the MIPI via antipads reach: a sliver off J4's MIPI pads 2, 3, 5, 6; adjacent antipads join into slot voids along each via row | Design review 2026-11-01; geometry corrected 2026-11-02 | [Camera and CSI-2](#camera-and-csi-2) |
 | MDI 3W waived inside "U1 MDI escape" | Design review 2026-11-01 (0.4 mm pitch) | [Ethernet and PoE isolation](#ethernet-and-poe-isolation) |
 | MDI on B.Cu from J1, one via per line near U1 (no longer F.Cu only) | User decision 2026-11-16 (LINK-PP pinout: the In1 PoE lane threads J1's pin field) | [MDI](#mdi) |
 | MDI 3W waived at J1's own chip-side pins and against the In1 PoE lane inside J1's courtyard | User decision 2026-11-16 (2.54 mm pin stagger) | [MDI](#mdi) |
-| PoE isolation waived inside J1's pin field, including the lane between its chip-side pins and J1.11/J1.14 beside the shield pads | User decision 2026-11-16 (LINK-PP 1500 Vrms hipot) | [PoE isolation](#poe-isolation) |
+| ETH_RD pair nearer to voids in In2 than SPRAAR7J p.9 asks: under 1.5 W from the void of J1's south peg, and on the plane strip between the antipads of J1.12 and J1.13 | Design review 2026-11-16: J1.18 ("MDI spacing") and the peg leave no room for a coupled 45° jog; the PoE pads' isolation gap sets the strip; 100BASE-TX | [MDI](#mdi) |
+| PoE isolation waived inside J1's pin field: the In1 lane at the net-class clearance from J1's chip-side pads, held only to IPC-2221A's internal-conductor spacing for the cable voltage, and J1.11/J1.14 beside the shield pads | User decision 2026-11-16 (LINK-PP pinout: the centre taps sit beyond the chip-side pins; the jack's hipot figure does not cover this copper) | [PoE isolation](#poe-isolation) |
 | Both MDI pairs P/N-inverted between U1 and J1 (no swap vias), relying on the IP101G's polarity handling; the link partner receives our transmit pair inverted | User decision 2026-11-04 | [Ethernet and PoE isolation](#mdi) |
 | A few RMII/strobe layer changes without a close GND via (REF_CLK, TXD0, TXD1, TX_EN in U1's fan-out, TX_EN at U6.67, two STROBE vias); every XVS layer change has a return close by | Design review; XVS routing corrected 2026-11-02 | [Ethernet and PoE isolation](#rmii) |
 | No GND guard at the crystal | Design review (IP101G: "if possible") | [Ethernet and PoE isolation](#rmii) |

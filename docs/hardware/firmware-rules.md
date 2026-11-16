@@ -312,7 +312,8 @@ there can latch fibre mode, so GPIO28 keeps its internal pulls off (FW-11). Deta
   (AUTO_MDIX_DIS). The board's MDI pairs are swapped at the jack, which makes the straight (MDI)
   wiring the PHY's MDI-X channel. If auto-MDIX ever has to be off, set page 16 register 30 bit 3
   (FORCE_MDIX) = 1 (IP101G datasheet p.25, p.29, §5.1.6 p.46). Both pairs are also P/N-inverted
-  between U1 and J1 on purpose, so both route on F.Cu without vias (user decision 2026-11-04):
+  between U1 and J1 on purpose (user decision 2026-11-04; kept for the B.Cu route of 2026-11-16, no
+  swap vias):
   the read-only POLARITY status bit, page 16 register 18 bit 8 (p.27), may read reversed (1) on
   the receive pair, at least at 10 Mbit/s. That is the board's wiring, not a fault: never raise an
   error, retry or reset the PHY on it. [ethernet.md](ethernet.md#magjack-and-mdi)

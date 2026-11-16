@@ -390,8 +390,8 @@ starts triggers only after an SCCB ACK ([firmware-rules](firmware-rules.md#rules
   must pass the full-rate test before the design is released.
 - **CSI clock pairs without a GND guard**, 2W to their neighbours (user decision, 2026-11-01).
 - **Reference-plane edges near the CSI pairs**, under the 90 mil of TI SPRAAR7J (p.9):
-  - The CSI bus crosses the In2 neck between the lens cutout and J1 closer than 90 mil to a plane edge on
-    each side, on a 45° crossing (user decision, 2026-11-01: "Use 45°, accept 71.7 mil").
+  - The CSI bus passes the In2 plane edge at the lens cutout closer than 90 mil, at 45° (user
+    decision, 2026-11-01: "Use 45°, accept 71.7 mil").
   - At the FFC notch, CSI_D1_P runs closer than 90 mil to the In1/In2 plane edge over part of its
     length under J4 (user decision, 2026-11-01: "Pull planes to 0.3 mm").
 

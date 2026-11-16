@@ -42,8 +42,8 @@ from the top after JLCPCB's assembly (user decision 2026-10-31: hand-assembly li
   η = P_out / 12.95 W and J1's rating at η = P_out / (37 V × 0.72 A), a lower efficiency: the
   802.3af limit binds first. The real margin is unknown ([Accepted risks](#accepted-risks)). The four
   PoE tracks (class `POE_CABLE`) run on In1; they are sized for the pair current at the 802.3af limit,
-  12.95 W / 37 V = 0.35 A, and their rise at that current comes from the external-layer IPC-2152 fit
-  of [layout](layout.md#net-classes) applied to In1's copper thickness.
+  12.95 W / 37 V = 0.35 A, and their rise at that current comes from IPC-2221's formula for internal
+  conductors with In1's copper thickness ([layout](layout.md#poe-isolation)).
 
 ### Isolation
 
