@@ -9,7 +9,7 @@
 		(in_pos_files yes)
 		(duplicate_pin_numbers_are_jumpers no)
 		(property "Reference" "U"
-			(at -17.78 31.75 0)
+			(at -20.32 34.29 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -20,14 +20,14 @@
 			)
 		)
 		(property "Value" "IP101GRI"
-			(at 17.78 31.75 0)
+			(at -20.32 -34.29 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
-				(justify right)
+				(justify left)
 			)
 		)
 		(property "Footprint" "Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm"
@@ -88,7 +88,7 @@
 		(symbol "IP101GRI_0_0"
 			(rectangle
 				(start -17.78 30.48)
-				(end 17.78 -27.94)
+				(end 17.78 -30.48)
 				(stroke
 					(width 0.254)
 					(type default)
@@ -674,7 +674,7 @@
 				)
 			)
 			(pin power_in line
-				(at 0 -30.48 90)
+				(at 0 -33.02 90)
 				(length 2.54)
 				(name "GND"
 					(effects

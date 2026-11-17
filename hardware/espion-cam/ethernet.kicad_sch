@@ -2778,7 +2778,7 @@
 			(in_pos_files yes)
 			(duplicate_pin_numbers_are_jumpers no)
 			(property "Reference" "U"
-				(at -17.78 31.75 0)
+				(at -20.32 34.29 0)
 				(show_name no)
 				(do_not_autoplace no)
 				(effects
@@ -2789,14 +2789,14 @@
 				)
 			)
 			(property "Value" "IP101GRI"
-				(at 17.78 31.75 0)
+				(at -20.32 -34.29 0)
 				(show_name no)
 				(do_not_autoplace no)
 				(effects
 					(font
 						(size 1.27 1.27)
 					)
-					(justify right)
+					(justify left)
 				)
 			)
 			(property "Footprint" "Package_DFN_QFN:QFN-32-1EP_4x4mm_P0.4mm_EP2.65x2.65mm"
@@ -2857,7 +2857,7 @@
 			(symbol "IP101GRI_0_0"
 				(rectangle
 					(start -17.78 30.48)
-					(end 17.78 -27.94)
+					(end 17.78 -30.48)
 					(stroke
 						(width 0.254)
 						(type default)
@@ -3443,7 +3443,7 @@
 					)
 				)
 				(pin power_in line
-					(at 0 -30.48 90)
+					(at 0 -33.02 90)
 					(length 2.54)
 					(name "GND"
 						(effects
@@ -4518,6 +4518,16 @@
 	)
 	(wire
 		(pts
+			(xy 149.86 127) (xy 149.86 128.27)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "86cc0e16-4cad-4c69-8b40-1aa5fef7e076")
+	)
+	(wire
+		(pts
 			(xy 93.98 113.03) (xy 93.98 114.3)
 		)
 		(stroke
@@ -4755,16 +4765,6 @@
 			(type default)
 		)
 		(uuid "bb13cda0-8acd-45ad-aee6-0ad138152b6f")
-	)
-	(wire
-		(pts
-			(xy 149.86 124.46) (xy 149.86 125.73)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "bc54e3ac-0d52-447b-853d-b491662ca1af")
 	)
 	(wire
 		(pts
@@ -7618,7 +7618,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 149.86 125.73 0)
+		(at 149.86 128.27 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -7629,7 +7629,7 @@
 		(fields_autoplaced yes)
 		(uuid "a347a6e4-187b-4775-a81f-ee28db02fda9")
 		(property "Reference" "#PWR018"
-			(at 149.86 132.08 0)
+			(at 149.86 134.62 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7640,7 +7640,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 149.86 129.54 0)
+			(at 149.86 132.08 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -7650,7 +7650,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 149.86 125.73 0)
+			(at 149.86 128.27 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7661,7 +7661,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 149.86 125.73 0)
+			(at 149.86 128.27 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7672,7 +7672,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 149.86 125.73 0)
+			(at 149.86 128.27 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8296,26 +8296,23 @@
 				)
 			)
 		)
-		(pin "29"
-			(uuid "91b9da3f-a76c-4701-819f-23eb2198a989")
+		(pin "1"
+			(uuid "aca919da-f09f-468c-9892-a7a0074dd435")
 		)
-		(pin "24"
-			(uuid "e2b95c49-cbdf-4875-a819-38d2e9be6b69")
-		)
-		(pin "20"
-			(uuid "b4480206-2574-4bd3-9266-7af495c044e2")
-		)
-		(pin "32"
-			(uuid "ab9db830-6c3f-466b-aeed-53a6dea51ff1")
-		)
-		(pin "16"
-			(uuid "b47f5a00-a3f0-4896-9138-90fcee3251c1")
-		)
-		(pin "10"
-			(uuid "e061e97d-c599-4b71-817a-133aa509fd77")
+		(pin "2"
+			(uuid "758c84c0-f4f1-4a06-85c2-141765d69158")
 		)
 		(pin "3"
 			(uuid "a19678c7-3a3b-4f0d-b120-3e9f4c678ea1")
+		)
+		(pin "4"
+			(uuid "015f0687-04ec-44d9-8ba9-cb06db424128")
+		)
+		(pin "5"
+			(uuid "4c02f07a-3d7d-4cd3-87cb-5a32ee6766d3")
+		)
+		(pin "6"
+			(uuid "f6343382-6e95-4dd3-847c-69081702d8ab")
 		)
 		(pin "7"
 			(uuid "cc7cfa24-3b70-4a05-a3a3-e2b160a7ec3d")
@@ -8323,35 +8320,53 @@
 		(pin "8"
 			(uuid "3665fd03-df56-49d5-ad1e-a8d416c24f25")
 		)
-		(pin "23"
-			(uuid "1442414f-f875-418a-a39a-49d190e08058")
+		(pin "9"
+			(uuid "47afe32c-30cb-46c5-82bf-01c43358f80a")
 		)
-		(pin "2"
-			(uuid "758c84c0-f4f1-4a06-85c2-141765d69158")
+		(pin "10"
+			(uuid "e061e97d-c599-4b71-817a-133aa509fd77")
 		)
 		(pin "11"
 			(uuid "ed882175-e7fb-40c4-a279-b3f976931622")
 		)
-		(pin "6"
-			(uuid "f6343382-6e95-4dd3-847c-69081702d8ab")
+		(pin "12"
+			(uuid "7e3b549f-d513-436d-9399-d42fdf777c24")
 		)
-		(pin "30"
-			(uuid "eda6bec8-7bd8-4822-8452-446fd44abe6b")
+		(pin "13"
+			(uuid "eaffbb62-b4d4-4695-b01c-9dab90f565f9")
 		)
 		(pin "14"
 			(uuid "5a5f7e14-fab5-4fa2-ac74-0d7e07cebc2b")
 		)
+		(pin "15"
+			(uuid "f0dad58a-e2ef-4218-b01f-316f166e8102")
+		)
+		(pin "16"
+			(uuid "b47f5a00-a3f0-4896-9138-90fcee3251c1")
+		)
 		(pin "17"
 			(uuid "1ee2e4cf-bcbd-41a0-b16d-0ba39408fb62")
 		)
-		(pin "1"
-			(uuid "aca919da-f09f-468c-9892-a7a0074dd435")
+		(pin "18"
+			(uuid "fe76cf2a-f989-4a3d-ae98-f7621c2d7986")
 		)
-		(pin "4"
-			(uuid "015f0687-04ec-44d9-8ba9-cb06db424128")
+		(pin "19"
+			(uuid "4377d45b-773c-494d-8c3e-972dc6a845ac")
 		)
-		(pin "31"
-			(uuid "c71ead7d-65f9-46b7-8f60-0f671b90598f")
+		(pin "20"
+			(uuid "b4480206-2574-4bd3-9266-7af495c044e2")
+		)
+		(pin "21"
+			(uuid "c5d5c7ee-10fe-4307-ab17-3a2c002d9507")
+		)
+		(pin "22"
+			(uuid "a080f52b-e58d-4de0-b062-cb9a276c879f")
+		)
+		(pin "23"
+			(uuid "1442414f-f875-418a-a39a-49d190e08058")
+		)
+		(pin "24"
+			(uuid "e2b95c49-cbdf-4875-a819-38d2e9be6b69")
 		)
 		(pin "25"
 			(uuid "29cdda26-f273-48ca-a2bf-631071522d4a")
@@ -8359,41 +8374,26 @@
 		(pin "26"
 			(uuid "311b81fb-e611-4580-9649-41f1f7c5c855")
 		)
-		(pin "12"
-			(uuid "7e3b549f-d513-436d-9399-d42fdf777c24")
-		)
-		(pin "21"
-			(uuid "c5d5c7ee-10fe-4307-ab17-3a2c002d9507")
-		)
-		(pin "5"
-			(uuid "4c02f07a-3d7d-4cd3-87cb-5a32ee6766d3")
-		)
 		(pin "27"
 			(uuid "c0d19ae3-22b1-44e1-b5f0-ccd549b26f2a")
-		)
-		(pin "9"
-			(uuid "47afe32c-30cb-46c5-82bf-01c43358f80a")
-		)
-		(pin "13"
-			(uuid "eaffbb62-b4d4-4695-b01c-9dab90f565f9")
 		)
 		(pin "28"
 			(uuid "5af55e92-96bb-4135-aca5-8ca822f990fe")
 		)
-		(pin "19"
-			(uuid "4377d45b-773c-494d-8c3e-972dc6a845ac")
+		(pin "29"
+			(uuid "91b9da3f-a76c-4701-819f-23eb2198a989")
 		)
-		(pin "18"
-			(uuid "fe76cf2a-f989-4a3d-ae98-f7621c2d7986")
+		(pin "30"
+			(uuid "eda6bec8-7bd8-4822-8452-446fd44abe6b")
 		)
-		(pin "22"
-			(uuid "a080f52b-e58d-4de0-b062-cb9a276c879f")
+		(pin "31"
+			(uuid "c71ead7d-65f9-46b7-8f60-0f671b90598f")
+		)
+		(pin "32"
+			(uuid "ab9db830-6c3f-466b-aeed-53a6dea51ff1")
 		)
 		(pin "33"
 			(uuid "3f7ed841-d5fd-4adb-84b5-9f9ae4395e57")
-		)
-		(pin "15"
-			(uuid "f0dad58a-e2ef-4218-b01f-316f166e8102")
 		)
 		(instances
 			(project "espion-cam"
