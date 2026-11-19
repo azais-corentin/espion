@@ -34,9 +34,11 @@ M3 washer clearance: no copper other than GND within the ISO 7089 M3 washer radi
 r 3.8 mm, of a mounting hole's centre. Parts keep their courtyards outside it too. H1 is the tight one: the +3V3 loop
 at J2's west shield pads runs closest to it, which is why that loop is routed where it is ([Power](#power)).
 
-The board carries "espion-cam" with its revision and `${ISSUE_DATE}` on the bottom silkscreen. The date text follows the
-title block's date, which `kicad_edit` `set_board_setup {date}` sets to the release date before the fab output is made.
-Below them, a "JLCJLCJLCJLC" text on the bottom silkscreen is where JLCPCB prints its order number (user decision
+The board carries "espion-cam" and `${GIT_COMMIT}` on the bottom silkscreen, so every board names the commit its Gerbers
+came from (user decision 2026-11-19, replacing the revision and date). `kicad_export` fills in HEAD's short hash and
+refuses the Gerbers while the project or `hardware/lib` has uncommitted changes; the project's own value, a placeholder
+as long as the hash, is what pcbnew and DRC see.
+Below it, a "JLCJLCJLCJLC" text on the bottom silkscreen is where JLCPCB prints its order number (user decision
 2026-11-09: placeholder rather than a paid removal or a spot of JLCPCB's choosing); the order sets "Mark on PCB" to
 "Order number (specify position)".
 

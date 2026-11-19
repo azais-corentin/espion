@@ -112,7 +112,7 @@ Limits come from the datasheet (document, page, table/figure), a requirement in 
 - **SLK-1** Text size, silk clearance and mirroring. **Auto:** `drc` (`text_height`, `text_thickness`, `silk_over_copper`, `silk_overlap`, `silk_edge_clearance`, `nonmirrored_text_on_back_layer`). [AZ][SC]
 - **SLK-2** Each designator sits next to its part and names it without ambiguity; in dense areas it moves out or goes, never overlaps (V8). [ALT-CL][AZ]
 - **SLK-3** Every IC, diode, LED, polarised capacitor and keyed connector has a pin-1 or polarity mark that stays visible after assembly, outside the body (V8). [JLC-POL][ALT-CL]
-- **SLK-4** The board carries name, revision and date; connectors, buttons, LEDs, test points and J4's camera pin 1 and contact side are labelled; the PoE cable side is marked as a hazard (`board_graphics`, V8). [ALT-CL][SC]
+- **SLK-4** The board carries its name and the commit it is made from (`${GIT_COMMIT}`, filled in by `kicad_export`); connectors, buttons, LEDs, test points and J4's camera pin 1 and contact side are labelled; the PoE cable side is marked as a hazard (`board_graphics`, V8). [ALT-CL][SC]
 
 ## TST: test access
 - **TST-1** Every probe point the schematic review's FW-4 relies on (test point or accessible passive pad) is on top, not under a part, and reachable with the board in its enclosure and the camera fitted (`footprints`, V10). [ALT-CL][MF]

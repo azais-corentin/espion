@@ -987,7 +987,9 @@
       "IMU"
     ]
   ],
-  "text_variables": {},
+  "text_variables": {
+    "GIT_COMMIT": "0000000"
+  },
   "tuning_profiles": {
     "meta": {
       "version": 0

@@ -155,6 +155,7 @@
 			(outputdirectory "")
 		)
 	)
+	(property "GIT_COMMIT" "0000000")
 	(footprint "Resistor_SMD:R_0402_1005Metric"
 		(layer "F.Cu")
 		(uuid "0446fab3-8e43-486f-ad1a-5a0a1cfe17ed")
@@ -32935,22 +32936,10 @@
 			(justify mirror)
 		)
 	)
-	(gr_text "espion-cam rev 0.1"
+	(gr_text "espion-cam ${GIT_COMMIT}"
 		(at 112.5 149 0)
 		(layer "B.SilkS")
-		(uuid "9ffd517f-46fe-4c8d-9dfd-1d03543d3332")
-		(effects
-			(font
-				(size 1 1)
-				(thickness 0.15)
-			)
-			(justify mirror)
-		)
-	)
-	(gr_text "${ISSUE_DATE}"
-		(at 112.5 151 0)
-		(layer "B.SilkS")
-		(uuid "a21c6b2a-13b0-43a9-a635-82c83948955f")
+		(uuid "5101fe0c-d598-4828-acd0-f65765408d11")
 		(effects
 			(font
 				(size 1 1)
