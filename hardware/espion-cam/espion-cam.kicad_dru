@@ -116,7 +116,8 @@
 (rule "Through vias only" (constraint disallow micro_via blind_via buried_via))
 
 # Silkscreen lines >= 0.15 mm. JLCPCB PCB capabilities, https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-11-02: "Minimum Line Width >=0.15mm". KiCad has no board setting for it.
-(rule "Silk line width" (condition "A.Type == 'Graphic' && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint assertion "A.Line_Width >= 0.15mm"))
+# Outlines only: a filled shape (the logo's polygons) is drawn by its fill, with no outline stroke, so its line width says nothing about the printed width (user decision 2026-11-19).
+(rule "Silk line width" (condition "A.Type == 'Graphic' && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS') && A.Fill == 'None'") (constraint assertion "A.Line_Width >= 0.15mm"))
 
 # Board-level silkscreen (texts, marks) >= 0.15 mm from pads. JLCPCB PCB capabilities, https://jlcpcb.com/capabilities/pcb-capabilities, read 2026-11-02: "The Minimum Distance Between Pad and Silkscreen is 0.15mm". Footprint silk is exempt: stock silk stays, JLCPCB clips it (user decision 2026-11-02).
 (rule "Board silk to pads" (condition "B.Type == 'Pad' && !A.memberOfFootprint('*') && (A.Layer == 'F.SilkS' || A.Layer == 'B.SilkS')") (constraint silk_clearance (min 0.15mm)))

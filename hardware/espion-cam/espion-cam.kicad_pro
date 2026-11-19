@@ -70,7 +70,12 @@
         }
       },
       "diff_pair_dimensions": [],
-      "drc_exclusions": [],
+      "drc_exclusions": [
+        [
+          "missing_courtyard|130000000|112000000|5be5f1b3-8280-467a-b87b-7df9beee2a6e|00000000-0000-0000-0000-000000000000",
+          "Board-only silkscreen logo (the \"espion\" badge, from kibuzzard): no pads and no body, nothing to place or keep clear, so it has no courtyard (user decision 2026-11-19)."
+        ]
+      ],
       "meta": {
         "version": 2
       },
