@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Board, flipToBack } from "../src/board";
-import { type Component, run } from "../src/cli";
+import { type Component, pcbGerbers, run } from "../src/cli";
 import { loadConfig, projectConfig } from "../src/config";
 import { assemblyParts, bomCsv, bomRows, checkCorrections, correctionFor, cplCsv, cplRow, cplRows, handCsv, handParts, parsePos, type PosRow, runExport } from "../src/export";
 import { parse } from "../src/sexpr";
@@ -300,6 +300,46 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 	};
 	const config = (assembly: unknown, fields?: unknown) =>
 		fs.writeFileSync(path.join(root, ".omp", "kicad.json"), JSON.stringify({ projects: { [BOARD_PROJECT]: { assembly, ...(fields ? { fields } : {}) } } }));
+	/** The fixture placed and routed on a 30 × 20 mm outline, R1 on the bottom: it passes the gate. */
+	const routedBoard = async () => {
+		// ERC: the fixture's GND has no power source
+		await edit([
+			{ op: "add_symbol", sheet: "root", lib_id: "power:PWR_FLAG", at: [139.7, 105.41] },
+			{ op: "add_wire", sheet: "root", points: [[139.7, 105.41], [139.7, 106.68]] },
+			{ op: "add_power", sheet: "root", net: "GND", at: [139.7, 106.68] },
+		]);
+		await edit([{ op: "update_from_schematic" }]);
+		// R1 to the back, as pcbnew's flip leaves it (the toolkit has no flip op)
+		const boardFile = path.join(dir, "board.kicad_pcb");
+		const flipped = Board.load(boardFile);
+		flipToBack(flipped.footprint("R1"));
+		fs.writeFileSync(boardFile, flipped.serialize());
+		await edit([
+			{ op: "set_board_edges", outline: { rect: { x: 0, y: 0, width: 30, height: 20 } } },
+			{ op: "place_footprint", ref: "R1", at: [8, 6], rot: 90 },
+			{ op: "place_footprint", ref: "C1", at: [8, 14] },
+			{ op: "place_footprint", ref: "D1", at: [20, 6] },
+		]);
+		// the toolkit has no routing op: tracks and vias written into the temp copy, as pcbnew saves them;
+		// R1's pads (B.Cu, turned 90°): pad 1 at (8, 6.825), pad 2 at (8, 5.175)
+		const seg = (a: number[], b: number[], net: string, layer = "F.Cu") =>
+			`\t(segment\n\t\t(start ${a[0]} ${a[1]})\n\t\t(end ${b[0]} ${b[1]})\n\t\t(width 0.25)\n\t\t(layer "${layer}")\n\t\t(net "${net}")\n\t\t(uuid "${crypto.randomUUID()}")\n\t)\n`;
+		const track = (pts: number[][], net: string, layer?: string) => pts.slice(1).map((p, i) => seg(pts[i]!, p, net, layer)).join("");
+		const via = (x: number, y: number, net: string) =>
+			`\t(via\n\t\t(at ${x} ${y})\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers "F.Cu" "B.Cu")\n\t\t(net "${net}")\n\t\t(uuid "${crypto.randomUUID()}")\n\t)\n`;
+		const src = fs.readFileSync(boardFile, "utf8");
+		const end = src.lastIndexOf("\t(embedded_fonts");
+		const copper =
+			track([[8, 6.825], [8, 10]], "/VIN", "B.Cu") +
+			via(8, 10, "/VIN") +
+			track([[8, 10], [7.225, 14]], "/VIN") +
+			track([[8, 5.175], [8, 3]], "LED_A", "B.Cu") +
+			via(8, 3, "LED_A") +
+			track([[8, 3], [20.7875, 3], [20.7875, 6]], "LED_A") +
+			track([[8.775, 14], [19.2125, 14], [19.2125, 6]], "GND") +
+			via(14, 14, "GND");
+		fs.writeFileSync(boardFile, src.slice(0, end) + copper + src.slice(end));
+	};
 
 	beforeEach(() => {
 		root = stageBoardFixture();
@@ -361,43 +401,7 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 	}, 180_000);
 
 	test("a placed, routed board with a bottom part passes the gate: zipped Gerbers and drill files, JLCPCB BOM and CPL from KiCad's position file with corrections; the fields check gates assembly only", async () => {
-		// ERC: the fixture's GND has no power source
-		await edit([
-			{ op: "add_symbol", sheet: "root", lib_id: "power:PWR_FLAG", at: [139.7, 105.41] },
-			{ op: "add_wire", sheet: "root", points: [[139.7, 105.41], [139.7, 106.68]] },
-			{ op: "add_power", sheet: "root", net: "GND", at: [139.7, 106.68] },
-		]);
-		await edit([{ op: "update_from_schematic" }]);
-		// R1 to the back, as pcbnew's flip leaves it (the toolkit has no flip op)
-		const boardFile = path.join(dir, "board.kicad_pcb");
-		const flipped = Board.load(boardFile);
-		flipToBack(flipped.footprint("R1"));
-		fs.writeFileSync(boardFile, flipped.serialize());
-		await edit([
-			{ op: "set_board_edges", outline: { rect: { x: 0, y: 0, width: 30, height: 20 } } },
-			{ op: "place_footprint", ref: "R1", at: [8, 6], rot: 90 },
-			{ op: "place_footprint", ref: "C1", at: [8, 14] },
-			{ op: "place_footprint", ref: "D1", at: [20, 6] },
-		]);
-		// the toolkit has no routing op: tracks and vias written into the temp copy, as pcbnew saves them;
-		// R1's pads (B.Cu, turned 90°): pad 1 at (8, 6.825), pad 2 at (8, 5.175)
-		const seg = (a: number[], b: number[], net: string, layer = "F.Cu") =>
-			`\t(segment\n\t\t(start ${a[0]} ${a[1]})\n\t\t(end ${b[0]} ${b[1]})\n\t\t(width 0.25)\n\t\t(layer "${layer}")\n\t\t(net "${net}")\n\t\t(uuid "${crypto.randomUUID()}")\n\t)\n`;
-		const track = (pts: number[][], net: string, layer?: string) => pts.slice(1).map((p, i) => seg(pts[i]!, p, net, layer)).join("");
-		const via = (x: number, y: number, net: string) =>
-			`\t(via\n\t\t(at ${x} ${y})\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers "F.Cu" "B.Cu")\n\t\t(net "${net}")\n\t\t(uuid "${crypto.randomUUID()}")\n\t)\n`;
-		const src = fs.readFileSync(boardFile, "utf8");
-		const end = src.lastIndexOf("\t(embedded_fonts");
-		const copper =
-			track([[8, 6.825], [8, 10]], "/VIN", "B.Cu") +
-			via(8, 10, "/VIN") +
-			track([[8, 10], [7.225, 14]], "/VIN") +
-			track([[8, 5.175], [8, 3]], "LED_A", "B.Cu") +
-			via(8, 3, "LED_A") +
-			track([[8, 3], [20.7875, 3], [20.7875, 6]], "LED_A") +
-			track([[8.775, 14], [19.2125, 14], [19.2125, 6]], "GND") +
-			via(14, 14, "GND");
-		fs.writeFileSync(boardFile, src.slice(0, end) + copper + src.slice(end));
+		await routedBoard();
 
 		config({ corrections: { "Fixture:LED_*": { rot: 180, offset: [0, 0.5] } } });
 		const first = await runExport(root, { project: BOARD_PROJECT, outputs: ["gerbers", "assembly"], rev: "A 1" }, undefined, NOW);
@@ -512,5 +516,65 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 		expect(bottomSvg).toMatch(/<path data-ref="R1" d="M[^"]+ Z" fill="#FF5A00"/);
 		expect(bottomSvg).toContain("board: assembly drawing, bottom side, mirrored (seen from below)");
 		expect(bottomSvg).toContain("R1 (1k): hand-soldered: test");
+	}, 300_000);
+
+	test("a board showing ${GIT_COMMIT}: the plots carry HEAD's short hash (-dirty with uncommitted changes); its gerbers refused outside git and while the project has uncommitted changes", async () => {
+		await routedBoard();
+		await edit([
+			{ op: "set_text_variable", name: "GIT_COMMIT", value: "dev" },
+			{ op: "add_board_text", text: "${GIT_COMMIT}", at: [24, 17.5], layer: "F.SilkS" },
+		]);
+		const fab = path.join(dir, "fab", "draft-2026-10-30");
+		const silk = (file: string) =>
+			fs
+				.readFileSync(file, "utf8")
+				.split("\n")
+				.filter(l => !/CreationDate|^G04 Created by/.test(l))
+				.join("\n");
+
+		const noRepo = await runExport(root, { project: BOARD_PROJECT, outputs: ["gerbers"] }, undefined, NOW);
+		expect(noRepo.refused).toEqual(["gerbers"]);
+		expect(noRepo.text).toContain("REFUSED gerbers: the board is not ready for fabrication:\n- the board shows ${GIT_COMMIT}, but the project is in no git repository with a commit to fill it with");
+
+		const git = (...args: string[]) => {
+			const r = Bun.spawnSync(["git", "-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { stdout: "pipe", stderr: "pipe" });
+			if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
+			return r.stdout.toString().trim();
+		};
+		git("init", "-q");
+		fs.writeFileSync(path.join(root, ".gitignore"), "fab/\n");
+		git("add", "-A");
+		git("commit", "-q", "-m", "board");
+		const head = git("rev-parse", "--short=7", "HEAD");
+
+		// an untracked file in the project: gerbers refused naming it, the STEP plotted with HEAD-dirty
+		fs.writeFileSync(path.join(dir, "notes.txt"), "draft");
+		const dirty = await runExport(root, { project: BOARD_PROJECT, outputs: ["gerbers", "step"] }, undefined, NOW);
+		expect(dirty.refused).toEqual(["gerbers"]);
+		expect(dirty.text).toContain(
+			"REFUSED gerbers: the board is not ready for fabrication:\n- uncommitted changes in the project or its library (the board shows ${GIT_COMMIT}: commit them first): 1\n    - board/notes.txt",
+		);
+		expect(dirty.text).toContain(`\${GIT_COMMIT} in the plots: ${head}-dirty (HEAD with uncommitted changes in the project or its library).`);
+
+		// committed: gerbers written, the silkscreen showing HEAD's hash exactly as a literal text would, not the project's "dev"
+		git("add", "-A");
+		git("commit", "-q", "-m", "notes");
+		const head2 = git("rev-parse", "--short=7", "HEAD");
+		const clean = await runExport(root, { project: BOARD_PROJECT, outputs: ["gerbers"] }, undefined, NOW);
+		expect(clean.refused).toEqual([]);
+		expect(clean.text).toContain(`\${GIT_COMMIT} in the plots: ${head2} (HEAD).`);
+		const plotted = silk(path.join(fab, "gerbers", "board-F_Silkscreen.gto"));
+		const plot = async (name: string) => {
+			const out = path.join(root, name);
+			await pcbGerbers(path.join(dir, "board.kicad_pcb"), ["F.SilkS"], out, { cwd: dir, repoRoot: root });
+			return silk(path.join(out, "board-F_Silkscreen.gto"));
+		};
+		const placeholder = await plot("dev-plot");
+		await edit([
+			{ op: "remove_board_item", text: "${GIT_COMMIT}" },
+			{ op: "add_board_text", text: head2, at: [24, 17.5], layer: "F.SilkS" },
+		]);
+		expect(plotted).toBe(await plot("literal-plot"));
+		expect(plotted).not.toBe(placeholder);
 	}, 300_000);
 });

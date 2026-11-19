@@ -1,6 +1,6 @@
 /**
- * Project settings ops: net classes and their patterns, BOM presets, bus aliases, ERC and DRC
- * exclusions (.kicad_pro), and custom design rules (.kicad_dru).
+ * Project settings ops: net classes and their patterns, BOM presets, bus aliases, text variables,
+ * ERC and DRC exclusions (.kicad_pro), and custom design rules (.kicad_dru).
  *
  * .kicad_pro changes go through `proJson` (byte-exact outside the changed keys). The rules file is
  * edited as text: only the named rule's text changes, every other rule keeps its comments and
@@ -420,6 +420,41 @@ const removeBusAlias: OpDef = {
 	},
 };
 
+// ---- text variables -----------------------------------------------------------------------------
+
+const setTextVariable: OpDef = {
+	op: "set_text_variable",
+	group: "project",
+	doc:
+		"Set or remove a project text variable (.kicad_pro text_variables, KiCad's Text Variables in Schematic and Board Setup): a text holding `${NAME}` shows its value in KiCad, the checks and the plots. " +
+		"kicad_export overrides GIT_COMMIT in its plots with the commit the outputs come from, so the project's value is only what pcbnew and the checks show. " +
+		"Removing a variable a text still uses is refused by the gate (ERC or DRC unresolved_variable).",
+	fields: {
+		name: { t: "string", req: true, doc: "variable name, letters, digits and _, e.g. GIT_COMMIT" },
+		value: { t: "string", doc: "its value; omit (or null) to remove the variable" },
+	},
+	apply(ctx, args) {
+		const name = String(args.name);
+		if (!/^[A-Za-z0-9_]+$/.test(name)) throw new Error(`name: ${JSON.stringify(name)} must be letters, digits and _`);
+		const data = ctx.project.proJson.data;
+		const vars = data.text_variables ?? {};
+		if (typeof vars !== "object" || vars === null || Array.isArray(vars)) throw new Error(`${ctx.project.rel(ctx.project.proFile)}: text_variables is not an object`);
+		const old = (vars as Record<string, string>)[name];
+		const value = (args.value ?? undefined) as string | undefined;
+		if (old === value) {
+			ctx.notes.push(value === undefined ? `no text variable ${name} to remove` : `text variable ${name} already is "${value}"`);
+			return;
+		}
+		// KiCad writes the variables sorted by name
+		const next = Object.entries({ ...vars, [name]: value }).filter(([, v]) => v !== undefined);
+		data.text_variables = Object.fromEntries(next.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+		ctx.notes.push(value === undefined ? `text variable ${name} removed (was "${old}")` : `text variable ${name} = "${value}"${old === undefined ? "" : ` (was "${old}")`}`);
+		ctx.project.touchPro();
+		// texts on the board resolve it: DRC sees an unresolved one
+		ctx.touchBoard();
+	},
+};
+
 // ---- ERC and DRC exclusions ---------------------------------------------------------------------
 
 const EXCLUSION_PICK: Fields = {
@@ -670,6 +705,7 @@ export const ops: OpDef[] = [
 	removeBomPreset,
 	setBusAlias,
 	removeBusAlias,
+	setTextVariable,
 	removeExclusion,
 	setExclusionComment,
 	setRule,

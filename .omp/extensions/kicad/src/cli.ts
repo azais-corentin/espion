@@ -422,11 +422,12 @@ function filesIn(dir: string): string[] {
 /**
  * Gerbers of `layers` into `outDir` with kicad-cli's file names: Protel extensions (kicad-cli's
  * default), solder mask subtracted from silkscreen, zones checked and refilled first (in memory),
- * reference and value texts plotted, absolute origin. Returns the files of `outDir`.
+ * reference and value texts plotted, absolute origin. `flags` are further kicad-cli options (e.g.
+ * `--define-var NAME=VALUE`). Returns the files of `outDir`.
  */
-export async function pcbGerbers(board: string, layers: string[], outDir: string, o: RunOpts): Promise<string[]> {
+export async function pcbGerbers(board: string, layers: string[], outDir: string, o: RunOpts, flags: string[] = []): Promise<string[]> {
 	fs.mkdirSync(outDir, { recursive: true });
-	await must(["kicad-cli", "pcb", "export", "gerbers", "--layers", layers.join(","), "--subtract-soldermask", "--check-zones", "-o", `${outDir}${path.sep}`, board], o);
+	await must(["kicad-cli", "pcb", "export", "gerbers", "--layers", layers.join(","), "--subtract-soldermask", "--check-zones", ...flags, "-o", `${outDir}${path.sep}`, board], o);
 	return filesIn(outDir);
 }
 
@@ -458,9 +459,9 @@ export async function pcbPos(board: string, o: RunOpts): Promise<string> {
 	return text;
 }
 
-/** The board as a STEP file with its footprints' 3D models (no model substitution), overwriting `out`. */
-export async function pcbStep(board: string, out: string, o: RunOpts): Promise<RunResult> {
-	const r = await must(["kicad-cli", "pcb", "export", "step", "--force", "-o", out, board], o);
+/** The board as a STEP file with its footprints' 3D models (no model substitution), overwriting `out`; `flags` as for pcbGerbers. */
+export async function pcbStep(board: string, out: string, o: RunOpts, flags: string[] = []): Promise<RunResult> {
+	const r = await must(["kicad-cli", "pcb", "export", "step", "--force", ...flags, "-o", out, board], o);
 	if (!fs.existsSync(out)) throw new Error(`kicad-cli pcb export step wrote no output: ${(r.stderr || r.stdout).trim().slice(-2000)}`);
 	return r;
 }

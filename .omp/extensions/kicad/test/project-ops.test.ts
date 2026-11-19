@@ -279,6 +279,25 @@ describe.skipIf(!HAS_KICAD)("bus alias ops", () => {
 		expect(fs.readFileSync(proFile, "utf8")).toBe(pro0);
 	});
 
+	test("set_text_variable adds variables in KiCad's name order, changes and removes them; the rest of the .kicad_pro keeps its bytes", async () => {
+		const pro0 = fs.readFileSync(proFile, "utf8");
+		const vars = () => JSON.parse(fs.readFileSync(proFile, "utf8")).text_variables;
+		expect(await apply(root, [{ op: "set_text_variable", name: "REV_NOTE", value: "proto" }])).toEqual(['text variable REV_NOTE = "proto"']);
+		expect(await apply(root, [{ op: "set_text_variable", name: "GIT_COMMIT", value: "dev" }])).toEqual(['text variable GIT_COMMIT = "dev"']);
+		expect(Object.entries(vars())).toEqual([
+			["GIT_COMMIT", "dev"],
+			["REV_NOTE", "proto"],
+		]);
+		expect(await apply(root, [{ op: "set_text_variable", name: "GIT_COMMIT", value: "abc" }])).toEqual(['text variable GIT_COMMIT = "abc" (was "dev")']);
+		expect(await apply(root, [{ op: "set_text_variable", name: "GIT_COMMIT", value: "abc" }])).toEqual(['text variable GIT_COMMIT already is "abc"']);
+		await expect(apply(root, [{ op: "set_text_variable", name: "GIT COMMIT", value: "x" }])).rejects.toThrow('name: "GIT COMMIT" must be letters, digits and _');
+		// null and an omitted value both remove; the file is back to its bytes
+		expect(await apply(root, [{ op: "set_text_variable", name: "GIT_COMMIT", value: null }])).toEqual(['text variable GIT_COMMIT removed (was "abc")']);
+		expect(await apply(root, [{ op: "set_text_variable", name: "REV_NOTE" }])).toEqual(['text variable REV_NOTE removed (was "proto")']);
+		expect(await apply(root, [{ op: "set_text_variable", name: "REV_NOTE" }])).toEqual(["no text variable REV_NOTE to remove"]);
+		expect(fs.readFileSync(proFile, "utf8")).toBe(pro0);
+	});
+
 	test("set_bus_alias adding and removing an unused member passes the transaction's gates with the connectivity unchanged", async () => {
 		const pro0 = fs.readFileSync(proFile, "utf8");
 		const add = await runEdit({ ops: [{ op: "set_bus_alias", name: "IMU", members: ["IMU_SDA", "IMU_SCL", "IMU_INT1", "IMU_SPARE"] }] }, root, undefined);

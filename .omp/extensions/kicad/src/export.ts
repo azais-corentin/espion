@@ -12,6 +12,10 @@
  * every connection routed, and ERC; assembly also needs the fields check. STEP and the drawings are
  * never gated; the drawings need a board outline.
  *
+ * A board that shows `${GIT_COMMIT}` gets the commit the outputs come from in every plot (HEAD,
+ * git's short form, "-dirty" with uncommitted changes in the project or its library); its Gerbers
+ * are refused until those changes are committed, so the silkscreen names a commit that holds them.
+ *
  * JLCPCB sources (read 2026-10-30):
  * - Gerbers and drill: https://jlcpcb.com/help/article/how-to-generate-gerber-and-drill-files-in-kicad-8
  *   (layers F/B.Cu and inner copper, F/B.Paste, F/B.Silkscreen, F/B.Mask, Edge.Cuts; plot reference
@@ -572,6 +576,24 @@ async function boardGate(project: Project, analysis: Analysis): Promise<string[]
 	];
 }
 
+// ---- commit -------------------------------------------------------------------------------------
+
+/** The text variable kicad_export sets in its plots to the commit the outputs come from. */
+export const COMMIT_VAR = "GIT_COMMIT";
+
+/**
+ * The commit the outputs come from: HEAD in git's short form (7 characters, more when that is
+ * ambiguous) and the uncommitted changes under `paths` (modified, staged or untracked, not ignored;
+ * repo-relative as git prints them). No commit when `repoRoot` is not in a git repository with one.
+ */
+export async function gitCommit(repoRoot: string, paths: string[], o: cli.RunOpts): Promise<{ commit?: string; dirty: string[] }> {
+	const head = await cli.run(["git", "-C", repoRoot, "rev-parse", "--short=7", "HEAD"], o);
+	if (head.code !== 0) return { dirty: [] };
+	const status = await cli.run(["git", "-C", repoRoot, "status", "--porcelain=v1", "--untracked-files=all", "--", ...paths], o);
+	if (status.code !== 0) throw new Error(`git status failed (exit ${status.code}): ${status.stderr.trim()}`);
+	return { commit: head.stdout.trim(), dirty: status.stdout.split("\n").filter(Boolean).map(l => l.slice(3)) };
+}
+
 // ---- runner -------------------------------------------------------------------------------------
 
 /** The title block revision of the board, if any. */
@@ -637,22 +659,37 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 	for (const p of removed) fs.rmSync(p, { recursive: true, force: true });
 	try {
 		const gated = outputs.filter(x => x === "gerbers" || x === "assembly");
-		const [gate, nl, fields] = await Promise.all([
+		const shown = `\${${COMMIT_VAR}}`;
+		const showsCommit = fs.readFileSync(project.boardFile, "utf8").includes(shown);
+		const sources = [project.dir, path.resolve(repoRoot, project.settings.libDir)].filter(p => fs.existsSync(p));
+		const [gate, nl, fields, git] = await Promise.all([
 			gated.length ? boardGate(project, analysis) : Promise.resolve([]),
 			analysis.netlist(),
 			outputs.includes("assembly") ? CHECKS.get("fields")!.run({ project, analysis, baseline: "HEAD", args: {}, signal }) : Promise.resolve([]),
+			showsCommit ? gitCommit(repoRoot, sources, o) : Promise.resolve(undefined),
 		]);
+		const commitWhy = !git
+			? []
+			: !git.commit
+				? [`- the board shows ${shown}, but the project is in no git repository with a commit to fill it with`]
+				: failed(`uncommitted changes in the project or its library (the board shows ${shown}: commit them first)`, git.dirty);
 		for (const x of gated) {
-			const why = [...gate, ...(x === "assembly" ? failed("fields check errors", fields.filter(f => f.severity === "error").map(f => f.message)) : [])];
+			const why = [
+				...gate,
+				...(x === "gerbers" ? commitWhy : []),
+				...(x === "assembly" ? failed("fields check errors", fields.filter(f => f.severity === "error").map(f => f.message)) : []),
+			];
 			if (why.length) refusals.set(x, why);
 		}
 		if (outputs.includes("drawings") && !outline.bbox) refusals.set("drawings", []);
 		const ok = (x: Output) => outputs.includes(x) && !refusals.has(x);
 		if (outputs.some(ok)) fs.mkdirSync(dir, { recursive: true });
+		const commit = git?.commit && `${git.commit}${git.dirty.length ? "-dirty" : ""}`;
+		const plotVars = commit ? ["--define-var", `${COMMIT_VAR}=${commit}`] : [];
 
 		if (ok("step")) {
 			const out = path.join(dir, `${project.name}.step`);
-			await cli.pcbStep(project.boardFile, out, o);
+			await cli.pcbStep(project.boardFile, out, o, plotVars);
 			files.push(out);
 			const models = await missingModels(project, board);
 			const missing = [...models.missing].map(([p, refs]) => `${p} (${refs.sort(natural).join(", ")})`);
@@ -661,12 +698,15 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 
 		if (ok("gerbers")) {
 			const gdir = path.join(dir, "gerbers");
-			await cli.pcbGerbers(project.boardFile, [...board.copperLayers(), ...FAB_LAYERS], gdir, o);
+			await cli.pcbGerbers(project.boardFile, [...board.copperLayers(), ...FAB_LAYERS], gdir, o, plotVars);
 			const plotted = await cli.pcbDrill(project.boardFile, gdir, o);
 			const archive = path.join(dir, `${project.name}-gerbers.zip`);
 			fs.writeFileSync(archive, zip(plotted.map(f => ({ name: path.basename(f), data: fs.readFileSync(f) })), now));
 			files.push(archive, ...plotted);
 			notes.push(`Gerbers: ${plotted.length} files (Gerbers, drill, drill map) zipped into ${path.basename(archive)}: upload that one.`);
+		}
+		if (commit && (["gerbers", "step", "drawings"] as const).some(ok)) {
+			notes.push(`${shown} in the plots: ${commit} (HEAD${git!.dirty.length ? " with uncommitted changes in the project or its library" : ""}).`);
 		}
 
 		const boardIds = new Map(fps.map(fp => [fpRef(fp), fpId(fp)] as const));
@@ -721,7 +761,8 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 			const tmp = cli.tmpDir("drawings");
 			let pdfs = 0;
 			try {
-				const plot = (layers: readonly string[], file: string) => cli.pcbSvg(project.boardFile, [...layers], PART_THEME, path.join(tmp, file), o, DRAWING_FLAGS);
+				const plot = (layers: readonly string[], file: string) =>
+					cli.pcbSvg(project.boardFile, [...layers], PART_THEME, path.join(tmp, file), o, [...DRAWING_FLAGS, ...plotVars]);
 				const plots = await Promise.all(sides.map(s => Promise.all([plot(DRAWING_LAYERS[s].black, `${s}-black.svg`), plot(DRAWING_LAYERS[s].grey, `${s}-grey.svg`)])));
 				const [bx0, by0, bx1, by1] = outline.bbox!;
 				for (const [k, side] of sides.entries()) {
