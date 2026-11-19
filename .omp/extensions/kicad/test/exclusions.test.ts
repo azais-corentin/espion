@@ -209,11 +209,12 @@ describe.skipIf(!HAS_KICAD)("DRC exclusions", () => {
 	afterEach(() => cleanup(root));
 	const proFile = () => path.join(root, BOARD_PROJECT, "board.kicad_pro");
 
-	/** The board fixture with the copper board and its dangling track excluded (written as KiCad writes the .kicad_pro). */
+	/** The board fixture with the copper board and its dangling track excluded (written as KiCad writes the .kicad_pro); `null`: not excluded. */
 	function stage(entry: unknown = [TRACK, "probe track, routing comes later"]): void {
 		root = stageBoardFixture();
 		const dir = path.join(root, BOARD_PROJECT);
 		fs.copyFileSync(path.join(dir, "copper.kicad_pcb"), path.join(dir, "board.kicad_pcb"));
+		if (entry === null) return;
 		const pro = parsePro(fs.readFileSync(proFile(), "utf8"));
 		exclusionList(pro.data, "drc")!.push(entry);
 		fs.writeFileSync(proFile(), stringifyPro(pro));
@@ -255,4 +256,24 @@ describe.skipIf(!HAS_KICAD)("DRC exclusions", () => {
 		expect(r.report).toMatch(/DRC: \d+ violations after \(0 new, 0 resolved\)/);
 		expect(JSON.parse(fs.readFileSync(proFile(), "utf8")).board.design_settings.drc_exclusions).toEqual([]);
 	}, 120_000);
+
+	test("add_drc_exclusion writes the key pcbnew writes for the violation, and is refused when KiCad's DRC doesn't take it", async () => {
+		stage(null);
+		const add = (at: number[]) =>
+			runEdit(
+				{ project: BOARD_PROJECT, ops: [{ op: "add_drc_exclusion", rule: "track_dangling", items: ["C0FFEE00-0000-4000-8000-000000000009"], at, comment: "routing comes later" }] },
+				root,
+				undefined,
+				undefined,
+				noKicad,
+			);
+		const wrong = await add([9.2, 14]);
+		expect(wrong.applied).toBe(false);
+		expect(wrong.report).toContain("the added exclusion track_dangling @ (9.2, 14) excludes nothing in KiCad's DRC");
+		expect(JSON.parse(fs.readFileSync(proFile(), "utf8")).board.design_settings.drc_exclusions).toEqual([]);
+		const r = await add([9.175, 14]);
+		expect(r.applied).toBe(true);
+		expect(JSON.parse(fs.readFileSync(proFile(), "utf8")).board.design_settings.drc_exclusions).toEqual([[TRACK, "routing comes later"]]);
+		expect(r.report).toMatch(/DRC: \d+ violations after \(0 new, 1 resolved\)/);
+	}, 180_000);
 });

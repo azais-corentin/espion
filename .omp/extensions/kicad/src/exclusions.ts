@@ -101,6 +101,19 @@ export function parseKey(kind: ExclusionKind, key: string): Pick<Exclusion, "rul
 	}
 }
 
+/** DRC rules whose key carries a layer (see the module doc), which KiCad's DRC report doesn't give. */
+const LAYERED_DRC_KEYS: Record<string, true> = { copper_sliver: true, generic_warning: true, generic_error: true, unconnected_items: true, starved_thermal: true };
+
+/**
+ * The exclusion key of a DRC violation in the default form, rule | x | y | main uuid | aux uuid
+ * (board internal units, 1 nm; a missing item as the nil uuid), as PCB_MARKER::SerializeToString
+ * writes it. `at` is the marker's position, board mm.
+ */
+export function drcKey(rule: string, at: Pt, main?: string, aux?: string): string {
+	if (LAYERED_DRC_KEYS[rule]) throw new Error(`${rule}: its exclusion key carries a layer the DRC report doesn't give; exclude it in pcbnew`);
+	return [rule, Math.round(at[0] * 1e6), Math.round(at[1] * 1e6), main || NIL_UUID, aux || NIL_UUID].join("|");
+}
+
 /** The project's exclusions of one kind, in file order. */
 export function exclusions(data: Record<string, unknown>, kind: ExclusionKind): Exclusion[] {
 	// KiCad writes [key, comment]; files from before comments hold the bare key

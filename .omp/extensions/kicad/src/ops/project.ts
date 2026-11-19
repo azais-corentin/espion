@@ -7,7 +7,8 @@
  * layout.
  */
 import { conditionNetclasses, itemProblems, type NetclassJson, netSettings, scanDru } from "../checks/rules";
-import { EXCLUSION_KINDS, type ExclusionKind, editableList, selectExclusions } from "../exclusions";
+import * as cli from "../cli";
+import { drcKey, EXCLUSION_KINDS, type ExclusionKind, editableList, exclusions, selectExclusions } from "../exclusions";
 import { key, onInterior, type Pt, type Seg, touches } from "../geom";
 import type { Project } from "../project";
 import type { LabelKind } from "../sch";
@@ -468,7 +469,7 @@ const removeExclusion: OpDef = {
 	group: "project",
 	doc:
 		"Delete ERC or DRC exclusions from the .kicad_pro (kicad_query exclusions lists them, stale ones too). One exclusion unless all. " +
-		"A violation the exclusion still hid shows again in ERC/DRC: the edit reports it and still applies (it isn't new); fix it or exclude it again in KiCad.",
+		"A violation the exclusion still hid shows again in ERC/DRC: the edit reports it and still applies (it isn't new); fix it or exclude it again (DRC: add_drc_exclusion; ERC: in KiCad).",
 	fields: { ...EXCLUSION_PICK, all: { t: "boolean", doc: "remove every exclusion match selects (default false: exactly one must match)" } },
 	apply(ctx, args) {
 		const kind = args.kind as ExclusionKind;
@@ -502,6 +503,52 @@ const setExclusionComment: OpDef = {
 		list[e.index] = [e.key, comment];
 		ctx.notes.push(`${what}: comment ${comment ? (e.comment ? "replaced" : "added") : "removed"}`);
 		ctx.project.touchPro();
+	},
+};
+
+const addDrcExclusion: OpDef = {
+	op: "add_drc_exclusion",
+	group: "project",
+	doc:
+		"Exclude one DRC violation of the board with its reason, as pcbnew's Exclude on the marker does (.kicad_pro board.design_settings.drc_exclusions). " +
+		"KiCad's DRC (zones refilled in memory) of the board as it is on disk, before this edit's other ops, gives the shown violations of `rule`; the one whose items all `items` texts name (each found in an item's description or uuid, case-insensitive) is excluded, and exactly one must match. " +
+		"KiCad matches an exclusion by its whole key: the rule, the marker position and the two item uuids. The position is `at`, else the first item's, which is where KiCad puts the marker of a footprint's own violation (missing_courtyard); " +
+		"the edit is refused when KiCad's DRC afterwards doesn't report the violation excluded: then give the marker's position (pcbnew's marker) as `at`. " +
+		"Rules whose key carries a layer (copper_sliver, generic_warning, generic_error, unconnected_items, starved_thermal) are excluded in pcbnew; ERC exclusions are made in KiCad.",
+	fields: {
+		rule: { t: "string", req: true, doc: 'KiCad\'s violation type, as kicad_check drc names it, e.g. "missing_courtyard"' },
+		items: { t: "strings", req: true, doc: 'texts that pick the violation by its items, e.g. ["kibuzzard-6AFF7ADE"] or ["R1", "GND"]: a reference, net, pad or uuid' },
+		at: { t: "point", doc: "the marker's position, board mm (default: the first item's position)" },
+		comment: { t: "string", req: true, doc: "why the violation is excluded, with its source (a datasheet page, a user decision)" },
+	},
+	async apply(ctx, args) {
+		const { project } = ctx;
+		const rule = String(args.rule);
+		const comment = String(args.comment).trim();
+		if (!comment) throw new Error("comment: say why the violation is excluded");
+		const want = (args.items as string[]).map(s => s.toLowerCase());
+		if (!want.length || want.some(s => !s.trim())) throw new Error("items: give at least one non-empty text");
+		const list = editableList(project.proJson.data, "drc", project.rel(project.proFile));
+		const report = await cli.pcbDrc(project.boardFile, { cwd: project.dir, repoRoot: project.repoRoot }, false, true);
+		const shown = report.violations.filter(v => v.type === rule && !v.excluded);
+		const hits = shown.filter(v => want.every(s => v.items.some(i => i.description.toLowerCase().includes(s) || i.uuid?.toLowerCase() === s)));
+		const show = (l: cli.DrcViolation[]) => l.map(v => `[${v.items.map(i => i.description).join("; ")}]`).join(", ");
+		if (hits.length !== 1) {
+			throw new Error(
+				hits.length
+					? `${hits.length} ${rule} violations match: ${show(hits)}; add items to tell them apart`
+					: `no shown ${rule} violation names ${(args.items as string[]).join(", ")}; ${shown.length ? `the ${rule} violations: ${show(shown)}` : `the board has no shown ${rule} violation (kicad_check drc lists them)`}`,
+			);
+		}
+		const v = hits[0]!;
+		const pos = (args.at as Pt | undefined) ?? (v.items[0]?.pos ? ([v.items[0].pos.x, v.items[0].pos.y] as Pt) : undefined);
+		if (!pos) throw new Error(`${rule}: the report gives no position for [${v.items.map(i => i.description).join("; ")}]; give the marker's position as at`);
+		const key = drcKey(rule, pos, v.items[0]?.uuid, v.items[1]?.uuid);
+		if (exclusions(project.proJson.data, "drc").some(e => e.key === key)) throw new Error(`a DRC exclusion with key ${key} exists already`);
+		list.push([key, comment]);
+		ctx.notes.push(`DRC exclusion added: ${rule} @ (${pos[0]}, ${pos[1]}) [${v.items.map(i => i.description).join("; ")}] "${comment}"`);
+		project.touchPro();
+		ctx.touchBoard();
 	},
 };
 
@@ -708,6 +755,7 @@ export const ops: OpDef[] = [
 	setTextVariable,
 	removeExclusion,
 	setExclusionComment,
+	addDrcExclusion,
 	setRule,
 	removeRule,
 	setRulesHeader,

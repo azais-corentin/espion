@@ -35,7 +35,7 @@ import { klcFindings } from "./checks/klc";
 import { styleFindings } from "./checks/style";
 import * as cli from "./cli";
 import { Copper } from "./copper";
-import { type Exclusion, removedExclusions, unexcluded } from "./exclusions";
+import { type Exclusion, excludes, removedExclusions, unexcluded } from "./exclusions";
 import { compactJson } from "./format";
 import { type Box, bbox, type Pt } from "./geom";
 import { type Expect, checkExpect, diffNetlists, expectFromDiff, summarize } from "./netdiff";
@@ -405,6 +405,15 @@ async function verifyAndWrite(s: Staged): Promise<EditResult> {
 		const drc = drcAfter ? boardChange(drcBefore, drcAfter, s.board.placed, rename) : undefined;
 		// a changed board file is gated; changed board rules alone are reported (tighter rules show real problems to fix)
 		if (drc && pending.has(project.boardFile)) problems.push(...[...drc.gated, ...drc.parityNew].map(fmtFinding));
+		// KiCad matches a DRC exclusion by its whole key (marker position included): one the edit adds must exclude a violation of the after-state
+		if (drcAfter) {
+			const reported = [...drcAfter.violations, ...drcAfter.parity, ...drcAfter.unconnected];
+			for (const e of removedExclusions(project.proJson.data, before.proJson.data, "drc")) {
+				if (!reported.some(v => v.excluded && excludes(e, v))) {
+					problems.push(`  - [drc] the added exclusion ${e.rule} @ (${e.at[0]}, ${e.at[1]}) excludes nothing in KiCad's DRC: give the marker's position (pcbnew's marker) as at`);
+				}
+			}
+		}
 
 		const lines: string[] = [...s.lockNotes];
 		if (s.notes.length) lines.push("Done:", ...s.notes.map(n => `  - ${n}`));
