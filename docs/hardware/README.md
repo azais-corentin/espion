@@ -169,6 +169,8 @@ IMU and board:
 
 ## First-board checks
 
+Before the first power-up, on every board: the LED ring's orientation, by resistance from +32V (TP13) to `LED_K` (R70.1) and a diode test on D9. Amicc's pad drawing doesn't say which side it shows, and a ring placed the other way shorts +32V onto Q1 at the first pulse — [led](led.md#first-board-checks), check 9.
+
 Power ([power](power.md#first-board-checks)):
 1. `+5V_POE` at no load and full load with a 44 V and a 57 V PSE: ≤ 5.5 V, the input limit of U3 and U11.
 2. PoE cold start: monotonic, no hiccup; stays up through 0.5 ms / 120 fps LED pulses; the module's ripple on `+5V_POE` and `+5V` (no input filter).

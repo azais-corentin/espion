@@ -893,6 +893,21 @@ the backstop if the firmware itself fails ([Accepted risks](#accepted-risks)).
      doesn't trip before them or in the band.
 8. **Joints beside big parts:** AOI or a visual check of R5 and C8 (beside C46) for wetting,
    tombstoning and shifted parts.
+9. **Ring orientation, before the first power-up.** The footprint takes pad 1 as the cathode and
+   the centre pad and the other outer pad as the anode from Amicc's pad drawing (p.6), which doesn't
+   say whether it is seen from the top or the bottom. Read the other way, each LED's anode bridges
+   pad 1 and pad 2 and shorts its two nets: the string becomes a short from +32V to `LED_K`, and
+   the first pulse puts all of +32V across Q1 at I_LED. FW-7's power-up wait doesn't catch it: it
+   faults only a reading below its floor. On every board, unpowered and with C46 and C47
+   discharged:
+   - resistance from +32V (TP13) to `LED_K` (R70.1): near 0 Ω means a shorted string;
+   - diode test on one LED (D9): red lead on the centre pad, black on pad 1 must read a forward
+     drop, the reverse must read open; near 0 V both ways means a shorted LED.
+
+   On a short, don't power the board. Turn all twelve LEDs by 180° (hot air) and correct the ring
+   for the next order: the `LED_SMD_Amicc:*` entry of `assembly.corrections` in
+   `.omp/kicad.json` changes by 180°, and the footprint loses its provisional note in
+   [hardware/lib](../../hardware/lib/README.md).
 
 If the thermal test fails, pick R61 so that its worst-case current (the inputs of
 [LED current](#led-current), with 1 % values, fee-free ones first, user decision 2026-11-09)
