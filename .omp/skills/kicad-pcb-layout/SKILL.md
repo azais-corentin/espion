@@ -40,7 +40,7 @@ Every board edit is re-saved by KiCad, every zone is refilled and the fills are 
 9. **Board text and setup.**
    - `add_board_text` (layer `F.SilkS`), `add_board_graphic`, `remove_board_item`.
    - `add_board_footprint` and `remove_board_footprint` for fiducials, logos and test pads.
-   - `set_board_setup {title, rev, date}`: `kicad_export` names its folder after `rev`. It also sets the solder mask, paste, via tenting and teardrops.
+   - `set_board_setup {title, rev, date}`: `kicad_export` names its folder after `rev`, else after the commit. It also sets the solder mask, paste, via tenting and teardrops.
    - `set_text_variable {name, value?}`: a project text variable that texts show as `${NAME}`. A board text with `${GIT_COMMIT}` gets the commit from `kicad_export` (HEAD's short hash; the Gerbers are refused while the project or its library has uncommitted changes); give the project a placeholder of the hash's length so DRC checks the text at its plotted size.
 10. **Checks.** `kicad_check {}` runs every default check. For the board:
     - `drc`: DRC with parity; unconnected items are one count, `args: {unconnected: true}` lists them;

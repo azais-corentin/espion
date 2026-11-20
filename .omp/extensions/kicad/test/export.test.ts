@@ -518,13 +518,12 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 		expect(bottomSvg).toContain("R1 (1k): hand-soldered: test");
 	}, 300_000);
 
-	test("a board showing ${GIT_COMMIT}: the plots carry HEAD's short hash (-dirty with uncommitted changes); its gerbers refused outside git and while the project has uncommitted changes", async () => {
+	test("a board showing ${GIT_COMMIT}: the plots carry HEAD's short hash (-dirty with uncommitted changes) and the outputs go to a folder named after it; its gerbers refused outside git and while the project has uncommitted changes", async () => {
 		await routedBoard();
 		await edit([
 			{ op: "set_text_variable", name: "GIT_COMMIT", value: "dev" },
 			{ op: "add_board_text", text: "${GIT_COMMIT}", at: [24, 17.5], layer: "F.SilkS" },
 		]);
-		const fab = path.join(dir, "fab", "draft-2026-10-30");
 		const silk = (file: string) =>
 			fs
 				.readFileSync(file, "utf8")
@@ -555,6 +554,7 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 			"REFUSED gerbers: the board is not ready for fabrication:\n- uncommitted changes in the project or its library (the board shows ${GIT_COMMIT}: commit them first): 1\n    - board/notes.txt",
 		);
 		expect(dirty.text).toContain(`\${GIT_COMMIT} in the plots: ${head}-dirty (HEAD with uncommitted changes in the project or its library).`);
+		expect(dirty.files).toEqual([`${BOARD_PROJECT}/fab/${head}-dirty-2026-10-30/board.step`]);
 
 		// committed: gerbers written, the silkscreen showing HEAD's hash exactly as a literal text would, not the project's "dev"
 		git("add", "-A");
@@ -563,6 +563,8 @@ describe.skipIf(!HAS_KICAD)("kicad_export on the board fixture", () => {
 		const clean = await runExport(root, { project: BOARD_PROJECT, outputs: ["gerbers"] }, undefined, NOW);
 		expect(clean.refused).toEqual([]);
 		expect(clean.text).toContain(`\${GIT_COMMIT} in the plots: ${head2} (HEAD).`);
+		expect(clean.text).toContain(`Fabrication outputs of ${BOARD_PROJECT}, commit ${head2}, in ${BOARD_PROJECT}/fab/${head2}-2026-10-30/`);
+		const fab = path.join(dir, "fab", `${head2}-2026-10-30`);
 		const plotted = silk(path.join(fab, "gerbers", "board-F_Silkscreen.gto"));
 		const plot = async (name: string) => {
 			const out = path.join(root, name);

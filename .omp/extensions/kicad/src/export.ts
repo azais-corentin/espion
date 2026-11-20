@@ -1,5 +1,7 @@
 /**
- * Fabrication outputs for JLCPCB (`kicad_export`), written to `<project dir>/fab/<rev>-<YYYY-MM-DD>/`:
+ * Fabrication outputs for JLCPCB (`kicad_export`), written to `<project dir>/fab/<version>-<YYYY-MM-DD>/`
+ * (the version: the `rev` asked for, else the board's title block revision, else the commit the
+ * outputs come from, else "draft" outside git):
  *
  * - gerbers: Gerbers and Excellon drill files with a drill map, zipped for upload;
  * - assembly: the BOM and CPL (pick and place) CSVs for JLCPCB's assembly service, and the list of
@@ -647,28 +649,30 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 	const outline = boardOutline(board.tree.filter((c): c is List => isList(c) && isEdgeItem(c)));
 	const fps = board.footprints();
 	const bottom = fps.filter(fp => placement(fp).side === "bottom").length;
-	const rev = req.rev?.trim() ?? boardRev(board) ?? "draft";
-	const dir = path.join(project.dir, "fab", `${rev.replace(/[^A-Za-z0-9._-]+/g, "_")}-${ymd(now)}`);
 	const analysis = new Analysis(project, signal);
 	const o = analysis.runOpts;
-	const files: string[] = [];
-	const notes: string[] = [];
-	const refusals = new Map<Output, string[]>();
-	// every requested output starts from nothing: a refused one leaves none of an earlier run's files behind
-	const removed = outputs.flatMap(x => outputPaths(dir, project.name, x)).filter(p => fs.existsSync(p));
-	for (const p of removed) fs.rmSync(p, { recursive: true, force: true });
 	try {
+		const sources = [project.dir, path.resolve(repoRoot, project.settings.libDir)].filter(p => fs.existsSync(p));
+		const git = await gitCommit(repoRoot, sources, o);
+		const commit = git.commit && `${git.commit}${git.dirty.length ? "-dirty" : ""}`;
+		const rev = req.rev?.trim() ?? boardRev(board);
+		const version = rev ? `rev ${rev}` : commit ? `commit ${commit}` : "draft";
+		const dir = path.join(project.dir, "fab", `${(rev ?? commit ?? "draft").replace(/[^A-Za-z0-9._-]+/g, "_")}-${ymd(now)}`);
+		const files: string[] = [];
+		const notes: string[] = [];
+		const refusals = new Map<Output, string[]>();
+		// every requested output starts from nothing: a refused one leaves none of an earlier run's files behind
+		const removed = outputs.flatMap(x => outputPaths(dir, project.name, x)).filter(p => fs.existsSync(p));
+		for (const p of removed) fs.rmSync(p, { recursive: true, force: true });
 		const gated = outputs.filter(x => x === "gerbers" || x === "assembly");
 		const shown = `\${${COMMIT_VAR}}`;
 		const showsCommit = fs.readFileSync(project.boardFile, "utf8").includes(shown);
-		const sources = [project.dir, path.resolve(repoRoot, project.settings.libDir)].filter(p => fs.existsSync(p));
-		const [gate, nl, fields, git] = await Promise.all([
+		const [gate, nl, fields] = await Promise.all([
 			gated.length ? boardGate(project, analysis) : Promise.resolve([]),
 			analysis.netlist(),
 			outputs.includes("assembly") ? CHECKS.get("fields")!.run({ project, analysis, baseline: "HEAD", args: {}, signal }) : Promise.resolve([]),
-			showsCommit ? gitCommit(repoRoot, sources, o) : Promise.resolve(undefined),
 		]);
-		const commitWhy = !git
+		const commitWhy = !showsCommit
 			? []
 			: !git.commit
 				? [`- the board shows ${shown}, but the project is in no git repository with a commit to fill it with`]
@@ -684,8 +688,8 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 		if (outputs.includes("drawings") && !outline.bbox) refusals.set("drawings", []);
 		const ok = (x: Output) => outputs.includes(x) && !refusals.has(x);
 		if (outputs.some(ok)) fs.mkdirSync(dir, { recursive: true });
-		const commit = git?.commit && `${git.commit}${git.dirty.length ? "-dirty" : ""}`;
-		const plotVars = commit ? ["--define-var", `${COMMIT_VAR}=${commit}`] : [];
+		const shownCommit = showsCommit ? commit : undefined;
+		const plotVars = shownCommit ? ["--define-var", `${COMMIT_VAR}=${shownCommit}`] : [];
 
 		if (ok("step")) {
 			const out = path.join(dir, `${project.name}.step`);
@@ -705,8 +709,8 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 			files.push(archive, ...plotted);
 			notes.push(`Gerbers: ${plotted.length} files (Gerbers, drill, drill map) zipped into ${path.basename(archive)}: upload that one.`);
 		}
-		if (commit && (["gerbers", "step", "drawings"] as const).some(ok)) {
-			notes.push(`${shown} in the plots: ${commit} (HEAD${git!.dirty.length ? " with uncommitted changes in the project or its library" : ""}).`);
+		if (shownCommit && (["gerbers", "step", "drawings"] as const).some(ok)) {
+			notes.push(`${shown} in the plots: ${shownCommit} (HEAD${git.dirty.length ? " with uncommitted changes in the project or its library" : ""}).`);
 		}
 
 		const boardIds = new Map(fps.map(fp => [fpRef(fp), fpId(fp)] as const));
@@ -775,7 +779,7 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 						hand: onSide.map(r => ({ ref: r.ref, value: r.value, reason: r.reason, edges: courtyardEdges(r.fp) })),
 						title: `${project.name}: assembly drawing, ${side === "top" ? "top side (seen from above)" : "bottom side, mirrored (seen from below)"}`,
 						info: [
-							`Rev ${rev}, ${ymd(now)}; board ${round2(bx1 - bx0)} × ${round2(by1 - by0)} mm; footprints on this side: ${side === "top" ? fps.length - bottom : bottom}.`,
+							`${version[0]!.toUpperCase()}${version.slice(1)}, ${ymd(now)}; board ${round2(bx1 - bx0)} × ${round2(by1 - by0)} mm; footprints on this side: ${side === "top" ? fps.length - bottom : bottom}.`,
 							`Outline and ${DRAWING_LAYERS[side].black[1]} (references) in black, ${DRAWING_LAYERS[side].grey[0]} in grey; DNP parts crossed out.`,
 						],
 					});
@@ -804,7 +808,7 @@ export async function runExport(repoRoot: string, req: ExportRequest, signal?: A
 		const copper = board.copperLayers();
 		const size = outline.bbox ? `${round2(outline.bbox[2] - outline.bbox[0])} × ${round2(outline.bbox[3] - outline.bbox[1])} mm` : "no outline";
 		const lines = [
-			`Fabrication outputs of ${project.rel(project.dir)}, rev ${rev}, in ${project.rel(dir)}/`,
+			`Fabrication outputs of ${project.rel(project.dir)}, ${version}, in ${project.rel(dir)}/`,
 			`Board: ${size}, ${copper.length} copper layers (${copper.join(", ")}); ${fps.length} footprints (${fps.length - bottom} top, ${bottom} bottom); ` +
 				`schematic: ${comps.length} parts, ${comps.filter(c => c.dnp).length} DNP; to assemble: ${asm.parts.length} parts, ${bomRows(asm.parts).length} LCSC part numbers.`,
 		];
