@@ -7,7 +7,6 @@
 	(title_block
 		(title "espion-cam — LED driver")
 		(date "2026-10-29")
-		(rev "0.1")
 	)
 	(lib_symbols
 		(symbol "74xGxx_TI:SN74LVC1G97DBV"

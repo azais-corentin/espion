@@ -7,7 +7,6 @@
 	(title_block
 		(title "espion-cam — LED ring")
 		(date "2026-10-29")
-		(rev "0.1")
 	)
 	(lib_symbols
 		(symbol "Device:LED"

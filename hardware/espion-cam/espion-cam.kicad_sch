@@ -7,7 +7,6 @@
 	(title_block
 		(title "espion-cam")
 		(date "2026-10-29")
-		(rev "0.1")
 	)
 	(lib_symbols
 		(symbol "Mechanical:MountingHole_Pad"

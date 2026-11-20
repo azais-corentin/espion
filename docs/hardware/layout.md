@@ -35,12 +35,13 @@ r 3.8 mm, of a mounting hole's centre. Parts keep their courtyards outside it to
 at J2's west shield pads runs closest to it, which is why that loop is routed where it is ([Power](#power)).
 
 The board carries "espion-cam" and `${GIT_COMMIT}` on the bottom silkscreen, so every board names the commit its Gerbers
-came from (user decision 2026-11-19, replacing the revision and date). `kicad_export` fills in HEAD's short hash and
-refuses the Gerbers while the project or `hardware/lib` has uncommitted changes; the project's own value, a placeholder
-as long as the hash, is what pcbnew and DRC see.
-Below it, a "JLCJLCJLCJLC" text on the bottom silkscreen is where JLCPCB prints its order number (user decision
-2026-11-09: placeholder rather than a paid removal or a spot of JLCPCB's choosing); the order sets "Mark on PCB" to
-"Order number (specify position)".
+came from (user decision 2026-11-19, replacing the revision and date). The commit is the board's only version: the
+title blocks carry no revision (user decision 2026-11-20), so `kicad_export` names the fab folder after the commit too.
+It fills in HEAD's short hash and refuses the Gerbers while the project or `hardware/lib` has uncommitted changes; the
+project's own value, a placeholder as long as the hash, is what pcbnew and DRC see.
+The board has no order-number placeholder: JLCPCB prints no order number since May 2026 and asks for no "JLCJLCJLCJLC"
+text in the silkscreen (https://jlcpcb.com/help/article/how-to-mark-on-pcb, read 2026-11-20); the order keeps "Mark on
+PCB" at "Remove Mark" (user decision 2026-11-20).
 
 ### Stack-up
 
