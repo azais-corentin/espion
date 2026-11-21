@@ -8,9 +8,17 @@
 //!
 //! 1. Start at the blob's centroid. The window sigma `s` comes from the blob's area: a
 //!    Gaussian spot cut at half its peak covers `2 pi ln 2 sigma^2` pixels, so
-//!    `s = sqrt(area / (2 pi ln 2))`, clamped to 0.75..=4 px. The square of half-size
-//!    `ceil(4 s) + 1` around the start pixel (at most 35 x 35) is read from the frame once
-//!    into a stack buffer; everything below works on that buffer.
+//!    `s = sqrt(area / (2 pi ln 2))`, at least 0.75 px. A spot with `s` above 4 px (an
+//!    area of 70 and up) is measured on bins of `2^k` x `2^k` pixels, `k` the smallest
+//!    (at most 5, with at least one bin per row and column) that brings `s / 2^k` to 4 or
+//!    below: each bin is the rounded mean of its pixels (RAW8 with 2 fraction bits), bin
+//!    centres at `(2^k - 1) / 2` px from their first pixel's, the partial bins of the
+//!    frame's right and bottom edges left out. Everything below is then in bins, the
+//!    result scaled back to pixels. A window too narrow for the spot would see only its
+//!    top: the width blows up (step 4) and the centre follows the top's unevenness. The
+//!    square of half-size `ceil(4 s) + 1` around the start pixel (at most 35 x 35) is read
+//!    from the frame once into a stack buffer (binned: each of its `4^k` pixels once);
+//!    everything below works on that buffer.
 //! 2. Local background: the median of the pixels on the perimeter of that square (the
 //!    pixels of it in the frame; if none, the border of the square clipped to the frame),
 //!    selected with two 32-bin counts (top 5 bits, then low 5 bits of the 10-bit value).
@@ -28,11 +36,12 @@
 //!    the weighted second moment `m = sum(w d^2) / sum(w)` (x and y averaged), `w` the
 //!    unclipped `(value - background) * G`, so the noise does not bias it. A Gaussian spot
 //!    of sigma `sigma` under the window gives `m = sigma^2 s^2 / (sigma^2 + s^2)`, so
-//!    `sigma^2 = m s^2 / (s^2 - m)`, less the 1/12 px^2 that the pixel's own width adds.
-//!    For any other profile this is the sigma of the Gaussian with the same weighted
-//!    moment. `m <= 0` or weights summing to zero or less give 0; `m >= s^2` (a spot far
-//!    wider than the window) gives `u16::MAX`. `flux` is the sum of `value - background`
-//!    over the window, unweighted, clamped to 0 and up.
+//!    `sigma^2 = m s^2 / (s^2 - m)`, less the 1/12 px^2 that the pixel's own width adds
+//!    (binned: the bin's, 1/12 bin^2). For any other profile this is the sigma of the
+//!    Gaussian with the same weighted moment. `m <= 0` or weights summing to zero or less
+//!    give 0; `m >= s^2` (a spot far wider than the window) or a width past 255 px gives
+//!    `u16::MAX`. `flux` is the sum of `value - background` over the window, unweighted,
+//!    clamped to 0 and up (binned: times the pixels per bin).
 //!
 //! The weights are separable, `G = gx(dx) gy(dy)`: each step builds `gx` and `gy` once
 //! (at most 33 entries each) at the current sub-pixel estimate, and makes one pass over
@@ -94,9 +103,12 @@ pub fn refine_raw10(frame: &[u8], width: u16, height: u16, blob: &Blob) -> Spot 
 const Q: u32 = 12;
 /// One pixel.
 const ONE: i32 = 1 << Q;
-/// Window sigma bounds.
+/// Window sigma bounds, in pixels of the frame or, for wider spots, of its bins.
 const SIGMA_MIN: i32 = 3 * ONE / 4;
 const SIGMA_MAX: i32 = 4 * ONE;
+/// Most bin shift: bins of 32 x 32 pixels bring the widest window sigma (about 123 px, for
+/// an area of `u16::MAX`) below [`SIGMA_MAX`].
+const MAX_SHIFT: u32 = 5;
 /// Largest window half-size: `ceil(4 * SIGMA_MAX)` px.
 const MAX_HALF: usize = 16;
 const MAX_SIDE: usize = 2 * MAX_HALF + 1;
@@ -106,7 +118,7 @@ const BUF_SIDE: usize = MAX_SIDE + 2;
 const MAX_RING: usize = 4 * (BUF_SIDE - 1);
 /// Steps below this (1/512 px) end the iteration.
 const STOP: i32 = ONE / 512;
-/// 1/12 px^2 in Q15 px^2: the variance of a uniform pixel.
+/// 1/12 px^2 in Q15 px^2: the variance of a uniform pixel (or bin, in bins).
 const PIXEL_VAR: i64 = (32768 + 6) / 12;
 
 /// Table steps per unit of `t` in [`EXP`].
@@ -182,13 +194,18 @@ fn sqrt_round(v: u32) -> u32 {
     if rem > root { root + 1 } else { root }
 }
 
-/// A frame: rows of `stride` bytes holding `width` pixels, `rows` of them in `data`.
+/// A frame: rows of `stride` bytes holding `width` pixels, `rows` of them in `data`; seen
+/// through bins of `2^shift` x `2^shift` pixels, `width` and `rows` counting bins.
 struct View<'a> {
     data: &'a [u8],
     stride: usize,
     width: usize,
     rows: usize,
     raw10: bool,
+    shift: u32,
+    /// Fraction bits of a bin's value: 2 for binned RAW8 (a bin's mean in 1/4 DN, still
+    /// 10 bits), else 0.
+    frac: u32,
 }
 
 impl<'a> View<'a> {
@@ -204,12 +221,27 @@ impl<'a> View<'a> {
             width,
             rows,
             raw10,
+            shift: 0,
+            frac: 0,
         }
     }
 
-    /// Pixels `x0..x0 + out.len()` of row `y` (`< rows`) into `out`.
+    /// The frame (`shift` 0) seen through bins of `2^shift` x `2^shift` pixels; the pixels
+    /// of a partial last bin column or row are not used.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-    fn load(&self, y: usize, x0: usize, out: &mut [u16]) {
+    fn binned(&self, shift: u32) -> Self {
+        Self {
+            width: self.width >> shift,
+            rows: self.rows >> shift,
+            shift,
+            frac: if shift == 0 || self.raw10 { 0 } else { 2 },
+            ..*self
+        }
+    }
+
+    /// `f(i, value)` for the frame pixels `x0 + i`, `i < n`, of frame row `y` (`< rows`).
+    #[inline(always)]
+    fn pixels(&self, y: usize, x0: usize, n: usize, mut f: impl FnMut(usize, u16)) {
         let row = self
             .data
             .get(y * self.stride..(y + 1) * self.stride)
@@ -217,24 +249,50 @@ impl<'a> View<'a> {
         if self.raw10 {
             // One unpack per group of four pixels.
             let mut x = x0;
-            let end = x0 + out.len();
+            let end = x0 + n;
             while x < end {
                 let at = x / 4 * raw10::GROUP_BYTES;
                 let px = row
                     .get(at..)
                     .and_then(|g| g.first_chunk())
                     .map_or([0; 4], raw10::unpack);
-                for &v in &px[x % 4..] {
-                    if let Some(o) = out.get_mut(x - x0) {
-                        *o = v as u16;
-                    }
+                for &v in px.get(x % 4..(end - x / 4 * 4).min(4)).unwrap_or(&[]) {
+                    f(x - x0, v as u16);
                     x += 1;
                 }
             }
-        } else if let Some(px) = row.get(x0..x0 + out.len()) {
-            for (o, &v) in out.iter_mut().zip(px) {
-                *o = v as u16;
+        } else if let Some(px) = row.get(x0..x0 + n) {
+            for (i, &v) in px.iter().enumerate() {
+                f(i, v as u16);
             }
+        }
+    }
+
+    /// Bins `x0..x0 + out.len()` of bin row `y` (`< rows`) into `out`: each the rounded
+    /// mean of its pixels with `frac` fraction bits, at most 10 bits like the pixels.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn load(&self, y: usize, x0: usize, out: &mut [u16]) {
+        if self.shift == 0 {
+            self.pixels(y, x0, out.len(), |i, v| {
+                if let Some(o) = out.get_mut(i) {
+                    *o = v;
+                }
+            });
+            return;
+        }
+        let shift = self.shift;
+        let mut acc = [0u32; BUF_SIDE];
+        for j in 0..1 << shift {
+            self.pixels((y << shift) + j, x0 << shift, out.len() << shift, |i, v| {
+                if let Some(a) = acc.get_mut(i >> shift) {
+                    *a += v as u32;
+                }
+            });
+        }
+        let drop = 2 * shift - self.frac;
+        let round = (1 << drop) >> 1;
+        for (o, &a) in out.iter_mut().zip(&acc) {
+            *o = ((a + round) >> drop) as u16;
         }
     }
 }
@@ -246,15 +304,33 @@ fn span(p: usize, half: usize, lo: usize, hi: usize) -> Option<(usize, usize)> {
     (a <= b).then_some((a, b))
 }
 
-/// The window sigma for a blob of `area` pixels cut at half its peak, in 1/4096 px:
-/// `sqrt(area / (2 pi ln 2))`, `2^24 / (2 pi ln 2) = 3852251`. Areas of 70 and up are past
-/// [`SIGMA_MAX`] (`s^2` fits a `u32` below that).
+/// The window sigma for a blob of `area` pixels cut at half its peak, in frame pixels
+/// (1/4096 px): `sqrt(area / (2 pi ln 2))`, `2^24 / (2 pi ln 2) = 3852251`, at least
+/// [`SIGMA_MIN`]. Past `u32` (areas above 1114) the root of a 256th, times 16.
 #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 fn window_sigma(area: u16) -> i32 {
-    if area >= 70 {
-        return SIGMA_MAX;
+    let v = area as u64 * 3_852_251;
+    let s = match u32::try_from(v) {
+        Ok(v) => sqrt_round(v),
+        Err(_) => sqrt_round((v >> 8) as u32) << 4,
+    };
+    (s as i32).max(SIGMA_MIN)
+}
+
+/// The fewest bins, `2^shift` x `2^shift` pixels, that bring the window sigma `s` (frame
+/// pixels) to [`SIGMA_MAX`] bins or below, keeping at least one bin per row and column of
+/// the `width` x `rows` frame.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+fn bin_shift(s: i32, width: usize, rows: usize) -> u32 {
+    let mut shift = 0;
+    while shift < MAX_SHIFT
+        && s >> shift > SIGMA_MAX
+        && width >> (shift + 1) > 0
+        && rows >> (shift + 1) > 0
+    {
+        shift += 1;
     }
-    (sqrt_round(area as u32 * 3_852_251) as i32).clamp(SIGMA_MIN, SIGMA_MAX)
+    shift
 }
 
 /// The pixel holding position `c` (1/4096 px, `c >= 0`).
@@ -527,17 +603,23 @@ fn refine(view: &View, blob: &Blob) -> (Spot, u32) {
         };
         return (spot, 0);
     }
+    // A spot wider than the window is measured on bins of 2^shift x 2^shift pixels, in
+    // which it is narrow enough; everything below is in bins.
+    let sf = window_sigma(blob.area);
+    let shift = bin_shift(sf, view.width, view.rows);
+    let view = &view.binned(shift);
+    let s = (sf >> shift).clamp(SIGMA_MIN, SIGMA_MAX);
     // Widths and rows are at most 65535: positions fit an i32 in 1/4096 px.
     let max = (
         ((view.width - 1) as i32) << Q,
         ((view.rows - 1) as i32) << Q,
     );
-    // Q11.5 to Q12.
-    let start = (
-        ((blob.x as i32) << 7).min(max.0),
-        ((blob.y as i32) << 7).min(max.1),
-    );
-    let s = window_sigma(blob.area);
+    // Frame position `p` is bin position `(p - off) / 2^shift`: bin centres sit
+    // `(2^shift - 1) / 2` px from their first pixel's.
+    let off = ((1 << shift) - 1) << (Q - 1);
+    // Q11.5 to Q12, then to bins.
+    let to_bins = |p: u16| ((p as i32) << 7).saturating_sub(off).max(0) >> shift;
+    let start = (to_bins(blob.x).min(max.0), to_bins(blob.y).min(max.1));
     let half = ((4 * s + ONE - 1) >> Q) as usize;
     let inv = gauss_inv(s);
     // A struct literal (a memset), not a const (a 2.4 KB copy from flash).
@@ -575,12 +657,17 @@ fn refine(view: &View, blob: &Blob) -> (Spot, u32) {
             break;
         }
     }
+    // Back to frame pixels: the width scales with the bin, the flux sums `4^shift` pixels
+    // per bin, in units of `2^-frac`.
     let (width, flux) = last.map_or((0, 0), |p| {
-        (p.width(s), p.flux.clamp(0, u32::MAX as i64) as u32)
+        let width = ((p.width(s) as u32) << shift).min(u16::MAX as u32) as u16;
+        let flux = ((p.flux.max(0) << (2 * shift)) >> view.frac).min(u32::MAX as i64) as u32;
+        (width, flux)
     });
+    let to_frame = |c: i32| (((c << shift) + off + 8) >> 4) as u32;
     let spot = Spot {
-        x: ((c.0 + 8) >> 4) as u32,
-        y: ((c.1 + 8) >> 4) as u32,
+        x: to_frame(c.0),
+        y: to_frame(c.1),
         width,
         flux,
     };
@@ -831,10 +918,22 @@ mod tests {
         assert_eq!(window_sigma(10) * 1000 / ONE, 1515);
         assert_eq!(window_sigma(0), SIGMA_MIN);
         assert_eq!(window_sigma(69), 16304);
-        assert_eq!(window_sigma(70), SIGMA_MAX);
-        assert_eq!(window_sigma(u16::MAX), SIGMA_MAX);
+        assert_eq!(window_sigma(70), 16421);
         let k = (1u64 << 24) as f64 / (2.0 * core::f64::consts::PI * core::f64::consts::LN_2);
         assert_eq!(k.round(), 3_852_251.0);
+        for area in [70u16, 393, 1114, 1115, 20_000, u16::MAX] {
+            let want = (area as f64 * k).sqrt();
+            let got = window_sigma(area) as f64;
+            assert!((got / want - 1.0).abs() < 1e-4, "area {area}: {got} {want}");
+        }
+        // The fewest bins that bring the window to SIGMA_MAX, one bin per side at least.
+        assert_eq!(bin_shift(SIGMA_MAX, 1280, 800), 0);
+        assert_eq!(bin_shift(SIGMA_MAX + 1, 1280, 800), 1);
+        // 9.5 px: 4 x 4 bins.
+        assert_eq!(bin_shift(window_sigma(393), 1280, 800), 2);
+        assert_eq!(bin_shift(window_sigma(u16::MAX), 1280, 800), MAX_SHIFT);
+        assert!(window_sigma(u16::MAX) >> MAX_SHIFT <= SIGMA_MAX);
+        assert_eq!(bin_shift(window_sigma(u16::MAX), 1280, 3), 1);
     }
 
     #[test]
@@ -918,12 +1017,16 @@ mod tests {
                         let flux = r.0.flux as f64 / (scene.total() * scale);
                         worst.flux = worst.flux.max((flux - 1.0).abs());
                         worst.add(r, &blobs[0], c);
-                        let half = (4 * window_sigma(blobs[0].area) + ONE - 1) >> Q;
-                        let side = 2 * half + 1;
-                        sides.0 = sides.0.min(side);
-                        sides.1 = sides.1.max(side);
-                        // Pixels read: the buffer once, the window once per step.
-                        pixels += (side + 2) * (side + 2) + r.1 as i32 * side * side;
+                        let sf = window_sigma(blobs[0].area);
+                        let shift = bin_shift(sf, W, W);
+                        let s = (sf >> shift).clamp(SIGMA_MIN, SIGMA_MAX);
+                        let side = 2 * ((4 * s + ONE - 1) >> Q) + 1;
+                        // The window in frame pixels.
+                        sides.0 = sides.0.min(side << shift);
+                        sides.1 = sides.1.max(side << shift);
+                        // Reads: the buffer's pixels once, the window's bins once per step.
+                        pixels +=
+                            (((side + 2) * (side + 2)) << (2 * shift)) + r.1 as i32 * side * side;
                     }
                 }
                 println!(
@@ -996,6 +1099,55 @@ mod tests {
                     worst.widths.1
                 );
                 assert!(worst.pos <= 0.02, "{name} raw10 {raw10}: {}", worst.pos);
+            }
+        }
+    }
+
+    /// Discs wider than the window (radius 6 to 24 px, measured on bins of 2 to 8 px):
+    /// centred within 0.5 % of the radius (the bins' sampling of the disc, 0.005 bin), and
+    /// a width close to the disc's `R / 2` (a uniform disc's sigma per axis), not the far
+    /// larger value of a window too narrow for the spot.
+    #[test]
+    fn wide_discs() {
+        const W: usize = 128;
+        const PHASES: [f64; 4] = [0.0, 0.25, 0.5, 0.75];
+        for r in [6.0, 9.0, 11.0, 16.0, 24.0] {
+            for raw10 in [false, true] {
+                let mut worst = Worst::default();
+                for &fy in &PHASES {
+                    for &fx in &PHASES {
+                        let c = (64.0 + fx, 63.0 + fy);
+                        let mut scene = Scene::new(W, W);
+                        scene.disc(c.0, c.1, r, 200.0);
+                        let (f, blobs) = if raw10 {
+                            let f = scene.raw10(10.0);
+                            let b = detect10(&f, W);
+                            (f, b)
+                        } else {
+                            let f = scene.raw8(10.0, None);
+                            let b = detect8(&f, W);
+                            (f, b)
+                        };
+                        assert_eq!(blobs.len(), 1);
+                        let res = run(&f, W, W, raw10, &blobs[0]);
+                        worst.add(res, &blobs[0], c);
+                    }
+                }
+                let ratio = (worst.widths.0 / (r / 2.0), worst.widths.1 / (r / 2.0));
+                println!(
+                    "disc r {r:4} raw10 {raw10:5}: |err| max {:.4} (thresholded {:.4}), steps {}/{:.2}, width / (r / 2) {:.3}..={:.3}",
+                    worst.pos,
+                    worst.thresholded,
+                    worst.steps,
+                    worst.mean_steps(),
+                    ratio.0,
+                    ratio.1
+                );
+                assert!(worst.pos <= 0.005 * r, "r {r} raw10 {raw10}: {}", worst.pos);
+                assert!(
+                    ratio.0 >= 1.0 && ratio.1 <= 1.25,
+                    "r {r} raw10 {raw10}: width / (r / 2) {ratio:?}"
+                );
             }
         }
     }

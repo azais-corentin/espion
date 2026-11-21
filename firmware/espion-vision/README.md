@@ -78,9 +78,14 @@ frame and return a `Spot`: centre in 1/256 pixel (pixel centres at integer coord
 window, frame units). Integer math only, so the board and the host agree bit for bit.
 
 1. Window sigma `s` from the blob's area: a Gaussian cut at half its peak covers
-   `2π ln 2 σ²` pixels, so `s = sqrt(area / (2π ln 2))`, clamped to 0.75..=4 px. The
-   square of half-size `ceil(4s) + 1` around the blob's centroid (at most 35 × 35) is read
-   from the frame once into a stack buffer; the rest works on it.
+   `2π ln 2 σ²` pixels, so `s = sqrt(area / (2π ln 2))`, at least 0.75 px. Past 4 px (an
+   area of 70 and up) the spot is measured on bins of `2^k × 2^k` pixels, the smallest `k`
+   (at most 5) that brings `s / 2^k` to 4 or below: each bin the rounded mean of its pixels
+   (RAW8 with 2 fraction bits), the rest in bins, the result scaled back to pixels. A
+   window too narrow for the spot sees only its top: the width blows up (step 4) and the
+   centre follows the top's unevenness. The square of half-size `ceil(4s) + 1` around the
+   blob's centroid (at most 35 × 35, pixels or bins) is read from the frame once into a
+   stack buffer; the rest works on it.
 2. Background: the median of the pixels on the perimeter of that square, selected with
    two 32-bin counts (no sort).
 3. From the blob's centroid, iterated Gaussian-weighted centroid over the square of
@@ -92,16 +97,19 @@ window, frame units). Integer math only, so the board and the host agree bit for
    the Gaussian-weighted second moment `m = Σ w d² / Σ w` (same weights `w`, unclipped,
    x and y averaged). A Gaussian spot of sigma σ under the window gives
    `m = σ² s² / (σ² + s²)`, so `σ² = m s² / (s² − m)`, less the 1/12 px² of the pixel's own
-   width. For any other profile it is the sigma of the Gaussian with the same weighted
-   moment. `m ≤ 0` gives 0, `m ≥ s²` (far wider than the window) `u16::MAX`. `flux`: the
-   unweighted sum of value − background over that window, at least 0.
+   width (binned: the bin's). For any other profile it is the sigma of the Gaussian with the
+   same weighted moment. `m ≤ 0` gives 0, `m ≥ s²` (far wider than the window) or a width
+   past 255 px `u16::MAX`. `flux`: the unweighted sum of value − background over that
+   window, at least 0.
 
 Cost: the weights are separable (`gx(dx) · gy(dy)`, built once per step from an
 `exp` table), so a step is one pass over the window with four `i32` multiply-adds per
 pixel (15 RV32 instructions in the loop), plus about 45 instructions per column and 90 per
 row; divisions are 32-bit (two per step); no `i128`, no 64-bit division, no sort. At
 σ 1.5 px: a 15 × 15 window, 2.7 steps, about 900 pixel reads per blob (the 17 × 17 buffer
-once, the window per step), estimated at about 21 000 instructions per blob on the P4.
+once, the window per step), estimated at about 21 000 instructions per blob on the P4. A
+binned spot's buffer reads each of its pixels once (about 15 × the blob's area), the steps
+stay within the 35 × 35 bins.
 
 Every window is clipped to the frame (a spot within 4 widths of the edge may be biased
 towards the inside), to the rows given, and to the buffer (an estimate that moves more than
@@ -113,6 +121,8 @@ saturated Gaussian within 0.012 px (`width`: 1.39 to 1.46 px for a disc of radiu
 read noise and shot noise at σ 1.5 px, peak 220: 0.021 px rms per axis against 0.071 for
 the thresholded centroid, `width` 1.500 px on average with 0.015 px rms error. About 2.7
 steps on average for Gaussian spots (at most 4), windows of 13 to 17 px square at σ 1.5.
+Uniform discs of radius 6 to 24 px (bins of 2 to 8 px) within 0.5 % of the radius, `width`
+1.12 to 1.14 × `R / 2` (that of radius 4 at full resolution: 1.12 to 1.14).
 
 ## Cargo features
 
