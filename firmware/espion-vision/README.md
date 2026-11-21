@@ -41,6 +41,17 @@ vector skip can hold a per-core token that is not `Send` while the detector live
 static. `Scalar` is the portable skip and the reference; the calls without `_with` use it.
 Any skip that keeps the contract in `skip.rs` gives the same blobs.
 
+`push_rows_until(skip, rows, first_row, stop)` is `push_rows_with` that can stop early, at a
+row boundary, for a caller with a deadline (core 1 must give each strip back to the DMA in
+time). It asks `stop()` before each row it scans and before each jump of the skip over dark
+rows, returns at the first `true`, and says how many rows it did (those the skip passed
+included). Between two questions it does at most one row (scan, labelling, end of row) or one
+skip jump over at most the rest of `rows`, so the work after the last `false` is bounded by
+one row's worst case (every other pixel bright) or one skip over `rows`, whatever the pixels.
+Pushing the remaining rows afterwards continues exactly where it stopped (bit-identical blobs
+and `Stats`); rows never pushed count as dark, as any gap does. With a `stop` that never
+answers `true` it is `push_rows_with`, which is built on it.
+
 ## Automatic threshold
 
 `auto` picks the threshold of the next frame from the current one, integer math only:
@@ -108,7 +119,7 @@ steps on average for Gaussian spots (at most 4), windows of 13 to 17 px square a
 | Feature | What |
 |---|---|
 | `pie` | `impl Skip for esp32p4_pie::Pie` (crate `firmware/esp32p4-pie`): the PIE dark skip of the ESP32-P4, 16 bytes per load. The impl is compiled for `target_arch = "riscv32"` only; on the host the feature builds the dependency's encoders and adds nothing, so `cargo test --features pie` runs the same tests. The token comes from `Pie::enable()` on the core that runs the detector; pass `&pie` to the `_with` calls |
-| `ram` | The hot functions (`push_rows_with` with the strip loop, `Scalar`'s skip methods, `link`, `end_row`, `emit`, `finish`, the centroid division; every function of `refine`) in `.rwtext`, which esp-hal's linker script places in internal RAM; with `pie`, the PIE kernels too (`esp32p4-pie/ram`). No effect on the host. Every linked instance of the generic functions moves: about 9.3 KB for the Pie path, 12.7 KB for `Scalar`. Measured on the ESP32-P4 in `firmware/poc-p4-eth/README.md`, "Hot code in RAM and Zb/Zcb" |
+| `ram` | The hot functions (`push_rows_with` and `push_rows_until` with the strip loop, `Scalar`'s skip methods, `link`, `end_row`, `emit`, `finish`, the centroid division; every function of `refine`) in `.rwtext`, which esp-hal's linker script places in internal RAM; with `pie`, the PIE kernels too (`esp32p4-pie/ram`). No effect on the host. Every linked instance of the generic functions moves (one strip loop per `stop` closure type): about 9.3 KB for the Pie path, 12.7 KB for `Scalar` (measured before `push_rows_until`). Measured on the ESP32-P4 in `firmware/poc-p4-eth/README.md`, "Hot code in RAM and Zb/Zcb" |
 
 ## Algorithm
 
@@ -155,6 +166,11 @@ the whole range, RAW8 and RAW10, random buffer alignments and random strip split
 skips that answer as `Scalar` does, at the start of the window-sized block holding the
 bright pixel (as a vector skip does) or as early as the contract allows; each frame is
 compared with an 8-connected flood fill (`src/reference.rs`) blob for blob and in order.
+The same strips also go through `push_rows_until`, stopped after a random number of
+answers and resumed until done, and must give the unbounded `Stats` and blobs. On rows of
+1280 pixels where every other pixel is bright (shifted by one each row), `push_rows_until`
+must do exactly one row per `false` (two questions before the first row) and resume to the
+same result.
 
 ## Measured
 

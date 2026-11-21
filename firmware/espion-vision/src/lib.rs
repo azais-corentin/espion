@@ -909,29 +909,57 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     /// visited. Row by row work resumes in the row holding the answer, from the answer.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     pub fn push_rows_with<S: Skip>(&mut self, skip: &S, rows: &[u8], first_row: u16) {
+        self.push_rows_until(skip, rows, first_row, || false);
+    }
+
+    /// [`Self::push_rows_with`] that can stop early, at a row boundary: `stop` is asked
+    /// before each row is scanned and before each jump of the skip over dark rows, and the
+    /// call returns at the first `true`. Returns the rows done (`rows.len() / stride` if
+    /// `stop` never answered `true`): the rows before the one the call stopped at, those
+    /// the skip passed included.
+    ///
+    /// Between two questions the call does at most one row's scan, labelling and end of
+    /// row, or one skip jump over at most the rest of `rows`; nothing after the `true`. So
+    /// the work after the last `false` is bounded by the larger of one row's worst case
+    /// (every other pixel bright) and one skip over `rows`, whatever the pixels.
+    ///
+    /// Pushing the remaining rows afterwards (`first_row` + the rows done) continues exactly
+    /// where the call stopped: the blobs and `Stats` are bit-identical to one unbounded call.
+    /// Rows never pushed (a frame cut short) are, as with any gap, dark rows for
+    /// [`Self::finish`].
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    pub fn push_rows_until<S: Skip, P: FnMut() -> bool>(
+        &mut self,
+        skip: &S,
+        rows: &[u8],
+        first_row: u16,
+        stop: P,
+    ) -> usize {
         let Some(stride) = NonZeroUsize::new(self.stride) else {
-            return;
+            return 0;
         };
         if first_row != self.next_row {
             self.flush();
         }
         match (self.raw10, self.high) {
-            (false, false) => self.strip::<S, Raw8<false>>(skip, rows, stride, first_row),
-            (false, true) => self.strip::<S, Raw8<true>>(skip, rows, stride, first_row),
-            (true, _) => self.strip::<S, Raw10>(skip, rows, stride, first_row),
+            (false, false) => self.strip::<S, Raw8<false>, P>(skip, rows, stride, first_row, stop),
+            (false, true) => self.strip::<S, Raw8<true>, P>(skip, rows, stride, first_row, stop),
+            (true, _) => self.strip::<S, Raw10, P>(skip, rows, stride, first_row, stop),
         }
     }
 
-    /// The rows of one [`Self::push_rows_with`] call in format `F`. The scan state and the
+    /// The rows of one [`Self::push_rows_until`] call in format `F`. The scan state and the
     /// two run buffers are taken once for the call; the rows swap the buffers by reference.
+    /// Returns the rows done.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-    fn strip<S: Skip, F: Format>(
+    fn strip<S: Skip, F: Format, P: FnMut() -> bool>(
         &mut self,
         skip: &S,
         rows: &[u8],
         stride: NonZeroUsize,
         first_row: u16,
-    ) {
+        mut stop: P,
+    ) -> usize {
         let Self {
             threshold,
             add,
@@ -965,6 +993,9 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         loop {
             let mut first = None;
             if n_prev == 0 {
+                if stop() {
+                    break;
+                }
                 let o = F::first_bright(skip, rest, scan.skip_t);
                 // `o % stride <= o <= rest.len()`: the slice cannot fail.
                 let x = o % stride;
@@ -975,6 +1006,9 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             let Some((row, tail)) = rest.split_at_checked(stride.get()) else {
                 break;
             };
+            if stop() {
+                break;
+            }
             let x = first.unwrap_or_else(|| F::first_bright(skip, row, scan.skip_t));
             if x < row.len() {
                 F::scan(&mut scan, skip, row, x);
@@ -1001,6 +1035,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         stats.pixels += scan.pixels;
         stats.runs += nruns_sum;
         stats.overflow += scan.dropped;
+        usize::from(y.wrapping_sub(first_row))
     }
 
     /// Finishes the frame: writes the blobs into `out` (at most `out.len()`, the rest is

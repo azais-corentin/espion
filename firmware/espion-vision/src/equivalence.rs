@@ -194,6 +194,29 @@ fn run(raw10: bool, seed: u32) {
             assert_eq!(s.pixels as usize, bright, "{ctx}");
             assert_eq!(got[..n], want[..], "{ctx}");
             assert_eq!(s, want_stats, "{ctx}");
+
+            // The same strips through `push_rows_until`, stopped after a random number of
+            // answers and resumed with the rest until done: bit-identical.
+            begin(&mut det, raw10, w, t);
+            for &(y, n, pushed) in &strips {
+                let mut done = 0;
+                let mut calls = 0;
+                while pushed && done < n {
+                    // Some calls stop at once, some run through (after 64 calls, always).
+                    let mut left = if calls >= 64 { u32::MAX } else { rng.below(5) };
+                    let rows = &f[(y + done) * stride..(y + n) * stride];
+                    let d = det.push_rows_until(&model, rows, (y + done) as u16, || {
+                        left = left.saturating_sub(1);
+                        left == 0
+                    });
+                    assert!(d <= n - done, "{ctx}: {d} rows done of {}", n - done);
+                    done += d;
+                    calls += 1;
+                }
+            }
+            let n = det.finish(&mut got);
+            assert_eq!(got[..n], want[..], "bounded: {ctx}");
+            assert_eq!(det.stats(), want_stats, "bounded: {ctx}");
         }
     }
 }
@@ -270,6 +293,75 @@ fn strip_edges(raw10: bool) {
             }
         }
     }
+}
+
+/// Rows where every other pixel is bright, shifted by one each row (as the sensor's colour
+/// test patterns look on a mono sensor): the most runs a row holds, each touching two runs
+/// above, so every row is the detector's worst case. `push_rows_until` asks before every row
+/// (twice before the first: also before the skip's jump) and does exactly the rows it was
+/// allowed, then the rest pushed unbounded gives the blobs and `Stats` of one call.
+fn alternating_bounded(raw10: bool) {
+    const W: usize = 1280;
+    const H: usize = 64;
+    let (t, v) = if raw10 { (512, 1023) } else { (128, 255) };
+    let stride = if raw10 { W / 4 * raw10::GROUP_BYTES } else { W };
+    let px: Vec<u16> = (0..W * H)
+        .map(|i| {
+            if (i % W + i / W).is_multiple_of(2) {
+                v
+            } else {
+                0
+            }
+        })
+        .collect();
+    let mut f = vec![0u8; stride * H];
+    fill(raw10, &mut f, &px);
+    let mut det = Det::new();
+    let mut got = vec![Blob::default(); 2048];
+    begin(&mut det, raw10, W, t);
+    assert_eq!(det.push_rows_until(&Scalar, &f, 0, || false), H);
+    let n = det.finish(&mut got);
+    let want = got[..n].to_vec();
+    let want_stats = det.stats();
+    assert_eq!(want_stats.runs as usize, W / 2 * H);
+    for allowed in [0, 1, 2, 3, 10, H, H + 1, H + 5] {
+        begin(&mut det, raw10, W, t);
+        let mut asked = 0;
+        let done = det.push_rows_until(&Scalar, &f, 0, || {
+            asked += 1;
+            asked > allowed
+        });
+        // The first row costs two answers (skip jump, row), every other row one.
+        assert_eq!(
+            done,
+            allowed.saturating_sub(1).min(H),
+            "raw10 {raw10} allowed {allowed}"
+        );
+        assert!(
+            asked <= allowed + 1,
+            "raw10 {raw10} allowed {allowed}: asked {asked}"
+        );
+        let s = det.stats();
+        assert_eq!(
+            s.runs as usize,
+            W / 2 * done,
+            "raw10 {raw10} allowed {allowed}"
+        );
+        det.push_rows_with(&Scalar, &f[done * stride..], done as u16);
+        let n = det.finish(&mut got);
+        assert_eq!(got[..n], want[..], "raw10 {raw10} allowed {allowed}");
+        assert_eq!(det.stats(), want_stats, "raw10 {raw10} allowed {allowed}");
+    }
+}
+
+#[test]
+fn raw8_alternating_rows_bounded() {
+    alternating_bounded(false);
+}
+
+#[test]
+fn raw10_alternating_rows_bounded() {
+    alternating_bounded(true);
 }
 
 #[test]
