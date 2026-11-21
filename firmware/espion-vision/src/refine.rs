@@ -8,19 +8,23 @@
 //!
 //! 1. Start at the blob's centroid. The window sigma `s` comes from the blob's area: a
 //!    Gaussian spot cut at half its peak covers `2 pi ln 2 sigma^2` pixels, so
-//!    `s = sqrt(area / (2 pi ln 2))`, clamped to 0.75..=8 px.
-//! 2. Local background: the median of the pixels on the perimeter of the square of
-//!    half-size `ceil(4 s) + 1` around the start (the pixels of it in the frame; if none,
-//!    the border of that square clipped to the frame).
+//!    `s = sqrt(area / (2 pi ln 2))`, clamped to 0.75..=4 px. The square of half-size
+//!    `ceil(4 s) + 1` around the start pixel (at most 35 x 35) is read from the frame once
+//!    into a stack buffer; everything below works on that buffer.
+//! 2. Local background: the median of the pixels on the perimeter of that square (the
+//!    pixels of it in the frame; if none, the border of the square clipped to the frame),
+//!    selected with two 32-bin counts (top 5 bits, then low 5 bits of the 10-bit value).
 //! 3. Iterated Gaussian-weighted centroid over the square of half-size `ceil(4 s)` around
-//!    the current estimate: each pixel weighs `(value - background) * exp(-d^2 / (2 s^2))`,
-//!    `d` its distance to the estimate, the difference not clipped (so the noise does not
-//!    bias it). Each step moves twice the weighted mean offset (clamped to 1 px per axis):
-//!    for a Gaussian spot of the window's width that lands on the centre in one step, and
-//!    the centre of any symmetric spot is the fixed point whatever `s`. At most
-//!    [`MAX_STEPS`] steps, until a step is below 1/512 px on both axes. A window whose
-//!    weights sum to zero or less keeps the start.
-//! 4. Over the final window, with the same weights around the final centre: `width` from
+//!    the current estimate (clipped to the buffer: an estimate more than 1 px from the
+//!    start pixel loses the far columns): each pixel weighs
+//!    `(value - background) * exp(-d^2 / (2 s^2))`, `d` its distance to the estimate, the
+//!    difference not clipped (so the noise does not bias it). Each step moves twice the
+//!    weighted mean offset (clamped to 1 px per axis): for a Gaussian spot of the window's
+//!    width that lands on the centre in one step, and the centre of any symmetric spot is
+//!    the fixed point whatever `s`. At most [`MAX_STEPS`] steps, until a step is below
+//!    1/512 px on both axes. A window whose weights sum to zero or less keeps the start.
+//! 4. Over the window of the last step (whose estimate is within 1/512 px of the result
+//!    once converged), with the same weights: `width` from
 //!    the weighted second moment `m = sum(w d^2) / sum(w)` (x and y averaged), `w` the
 //!    unclipped `(value - background) * G`, so the noise does not bias it. A Gaussian spot
 //!    of sigma `sigma` under the window gives `m = sigma^2 s^2 / (sigma^2 + s^2)`, so
@@ -30,11 +34,18 @@
 //!    wider than the window) gives `u16::MAX`. `flux` is the sum of `value - background`
 //!    over the window, unweighted, clamped to 0 and up.
 //!
-//! Positions are held in 1/4096 px. The Gaussian comes from a table of `exp(-t)`, `t` in
-//! steps of 1/32 up to 16, in Q15 with linear interpolation; the table is built at compile
-//! time with integer math (`EXP`). Every input is clipped to the frame (blobs at the edge,
-//! frames shorter than `width * height`), so no input panics, and host and target give the
-//! same result bit for bit.
+//! The weights are separable, `G = gx(dx) gy(dy)`: each step builds `gx` and `gy` once
+//! (at most 33 entries each) at the current sub-pixel estimate, and makes one pass over
+//! the window whose inner loop is four `i32` multiply-adds per pixel: `v - bg`, times
+//! `gx`, `gx * ix` and `gx * dx^2 / 4` (`ix` the column's integer offset from the window's
+//! centre pixel); rows are folded into `i64` totals with `gy`. The same pass gives the
+//! step, the width and the flux. Positions are held in 1/4096 px. The Gaussian comes from
+//! a table of `exp(-t)`, `t` in steps of 1/32 up to 16, in Q15 with linear interpolation;
+//! the table is built at compile time with integer math (`EXP`). Divisions are 32-bit
+//! (the 64-bit totals are narrowed first): two per step, three per blob; one integer
+//! square root per blob (and one for the window sigma); no sort. Every input is clipped
+//! to the frame (blobs at the edge, frames shorter than `width * height`), so no input
+//! panics, and host and target give the same result bit for bit.
 
 use crate::{Blob, raw10};
 
@@ -63,6 +74,7 @@ pub struct Spot {
 
 /// Measures `blob` on a RAW8 frame of `width` x `height` pixels (fewer rows if `frame` is
 /// shorter).
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 pub fn refine_raw8(frame: &[u8], width: u16, height: u16, blob: &Blob) -> Spot {
     let view = View::new(frame, width as usize, width as usize, height, false);
     refine(&view, blob).0
@@ -71,6 +83,7 @@ pub fn refine_raw8(frame: &[u8], width: u16, height: u16, blob: &Blob) -> Spot {
 /// Measures `blob` on a packed CSI-2 RAW10 frame ([`raw10`], rows of `width / 4 * 5`
 /// bytes, `width` a multiple of 4; the pixels of a partial last group are not used) of
 /// `height` rows (fewer if `frame` is shorter). Values, background and flux are 10-bit.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 pub fn refine_raw10(frame: &[u8], width: u16, height: u16, blob: &Blob) -> Spot {
     let groups = width as usize / 4;
     let view = View::new(frame, groups * raw10::GROUP_BYTES, groups * 4, height, true);
@@ -80,17 +93,21 @@ pub fn refine_raw10(frame: &[u8], width: u16, height: u16, blob: &Blob) -> Spot 
 /// Fraction bits of positions and sigmas.
 const Q: u32 = 12;
 /// One pixel.
-const ONE: i64 = 1 << Q;
+const ONE: i32 = 1 << Q;
 /// Window sigma bounds.
-const SIGMA_MIN: i64 = 3 * ONE / 4;
-const SIGMA_MAX: i64 = 8 * ONE;
+const SIGMA_MIN: i32 = 3 * ONE / 4;
+const SIGMA_MAX: i32 = 4 * ONE;
 /// Largest window half-size: `ceil(4 * SIGMA_MAX)` px.
-const MAX_HALF: usize = 32;
+const MAX_HALF: usize = 16;
 const MAX_SIDE: usize = 2 * MAX_HALF + 1;
-/// Pixels on the perimeter of the background square (half-size `MAX_HALF + 1`), at most.
-const MAX_RING: usize = 8 * (MAX_HALF + 1);
+/// Side of the buffered square (window plus the background ring), at most.
+const BUF_SIDE: usize = MAX_SIDE + 2;
+/// Pixels on the border of the buffered square, at most.
+const MAX_RING: usize = 4 * (BUF_SIDE - 1);
 /// Steps below this (1/512 px) end the iteration.
-const STOP: i64 = ONE / 512;
+const STOP: i32 = ONE / 512;
+/// 1/12 px^2 in Q15 px^2: the variance of a uniform pixel.
+const PIXEL_VAR: i64 = (32768 + 6) / 12;
 
 /// Table steps per unit of `t` in [`EXP`].
 const EXP_PER_UNIT: usize = 32;
@@ -120,12 +137,13 @@ static EXP: [u16; EXP_LEN] = {
     table
 };
 
-/// `exp(-d^2 / (2 s^2))` in Q15, `d` in 1/4096 px (`|d| <= 33 px`), `inv = 2^44 / s^2`
-/// (`s` in 1/4096 px), so `d^2 * inv >> 32` is `t` in 1/(32 * 256): table index and an
-/// 8-bit interpolation fraction.
+/// `exp(-d^2 / (2 s^2))` in Q15, `d` in 1/4096 px (`|d| <= 16.5 px`), `inv = 2^46 / s^2`
+/// ([`gauss_inv`]). `|d|` is rounded to 1/2048 px (`q < 2^16`), so `q^2 * inv >> 32` (one
+/// `mulhu`) is `t` in 1/(32 * 256): table index and an 8-bit interpolation fraction.
 #[inline(always)]
-fn gauss(d: i64, inv: u64) -> i32 {
-    let t = ((d * d) as u64 * inv) >> 32;
+fn gauss(d: i32, inv: u32) -> i32 {
+    let q = (d.unsigned_abs() + 1) >> 1;
+    let t = (((q * q) as u64 * inv as u64) >> 32) as u32;
     let k = (t >> 8) as usize;
     match (EXP.get(k), EXP.get(k + 1)) {
         (Some(&a), Some(&b)) => {
@@ -134,6 +152,34 @@ fn gauss(d: i64, inv: u64) -> i32 {
         }
         _ => 0,
     }
+}
+
+/// `g * d^2 / 4`, `g` in Q15, `d` in 1/4096 px, the result in Q15 px^2 / 4: at most
+/// `8192 * 2 s^2 / e` (below 9.7e4 for `s <= 4` px) plus the table's rounding, so a row of
+/// `(v - bg) * g d^2 / 4` sums in an `i32` (bounded by a test).
+#[inline(always)]
+fn quarter_d2(g: i32, d: i32) -> i32 {
+    ((g as i64 * (d as i64 * d as i64) + (1 << 25)) >> 26) as i32
+}
+
+/// Rounded square root.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+fn sqrt_round(v: u32) -> u32 {
+    let (mut rem, mut root, mut bit) = (v, 0u32, 1u32 << 30);
+    while bit > rem {
+        bit >>= 2;
+    }
+    while bit != 0 {
+        if rem >= root + bit {
+            rem -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    // rem = v - root^2; round up past (root + 1/2)^2.
+    if rem > root { root + 1 } else { root }
 }
 
 /// A frame: rows of `stride` bytes holding `width` pixels, `rows` of them in `data`.
@@ -146,6 +192,7 @@ struct View<'a> {
 }
 
 impl<'a> View<'a> {
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn new(data: &'a [u8], stride: usize, width: usize, height: u16, raw10: bool) -> Self {
         let rows = data
             .len()
@@ -160,193 +207,317 @@ impl<'a> View<'a> {
         }
     }
 
-    /// Row `y` (`< rows`).
-    fn row(&self, y: usize) -> &[u8] {
-        self.data
-            .get(y * self.stride..(y + 1) * self.stride)
-            .unwrap_or(&[])
-    }
-
-    /// Pixel `(x, y)` of the frame (`x < width`, `y < rows`; 0 outside).
-    fn pixel(&self, x: usize, y: usize) -> u16 {
-        let row = self.row(y);
-        if self.raw10 {
-            let at = x / 4 * raw10::GROUP_BYTES;
-            row.get(at..)
-                .and_then(|g| g.first_chunk())
-                .map_or(0, |g| raw10::unpack(g)[x % 4] as u16)
-        } else {
-            row.get(x).map_or(0, |&v| v as u16)
-        }
-    }
-
-    /// Pixels `x0..x0 + out.len()` of row `y` into `out`, as `value - bg`.
+    /// Pixels `x0..x0 + out.len()` of row `y` (`< rows`) into `out`.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-    fn load(&self, y: usize, x0: usize, bg: i32, out: &mut [i32]) {
-        let row = self.row(y);
+    fn load(&self, y: usize, x0: usize, out: &mut [u16]) {
+        let row = self
+            .data
+            .get(y * self.stride..(y + 1) * self.stride)
+            .unwrap_or(&[]);
         if self.raw10 {
-            for (i, o) in out.iter_mut().enumerate() {
-                let x = x0 + i;
+            // One unpack per group of four pixels.
+            let mut x = x0;
+            let end = x0 + out.len();
+            while x < end {
                 let at = x / 4 * raw10::GROUP_BYTES;
-                *o = row
+                let px = row
                     .get(at..)
                     .and_then(|g| g.first_chunk())
-                    .map_or(0, |g| raw10::unpack(g)[x % 4] as i32)
-                    - bg;
+                    .map_or([0; 4], raw10::unpack);
+                for &v in &px[x % 4..] {
+                    if let Some(o) = out.get_mut(x - x0) {
+                        *o = v as u16;
+                    }
+                    x += 1;
+                }
             }
-        } else {
-            let px = row.get(x0..).unwrap_or(&[]);
+        } else if let Some(px) = row.get(x0..x0 + out.len()) {
             for (o, &v) in out.iter_mut().zip(px) {
-                *o = v as i32 - bg;
+                *o = v as u16;
             }
         }
     }
+}
 
-    /// The pixel range `p - half..=p + half` clipped to `0..len`.
-    fn span(p: usize, half: usize, len: usize) -> (usize, usize) {
-        (p.saturating_sub(half), (p + half).min(len - 1))
-    }
+/// The pixel range `p - half..=p + half` clipped to `lo..=hi`, if not empty.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+fn span(p: usize, half: usize, lo: usize, hi: usize) -> Option<(usize, usize)> {
+    let (a, b) = (p.saturating_sub(half).max(lo), (p + half).min(hi));
+    (a <= b).then_some((a, b))
 }
 
 /// The window sigma for a blob of `area` pixels cut at half its peak, in 1/4096 px:
-/// `sqrt(area / (2 pi ln 2))`, `1 / (2 pi ln 2) = 0.229612`.
-fn window_sigma(area: u16) -> i64 {
-    let s2 = ((area as u64) << (2 * Q)) * 229_612 / 1_000_000;
-    (s2.isqrt() as i64).clamp(SIGMA_MIN, SIGMA_MAX)
+/// `sqrt(area / (2 pi ln 2))`, `2^24 / (2 pi ln 2) = 3852251`. Areas of 70 and up are past
+/// [`SIGMA_MAX`] (`s^2` fits a `u32` below that).
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+fn window_sigma(area: u16) -> i32 {
+    if area >= 70 {
+        return SIGMA_MAX;
+    }
+    (sqrt_round(area as u32 * 3_852_251) as i32).clamp(SIGMA_MIN, SIGMA_MAX)
 }
 
 /// The pixel holding position `c` (1/4096 px, `c >= 0`).
-fn pixel_of(c: i64) -> usize {
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+fn pixel_of(c: i32) -> usize {
     ((c + ONE / 2) >> Q) as usize
 }
 
-/// Median of the pixels of the border of `x0..=x1` x `y0..=y1` that lie in the frame;
-/// `None` if none does.
-fn ring_median(view: &View, x0: i64, x1: i64, y0: i64, y1: i64) -> Option<u16> {
-    let mut buf = [0u16; MAX_RING];
-    let mut n = 0;
-    let (w, h) = (view.width as i64, view.rows as i64);
-    let mut put = |x: i64, y: i64| {
-        if (0..w).contains(&x)
-            && (0..h).contains(&y)
-            && let Some(slot) = buf.get_mut(n)
-        {
-            *slot = view.pixel(x as usize, y as usize);
-            n += 1;
+/// The value of the 32 bins holding the `k`-th smallest (0-based) of their counts, and the
+/// count in the bins below it.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+fn select(bins: &[u16; 32], k: u16) -> (u16, u16) {
+    let mut below = 0;
+    for (i, &c) in bins.iter().enumerate() {
+        if below + c > k {
+            return (i as u16, below);
         }
-    };
-    for y in y0..=y1 {
-        if y == y0 || y == y1 {
-            for x in x0..=x1 {
-                put(x, y);
+        below += c;
+    }
+    (31, below)
+}
+
+/// The lower median of 10-bit values (not empty): the bin of the top 5 bits, then the low
+/// 5 bits within it.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+fn median(vals: &[u16]) -> u16 {
+    let k = (vals.len().saturating_sub(1) / 2) as u16;
+    let mut high = [0u16; 32];
+    for &v in vals {
+        high[(v >> 5) as usize & 31] += 1;
+    }
+    let (h, below) = select(&high, k);
+    let mut low = [0u16; 32];
+    for &v in vals {
+        if (v >> 5) & 31 == h {
+            low[v as usize & 31] += 1;
+        }
+    }
+    h << 5 | select(&low, k - below).0
+}
+
+/// The square of half-size `r` around a pixel, clipped to the frame, read once.
+struct Window {
+    /// Rows of `w` pixels.
+    buf: [u16; BUF_SIDE * BUF_SIDE],
+    /// Frame column and row of `buf[0]`.
+    x0: usize,
+    y0: usize,
+    w: usize,
+    h: usize,
+    /// Which sides of the unclipped square lie in the frame: top, bottom, left, right.
+    sides: [bool; 4],
+}
+
+impl Window {
+    /// Reads the square of half-size `r` (`<= MAX_HALF + 1`) around pixel `(px, py)` of
+    /// the frame (`view` not empty) in place (returning the 2.4 KB buffer would copy it).
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn load(&mut self, view: &View, (px, py): (usize, usize), r: usize) {
+        let (x0, x1) = (px.saturating_sub(r), (px + r).min(view.width - 1));
+        let (y0, y1) = (py.saturating_sub(r), (py + r).min(view.rows - 1));
+        self.x0 = x0;
+        self.y0 = y0;
+        self.w = x1 - x0 + 1;
+        self.h = y1 - y0 + 1;
+        self.sides = [py >= r, py + r < view.rows, px >= r, px + r < view.width];
+        for (row, y) in self.buf.chunks_exact_mut(self.w).zip(y0..=y1) {
+            view.load(y, x0, row);
+        }
+    }
+
+    /// `n` pixels of frame row `y` from frame column `x`.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn row(&self, y: usize, x: usize, n: usize) -> &[u16] {
+        let at = (y - self.y0) * self.w + x - self.x0;
+        self.buf.get(at..at + n).unwrap_or(&[])
+    }
+
+    /// The pixels of the window of half-size `half` around pixel `(px, py)`, clipped to
+    /// the buffer: columns and rows, if not empty.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn span(&self, (px, py): (usize, usize), half: usize) -> Option<[(usize, usize); 2]> {
+        Some([
+            span(px, half, self.x0, self.x0 + self.w - 1)?,
+            span(py, half, self.y0, self.y0 + self.h - 1)?,
+        ])
+    }
+
+    /// The pixels of the given sides of the buffer into `out`; the corners once.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn ring(&self, [top, bottom, left, right]: [bool; 4], out: &mut [u16; MAX_RING]) -> usize {
+        let mut n = 0;
+        let mut put = |v: u16| {
+            if let Some(o) = out.get_mut(n) {
+                *o = v;
+                n += 1;
             }
+        };
+        for (y, row) in self.buf.chunks_exact(self.w).take(self.h).enumerate() {
+            if (top && y == 0) || (bottom && y == self.h - 1) {
+                row.iter().for_each(|&v| put(v));
+            } else {
+                if let (true, Some(&v)) = (left, row.first()) {
+                    put(v);
+                }
+                if let (true, Some(&v)) = (right, row.last()) {
+                    put(v);
+                }
+            }
+        }
+        n
+    }
+
+    /// Median of the perimeter of the square in the frame; if none of it is, of the
+    /// buffer's border.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn background(&self) -> u16 {
+        let mut ring = [0u16; MAX_RING];
+        let mut n = self.ring(self.sides, &mut ring);
+        if n == 0 {
+            n = self.ring([true, self.h > 1, true, self.w > 1], &mut ring);
+        }
+        ring.get(..n).filter(|r| !r.is_empty()).map_or(0, median)
+    }
+}
+
+/// The weighted sums of one pass over the window of half-size `half` around an estimate:
+/// in weight units (`gx * gy * (v - bg)`, Q30 per DN) times 1, the integer offset of the
+/// pixel from the window's centre pixel, or its squared distance to the estimate / 4 in
+/// Q15 px^2.
+struct Pass {
+    sw: i64,
+    sx: i64,
+    sy: i64,
+    sxx: i64,
+    syy: i64,
+    /// Sum of `v - bg`, unweighted.
+    flux: i64,
+    /// The estimate's offset from the window's centre pixel, 1/4096 px.
+    f: (i32, i32),
+}
+
+impl Pass {
+    /// One pass around `c` (1/4096 px), `None` if the window misses the buffer.
+    ///
+    /// Bounds (`|v - bg| <= 1023`, `g <= 32768`, `|ix| <= 16`, `s <= 4` px): a row's
+    /// `sum((v - bg) g)`, `sum((v - bg) g ix)` and `sum((v - bg) g d^2 / 4)` stay below
+    /// `1023 * sum(...)` of the column weights, which a test bounds by `i32::MAX`; the
+    /// `i64` totals stay below 2^50, so `total << 12` fits.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn new(win: &Window, c: (i32, i32), half: usize, bg: i32, inv: u32) -> Option<Self> {
+        let (pcx, pcy) = (pixel_of(c.0), pixel_of(c.1));
+        let f = (c.0 - ((pcx as i32) << Q), c.1 - ((pcy as i32) << Q));
+        let [(xa, xb), (ya, yb)] = win.span((pcx, pcy), half)?;
+        let n = xb - xa + 1;
+        // Per column: `(g, g * ix, g * dx^2 / 4)`, side by side so the row loop walks one
+        // table.
+        let mut gx = [(0i32, 0i32, 0i32); MAX_SIDE];
+        for (gi, x) in gx.iter_mut().zip(xa..=xb) {
+            let ix = x as i32 - pcx as i32;
+            let d = ix * ONE - f.0;
+            let g = gauss(d, inv);
+            *gi = (g, g * ix, quarter_d2(g, d));
+        }
+        let gx = gx.get(..n)?;
+        let mut p = Pass {
+            sw: 0,
+            sx: 0,
+            sy: 0,
+            sxx: 0,
+            syy: 0,
+            flux: 0,
+            f,
+        };
+        for y in ya..=yb {
+            let iy = y as i32 - pcy as i32;
+            let d = iy * ONE - f.1;
+            let gy = gauss(d, inv);
+            let (mut sum, mut s0, mut s1, mut s2) = (0i32, 0i32, 0i32, 0i32);
+            for (&v, &(g, gi, gd2)) in win.row(y, xa, n).iter().zip(gx) {
+                let a = v as i32 - bg;
+                sum += a;
+                s0 += a * g;
+                s1 += a * gi;
+                s2 += a * gd2;
+            }
+            let s0 = s0 as i64;
+            p.flux += sum as i64;
+            p.sw += gy as i64 * s0;
+            p.sx += gy as i64 * s1 as i64;
+            p.sy += (gy * iy) as i64 * s0;
+            p.sxx += gy as i64 * s2 as i64;
+            p.syy += quarter_d2(gy, d) as i64 * s0;
+        }
+        Some(p)
+    }
+
+    /// The step: twice the weighted mean offset from the estimate, clamped to 1 px per
+    /// axis; `None` when the weights sum to zero or less.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn step(&self) -> Option<(i32, i32)> {
+        if self.sw <= 0 {
+            return None;
+        }
+        // Mean offset: `sum(w (ix - f)) / sum(w)`, in 1/4096 px. `sw` narrowed to 16 bits,
+        // so the quotients (clamped to 4 px) are 32-bit divisions.
+        let (d, k) = narrow(self.sw, 16);
+        let lim = 4 * ONE as i64 * d as i64;
+        let step = |m: i64, f: i32| {
+            let mean = ((m << Q) >> k).clamp(-lim, lim) as i32 / d - f;
+            (2 * mean).clamp(-ONE, ONE)
+        };
+        Some((step(self.sx, self.f.0), step(self.sy, self.f.1)))
+    }
+
+    /// The spot's sigma in 1/256 px for a window sigma `s` (1/4096 px).
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn width(&self, s: i32) -> u16 {
+        if self.sw <= 0 {
+            return 0;
+        }
+        // Mean weighted second moment of x and y: `4 (sxx + syy) / (2 sw)` px^2, i.e.
+        // `65536 (sxx + syy) / sw` in Q15 px^2, with `sw` narrowed to 12 bits: `m` is below
+        // `s2 <= 2^19`, so the dividend fits 31 bits.
+        let s2 = ((s as i64 * s as i64) >> 9) as i32;
+        let (d, k) = narrow(self.sw, 12);
+        let sum = self.sxx + self.syy;
+        let num = if k >= 16 {
+            sum >> (k - 16)
         } else {
-            put(x0, y);
-            if x1 != x0 {
-                put(x1, y);
-            }
+            sum.clamp(0, 1 << 40) << (16 - k)
+        };
+        let m = num.clamp(0, s2 as i64 * d as i64) as i32 / d;
+        if m >= s2 {
+            return u16::MAX;
         }
+        // sigma^2 = m s2 / (s2 - m): the ratio in Q11 (`m << 11 < 2^30`), then times s2.
+        let r = (m << 11) / (s2 - m);
+        let var = ((s2 as i64 * r as i64) >> 11) - PIXEL_VAR;
+        // Q16 px^2, whose square root is in 1/256 px.
+        let var = (var.clamp(0, u32::MAX as i64 / 2) * 2) as u32;
+        sqrt_round(var).min(u16::MAX as u32) as u16
     }
-    let ring = buf.get_mut(..n).filter(|r| !r.is_empty())?;
-    let mid = (ring.len() - 1) / 2;
-    Some(*ring.select_nth_unstable(mid).1)
 }
 
-/// One centroid step from `c` (1/4096 px): twice the weighted mean offset over the window
-/// of half-size `half`, or `None` when the weights sum to zero or less.
+/// `(sw >> k, k)` with `sw >> k` below `2^bits` (`sw > 0`): a 32-bit divisor keeping the
+/// top `bits` bits of `sw`.
 #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-fn step(view: &View, c: (i64, i64), half: usize, bg: i32, inv: u64) -> Option<(i64, i64)> {
-    let (x0, x1) = View::span(pixel_of(c.0), half, view.width);
-    let (y0, y1) = View::span(pixel_of(c.1), half, view.rows);
-    let n = x1 - x0 + 1;
-    // Per column: the Gaussian `g` (Q15) and `g * dx` (dx in 1/4096 px). `g * |dx|` is at
-    // most `32768 * s * exp(-1/2)` plus the table's rounding: below 6.6e8 for s <= 8 px.
-    let mut gx = [0i32; MAX_SIDE];
-    let mut gxd = [0i32; MAX_SIDE];
-    for ((g, gd), x) in gx.iter_mut().zip(&mut gxd).zip(x0..=x1) {
-        let d = ((x as i64) << Q) - c.0;
-        *g = gauss(d, inv);
-        *gd = (*g as i64 * d) as i32;
-    }
-    let (gx, gxd) = (&gx[..n], &gxd[..n]);
-    let mut px = [0i32; MAX_SIDE];
-    let px = &mut px[..n];
-    let (mut sw, mut sx, mut sy) = (0i128, 0i128, 0i128);
-    for y in y0..=y1 {
-        let d = ((y as i64) << Q) - c.1;
-        let gy = gauss(d, inv) as i64;
-        view.load(y, x0, bg, px);
-        // |a| <= 1023, g <= 32768: `a * g` fits an i32.
-        let (mut s0, mut s1) = (0i64, 0i64);
-        for ((&a, &g), &gd) in px.iter().zip(gx).zip(gxd) {
-            s0 += (a * g) as i64;
-            s1 += a as i64 * gd as i64;
-        }
-        // Row sums in i128: `gy * s1` can pass 2^60 for a large saturated spot.
-        sw += gy as i128 * s0 as i128;
-        sx += gy as i128 * s1 as i128;
-        sy += (gy * d) as i128 * s0 as i128;
-    }
-    if sw <= 0 {
-        return None;
-    }
-    // `sx / sw` and `sy / sw` are the mean offsets in 1/4096 px (the weights cancel).
-    let step = |m: i128| (2 * m / sw).clamp(-ONE as i128, ONE as i128) as i64;
-    Some((step(sx), step(sy)))
+fn narrow(sw: i64, bits: u32) -> (i32, u32) {
+    let k = (64 - sw.leading_zeros()).saturating_sub(bits);
+    ((sw >> k) as i32, k)
 }
 
-/// `(width in 1/256 px, flux)` over the window of half-size `half` around `c`, weighted as
-/// in [`step`] (window sigma `s`, `inv = 2^44 / s^2`).
+/// `2^46 / s^2` for [`gauss`] (`s` in 1/4096 px, 0.75..=4 px, so below 2^23), as
+/// `(2^31 / s)^2 / 2^16`: a 32-bit division.
 #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-fn moments(view: &View, c: (i64, i64), half: usize, bg: i32, s: i64, inv: u64) -> (u16, u32) {
-    let (x0, x1) = View::span(pixel_of(c.0), half, view.width);
-    let (y0, y1) = View::span(pixel_of(c.1), half, view.rows);
-    let n = x1 - x0 + 1;
-    // Per column: `g` (Q15) and `g * dx^2` (dx^2 in 1/4096 px^2). `g * dx^2` is at most
-    // `32768 * 2 s^2 / e` plus the table's rounding: below 6.4e9 for s <= 8 px.
-    let mut gx = [0i32; MAX_SIDE];
-    let mut gxd2 = [0i64; MAX_SIDE];
-    for ((g, gd2), x) in gx.iter_mut().zip(&mut gxd2).zip(x0..=x1) {
-        let d = ((x as i64) << Q) - c.0;
-        *g = gauss(d, inv);
-        *gd2 = *g as i64 * ((d * d) >> Q);
-    }
-    let (gx, gxd2) = (&gx[..n], &gxd2[..n]);
-    let mut px = [0i32; MAX_SIDE];
-    let px = &mut px[..n];
-    let mut flux = 0i64;
-    let (mut sw, mut sxx, mut syy) = (0i128, 0i128, 0i128);
-    for y in y0..=y1 {
-        let d = ((y as i64) << Q) - c.1;
-        let gy = gauss(d, inv) as i64;
-        view.load(y, x0, bg, px);
-        let (mut sum, mut s0, mut s2) = (0i64, 0i64, 0i64);
-        for ((&a, &g), &gd2) in px.iter().zip(gx).zip(gxd2) {
-            sum += a as i64;
-            s0 += (a * g) as i64;
-            s2 += a as i64 * gd2;
-        }
-        flux += sum;
-        sw += gy as i128 * s0 as i128;
-        sxx += gy as i128 * s2 as i128;
-        syy += (gy * ((d * d) >> Q)) as i128 * s0 as i128;
-    }
-    let flux = flux.clamp(0, u32::MAX as i64) as u32;
-    if sw <= 0 {
-        return (0, flux);
-    }
-    // Mean weighted second moment of x and y, and the window variance, in 1/4096^2 px^2.
-    let m = ((sxx + syy) << Q) / (2 * sw);
-    let s2 = (s * s) as i128;
-    if m >= s2 {
-        return (u16::MAX, flux);
-    }
-    let var = (m * s2 / (s2 - m)).max(0) - (ONE * ONE / 12) as i128;
-    let sigma = (var.clamp(0, u64::MAX as i128) as u64).isqrt();
-    (((sigma + 8) >> 4).min(u16::MAX as u64) as u16, flux)
+fn gauss_inv(s: i32) -> u32 {
+    let r = (1u32 << 31) / s as u32;
+    ((r as u64 * r as u64) >> 16) as u32
 }
 
 /// The spot of `blob` and the number of centroid steps taken.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
 fn refine(view: &View, blob: &Blob) -> (Spot, u32) {
     if view.width == 0 || view.rows == 0 {
         let spot = Spot {
@@ -356,33 +527,46 @@ fn refine(view: &View, blob: &Blob) -> (Spot, u32) {
         };
         return (spot, 0);
     }
+    // Widths and rows are at most 65535: positions fit an i32 in 1/4096 px.
     let max = (
-        ((view.width - 1) as i64) << Q,
-        ((view.rows - 1) as i64) << Q,
+        ((view.width - 1) as i32) << Q,
+        ((view.rows - 1) as i32) << Q,
     );
     // Q11.5 to Q12.
     let start = (
-        ((blob.x as i64) << 7).min(max.0),
-        ((blob.y as i64) << 7).min(max.1),
+        ((blob.x as i32) << 7).min(max.0),
+        ((blob.y as i32) << 7).min(max.1),
     );
     let s = window_sigma(blob.area);
     let half = ((4 * s + ONE - 1) >> Q) as usize;
-    let inv = (1u64 << 44) / (s * s) as u64;
+    let inv = gauss_inv(s);
+    // A struct literal (a memset), not a const (a 2.4 KB copy from flash).
+    let mut win = Window {
+        buf: [0; BUF_SIDE * BUF_SIDE],
+        x0: 0,
+        y0: 0,
+        w: 1,
+        h: 1,
+        sides: [false; 4],
+    };
+    win.load(view, (pixel_of(start.0), pixel_of(start.1)), half + 1);
+    let bg = win.background() as i32;
 
-    let (px, py) = (pixel_of(start.0) as i64, pixel_of(start.1) as i64);
-    let r = half as i64 + 1;
-    let bg = ring_median(view, px - r, px + r, py - r, py + r).or_else(|| {
-        let (x0, x1) = View::span(px as usize, r as usize, view.width);
-        let (y0, y1) = View::span(py as usize, r as usize, view.rows);
-        ring_median(view, x0 as i64, x1 as i64, y0 as i64, y1 as i64)
-    });
-    let bg = bg.unwrap_or(0) as i32;
-
+    // Each pass gives the step and, over the same window, the width and flux: those of
+    // the last pass are kept (its estimate is within 1/512 px of the result once the steps
+    // have converged).
     let mut c = start;
     let mut steps = 0;
+    let mut last = None;
     while steps < MAX_STEPS {
         steps += 1;
-        let Some((dx, dy)) = step(view, c, half, bg, inv) else {
+        let Some(p) = Pass::new(&win, c, half, bg, inv) else {
+            c = start;
+            break;
+        };
+        let step = p.step();
+        last = Some(p);
+        let Some((dx, dy)) = step else {
             c = start;
             break;
         };
@@ -391,7 +575,9 @@ fn refine(view: &View, blob: &Blob) -> (Spot, u32) {
             break;
         }
     }
-    let (width, flux) = moments(view, c, half, bg, s, inv);
+    let (width, flux) = last.map_or((0, 0), |p| {
+        (p.width(s), p.flux.clamp(0, u32::MAX as i64) as u32)
+    });
     let spot = Spot {
         x: ((c.0 + 8) >> 4) as u32,
         y: ((c.1 + 8) >> 4) as u32,
@@ -636,7 +822,7 @@ mod tests {
             let want = (32768.0 * (-(k as f64) / 32.0).exp()).round();
             assert_eq!(e as f64, want, "k {k}");
         }
-        assert_eq!(gauss(0, 1 << 44 >> 24), 32768);
+        assert_eq!(gauss(0, 1 << 20), 32768);
     }
 
     #[test]
@@ -644,17 +830,73 @@ mod tests {
         // sigma 1.5 px: area 2 pi ln 2 * 2.25 = 9.80.
         assert_eq!(window_sigma(10) * 1000 / ONE, 1515);
         assert_eq!(window_sigma(0), SIGMA_MIN);
+        assert_eq!(window_sigma(69), 16304);
+        assert_eq!(window_sigma(70), SIGMA_MAX);
         assert_eq!(window_sigma(u16::MAX), SIGMA_MAX);
+        let k = (1u64 << 24) as f64 / (2.0 * core::f64::consts::PI * core::f64::consts::LN_2);
+        assert_eq!(k.round(), 3_852_251.0);
+    }
+
+    #[test]
+    fn sqrt_rounds() {
+        for v in (0..100_000u32).chain([u32::MAX, u32::MAX - 1, 1 << 30, (1 << 30) - 1]) {
+            assert_eq!(sqrt_round(v), (v as f64).sqrt().round() as u32, "{v}");
+        }
+    }
+
+    #[test]
+    fn median_matches_a_sort() {
+        let mut rng = Rng(5);
+        for n in 1..=MAX_RING {
+            for spread in [1u32, 8, 64, 1024] {
+                let vals: Vec<u16> = (0..n).map(|_| (rng.next() % spread) as u16).collect();
+                let mut sorted = vals.clone();
+                sorted.sort_unstable();
+                assert_eq!(median(&vals), sorted[(n - 1) / 2], "{vals:?}");
+            }
+        }
+    }
+
+    /// The per-row `i32` sums of a pass cannot overflow: `1023 * sum(g)`,
+    /// `1023 * sum(g |ix|)` and `1023 * sum(g d^2 / 4)` stay below `i32::MAX` for every
+    /// window sigma and sub-pixel offset.
+    #[test]
+    fn row_sums_fit_i32() {
+        let mut worst = (0i64, 0i64, 0i64);
+        for s in SIGMA_MIN..=SIGMA_MAX {
+            let inv = gauss_inv(s);
+            let half = (4 * s + ONE - 1) >> Q;
+            for f in (-ONE / 2..=ONE / 2).step_by(64) {
+                let (mut g0, mut g1, mut g2) = (0i64, 0i64, 0i64);
+                for ix in -half..=half {
+                    let g = gauss(ix * ONE - f, inv);
+                    g0 += g as i64;
+                    g1 += (g * ix.abs()) as i64;
+                    g2 += quarter_d2(g, ix * ONE - f) as i64;
+                }
+                worst = (worst.0.max(g0), worst.1.max(g1), worst.2.max(g2));
+            }
+        }
+        println!(
+            "max sum(g) {}, sum(g |ix|) {}, sum(g d^2 / 4) {}",
+            worst.0, worst.1, worst.2
+        );
+        assert!(1023 * worst.0 <= i32::MAX as i64);
+        assert!(1023 * worst.1 <= i32::MAX as i64);
+        assert!(1023 * worst.2 <= i32::MAX as i64);
     }
 
     #[test]
     fn gaussian_spots_noise_free() {
-        println!("sigma fmt  |err| max  thresholded  width err  flux err  steps max/mean  window");
+        println!(
+            "sigma fmt  |err| max  thresholded  width err  flux err  steps max/mean  window  pixels/blob"
+        );
         for sigma in [1.0, 1.5, 2.5, 4.0] {
             for raw10 in [false, true] {
                 let scale = if raw10 { 4.0 } else { 1.0 };
                 let mut worst = Worst::default();
-                let mut sides = (i64::MAX, 0);
+                let mut sides = (i32::MAX, 0);
+                let mut pixels = 0;
                 for &fy in &PHASES {
                     for &fx in &PHASES {
                         let c = (32.0 + fx, 31.0 + fy);
@@ -677,12 +919,15 @@ mod tests {
                         worst.flux = worst.flux.max((flux - 1.0).abs());
                         worst.add(r, &blobs[0], c);
                         let half = (4 * window_sigma(blobs[0].area) + ONE - 1) >> Q;
-                        sides.0 = sides.0.min(2 * half + 1);
-                        sides.1 = sides.1.max(2 * half + 1);
+                        let side = 2 * half + 1;
+                        sides.0 = sides.0.min(side);
+                        sides.1 = sides.1.max(side);
+                        // Pixels read: the buffer once, the window once per step.
+                        pixels += (side + 2) * (side + 2) + r.1 as i32 * side * side;
                     }
                 }
                 println!(
-                    "{sigma:5} {} {:9.4}  {:11.4}  {:8.3}  {:8.4}  {}/{:.2}  {}..={} px",
+                    "{sigma:5} {} {:9.4}  {:11.4}  {:8.3}  {:8.4}  {}/{:.2}  {}..={} px  {}",
                     if raw10 { "10" } else { " 8" },
                     worst.pos,
                     worst.thresholded,
@@ -691,7 +936,8 @@ mod tests {
                     worst.steps,
                     worst.mean_steps(),
                     sides.0,
-                    sides.1
+                    sides.1,
+                    pixels / worst.n as i32
                 );
                 assert!(
                     worst.pos <= 0.01,
