@@ -89,10 +89,25 @@ pub fn show(
         && let Some(p) = resize.interact_pointer_pos()
     {
         let o = shown_origin;
-        let w = ((p.x - rect.left()) / k - f32::from(o.x)) / f32::from(s);
-        let h = ((p.y - rect.top()) / k - f32::from(o.y)) / f32::from(s);
-        let room_w = (aw - o.x) / s;
-        let room_h = (ah - o.y) / s;
+        let (px, py) = ((p.x - rect.left()) / k, (p.y - rect.top()) / k);
+        // A centred window grows on both sides, its origin following the size: the corner
+        // under the pointer, `(active + size) / 2`, gives the size, and the whole active
+        // area is room. Otherwise the origin stays and only the area past it is room.
+        let (w, h, room_w, room_h) = if *centred {
+            (
+                (2.0 * px - f32::from(aw)) / f32::from(s),
+                (2.0 * py - f32::from(ah)) / f32::from(s),
+                aw / s,
+                ah / s,
+            )
+        } else {
+            (
+                (px - f32::from(o.x)) / f32::from(s),
+                (py - f32::from(o.y)) / f32::from(s),
+                (aw - o.x) / s,
+                (ah - o.y) / s,
+            )
+        };
         let nw = snap(
             w,
             wm,
