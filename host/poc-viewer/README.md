@@ -147,7 +147,7 @@ the dev shell and is the decoder the header check already uses.
 
 Dark neutral greys around the picture; colour means a pipeline stage (exposure amber, readout
 teal, encode indigo, send rust, decode blue, draw rose, detection lime, the markers' measure a
-paler lime), the same in the timing diagrams, on the settings that act on that stage and on its
+lighter lime), the same in the timing diagrams, on the settings that act on that stage and on its
 counters. The markers drawn over
 the picture are detection's lime: a yellow-green no other stage uses and far from the grey
 picture, so a cross shows on any frame. Red is for faults and refusals only. Type is IBM Plex
@@ -163,6 +163,8 @@ Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open
   board's capture and encoder errors since it booted, a detector fault); "Waiting for an
   answer" while a request is unanswered;
   **Counters** opens the drawer.
+- **Keyboard**: Tab moves through the controls; the one with the keyboard focus has a ring
+  (only when the keyboard moved the focus, so a clicked control does not look chosen).
 - **Rail** (left, 340 points, scrolls). At its top, in red, the board's last refusal (`The
   board refused the camera settings: ...`, with its values) until a request of the same kind
   succeeds, and the last decode failure.
@@ -205,14 +207,15 @@ Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open
   time, overflow), each of its blobs (x, y, width, flux, area, peak), and, when the window
   holds frames with exactly one blob, that marker's statistics over the statistics window:
   mean position, spread (sigma x, y), peak, area, width, flux and the detection rate.
-- **Pipeline timing** (under the picture): the ribbon, always; **Expand timing** adds the
-  staircase (next section).
+- **Pipeline timing** (under the picture): the ribbon; **Expand timing** shows the staircase
+  in its place (next section). The toggle stays at the strip's bottom right in both.
 - **Counters** (drawer, right): everything the board and the viewer count, by stage. Sensor:
   the mode as applied (HTS, VTS, PSV, rate and its error, line time, longest exposure, bytes per
   frame, exposure and gain), frames captured, capture errors. Encoder: quality in use, encode
   time, last JPEG, errors, frames it could not take. Link: received, Mbit/s, compressed frame
   size and ratio, frames sent and skipped by the board, datagrams, frames dropped for a missing
-  chunk or cut by a mode change, the request round trip, the addresses and the receive buffer.
+  chunk or cut by the board (a mode or encoding change, or frames turned off: the frame in
+  flight is not a fault), the request round trip, the addresses and the receive buffer.
   Decode: frames per second, time, failures. Display: presented, replaced before shown, the
   frame shown, the UI frame time. Board: generation, uptime, stream. Detector: the settings,
   frames detected and skipped (busy), detect time mean and max, the threshold in use and the
@@ -225,9 +228,10 @@ Every control has its own accessible name (an option of a choice is `name: optio
 
 Where a frame's time goes, from the start of its exposure to its markers arriving here and its
 picture's hand-off to the GPU, as the typical frame of the last 2 s, redrawn once a second (a
-new figure glides into place in 150 ms), so it can be read while frames come at hundreds per
-second. After the sensor a frame goes two ways, the two lanes: the **image** and the
-**markers**.
+new figure, and a new axis length, glide into place in 150 ms), so it can be read while frames
+come at hundreds per second. While the pointer is on a diagram it holds still ("Paused while
+the pointer is on the diagram"), so its figures and tooltips can be read. After the sensor a
+frame goes two ways, the two lanes: the **image** and the **markers**.
 
 | Lane | Stage | Source |
 |---|---|---|
@@ -251,21 +255,41 @@ stages sit too early. The gaps between stages are waits: for the encoder, for th
 decoding stage (it decodes the newest frame once the window took the picture before), for core
 0 (it takes core 1's results every millisecond), for the window's next pass, and with frames on
 for the markers' picture. What follows the upload or the hand-off (vsync, the compositor,
-scan-out) is not measured. Each stage shows its median and, as a whisker, its slowest sample of
-the window; computed stages are dashed.
+scan-out) is not measured: a dotted tail after each draw. Each stage shows its median and, as a
+whisker, its slowest sample of the window (an arrow where it leaves the axis); measured stages
+are solid, computed ones hatched, waits grey bands; a key under the diagram says so. Every
+figure is in ms with two decimals under 10 ms and one above ("<0.01" for what would round to
+nothing).
 
-- **Ribbon**: one row per lane on one time axis, each with its latency on the right: the image
-  row (the sensor's stages, then the picture's) to the GPU, the markers row to the blobs here
-  and when they were drawn. With frames off the sensor's stages get a row of their own; a lane
-  without samples is left out. Under the rows, the frames that start meanwhile (one per sensor
-  period).
-- **Staircase**: one row per stage, grouped by lane, three consecutive frames a period apart,
-  so the overlap of the stages of successive frames shows; ticks on frame 1's readout where its
-  strips end. Under the axis, frame 1's latencies, and core 1's figures of the window: strips
-  and their length, the longest wait from a strip's block to the detector, the longest detect,
-  copy wait and hold of a strip against the hold allowed, the measure's processor time, late
-  strips and frames cut. The axis grows at once when the frames no longer fit and shrinks only
-  with a tenth to spare.
+The samples are of one configuration: the board's generation (mode and encoding) and which
+ways are on (frames sent, detection). When it changes the window starts again and the heading
+says "Collecting since the change" until it is full; a sample from before the change is never
+taken (the board's state names its last timed frame for ever with frames off, and that frame
+is taken once). A way that is off keeps its row and says why ("Frames off", "Detection off",
+"No detection in this mode", "Waiting for ...").
+
+- **Ribbon**: three rows on one time axis in ms: the sensor (exposure, readout), the image
+  and the markers, each starting where the readout feeds it. Each stage is a bar with its name
+  and median above it, or below it where the names would collide, and a leader to the bar;
+  waits are named "wait" where they are wide enough. On the right each way's latency: the
+  capture, the picture handed to the GPU (or its last stage measured so far), the markers at
+  this PC and when they were drawn. Under the axis, the frames that start meanwhile (numbered,
+  one per sensor period) and how many periods the way takes. The axis is a round length
+  (ticks of 1, 2 or 5) a twentieth longer than the content: it grows at once and shrinks only
+  after three snapshots in a row would fit four fifths of it.
+- **Staircase**: one row per stage, grouped under Sensor, Image and Markers, with its median,
+  and three sub-rows: the typical frame and the same one and two periods later, so the overlap
+  of successive frames shows and no bar covers another; ticks on the readout where core 1's
+  strips end. Above, each way's latency in one line; under the axis, core 1's figures of the
+  window (the longest start after a strip is read out, detect, copy wait and hold of a strip
+  against the hold allowed, the strips and their length, the measure's processor time, strips
+  held too long and frames cut short, in red when not zero or over), and, when this PC presents
+  fewer frames than the sensor makes, how many. The strip is as tall as the staircase while the
+  picture keeps 160 points; its top border drags (a double click fits it again), and the
+  staircase scrolls when the strip is shorter.
+
+Every bar and wait (and every staircase row) has a tooltip with its figures, and is a node of
+its own for the screen reader and the `egui` tools (`Image: Send`, `Wait before Image: Draw`).
 
 Measured 2026-11-11 on this desktop (as below, 119.88 Hz, vsync on) against the board,
 `--selftest 8`, exposure 200 lines; ms, median of the last 2 s, stages in order with the

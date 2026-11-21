@@ -12,7 +12,8 @@
 //! only when every chunk arrived; a frame missing a chunk is dropped when a chunk of a newer frame arrives (or
 //! after [`ASSEMBLY_TIMEOUT`]) and counted, never repaired: as cut by the board when the newer
 //! chunk has another generation (the board abandons the frame in flight at a mode or encoding
-//! change), otherwise as incomplete (a chunk was lost). A chunk whose encoding, size or frame
+//! change) or when it times out with frames off (the board stops the frame in flight then),
+//! otherwise as incomplete (a chunk was lost). A chunk whose encoding, size or frame
 //! length disagrees with the frame it belongs to drops that frame too (counted as incomplete
 //! and in [`Stats::mismatched_chunks`]). Only the newest complete frame
 //! waits for the consumer: one it has not taken yet is replaced (and counted). Frame buffers
@@ -203,8 +204,9 @@ pub struct Stats {
     pub jpeg_bytes: u64,
     /// Frames dropped because a chunk was missing.
     pub frames_incomplete: u64,
-    /// Frames the board stopped sending part-way for a new frame layout (its next chunk has
-    /// another generation: a mode or encoding change), dropped without counting as missing.
+    /// Frames the board stopped sending part-way, dropped without counting as missing: for a
+    /// new frame layout (its next chunk has another generation: a mode or encoding change), or
+    /// because frames were turned off (the frame times out while the state says so).
     pub frames_cut: u64,
     /// Whole frames replaced by a newer one before the consumer took them.
     pub frames_replaced: u64,
@@ -557,7 +559,10 @@ impl Worker {
             .as_ref()
             .is_some_and(|a| now - a.started > ASSEMBLY_TIMEOUT)
         {
-            self.drop_assembly(false);
+            // With frames off the board stopped sending the frame on purpose (it keeps the
+            // generation, so no chunk of a newer one comes to cut it).
+            let off = self.stats.state.is_some_and(|s| !s.stream.enabled);
+            self.drop_assembly(off);
         }
     }
 
@@ -666,7 +671,8 @@ impl Worker {
         self.publish(None);
     }
 
-    /// Drops the frame being assembled; `cut`: the board abandoned it for a new layout.
+    /// Drops the frame being assembled; `cut`: the board abandoned it (a new layout, or frames
+    /// turned off).
     fn drop_assembly(&mut self, cut: bool) {
         if let Some(a) = self.assembly.take() {
             if cut {

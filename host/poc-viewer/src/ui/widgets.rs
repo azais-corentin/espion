@@ -1,5 +1,6 @@
 //! The window's controls, painted here. Each one carries a distinct accessible name (its
-//! `name`, or `name: option` for the options of a choice), so the `egui` MCP tools find it.
+//! `name`, or `name: option` for the options of a choice), so the `egui` MCP tools find it, and
+//! shows a ring while it has the keyboard focus ([`focus_ring`]).
 
 use std::ops::RangeInclusive;
 
@@ -15,6 +16,65 @@ use super::theme::{
 
 /// Width of the names' column in a [`row`].
 const NAME_WIDTH: f32 = 92.0;
+
+/// Notes, once a pass, whether the keyboard moved the focus last or the pointer did: the focus
+/// ring shows for the keyboard's focus only, so a clicked control does not look chosen. A focus
+/// that moved while no pointer button was pressed, held or released, in this pass or the one
+/// before (a click's focus shows a pass late), moved by the keyboard.
+pub fn note_focus_source(ctx: &egui::Context) {
+    let focused = ctx.memory(|m| m.focused());
+    let pointer =
+        ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_down() || i.pointer.any_released());
+    let id = focus_by_keyboard();
+    let FocusSource {
+        focused: before,
+        pointer: pointer_before,
+        keyboard,
+    } = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    let keyboard = if pointer || pointer_before {
+        false
+    } else {
+        keyboard || (focused.is_some() && focused != before)
+    };
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            id,
+            FocusSource {
+                focused,
+                pointer,
+                keyboard,
+            },
+        );
+    });
+}
+
+/// What [`note_focus_source`] keeps between passes.
+#[derive(Clone, Copy, Default)]
+struct FocusSource {
+    focused: Option<egui::Id>,
+    pointer: bool,
+    keyboard: bool,
+}
+
+fn focus_by_keyboard() -> egui::Id {
+    egui::Id::unique("focus by keyboard")
+}
+
+/// The keyboard focus: a ring around the control's `rect` while it has it from the keyboard.
+pub fn focus_ring(ui: &Ui, response: &Response, rect: Rect) {
+    let keyboard = ui
+        .ctx()
+        .data(|d| d.get_temp::<FocusSource>(focus_by_keyboard()))
+        .is_some_and(|f| f.keyboard);
+    if keyboard && response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            RADIUS,
+            Stroke::new(1.5, TEXT),
+            StrokeKind::Outside,
+        );
+    }
+}
 
 /// A name on the left, its control in the rest of the row.
 pub fn row<R>(ui: &mut Ui, name: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
@@ -135,6 +195,7 @@ pub fn segmented<T: PartialEq + Copy>(
             (theme::sans(BODY), MUTED)
         };
         painter.text(r.center(), Align2::CENTER_CENTER, c.text, font, color);
+        focus_ring(ui, &response, inner);
         if let Some(why) = &c.refused {
             response.on_hover_text(why);
         }
@@ -187,6 +248,7 @@ pub fn switch(ui: &mut Ui, name: &str, hue: Hue, on: &mut bool) -> Response {
                 FAINT
             },
         );
+        focus_ring(ui, &response, rect);
         response
     })
     .inner
@@ -390,6 +452,7 @@ pub fn button(ui: &mut Ui, text: &str, hue: Option<Hue>) -> Response {
         theme::strong(BODY),
         color,
     );
+    focus_ring(ui, &response, rect);
     response
 }
 
@@ -417,6 +480,51 @@ pub fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
         StrokeKind::Inside,
     );
     painter.galley_with_override_text_color(rect.center() - galley.size() / 2.0, galley, color);
+    focus_ring(ui, &response, rect);
+    response
+}
+
+/// A small button that shows or hides a part of the window: a chevron pointing where the
+/// part grows (up, for a strip at the bottom) while it is hidden, down while it shows. Its
+/// accessible node says whether the part is expanded.
+pub fn disclosure(ui: &mut Ui, text: &str, expanded: bool) -> Response {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), theme::sans(BODY), TEXT);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(galley.size().x + 38.0, CONTROL), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, true, text));
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_expanded(expanded));
+    let (fill, line) = if response.hovered() {
+        (HOVER, MUTED)
+    } else {
+        (RAISED, LINE)
+    };
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        RADIUS,
+        fill,
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
+    let c = pos2(rect.left() + 15.0, rect.center().y);
+    let dy = if expanded { 2.5 } else { -2.5 };
+    painter.line(
+        vec![
+            pos2(c.x - 5.0, c.y - dy),
+            pos2(c.x, c.y + dy),
+            pos2(c.x + 5.0, c.y - dy),
+        ],
+        Stroke::new(1.5, TEXT),
+    );
+    painter.galley_with_override_text_color(
+        pos2(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        TEXT,
+    );
+    focus_ring(ui, &response, rect);
     response
 }
 
@@ -501,13 +609,6 @@ pub fn stat_toned(ui: &mut Ui, name: &str, value: &str, fault: bool) {
     let value_response = ui.interact(shown, id.with("value"), Sense::hover());
     value_response.widget_info(|| WidgetInfo::labeled(Role::Label, true, value));
     value_response.labelled_by(name_response.id);
-}
-
-/// A hairline across the panel.
-pub fn rule(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter()
-        .hline(rect.x_range(), rect.center().y, Stroke::new(1.0, LINE));
 }
 
 /// Lays `add` out from the right edge.

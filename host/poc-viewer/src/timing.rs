@@ -32,6 +32,13 @@
 //! [`WINDOW`]: per step the median length and the slowest sample, chained in order within its
 //! lane (a step starts after the one before it plus the median wait between them). The window
 //! draws snapshots only, so the diagram changes once a second however fast frames come.
+//!
+//! The samples are of one configuration: the board's generation (its mode and encoding) and
+//! which ways are on ([`Lanes`]: frames sent, detection). [`Timing::configure`] forgets them
+//! when that changes, and a sample that arrived before the change is never taken, so a lane
+//! shows the new configuration only, or nothing while it has no sample of it. The board's
+//! state names the last frame it timed until it times another, which it never does with
+//! frames off: each frame is taken once, however long the state repeats it.
 
 use std::{
     collections::VecDeque,
@@ -198,6 +205,53 @@ impl Sensor {
     }
 }
 
+/// The board's marker detection, as the markers lane needs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Detection {
+    /// On and running.
+    On,
+    /// Turned off.
+    Off,
+    /// Not possible in the running mode (whole frames only).
+    Unavailable,
+    /// Stopped by a fault.
+    Fault,
+}
+
+/// Which ways a frame takes after the sensor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Lanes {
+    /// The board sends frames (the image lane).
+    pub frames: bool,
+    /// The board's detection (the markers lane).
+    pub detection: Detection,
+}
+
+impl Lanes {
+    /// Both ways on.
+    pub const ALL: Self = Self {
+        frames: true,
+        detection: Detection::On,
+    };
+
+    /// The ways of the board's state.
+    pub fn of(state: &State) -> Self {
+        let d = state.detect;
+        Self {
+            frames: state.stream.enabled,
+            detection: if d.fault {
+                Detection::Fault
+            } else if !d.available {
+                Detection::Unavailable
+            } else if !d.settings.enabled {
+                Detection::Off
+            } else {
+                Detection::On
+            },
+        }
+    }
+}
+
 /// This PC's times of one frame it presented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostFrame {
@@ -282,8 +336,11 @@ pub struct Snapshot {
     pub total_us: f32,
     /// Frame period, µs.
     pub period_us: f32,
-    /// Length of a time axis that shows three consecutive frames, µs ([`axis_us`]).
-    pub axis_us: f32,
+    /// The ways on: a lane that is off has no steps, whatever samples came.
+    pub lanes: Lanes,
+    /// How long the samples have been collected: since the configuration changed, up to
+    /// [`WINDOW`]. Shorter, the snapshot is of fewer frames than a full window.
+    pub collected: Duration,
     /// Core 1's strips, when the window has blob frames.
     pub core1: Option<Core1>,
     /// Frames the board timed in the window (image).
@@ -308,25 +365,61 @@ impl Snapshot {
     }
 }
 
-/// Axis lengths, µs: 1, 2, 5 steps from 5 ms.
-const AXES_US: [f32; 12] = [5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 5e5, 1e6, 2e6, 5e6, 1e7, 2e7];
+/// A time axis for content that changes once a second: a round length (1, 2 or 5 times a power
+/// of ten per tick, at most [`Axis::TICKS`] ticks) with a twentieth to spare. It grows as soon
+/// as the content no longer fits, and shrinks only once [`Axis::SHRINK_AFTER`] snapshots in a
+/// row would fit in four fifths of it, so content near a length's end does not make it flip.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Axis {
+    len_us: f32,
+    smaller: u8,
+}
 
-/// The length of a time axis for `needed_us` of content when the axis is `current_us` long
-/// (0: none yet). It grows to the smallest step that holds the content as soon as the content
-/// no longer fits, and shrinks only to a step that holds it with a tenth to spare, so content
-/// near a step's end does not make the axis flip.
-pub fn axis_us(current_us: f32, needed_us: f32) -> f32 {
-    let fit = |needed: f32| {
-        AXES_US
-            .iter()
-            .copied()
-            .find(|&a| a >= needed)
-            .unwrap_or(AXES_US[AXES_US.len() - 1])
-    };
-    if current_us <= 0.0 || needed_us > current_us {
-        fit(needed_us)
-    } else {
-        fit(needed_us * 1.1).min(current_us)
+impl Axis {
+    /// Most ticks along an axis.
+    pub const TICKS: f32 = 10.0;
+    /// Snapshots in a row that fit a shorter axis before it shrinks.
+    pub const SHRINK_AFTER: u8 = 3;
+
+    /// Takes the content of a new snapshot, `needed_us` long.
+    pub fn fit(&mut self, needed_us: f32) {
+        let fit = Self::round(needed_us);
+        if self.len_us <= 0.0 || fit > self.len_us {
+            self.len_us = fit;
+            self.smaller = 0;
+        } else if fit < self.len_us * 0.8 {
+            self.smaller += 1;
+            if self.smaller >= Self::SHRINK_AFTER {
+                self.len_us = fit;
+                self.smaller = 0;
+            }
+        } else {
+            self.smaller = 0;
+        }
+    }
+
+    /// The length, µs; 0 before any content.
+    pub const fn len_us(&self) -> f32 {
+        self.len_us
+    }
+
+    /// The space between ticks on an axis `len_us` long: 1, 2 or 5 times a power of ten, the
+    /// smallest with at most [`Axis::TICKS`] ticks.
+    pub fn tick_us(len_us: f32) -> f32 {
+        let raw = (len_us / Self::TICKS).max(1.0);
+        let power = 10f32.powf(raw.log10().floor());
+        [1.0, 2.0, 5.0, 10.0]
+            .into_iter()
+            .map(|m| m * power)
+            .find(|&t| t >= raw * 0.999)
+            .unwrap_or(10.0 * power)
+    }
+
+    /// The round length that holds `needed_us` with a twentieth to spare, 1 ms at least.
+    fn round(needed_us: f32) -> f32 {
+        let n = needed_us.max(1_000.0) * 1.05;
+        let tick = Self::tick_us(n);
+        (n / tick).ceil() * tick
     }
 }
 
@@ -342,6 +435,13 @@ pub struct Timing {
     /// The board's count of cut frames each time it changed; the oldest is the window's
     /// baseline.
     cuts: VecDeque<(Instant, u32)>,
+    /// When the samples began: a sample that arrived earlier is of another configuration.
+    since: Instant,
+    /// The configuration of the samples: the board's generation and the ways on; `None` until
+    /// the board's state is known (then every sample is taken).
+    config: Option<(u32, Lanes)>,
+    /// The board's capture time of the last frame it timed that was taken.
+    last_board: Option<u64>,
     /// When the next snapshot is due.
     due: Instant,
     snapshot: Option<Snapshot>,
@@ -358,42 +458,57 @@ impl Timing {
             blobs: VecDeque::new(),
             overlay: VecDeque::new(),
             cuts: VecDeque::new(),
+            since: now,
+            config: None,
+            last_board: None,
             due: now,
             snapshot: None,
             serial: 0,
         }
     }
 
-    /// Forgets every sample and the snapshot (the frame layout changed).
-    pub fn reset(&mut self, now: Instant) {
+    /// The board's configuration: its generation (mode and encoding) and the ways on. When it
+    /// changes, every sample and the snapshot are forgotten and only samples that arrive from
+    /// now on are taken.
+    pub fn configure(&mut self, now: Instant, generation: u32, lanes: Lanes) {
+        if self.config == Some((generation, lanes)) {
+            return;
+        }
+        self.config = Some((generation, lanes));
         self.board.clear();
         self.host.clear();
         self.blobs.clear();
         self.overlay.clear();
         self.cuts.clear();
+        self.since = now;
         self.snapshot = None;
         self.due = now;
     }
 
-    /// A frame the board timed. The state repeats it until the board sent another, so a frame
-    /// already known is ignored.
+    /// A frame the board timed. The state repeats it until the board timed another (forever,
+    /// with frames off), so a frame already taken, or one that arrived before the
+    /// configuration changed, is ignored.
     pub fn board(&mut self, now: Instant, f: BoardFrame) {
-        if self
-            .board
-            .back()
-            .is_none_or(|(_, b)| b.timing.frame != f.timing.frame)
-        {
-            self.board.push_back((now, f));
+        if f.completed < self.since || self.last_board == Some(f.timestamp_us) {
+            return;
         }
+        self.last_board = Some(f.timestamp_us);
+        self.board.push_back((now, f));
     }
 
     /// A frame this PC presented.
     pub fn host(&mut self, now: Instant, f: HostFrame) {
-        self.host.push_back((now, f));
+        if f.completed >= self.since {
+            self.host.push_back((now, f));
+        }
     }
 
-    /// A blob frame received.
+    /// A blob frame received; one of another generation, or that arrived before the
+    /// configuration changed, is ignored.
     pub fn blobs(&mut self, now: Instant, f: &BlobFrame) {
+        if f.arrived < self.since || self.config.is_some_and(|(g, _)| g != f.generation) {
+            return;
+        }
         self.blobs.push_back((
             now,
             BlobSample {
@@ -406,7 +521,9 @@ impl Timing {
 
     /// A blob frame this PC drew.
     pub fn overlay(&mut self, now: Instant, f: OverlayFrame) {
-        self.overlay.push_back((now, f));
+        if f.arrived >= self.since {
+            self.overlay.push_back((now, f));
+        }
     }
 
     /// The board's count of cut frames ([`espion_proto::cam::DetectState::frames_cut`]).
@@ -466,11 +583,20 @@ impl Timing {
             },
         ];
         let capture = sensor.exposure_us + sensor.readout_us;
+        let lanes = self.config.map_or(Lanes::ALL, |(_, l)| l);
+        let markers_on = lanes.detection == Detection::On;
         let offset = self.offset();
-        let image = self.image_steps(&mut steps, capture, offset);
-        let (markers_us, markers_drawn_us) = self.marker_steps(&mut steps, capture, offset);
+        let image = if lanes.frames {
+            self.image_steps(&mut steps, capture, offset)
+        } else {
+            None
+        };
+        let (markers_us, markers_drawn_us) = if markers_on {
+            self.marker_steps(&mut steps, capture, offset)
+        } else {
+            (None, None)
+        };
         let total_us = steps.iter().map(Step::end_us).fold(0.0, f32::max);
-        let axis = self.snapshot.as_ref().map_or(0.0, |s| s.axis_us);
         self.snapshot = Some(Snapshot {
             serial: self.serial,
             steps,
@@ -480,8 +606,9 @@ impl Timing {
             markers_drawn_us,
             total_us,
             period_us: sensor.period_us,
-            axis_us: axis_us(axis, total_us + 2.0 * sensor.period_us),
-            core1: self.core1(&sensor),
+            lanes,
+            collected: now.saturating_duration_since(self.since).min(WINDOW),
+            core1: self.core1(&sensor).filter(|_| markers_on),
             board_frames: self.board.len() as u32,
             host_frames: self.host.len() as u32,
             blob_frames: self.blobs.len() as u32,
@@ -1140,15 +1267,117 @@ mod tests {
     }
 
     #[test]
-    fn the_axis_grows_at_once_and_shrinks_with_a_margin() {
-        assert_eq!(axis_us(0.0, 41_500.0), 50_000.0);
+    fn the_axis_grows_at_once_and_shrinks_after_a_few_snapshots() {
+        let mut a = Axis::default();
+        // A round length with a twentieth to spare, in ticks of 1, 2 or 5.
+        a.fit(37_400.0);
+        assert_eq!(a.len_us(), 40_000.0);
+        assert_eq!(Axis::tick_us(a.len_us()), 5_000.0);
         // Grows as soon as the content no longer fits.
-        assert_eq!(axis_us(50_000.0, 50_001.0), 100_000.0);
-        // 48 ms would fit 50 ms again, but not with a tenth to spare: the axis stays.
-        assert_eq!(axis_us(100_000.0, 48_000.0), 100_000.0);
-        assert_eq!(axis_us(100_000.0, 45_000.0), 50_000.0);
-        // Never below the smallest step, never above the largest.
-        assert_eq!(axis_us(0.0, 10.0), 5_000.0);
-        assert_eq!(axis_us(0.0, 1e9), 2e7);
+        a.fit(41_000.0);
+        assert_eq!(a.len_us(), 45_000.0);
+        // Content that would fit four fifths of it shrinks it only after three snapshots in a
+        // row; one that does not starts the count again.
+        a.fit(30_000.0);
+        a.fit(30_000.0);
+        a.fit(40_000.0);
+        a.fit(30_000.0);
+        a.fit(30_000.0);
+        assert_eq!(a.len_us(), 45_000.0);
+        a.fit(30_000.0);
+        assert_eq!(a.len_us(), 35_000.0);
+        // 38 ms would fit 40 ms, but that is not four fifths of 50: the axis stays.
+        let mut b = Axis::default();
+        b.fit(45_000.0);
+        for _ in 0..5 {
+            b.fit(38_000.0);
+        }
+        assert_eq!(b.len_us(), 50_000.0);
+        // 1 ms at least.
+        let mut c = Axis::default();
+        c.fit(10.0);
+        assert_eq!(c.len_us(), 1_200.0);
+    }
+
+    #[test]
+    fn a_frame_the_state_still_names_after_the_window_is_not_taken_again() {
+        // With frames off the board's state names its last timed frame for ever: once it left
+        // the window the image lane stays empty instead of coming back every other second.
+        let epoch = Instant::now();
+        let mut t = Timing::new(epoch);
+        let f = jpeg(epoch, 7, 1_000_000, 6_000, 4_000, 0);
+        t.board(epoch, f);
+        assert!(t.update(epoch, Some(SENSOR)));
+        assert!(t.snapshot().unwrap().image_us.is_some());
+        let mut now = epoch;
+        for _ in 0..6 {
+            now += INTERVAL;
+            t.board(now, f);
+            t.update(now, Some(SENSOR));
+        }
+        let s = t.snapshot().unwrap();
+        assert_eq!((s.board_frames, s.image_us), (0, None));
+    }
+
+    #[test]
+    fn samples_from_before_a_configuration_change_are_not_taken() {
+        let epoch = Instant::now();
+        let mut t = Timing::new(epoch);
+        t.configure(epoch, 1, Lanes::ALL);
+        let old = jpeg(epoch, 1, 1_000_000, 6_000, 4_000, 0);
+        let old_blobs = BlobFrame {
+            generation: 1,
+            ..blob_frame(epoch, 1_000_000, 6_000, 0)
+        };
+        // The mode changes after both arrived; the state still names the old frame, and an
+        // old blob frame comes late.
+        let change = old.completed.max(old_blobs.arrived) + Duration::from_millis(1);
+        t.configure(change, 2, Lanes::ALL);
+        t.board(change, old);
+        let late = BlobFrame {
+            arrived: change + Duration::from_millis(1),
+            ..old_blobs
+        };
+        t.blobs(change, &late);
+        assert!(t.update(change, Some(SENSOR)));
+        let s = t.snapshot().unwrap();
+        assert_eq!((s.board_frames, s.blob_frames), (0, 0));
+        assert_eq!(s.collected, Duration::ZERO);
+        // A blob frame of the new generation is taken.
+        let new = BlobFrame {
+            generation: 2,
+            ..late.clone()
+        };
+        t.blobs(change, &new);
+        let later = change + INTERVAL;
+        t.update(later, Some(SENSOR));
+        let s = t.snapshot().unwrap();
+        assert_eq!(s.blob_frames, 1);
+        assert_eq!(s.collected, INTERVAL);
+    }
+
+    #[test]
+    fn a_lane_that_is_off_has_no_steps() {
+        let epoch = Instant::now();
+        let mut t = Timing::new(epoch);
+        let lanes = Lanes {
+            frames: false,
+            detection: Detection::Off,
+        };
+        t.configure(epoch, 1, lanes);
+        let f = jpeg(epoch, 1, 1_000_000, 6_000, 4_000, 0);
+        t.board(epoch, f);
+        t.blobs(
+            epoch,
+            &BlobFrame {
+                generation: 1,
+                ..blob_frame(epoch, 1_000_000, 6_000, 0)
+            },
+        );
+        t.update(f.completed, Some(SENSOR));
+        let s = t.snapshot().unwrap();
+        assert_eq!(stages(s), [Stage::Exposure, Stage::Readout]);
+        assert_eq!((s.image_us, s.markers_us, s.core1), (None, None, None));
+        assert_eq!(s.lanes, lanes);
     }
 }

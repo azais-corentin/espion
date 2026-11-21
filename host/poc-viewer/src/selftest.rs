@@ -358,7 +358,7 @@ fn report(
     format!(
         "selftest: vsync {}, measured over {dt:.2} s\n{mode}\n{frame}\n\
          received: {:.1} fps whole, {:.1} Mbit/s UDP payload, {} dropped (chunk missing), \
-         {} cut by a mode change, {} replaced before shown, {} stale chunks\n\
+         {} cut by the board, {} replaced before shown, {} stale chunks\n\
          presented: {:.1} fps (new frames drawn), {:.1} UI passes/s\n\
          ui frame time (eframe cpu_usage): mean {mean:.3} ms, p50 {:.3}, p99 {:.3}, max {:.3} \
          over {} passes\n\
