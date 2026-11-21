@@ -8,16 +8,19 @@ use std::{
 };
 
 use espion_proto::cam::{
-    AUTO_QUALITY_MIN, CHUNK_MAX, CamError, CameraSettings, Encoding, Format, FrameChunk,
+    AUTO_EXPOSURE_HIGH, AUTO_EXPOSURE_LOW, AUTO_MIN_AREA, AUTO_QUALITY_MIN, CHUNK_MAX, CamError,
+    CameraSettings, DetectSettings, Encoding, Format, FrameBlobs, FrameChunk, GAIN_MAX, GAIN_MIN,
     JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, Op, Readout, Request,
-    STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern,
+    STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern, auto_exposure_cap,
 };
+use espion_vision::auto;
 use poc_viewer::{
+    blobs::px,
     camera,
     decode::Decoder,
     fake::{self, FakeCamera, FakeConfig},
     jpeg,
-    net::{Client, Command, Frame, Stats},
+    net::{BlobFrame, Client, Command, Frame, Stats},
 };
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -38,14 +41,32 @@ fn stream_in(encoding: Encoding) -> StreamSettings {
     }
 }
 
-/// The fake's defaults, streaming RAW8.
-fn raw8() -> FakeConfig {
+/// The fake's default camera with a fixed exposure: frames are bit-exact against the state's
+/// settings only while the automatic exposure leaves them alone.
+fn fixed() -> CameraSettings {
+    CameraSettings {
+        auto_exposure: false,
+        ..fake::default_camera()
+    }
+}
+
+/// The fake's defaults with a fixed exposure ([`fixed`]).
+fn cfg() -> FakeConfig {
     FakeConfig {
-        stream: stream_in(Encoding::Raw8),
+        camera: fixed(),
         ..FakeConfig::default()
     }
 }
 
+/// The fake's defaults with a fixed exposure, streaming RAW8.
+fn raw8() -> FakeConfig {
+    FakeConfig {
+        stream: stream_in(Encoding::Raw8),
+        ..cfg()
+    }
+}
+
+/// Binned 640x400 with a fixed exposure.
 fn binned_640(format: Format, rate_hz: u32) -> CameraSettings {
     CameraSettings {
         format,
@@ -58,6 +79,7 @@ fn binned_640(format: Format, rate_hz: u32) -> CameraSettings {
         exposure_lines: 100,
         gain_sixteenths: 48,
         test_pattern: TestPattern::Off,
+        auto_exposure: false,
     }
 }
 
@@ -140,7 +162,7 @@ fn psnr(a: &[u8], b: &[u8]) -> f64 {
 
 #[test]
 fn settings_are_applied_and_read_back() {
-    let (_fake, client) = start(FakeConfig::default());
+    let (_fake, client) = start(cfg());
     let want = CameraSettings {
         test_pattern: TestPattern::Bars,
         ..binned_640(Format::Raw8, 250)
@@ -195,7 +217,7 @@ fn settings_are_applied_and_read_back() {
 
 #[test]
 fn an_invalid_setting_returns_its_error_and_changes_nothing() {
-    let (_fake, client) = start(FakeConfig::default());
+    let (_fake, client) = start(cfg());
     let before = apply(&client, Command::GetState, |_| true);
 
     let bad_width = CameraSettings {
@@ -256,19 +278,10 @@ fn refused(client: &Client, cmd: Command) -> (CamError, Stats) {
     client.send(cmd);
     let s = client
         .wait_until(WAIT, |s| {
-            s.refusal
-                .is_some_and(|r| r.op == op_of(cmd) && r.at >= sent)
+            s.refusal.is_some_and(|r| r.op == cmd.op() && r.at >= sent)
         })
         .expect("refused");
     (s.refusal.unwrap().error, s)
-}
-
-fn op_of(c: Command) -> Op {
-    match c {
-        Command::GetState => Op::GetState,
-        Command::SetCamera(c) => Op::SetCamera(c),
-        Command::SetStream(s) => Op::SetStream(s),
-    }
 }
 
 #[test]
@@ -288,7 +301,7 @@ fn raw10_frames_arrive_bit_exact() {
     let (_fake, client) = start(raw8());
     let raw10 = CameraSettings {
         format: Format::Raw10,
-        ..fake::default_camera()
+        ..fixed()
     };
     apply(&client, Command::SetCamera(raw10), |s| {
         s.camera.format == Format::Raw10
@@ -323,7 +336,7 @@ fn raw10_frames_arrive_bit_exact() {
 
 #[test]
 fn a_slow_consumer_gets_the_newest_frame() {
-    let (_fake, client) = start(FakeConfig::default());
+    let (_fake, client) = start(cfg());
     let state = apply(
         &client,
         Command::SetCamera(binned_640(Format::Raw8, 250)),
@@ -429,8 +442,9 @@ fn the_board_talks_only_to_a_polling_host() {
     sock.send(d).unwrap();
     let mut answered = false;
     let mut chunks = 0;
+    let mut blob_frames = 0;
     let start = Instant::now();
-    let mut last_chunk = start;
+    let (mut last_chunk, mut last_blobs) = (start, start);
     while let Ok(n) = sock.recv(&mut buf) {
         match Message::decode(&buf[..n]) {
             Ok(Message::Response(r)) => answered |= r.seq == 77,
@@ -438,17 +452,24 @@ fn the_board_talks_only_to_a_polling_host() {
                 chunks += 1;
                 last_chunk = Instant::now();
             }
+            Ok(Message::Blobs(_)) => {
+                blob_frames += 1;
+                last_blobs = Instant::now();
+            }
             other => panic!("unexpected {other:?}"),
         }
     }
     assert!(answered);
     assert!(chunks > 1000);
-    // The stream stopped about STREAM_TIMEOUT_MS after the one request.
-    let stopped = (last_chunk - start).as_millis() as u32;
-    assert!(
-        (STREAM_TIMEOUT_MS - 100..=STREAM_TIMEOUT_MS + 100).contains(&stopped),
-        "stopped after {stopped} ms"
-    );
+    assert!(blob_frames > 100, "{blob_frames} blob frames");
+    // The stream and the blobs stopped about STREAM_TIMEOUT_MS after the one request.
+    for (what, last) in [("frames", last_chunk), ("blobs", last_blobs)] {
+        let stopped = (last - start).as_millis() as u32;
+        assert!(
+            (STREAM_TIMEOUT_MS - 100..=STREAM_TIMEOUT_MS + 100).contains(&stopped),
+            "{what} stopped after {stopped} ms"
+        );
+    }
 }
 
 #[test]
@@ -510,10 +531,10 @@ fn the_fake_starts_in_jpeg_at_quality_90_with_automatic_quality() {
 fn jpeg_frames_are_the_fakes_picture_within_the_codec_error() {
     let (_fake, client) = start(FakeConfig {
         stream: stream_in(Encoding::Jpeg),
-        ..FakeConfig::default()
+        ..cfg()
     });
     for (camera, min_psnr) in [
-        (fake::default_camera(), 38.0),
+        (fixed(), 38.0),
         (
             CameraSettings {
                 test_pattern: TestPattern::Bars,
@@ -548,7 +569,7 @@ fn jpeg_frames_are_the_fakes_picture_within_the_codec_error() {
 fn quality_is_applied_and_reported_and_refused_out_of_range() {
     let (_fake, client) = start(FakeConfig {
         stream: stream_in(Encoding::Jpeg),
-        ..FakeConfig::default()
+        ..cfg()
     });
     let mut sizes = Vec::new();
     for q in [30u8, 60, 95] {
@@ -589,7 +610,7 @@ fn quality_is_applied_and_reported_and_refused_out_of_range() {
 
 #[test]
 fn jpeg_is_refused_for_raw10_modes_and_sizes_not_a_multiple_of_8() {
-    let (_fake, client) = start(FakeConfig::default());
+    let (_fake, client) = start(cfg());
     let before = apply(&client, Command::GetState, |_| true);
     let jpeg_err = |reason, c: &CameraSettings| CamError::Jpeg {
         reason,
@@ -602,14 +623,14 @@ fn jpeg_is_refused_for_raw10_modes_and_sizes_not_a_multiple_of_8() {
         (
             CameraSettings {
                 format: Format::Raw10,
-                ..fake::default_camera()
+                ..fixed()
             },
             JpegRefusal::Format,
         ),
         (
             CameraSettings {
                 height: 796,
-                ..fake::default_camera()
+                ..fixed()
             },
             JpegRefusal::Size,
         ),
@@ -639,11 +660,11 @@ fn jpeg_is_refused_for_raw10_modes_and_sizes_not_a_multiple_of_8() {
     for c in [
         CameraSettings {
             format: Format::Raw10,
-            ..fake::default_camera()
+            ..fixed()
         },
         CameraSettings {
             height: 796,
-            ..fake::default_camera()
+            ..fixed()
         },
     ] {
         apply(&client, Command::SetCamera(c), |s| {
@@ -665,7 +686,7 @@ fn switching_between_jpeg_and_the_raw_encodings() {
     let (_fake, client) = start(FakeConfig {
         camera: binned_640(Format::Raw8, 250),
         stream: stream_in(Encoding::Jpeg),
-        ..FakeConfig::default()
+        ..cfg()
     });
     let mut generation = apply(&client, Command::GetState, |_| true).generation;
     let raw10 = binned_640(Format::Raw10, 250);
@@ -710,7 +731,7 @@ fn jpeg_frames_missing_a_chunk_are_dropped_and_the_stream_goes_on() {
     let (_fake, client) = start(FakeConfig {
         loss: 0.01,
         stream: stream_in(Encoding::Jpeg),
-        ..FakeConfig::default()
+        ..cfg()
     });
     let state = apply(&client, Command::GetState, |_| true);
     let base = client.stats();
@@ -755,9 +776,9 @@ fn window(client: &Client, secs: f64) -> (f64, u32, u32, u8) {
 
 #[test]
 fn automatic_quality_follows_the_link() {
-    // Binned 640x400 at the sensor's maximum through a 20 Mbit/s line: at quality 90 the
-    // fake's frames do not fit (a small window keeps the unoptimised test build's rendering
-    // ahead of the sensor).
+    // Binned 640x400 at the sensor's maximum through a 12 Mbit/s line: at quality 90 the
+    // fake's frames (about 6.8 kB) do not fit (a small window keeps the unoptimised test
+    // build's rendering ahead of the sensor).
     let fastest = CameraSettings {
         rate_mhz: 302_189,
         tolerance_mhz: 0,
@@ -765,13 +786,13 @@ fn automatic_quality_follows_the_link() {
     };
     let sensor = 302.19;
     let (_fake, client) = start(FakeConfig {
-        mbps: Some(20.0),
+        mbps: Some(12.0),
         camera: fastest,
         stream: StreamSettings {
             jpeg_quality: 90,
             ..stream_in(Encoding::Jpeg)
         },
-        ..FakeConfig::default()
+        ..cfg()
     });
     let state = apply(&client, Command::GetState, |_| true);
     next_frame(&client, state.generation);
@@ -875,15 +896,17 @@ fn chunks_that_disagree_with_their_frame_drop_it() {
 
 #[test]
 fn the_decoder_decodes_only_the_frames_taken() {
-    // 640x400 binned at 302 Hz in JPEG, a window that takes a picture every 100 ms.
+    // 640x400 binned at 302 Hz in JPEG, a window that takes a picture every 100 ms. The bar
+    // test pattern: the unoptimised test build encodes it faster than the markers scene.
     let fake = FakeCamera::spawn(FakeConfig {
         camera: CameraSettings {
             rate_mhz: 302_189,
             tolerance_mhz: 0,
+            test_pattern: TestPattern::Bars,
             ..binned_640(Format::Raw8, 300)
         },
         stream: stream_in(Encoding::Jpeg),
-        ..FakeConfig::default()
+        ..cfg()
     })
     .unwrap();
     let client = Arc::new(Client::connect(fake.addr(), || {}).unwrap());
@@ -929,7 +952,7 @@ fn a_frame_that_does_not_decode_is_counted_and_dropped() {
     let c = CameraSettings {
         width: 128,
         height: 64,
-        ..fake::default_camera()
+        ..fixed()
     };
     fake::render(&c, Encoding::Raw8, 3, &mut raw);
     let mut good = Vec::new();
@@ -1052,4 +1075,498 @@ fn the_state_times_the_last_frame_sent() {
         b.timestamp_us + u64::from(b.timing.send.end_us) < s.state.unwrap().uptime_us,
         "{b:?}"
     );
+}
+
+// ── Markers ─────────────────────────────────────────────────────────────────────────────────
+
+/// `n` blob frames of `state`'s generation captured after the state was made, in arrival
+/// order (nothing is lost on loopback).
+fn blob_frames_after(client: &Client, state: &State, n: usize) -> Vec<BlobFrame> {
+    let end = Instant::now() + WAIT;
+    let (mut seq, mut got, mut buf) = (0, Vec::new(), Vec::new());
+    while got.len() < n {
+        assert!(
+            Instant::now() < end,
+            "{} of {n} blob frames after {state:?}",
+            got.len()
+        );
+        buf.clear();
+        seq = client.blob_frames_since(seq, &mut buf);
+        got.extend(
+            buf.drain(..)
+                .filter(|b| b.generation == state.generation && b.timestamp_us > state.uptime_us),
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
+    got.truncate(n);
+    got
+}
+
+/// A stream that sends a few frames a second: the marker tests need the blobs, and frames
+/// streamed at the sensor rate would load the machine the other tests share.
+fn slow(encoding: Encoding) -> StreamSettings {
+    StreamSettings {
+        max_fps: 20,
+        ..stream_in(encoding)
+    }
+}
+
+/// No frames: blobs only.
+fn frames_off() -> StreamSettings {
+    StreamSettings {
+        enabled: false,
+        ..stream_in(Encoding::Raw8)
+    }
+}
+
+/// The fake's spots bright and unsaturated: a peak of about 235 (8-bit) for the brightest.
+fn lit(c: CameraSettings) -> CameraSettings {
+    CameraSettings {
+        exposure_lines: 15,
+        gain_sixteenths: 32,
+        auto_exposure: false,
+        ..c
+    }
+}
+
+/// Every blob of `frames` against the true centres of its frame: each frame has the fake's
+/// spots and nothing else, each spot within 0.1 px of its centre. Returns the largest
+/// distance and the mean signed error per axis, pixels.
+fn centres_error(frames: &[BlobFrame], c: &CameraSettings) -> (f64, f64, f64) {
+    let (mut worst, mut sx, mut sy, mut n) = (0.0f64, 0.0, 0.0, 0.0);
+    for f in frames {
+        assert_eq!((f.width, f.height, f.format), (c.width, c.height, c.format));
+        assert_eq!(
+            f.blobs.len(),
+            fake::MARKERS,
+            "frame {}: {:?}",
+            f.frame,
+            f.blobs
+        );
+        for (tx, ty) in fake::marker_centres(c, f.frame) {
+            let (ex, ey) = f
+                .blobs
+                .iter()
+                .map(|b| (px(b.x) - tx, px(b.y) - ty))
+                .min_by(|a, b| a.0.hypot(a.1).total_cmp(&b.0.hypot(b.1)))
+                .unwrap();
+            let d = ex.hypot(ey);
+            assert!(
+                d <= 0.1,
+                "frame {}: blob {ex:+.3} {ey:+.3} px from ({tx:.3}, {ty:.3})",
+                f.frame
+            );
+            worst = worst.max(d);
+            (sx, sy, n) = (sx + ex, sy + ey, n + 1.0);
+        }
+    }
+    (worst, sx / n, sy / n)
+}
+
+#[test]
+fn blobs_are_at_the_true_centres_of_their_frame() {
+    let raw10 = CameraSettings {
+        format: Format::Raw10,
+        ..fixed()
+    };
+    for (label, camera, stream) in [
+        ("RAW8", lit(fixed()), slow(Encoding::Raw8)),
+        ("RAW10", lit(raw10), slow(Encoding::Raw10)),
+        (
+            "RAW8 sensor, JPEG stream",
+            lit(fixed()),
+            slow(Encoding::Jpeg),
+        ),
+    ] {
+        let (_fake, client) = start(FakeConfig {
+            camera,
+            stream,
+            ..FakeConfig::default()
+        });
+        let state = apply(&client, Command::GetState, |_| true);
+        let frames = blob_frames_after(&client, &state, 40);
+        assert!(
+            frames
+                .iter()
+                .all(|f| f.flags & FrameBlobs::AUTO_THRESHOLD != 0)
+        );
+        let (worst, mx, my) = centres_error(&frames, &state.camera);
+        println!(
+            "{label}: {} blobs, largest error {worst:.4} px, mean signed error x {mx:+.4} y \
+             {my:+.4} px",
+            frames.len() * fake::MARKERS
+        );
+        assert!(mx.abs() <= 0.02 && my.abs() <= 0.02, "{label}: {mx} {my}");
+
+        // The blobs of a frame that came whole carry its number, generation and timestamp.
+        // The detector skips the frames captured while it is busy: then the next frame.
+        let end = Instant::now() + WAIT;
+        let (f, b) = 'found: loop {
+            assert!(Instant::now() < end, "no whole frame with its blobs");
+            let f = next_frame(&client, state.generation);
+            let given_up = Instant::now() + Duration::from_millis(200);
+            while Instant::now() < given_up {
+                if let Some(b) = client.blob_frame(f.generation, f.number) {
+                    break 'found (f, b);
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            client.recycle(f.data);
+        };
+        assert_eq!(
+            (b.frame, b.generation, b.timestamp_us),
+            (f.number, f.generation, f.timestamp_us)
+        );
+    }
+}
+
+#[test]
+fn the_fake_starts_with_detection_and_automatic_exposure() {
+    let (_fake, client) = start(FakeConfig::default());
+    let state = apply(&client, Command::GetState, |_| true);
+    assert!(state.camera.auto_exposure);
+    assert_eq!(state.detect.settings, DetectSettings::DEFAULT);
+    assert!(!state.detect.fault);
+    let s = client
+        .wait_until(WAIT, |s| {
+            s.state
+                .is_some_and(|st| st.detect.frames_detected > 10 && st.detect.detect_us_max > 0)
+        })
+        .expect("the detector reports its frames");
+    let d = s.state.unwrap().detect;
+    assert!(
+        d.detect_us_mean > 0 && d.detect_us_mean <= d.detect_us_max,
+        "{d:?}"
+    );
+    assert!(d.background_median > 0, "{d:?}");
+}
+
+#[test]
+fn blobs_flow_with_frames_off() {
+    let (_fake, client) = start(FakeConfig {
+        camera: lit(binned_640(Format::Raw8, 250)),
+        stream: StreamSettings {
+            enabled: false,
+            ..stream_in(Encoding::Raw8)
+        },
+        ..FakeConfig::default()
+    });
+    let a = apply(&client, Command::GetState, |_| true);
+    thread::sleep(Duration::from_millis(300));
+    let sa = client.stats();
+    let a = apply(&client, Command::GetState, |s| s.uptime_us > a.uptime_us);
+    thread::sleep(Duration::from_secs(1));
+    let z = apply(&client, Command::GetState, |s| s.uptime_us > a.uptime_us);
+    let sz = client.stats();
+    let captured = z.counters.frames_captured - a.counters.frames_captured;
+    let detected = z.detect.frames_detected - a.detect.frames_detected;
+    let skipped = z.detect.frames_skipped - a.detect.frames_skipped;
+    let received = sz.blob_frames - sa.blob_frames;
+    println!("{captured} captured, {detected} detected, {skipped} skipped, {received} received");
+    assert_eq!(sz.frames_whole, 0);
+    assert!(captured > 200, "{captured}");
+    assert!(
+        detected + skipped + 3 >= captured,
+        "{detected} + {skipped} of {captured}"
+    );
+    assert!(
+        received * 10 >= u64::from(detected) * 8,
+        "{received} of {detected}"
+    );
+}
+
+#[test]
+fn detection_off_sends_no_blobs() {
+    let (_fake, client) = start(FakeConfig {
+        camera: lit(binned_640(Format::Raw8, 250)),
+        stream: slow(Encoding::Raw8),
+        ..FakeConfig::default()
+    });
+    let state = apply(&client, Command::GetState, |_| true);
+    blob_frames_after(&client, &state, 5);
+    let off = DetectSettings {
+        enabled: false,
+        ..DetectSettings::DEFAULT
+    };
+    let a = apply(&client, Command::SetDetect(off), |s| {
+        !s.detect.settings.enabled
+    });
+    let seq = client.blob_frames_since(u64::MAX, &mut Vec::new());
+    thread::sleep(Duration::from_millis(600));
+    let mut late = Vec::new();
+    client.blob_frames_since(seq, &mut late);
+    assert!(
+        late.is_empty(),
+        "{} blob frames after detection off",
+        late.len()
+    );
+    let z = apply(&client, Command::GetState, |s| s.uptime_us > a.uptime_us);
+    assert_eq!(z.detect.frames_detected, a.detect.frames_detected);
+    assert_eq!(z.detect.frames_skipped, a.detect.frames_skipped);
+    // Frames still go.
+    next_frame(&client, z.generation);
+    // On again: blobs again.
+    let on = apply(&client, Command::SetDetect(DetectSettings::DEFAULT), |s| {
+        s.detect.settings.enabled
+    });
+    blob_frames_after(&client, &on, 5);
+}
+
+#[test]
+fn a_manual_threshold_and_area_filter_are_applied_and_echoed() {
+    let (_fake, client) = start(FakeConfig {
+        camera: lit(binned_640(Format::Raw8, 250)),
+        stream: frames_off(),
+        ..FakeConfig::default()
+    });
+    let manual = DetectSettings {
+        auto_threshold: false,
+        threshold: 150,
+        auto_area: false,
+        min_area: 1,
+        max_area: u16::MAX,
+        ..DetectSettings::DEFAULT
+    };
+    let st = apply(&client, Command::SetDetect(manual), |s| {
+        s.detect.settings == manual
+    });
+    assert_eq!(st.detect.threshold, 150);
+    let frames = blob_frames_after(&client, &st, 20);
+    let mut areas = Vec::new();
+    for f in &frames {
+        assert_eq!(
+            (f.threshold, f.flags & FrameBlobs::AUTO_THRESHOLD),
+            (150, 0)
+        );
+        assert_eq!(f.blobs.len(), fake::MARKERS, "{f:?}");
+        areas.extend(f.blobs.iter().map(|b| b.area));
+    }
+    areas.sort_unstable();
+    // Keep the larger half of the blobs.
+    let min_area = areas[areas.len() / 2].max(2);
+    let filtered_before = st.detect.blobs_filtered;
+    let bigger = DetectSettings { min_area, ..manual };
+    let st = apply(&client, Command::SetDetect(bigger), |s| {
+        s.detect.settings == bigger
+    });
+    let frames = blob_frames_after(&client, &st, 20);
+    let kept: usize = frames.iter().map(|f| f.blobs.len()).sum();
+    assert!(
+        frames
+            .iter()
+            .flat_map(|f| &f.blobs)
+            .all(|b| b.area >= min_area)
+    );
+    assert!(kept < 20 * fake::MARKERS, "{kept} blobs kept of 60");
+    let smaller = DetectSettings {
+        min_area: 1,
+        max_area: min_area - 1,
+        ..manual
+    };
+    let st = apply(&client, Command::SetDetect(smaller), |s| {
+        s.detect.settings == smaller
+    });
+    assert!(st.detect.blobs_filtered > filtered_before);
+    let frames = blob_frames_after(&client, &st, 20);
+    assert!(
+        frames
+            .iter()
+            .flat_map(|f| &f.blobs)
+            .all(|b| b.area < min_area)
+    );
+    // Automatic area filter: every blob of at least AUTO_MIN_AREA pixels.
+    let auto_area = DetectSettings {
+        auto_area: true,
+        ..smaller
+    };
+    let st = apply(&client, Command::SetDetect(auto_area), |s| {
+        s.detect.settings == auto_area
+    });
+    let frames = blob_frames_after(&client, &st, 20);
+    assert!(
+        frames
+            .iter()
+            .flat_map(|f| &f.blobs)
+            .all(|b| b.area >= AUTO_MIN_AREA)
+    );
+    assert!(frames.iter().any(|f| !f.blobs.is_empty()));
+}
+
+/// The automatic threshold of a frame of `c` as the rule makes it: the frame's background
+/// sample and the highest peak of its blobs (all of them kept: the automatic area filter).
+fn rule(c: &CameraSettings, f: &BlobFrame) -> u16 {
+    let mut raw = Vec::new();
+    let mut hist = auto::Histogram::new();
+    let peak = f.blobs.iter().map(|b| b.peak).max();
+    match c.format {
+        Format::Raw8 => {
+            fake::render(c, Encoding::Raw8, f.frame, &mut raw);
+            auto::sample_raw8(&raw, c.width, 0, &mut hist);
+            let bg = auto::Background::from_histogram(&hist).unwrap();
+            u16::from(auto::threshold_raw8(bg, peak))
+        }
+        Format::Raw10 => {
+            fake::render(c, Encoding::Raw10, f.frame, &mut raw);
+            auto::sample_raw10(&raw, c.width, 0, &mut hist);
+            let bg = auto::Background::from_histogram(&hist).unwrap();
+            auto::threshold_raw10(bg, peak)
+        }
+    }
+}
+
+#[test]
+fn the_automatic_threshold_follows_the_rule() {
+    for format in [Format::Raw8, Format::Raw10] {
+        let (_fake, client) = start(FakeConfig {
+            camera: lit(binned_640(format, 250)),
+            stream: frames_off(),
+            ..FakeConfig::default()
+        });
+        let state = apply(&client, Command::GetState, |_| true);
+        let frames = blob_frames_after(&client, &state, 40);
+        // A frame's threshold comes from the last frame detected when it was captured: the one
+        // before it, or the one before that when the detector was still busy.
+        let mut exact = 0;
+        for w in frames.windows(3) {
+            assert_eq!(w[1].seq + 1, w[2].seq, "a blob frame went missing");
+            let t = w[2].threshold;
+            let (a, b) = (rule(&state.camera, &w[1]), rule(&state.camera, &w[0]));
+            assert!(
+                t == a || t == b,
+                "{format:?} frame {}: threshold {t}, the rule gives {a} (frame {}) or {b} (frame {})",
+                w[2].frame,
+                w[1].frame,
+                w[0].frame
+            );
+            exact += usize::from(t == a);
+            assert!(w[2].flags & FrameBlobs::AUTO_THRESHOLD != 0);
+        }
+        // Half the peak of the brightest spot, well above the background.
+        let t8 = match format {
+            Format::Raw8 => frames[39].threshold,
+            Format::Raw10 => frames[39].threshold / 4,
+        };
+        assert!((100..=125).contains(&t8), "{format:?}: threshold {t8}");
+        println!("{format:?}: {exact} of 38 from the frame just before");
+    }
+}
+
+/// The brightest peak of each of the next `n` blob frames.
+fn brightest(client: &Client, state: &State, n: usize) -> Vec<u8> {
+    blob_frames_after(client, state, n)
+        .iter()
+        .map(|f| f.blobs.iter().map(|b| b.peak).max().unwrap_or(0))
+        .collect()
+}
+
+#[test]
+fn automatic_exposure_brings_the_brightest_peak_into_the_band() {
+    let base = binned_640(Format::Raw8, 250);
+    let (_fake, client) = start(FakeConfig {
+        camera: lit(base),
+        stream: frames_off(),
+        ..FakeConfig::default()
+    });
+    let st = apply(&client, Command::GetState, |_| true);
+    let cap = auto_exposure_cap(st.mode.line_ns, st.mode.max_exposure_lines);
+    let band = AUTO_EXPOSURE_LOW..=AUTO_EXPOSURE_HIGH;
+    for (label, lines, gain) in [("too dark", 4, GAIN_MIN), ("saturated", cap, 4 * GAIN_MIN)] {
+        let start_at = CameraSettings {
+            exposure_lines: lines,
+            gain_sixteenths: gain,
+            auto_exposure: true,
+            ..base
+        };
+        let st = apply(&client, Command::SetCamera(start_at), |s| {
+            s.camera.auto_exposure && s.camera.gain_sixteenths == gain
+        });
+        let first = brightest(&client, &st, 3);
+        assert!(
+            first.iter().all(|p| !band.contains(p)),
+            "{label}: starts at {first:?}"
+        );
+        // The rule's own measure: the highest peak of each group of 25 frames (at least one
+        // automatic exposure period at 250 Hz) is in the band, four groups in a row.
+        let end = Instant::now() + Duration::from_secs(10);
+        let settled = loop {
+            assert!(Instant::now() < end, "{label}: did not settle");
+            let st = apply(&client, Command::GetState, |_| true);
+            let peaks = brightest(&client, &st, 100);
+            let inside = peaks
+                .chunks(25)
+                .filter(|g| band.contains(g.iter().max().unwrap()))
+                .count();
+            if inside == 4 {
+                break (st, peaks);
+            }
+        };
+        let (st, peaks) = settled;
+        let c = st.camera;
+        println!(
+            "{label}: settled at {} lines (cap {cap}), gain {:.2}x, peaks {peaks:?}",
+            c.exposure_lines,
+            f32::from(c.gain_sixteenths) / 16.0
+        );
+        assert!(c.exposure_lines <= cap && (GAIN_MIN..=GAIN_MAX).contains(&c.gain_sixteenths));
+    }
+}
+
+#[test]
+fn set_detect_refusals_carry_their_values() {
+    let (_fake, client) = start(FakeConfig {
+        camera: lit(binned_640(Format::Raw8, 250)),
+        stream: frames_off(),
+        ..FakeConfig::default()
+    });
+    let before = apply(&client, Command::GetState, |_| true);
+    let d = DetectSettings::DEFAULT;
+    for (bad, want) in [
+        (
+            DetectSettings { threshold: 0, ..d },
+            CamError::Threshold { min: 1, max: 255 },
+        ),
+        (
+            DetectSettings {
+                threshold: 256,
+                ..d
+            },
+            CamError::Threshold { min: 1, max: 255 },
+        ),
+        (DetectSettings { min_area: 0, ..d }, CamError::Area),
+        (
+            DetectSettings {
+                min_area: 10,
+                max_area: 9,
+                ..d
+            },
+            CamError::Area,
+        ),
+    ] {
+        let (e, s) = refused(&client, Command::SetDetect(bad));
+        assert_eq!(e, want, "{bad:?}");
+        assert_eq!(s.state.unwrap().detect.settings, before.detect.settings);
+    }
+    // A RAW10 sensor takes 10-bit thresholds: 1023 at most. The manual threshold follows the
+    // format (128 x 4).
+    let st = apply(
+        &client,
+        Command::SetCamera(lit(binned_640(Format::Raw10, 250))),
+        |s| s.camera.format == Format::Raw10,
+    );
+    assert_eq!(st.detect.settings.threshold, 512);
+    let (e, _) = refused(
+        &client,
+        Command::SetDetect(DetectSettings {
+            threshold: 1024,
+            ..d
+        }),
+    );
+    assert_eq!(e, CamError::Threshold { min: 1, max: 1023 });
+    let ok = DetectSettings {
+        threshold: 1000,
+        auto_threshold: false,
+        ..d
+    };
+    let st = apply(&client, Command::SetDetect(ok), |s| s.detect.settings == ok);
+    assert_eq!(st.detect.threshold, 1000);
 }

@@ -8,7 +8,9 @@
 //!   the interrupt handlers' share, the part of it outside executor passes, the wake path and
 //!   the busy share with them (`crate::irq`); with the `idle-counter` feature the idle share
 //!   and the sleep path;
-//!   the stream counters, bad datagrams on the camera port, the receiver's counters, the
+//!   the stream counters, bad datagrams on the camera port, the receiver's counters (on the
+//!   strip path: frame ends, DMA errors and stalls as `dma_err`, strips lapped and blocks of
+//!   the wrong length as `csi_dropped`), the strip plan and core 1's copy counters, the
 //!   EMAC's missed-frame count and the TX frames it reported with an error since boot (of
 //!   which underflows). A core whose executor did not run in the window gets only its busy
 //!   share.
@@ -38,6 +40,8 @@
 //! - `A<d>` (one digit): the cache prefetch around the CPU's reads of PSRAM
 //!   ([`crate::prefetch::Mode`]: 0 off, 1 L1 and L2 autoload, 2 L1, 3 L2, 4 L1 and L2 on a hit
 //!   only, 5 L1 preload, 6 L1 preload of the next chunk); the `P` reply names the one in use.
+//! - `L1` / `L0`: the L1 data autoload over each strip core 1's detector reads, on (the boot
+//!   setting) or off, from the next camera start (a mode change).
 
 use core::cell::{Cell, RefCell};
 use core::fmt::{self, Write};
@@ -51,7 +55,7 @@ use esp32p4_csi::Stats;
 use log::info;
 use static_cell::ConstStaticCell;
 
-use super::{BAD_DATAGRAMS, CMDS, Cmd, DIAG_PORT, FAULT, SEND_BUSY_US, jpeg, send, shared};
+use super::{BAD_DATAGRAMS, CMDS, Cmd, DIAG_PORT, FAULT, SEND_BUSY_US, detect, jpeg, send, shared};
 use crate::{cpu, irq, net};
 
 const RX_BYTES: usize = 256;
@@ -141,6 +145,7 @@ pub(super) async fn task(stack: Stack<'static>) {
                     }
                     [b'R', ..] => write_report(&mut w),
                     [b'I', ..] => write_irq(&mut w),
+                    [b'T', ..] => write_strips(&mut w),
                     [b'N', ..] => write_net(&mut w),
                     [b'P', ..] => write_path(&mut w),
                     [b'F', d @ b'1'..=b'2', ..] => {
@@ -175,6 +180,14 @@ pub(super) async fn task(stack: Stack<'static>) {
                             Ok(()) => write!(w, "prefetch {}", crate::prefetch::mode_name()),
                             Err(e) => w.write_str(e.text()),
                         };
+                    }
+                    [b'L', d @ b'0'..=b'1', ..] => {
+                        detect::AUTOLOAD_WANTED.store(d == b'1', Ordering::Relaxed);
+                        let _ = w.write_str(if d == b'1' {
+                            "core 1 autoload on"
+                        } else {
+                            "core 1 autoload off"
+                        });
                     }
                     _ => {
                         let _ = w.write_str("unknown command");
@@ -288,6 +301,25 @@ fn write_report(w: &mut BufWriter<'_>) {
         SEND_BUSY_US.load(Ordering::Relaxed),
         critical_section::with(|cs| jpeg::LAST_ERROR.borrow(cs).get()),
         jpeg::LAST_ERROR_US.load(Ordering::Relaxed),
+    );
+}
+
+/// The strip path (`T`): the strip plan of the run, strips lapped (losing their frame, and
+/// after their copy, keeping it), frames core 1 did not copy and its copy errors. Apart from
+/// the `R` report, which fills its datagram.
+#[inline(never)]
+fn write_strips(w: &mut BufWriter<'_>) {
+    let plan = critical_section::with(|cs| detect::PLAN.borrow(cs).get());
+    let (not_copied, copy_errors) = espion_core1::copy_counts();
+    let _ = write!(
+        w,
+        "strip_rows={} strips={} lapped={} lapped_copied={} not_copied={} copy_errors={}",
+        plan.0,
+        plan.1,
+        detect::LAPPED.load(Ordering::Relaxed),
+        detect::LAPPED_COPIED.load(Ordering::Relaxed),
+        not_copied,
+        copy_errors,
     );
 }
 

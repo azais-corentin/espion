@@ -5,7 +5,10 @@
 //! `wgpu` (one copy into the staging buffer).
 //!
 //! The shader also applies the display gain (a brightness multiplier that leaves the data
-//! alone) and samples nearest-neighbour, so 1:1 shows the sensor's pixels.
+//! alone) and samples nearest-neighbour, so 1:1 shows the sensor's pixels. With the threshold
+//! mask on, it tints the pixels at or above the detection threshold of the frame shown
+//! ([`Mask`]): compared at the texture's depth (RAW10: 10 bits), so the tinted pixels are the
+//! ones the board's detector counted (a decoded JPEG frame: about them).
 
 use std::{
     sync::{Arc, Mutex},
@@ -25,8 +28,10 @@ struct U {
     uv: vec4<f32>,
     // display gain, RAW10 (1) or RAW8 (0), linear output target (1)
     opt: vec4<f32>,
-    // image width and height in pixels
+    // image width and height in pixels, mask threshold (texture units)
     size: vec4<u32>,
+    // mask tint (sRGB) and mask on (1)
+    tint: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var tex: texture_2d<u32>;
@@ -57,19 +62,26 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     let h = u.size.y;
     let x = min(u32(max(i.uv.x, 0.0) * f32(w)), w - 1u);
     let y = min(u32(max(i.uv.y, 0.0) * f32(h)), h - 1u);
+    var raw: u32;
     var v: f32;
     if u.opt.y > 0.5 {
         let g = (x / 4u) * 5u;
         let k = x % 4u;
         let hi = textureLoad(tex, vec2<u32>(g + k, y), 0).r;
         let lo = (textureLoad(tex, vec2<u32>(g + 4u, y), 0).r >> (2u * k)) & 3u;
-        v = f32((hi << 2u) | lo) / 1023.0;
+        raw = (hi << 2u) | lo;
+        v = f32(raw) / 1023.0;
     } else {
-        v = f32(textureLoad(tex, vec2<u32>(x, y), 0).r) / 255.0;
+        raw = textureLoad(tex, vec2<u32>(x, y), 0).r;
+        v = f32(raw) / 255.0;
     }
     v = clamp(v * u.opt.x, 0.0, 1.0);
-    if u.opt.z > 0.5 { v = to_linear(v); }
-    return vec4<f32>(v, v, v, 1.0);
+    var c = vec3<f32>(v, v, v);
+    if u.tint.w > 0.5 && raw >= u.size.z {
+        c = mix(c, u.tint.rgb, 0.65);
+    }
+    if u.opt.z > 0.5 { c = vec3<f32>(to_linear(c.r), to_linear(c.g), to_linear(c.b)); }
+    return vec4<f32>(c, 1.0);
 }
 ";
 
@@ -156,7 +168,7 @@ pub fn init(rs: &egui_wgpu::RenderState) {
     });
     let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("poc-viewer image"),
-        size: 48,
+        size: UNIFORM_BYTES as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -180,6 +192,18 @@ pub struct Shown {
     pub jpeg_len: Option<usize>,
 }
 
+/// The threshold mask: pixels at or above `threshold` are tinted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mask {
+    /// In the texture's units: 10-bit for a RAW10 frame, 8-bit otherwise.
+    pub threshold: u16,
+    /// The tint.
+    pub tint: egui::Color32,
+}
+
+/// Bytes of the shader's uniforms.
+const UNIFORM_BYTES: usize = 64;
+
 /// One paint of the image: the part of the frame inside `rect`.
 pub struct ImageCallback {
     /// The frame to show.
@@ -188,6 +212,8 @@ pub struct ImageCallback {
     pub uv: [f32; 4],
     /// Display gain.
     pub gain: f32,
+    /// The threshold mask, if on.
+    pub mask: Option<Mask>,
     /// Upload times, for the statistics.
     pub timing: Arc<Mutex<UploadTiming>>,
 }
@@ -278,15 +304,27 @@ impl egui_wgpu::CallbackTrait for ImageCallback {
         }
         let raw10 = f32::from(u8::from(f.encoding == Encoding::Raw10));
         let linear = f32::from(u8::from(res.linear_target));
-        let mut u = [0u8; 48];
+        let mut u = [0u8; UNIFORM_BYTES];
         let floats = [
             self.uv[0], self.uv[1], self.uv[2], self.uv[3], self.gain, raw10, linear, 0.0,
         ];
         for (b, v) in u.as_chunks_mut::<4>().0.iter_mut().zip(floats) {
             b.copy_from_slice(&v.to_le_bytes());
         }
-        u[32..36].copy_from_slice(&(f.width as u32).to_le_bytes());
-        u[36..40].copy_from_slice(&(f.height as u32).to_le_bytes());
+        let threshold = self.mask.map_or(0, |m| u32::from(m.threshold));
+        for (i, v) in [u32::from(f.width), u32::from(f.height), threshold, 0]
+            .into_iter()
+            .enumerate()
+        {
+            u[32 + 4 * i..36 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        let tint = self.mask.map_or([0.0; 4], |m| {
+            let c = |v: u8| f32::from(v) / 255.0;
+            [c(m.tint.r()), c(m.tint.g()), c(m.tint.b()), 1.0]
+        });
+        for (i, v) in tint.into_iter().enumerate() {
+            u[48 + 4 * i..52 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
         queue.write_buffer(&res.uniforms, 0, &u);
         Vec::new()
     }

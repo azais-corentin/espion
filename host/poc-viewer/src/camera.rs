@@ -194,6 +194,7 @@ mod tests {
             exposure_lines: 100,
             gain_sixteenths: 16,
             test_pattern: TestPattern::Off,
+            auto_exposure: false,
         }
     }
 

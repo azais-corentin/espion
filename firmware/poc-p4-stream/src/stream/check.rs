@@ -1,11 +1,13 @@
 //! The checks of a `SetCamera`, in the protocol's order (`docs/protocol.md`, "Camera stream"):
 //! the sensor mode (the `ov9281` builder: size, alignment, window, rate), the receiver's
-//! geometry, the stream's encoding against the format, then exposure and gain. The same rules
-//! as the viewer's `poc_viewer::camera` (its fake camera is the reference), on the wire types
-//! of `espion_proto::cam`.
+//! geometry, the stream's encoding against the format, then exposure and gain; and of a
+//! `SetDetect` against the running format. The same rules as the viewer's
+//! `poc_viewer::camera` (its fake camera is the reference), on the wire types of
+//! `espion_proto::cam`.
 
 use espion_proto::cam::{
-    CamError, CameraSettings, Encoding, Format, ModeInfo, Origin, Readout, TestPattern,
+    CamError, CameraSettings, DetectSettings, Encoding, Format, ModeInfo, Origin, Readout,
+    TestPattern,
 };
 use ov9281::{Gain, Mode, Rate, Tolerance, limits};
 
@@ -133,6 +135,12 @@ pub fn validate(c: &CameraSettings, encoding: Encoding) -> Result<Mode, CamError
     encoding.check(c.format, c.width, c.height)?;
     check_controls(c, &mode)?;
     Ok(mode)
+}
+
+/// The checks of a `SetDetect` against the running camera settings: the threshold within the
+/// format's range, then the area bounds ([`DetectSettings::check`], the protocol's rule).
+pub const fn detect(d: &DetectSettings, camera: &CameraSettings) -> Result<(), CamError> {
+    d.check(camera.format)
 }
 
 /// The settings as applied: the origin the mode resolved.

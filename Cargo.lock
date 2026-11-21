@@ -1243,6 +1243,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "espion-vision"
+version = "0.1.0"
+
+[[package]]
 name = "euclid"
 version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2899,6 +2903,7 @@ dependencies = [
  "clap",
  "eframe",
  "espion-proto",
+ "espion-vision",
  "jpeg-encoder",
  "ov9281",
  "png",

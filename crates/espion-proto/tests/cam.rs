@@ -3,11 +3,13 @@
 use espion_proto::{
     Error, HEADER_LEN, MAGIC, VERSION,
     cam::{
-        AUTO_QUALITY_MIN, AUTO_QUALITY_ROOM_PCT, CHUNK_MAX, CamError, CameraSettings, Counters,
-        EncoderState, Encoding, Format, FrameChunk, FrameTiming, JPEG_ALIGN, JPEG_FRAME_MAX,
+        AUTO_EXPOSURE_HIGH, AUTO_EXPOSURE_LOW, AUTO_MIN_AREA, AUTO_QUALITY_MIN,
+        AUTO_QUALITY_ROOM_PCT, BLOB_BYTES, Blob, CHUNK_MAX, CamError, CameraSettings, Counters,
+        DetectSettings, DetectState, EncoderState, Encoding, Exposure, FRAME_BLOBS_MAX, Format,
+        FrameBlobs, FrameChunk, FrameTiming, GAIN_MAX, GAIN_MIN, JPEG_ALIGN, JPEG_FRAME_MAX,
         JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op,
         Origin, Readout, Reply, Request, Response, Span, State, StreamSettings, TestPattern,
-        auto_quality, chunk_count, ijg_scale,
+        auto_exposure, auto_exposure_cap, auto_quality, chunk_count, ijg_scale, pack_blobs,
     },
     kind,
 };
@@ -28,6 +30,7 @@ fn camera(max: bool) -> CameraSettings {
             exposure_lines: u16::MAX,
             gain_sixteenths: u8::MAX,
             test_pattern: TestPattern::Random,
+            auto_exposure: true,
         }
     } else {
         CameraSettings {
@@ -41,6 +44,7 @@ fn camera(max: bool) -> CameraSettings {
             exposure_lines: 0,
             gain_sixteenths: 0,
             test_pattern: TestPattern::Off,
+            auto_exposure: false,
         }
     }
 }
@@ -95,10 +99,31 @@ fn state(max: bool) -> State {
                 end_us: u32::MAX,
             },
         }),
+        detect: DetectState {
+            settings: DetectSettings {
+                enabled: max,
+                auto_threshold: max,
+                threshold: m(u16::MAX as u32) as u16,
+                auto_area: max,
+                min_area: m(u16::MAX as u32) as u16,
+                max_area: m(u16::MAX as u32) as u16,
+            },
+            threshold: m(u16::MAX as u32) as u16,
+            background_median: m(u8::MAX as u32) as u8,
+            background_sigma: m(u8::MAX as u32) as u8,
+            detect_us_mean: m(u32::MAX),
+            detect_us_max: m(u32::MAX),
+            frames_detected: m(u32::MAX),
+            frames_skipped: m(u32::MAX),
+            blobs_dropped: m(u32::MAX),
+            blobs_filtered: m(u32::MAX),
+            fault: max,
+            available: max,
+        },
     }
 }
 
-fn every_error() -> [CamError; 16] {
+fn every_error() -> [CamError; 18] {
     [
         CamError::Size {
             max_width: 1280,
@@ -145,6 +170,8 @@ fn every_error() -> [CamError; 16] {
             min: JPEG_QUALITY_MIN,
             max: JPEG_QUALITY_MAX,
         },
+        CamError::Threshold { min: 1, max: 1023 },
+        CamError::Area,
     ]
 }
 
@@ -189,6 +216,15 @@ fn requests_round_trip() {
                 max_fps: 120,
                 jpeg_quality: 90,
                 auto_quality: true,
+            }),
+            Op::SetDetect(DetectSettings::DEFAULT),
+            Op::SetDetect(DetectSettings {
+                enabled: false,
+                auto_threshold: false,
+                threshold: u16::MAX,
+                auto_area: false,
+                min_area: u16::MAX,
+                max_area: u16::MAX,
             }),
         ] {
             round_trip(Message::Request(Request { seq, op }));
@@ -761,7 +797,7 @@ fn wrong_magic_version_or_kind_is_rejected() {
         kind::CONFIG,
         kind::FRAME_EPOCH,
         0x00,
-        0x23,
+        0x24,
         0xFF,
     ] {
         let mut d = good.clone();
@@ -799,4 +835,323 @@ fn too_small_a_buffer_is_reported() {
         assert_eq!(req.encode(&mut buf[..n]), Err(Error::BufferFull));
     }
     assert_eq!(req.encode(&mut buf[..need]).unwrap().len(), need);
+}
+
+/// `n` blobs whose every field differs.
+fn blobs(n: usize) -> Vec<Blob> {
+    (0..n)
+        .map(|i| Blob {
+            x: (i as u32).wrapping_mul(0x0101_0097),
+            y: u32::MAX - i as u32,
+            width: (i as u16).wrapping_mul(311),
+            flux: (i as u32).wrapping_mul(0x00F0_0F01),
+            area: (i as u16).wrapping_mul(13).wrapping_add(1),
+            peak: i as u8,
+        })
+        .collect()
+}
+
+fn frame_blobs(blobs: &[u8]) -> FrameBlobs<'_> {
+    FrameBlobs {
+        frame: u32::MAX,
+        generation: u32::MAX,
+        timestamp_us: u64::MAX,
+        format: Format::Raw10,
+        width: u16::MAX,
+        height: u16::MAX,
+        threshold: u16::MAX,
+        detect_us: u32::MAX,
+        flags: u8::MAX,
+        blobs,
+    }
+}
+
+#[test]
+fn blobs_round_trip_and_the_most_fit_a_datagram() {
+    for n in [0, 1, 2, FRAME_BLOBS_MAX] {
+        let want = blobs(n);
+        let mut packed = vec![0u8; n * BLOB_BYTES];
+        assert_eq!(
+            pack_blobs(want.iter().copied(), &mut packed),
+            (n * BLOB_BYTES, true)
+        );
+        let fb = frame_blobs(&packed);
+        let len = round_trip(Message::Blobs(fb));
+        assert!(len <= MAX_DATAGRAM, "{n} blobs take {len} bytes");
+        assert_eq!(fb.blob_count(), n);
+        assert_eq!(fb.blobs().collect::<Vec<_>>(), want);
+    }
+    // The largest message leaves no room for one more blob.
+    let mut buf = [0u8; MAX_DATAGRAM];
+    let packed = vec![0xFFu8; FRAME_BLOBS_MAX * BLOB_BYTES];
+    let len = frame_blobs(&packed).encode(&mut buf).unwrap().len();
+    assert!(len + BLOB_BYTES > MAX_DATAGRAM, "{len}");
+    assert_eq!(FRAME_BLOBS_MAX, 82);
+}
+
+#[test]
+fn packing_stops_at_the_room_given_and_the_datagram_limit() {
+    let want = blobs(FRAME_BLOBS_MAX + 5);
+    let mut small = [0u8; 3 * BLOB_BYTES + 2];
+    assert_eq!(
+        pack_blobs(want.iter().copied(), &mut small),
+        (3 * BLOB_BYTES, false)
+    );
+    let mut big = vec![0u8; (FRAME_BLOBS_MAX + 5) * BLOB_BYTES];
+    assert_eq!(
+        pack_blobs(want.iter().copied(), &mut big),
+        (FRAME_BLOBS_MAX * BLOB_BYTES, false)
+    );
+    let b = Blob {
+        x: 0x1234_5678,
+        y: 0x9ABC_DEF0,
+        width: 0x0102,
+        flux: 0x0304_0506,
+        area: 0x0708,
+        peak: 0x09,
+    };
+    assert_eq!(
+        b.to_bytes(),
+        [
+            0x78, 0x56, 0x34, 0x12, 0xF0, 0xDE, 0xBC, 0x9A, 0x02, 0x01, 0x06, 0x05, 0x04, 0x03,
+            0x08, 0x07, 0x09
+        ]
+    );
+    let small = Blob {
+        x: 640 * 256 + 64,
+        y: 3 * 256 + 192,
+        width: 384,
+        ..b
+    };
+    assert_eq!(
+        (small.x_px(), small.y_px(), small.width_px()),
+        (640.25, 3.75, 1.5)
+    );
+    assert_eq!(Blob::from_bytes(b.to_bytes()), b);
+}
+
+#[test]
+fn blobs_that_are_not_whole_or_too_many_are_rejected() {
+    let mut buf = [0u8; MAX_DATAGRAM + 64];
+    for len in [
+        1,
+        BLOB_BYTES - 1,
+        BLOB_BYTES + 1,
+        (FRAME_BLOBS_MAX + 1) * BLOB_BYTES,
+    ] {
+        let packed = vec![0u8; len];
+        assert_eq!(
+            frame_blobs(&packed).encode(&mut buf),
+            Err(Error::BlobsLayout),
+            "{len}"
+        );
+    }
+    // A datagram built by hand with a broken blob length is refused on decode.
+    let packed = vec![0u8; 2 * BLOB_BYTES];
+    let good = frame_blobs(&packed).encode(&mut buf).unwrap().to_vec();
+    assert!(Message::decode(&good).is_ok());
+    let len_at = good.len() - 2 * BLOB_BYTES - 1;
+    assert_eq!(good[len_at], (2 * BLOB_BYTES) as u8);
+    let mut cut = good[..good.len() - 1].to_vec();
+    cut[len_at] -= 1;
+    assert_eq!(Message::decode(&cut), Err(Error::BlobsLayout));
+}
+
+#[test]
+fn detection_settings_are_checked_against_the_format() {
+    let s = DetectSettings::DEFAULT;
+    assert_eq!(s.check(Format::Raw8), Ok(()));
+    assert_eq!(s.check(Format::Raw10), Ok(()));
+    for (format, max) in [(Format::Raw8, 255), (Format::Raw10, 1023)] {
+        for t in [0, max + 1, u16::MAX] {
+            let bad = DetectSettings { threshold: t, ..s };
+            assert_eq!(
+                bad.check(format),
+                Err(CamError::Threshold { min: 1, max }),
+                "{t}"
+            );
+            // Checked with the automatic threshold on too.
+            assert!(bad.auto_threshold);
+        }
+        for t in [1, max] {
+            assert_eq!(DetectSettings { threshold: t, ..s }.check(format), Ok(()));
+        }
+    }
+    for (min_area, max_area) in [(0, 10), (11, 10)] {
+        let bad = DetectSettings {
+            min_area,
+            max_area,
+            ..s
+        };
+        assert_eq!(bad.check(Format::Raw8), Err(CamError::Area));
+    }
+    // The threshold first.
+    let both = DetectSettings {
+        threshold: 0,
+        min_area: 0,
+        ..s
+    };
+    assert_eq!(
+        both.check(Format::Raw8),
+        Err(CamError::Threshold { min: 1, max: 255 })
+    );
+}
+
+#[test]
+fn area_filter_and_format_change() {
+    let manual = DetectSettings {
+        auto_area: false,
+        min_area: 3,
+        max_area: 40,
+        ..DetectSettings::DEFAULT
+    };
+    assert_eq!(manual.area_bounds(), (3, 40));
+    assert!(!manual.keeps(2) && manual.keeps(3) && manual.keeps(40) && !manual.keeps(41));
+    let auto = DetectSettings {
+        auto_area: true,
+        ..manual
+    };
+    assert_eq!(auto.area_bounds(), (AUTO_MIN_AREA, u16::MAX));
+    assert!(!auto.keeps(1) && auto.keeps(2) && auto.keeps(u16::MAX));
+
+    let t = |threshold, from, to| {
+        DetectSettings {
+            threshold,
+            ..DetectSettings::DEFAULT
+        }
+        .for_format(from, to)
+        .threshold
+    };
+    assert_eq!(t(128, Format::Raw8, Format::Raw10), 512);
+    assert_eq!(t(255, Format::Raw8, Format::Raw10), 1020);
+    assert_eq!(t(1023, Format::Raw10, Format::Raw8), 255);
+    assert_eq!(t(3, Format::Raw10, Format::Raw8), 1);
+    assert_eq!(t(77, Format::Raw8, Format::Raw8), 77);
+    assert_eq!(t(77, Format::Raw10, Format::Raw10), 77);
+    // Every scaled threshold passes the new format's check.
+    for th in 1..=255 {
+        let s = DetectSettings {
+            threshold: th,
+            ..DetectSettings::DEFAULT
+        };
+        assert_eq!(
+            s.for_format(Format::Raw8, Format::Raw10)
+                .check(Format::Raw10),
+            Ok(())
+        );
+    }
+    for th in 1..=1023 {
+        let s = DetectSettings {
+            threshold: th,
+            ..DetectSettings::DEFAULT
+        };
+        assert_eq!(
+            s.for_format(Format::Raw10, Format::Raw8)
+                .check(Format::Raw8),
+            Ok(())
+        );
+    }
+}
+
+#[test]
+fn automatic_exposure_cap() {
+    // 1280x800 at 120 Hz: about 9.1 us a line.
+    assert_eq!(auto_exposure_cap(9_100, 889), 54);
+    assert_eq!(auto_exposure_cap(9_100, 20), 20);
+    assert_eq!(auto_exposure_cap(1_000_000, 889), 1);
+    assert_eq!(auto_exposure_cap(0, 889), 889);
+    assert_eq!(auto_exposure_cap(9_100, 0), 1);
+}
+
+#[test]
+fn automatic_exposure_steps() {
+    let e = |lines, gain_sixteenths| Exposure {
+        lines,
+        gain_sixteenths,
+    };
+    // Within the band, or no blob: hold (after bringing the values within the limits).
+    for p in [
+        None,
+        Some(AUTO_EXPOSURE_LOW),
+        Some(220),
+        Some(AUTO_EXPOSURE_HIGH),
+    ] {
+        assert_eq!(auto_exposure(e(30, 32), p, 54), e(30, 32), "{p:?}");
+    }
+    assert_eq!(auto_exposure(e(100, 8), None, 54), e(54, GAIN_MIN));
+    assert_eq!(auto_exposure(e(0, 255), None, 54), e(1, GAIN_MAX));
+    // Too dark: aim at 220 / peak, at most twice; whole lines at 1x, the gain rounds up the rest.
+    assert_eq!(auto_exposure(e(20, 16), Some(110), 54), e(40, 16));
+    assert_eq!(auto_exposure(e(20, 16), Some(10), 54), e(40, 16));
+    assert_eq!(auto_exposure(e(20, 16), Some(199), 54), e(22, 17)); // aim 353
+    // At the cap, the rest goes to the gain.
+    assert_eq!(auto_exposure(e(40, 16), Some(110), 54), e(54, 24));
+    assert_eq!(auto_exposure(e(54, 16), Some(110), 54), e(54, 32));
+    assert_eq!(
+        auto_exposure(e(54, GAIN_MAX), Some(10), 54),
+        e(54, GAIN_MAX)
+    );
+    // Too bright: the gain comes down to about 1x before the exposure shortens.
+    assert_eq!(auto_exposure(e(54, 64), Some(u8::MAX), 54), e(54, 32));
+    assert_eq!(auto_exposure(e(54, 20), Some(u8::MAX), 54), e(33, 17)); // aim 540
+    assert_eq!(auto_exposure(e(40, 16), Some(u8::MAX), 54), e(20, 16));
+    assert_eq!(auto_exposure(e(40, 16), Some(250), 54), e(35, 17)); // aim 563
+    assert_eq!(auto_exposure(e(54, 17), Some(241), 54), e(52, 17)); // aim 838
+    assert_eq!(auto_exposure(e(1, 16), Some(u8::MAX), 54), e(1, 16));
+    // A few lines, where one line is coarser than the band: the gain makes the fine step
+    // (whole lines alone would swing 3 <-> 4 lines, peaks 189 <-> 253, for ever).
+    assert_eq!(auto_exposure(e(3, 16), Some(189), 54), e(3, 19)); // aim 55
+    assert_eq!(auto_exposure(e(4, 16), Some(253), 54), e(3, 19)); // aim 55
+    assert_eq!(auto_exposure(e(2, 16), Some(241), 54), e(1, 29)); // aim 29
+    assert_eq!(auto_exposure(e(1, 16), Some(199), 54), e(1, 17)); // aim 17
+}
+
+/// A linear sensor: the peak is `k` x lines x gain / 16, saturating at 255.
+fn peak_of(e: Exposure, k: f64) -> u8 {
+    (k * f64::from(e.lines) * f64::from(e.gain_sixteenths) / 16.0).min(255.0) as u8
+}
+
+#[test]
+fn automatic_exposure_settles_in_the_band() {
+    let cap = 54;
+    // From the darkest and the brightest setting, for sources from very dim to very bright:
+    // k from 0.3 to about 400 in steps of 3 % (49 and 63 swung for ever with whole lines).
+    let ks = (0..245).map(|i| 0.3 * 1.03f64.powi(i)).chain([49.0, 63.0]);
+    for k in ks {
+        for start in [
+            Exposure {
+                lines: 1,
+                gain_sixteenths: GAIN_MIN,
+            },
+            Exposure {
+                lines: cap,
+                gain_sixteenths: GAIN_MAX,
+            },
+        ] {
+            let mut e = start;
+            let mut steps = 0;
+            loop {
+                let p = peak_of(e, k);
+                let next = auto_exposure(e, Some(p), cap);
+                if next == e {
+                    break;
+                }
+                e = next;
+                steps += 1;
+                assert!(steps < 30, "k {k}: no rest after {steps} steps at {e:?}");
+            }
+            let p = peak_of(e, k);
+            let in_band = (AUTO_EXPOSURE_LOW..=AUTO_EXPOSURE_HIGH).contains(&p);
+            let at_limit =
+                (p < AUTO_EXPOSURE_LOW && e.lines == cap && e.gain_sixteenths == GAIN_MAX)
+                    || (p > AUTO_EXPOSURE_HIGH && e.lines == 1 && e.gain_sixteenths == GAIN_MIN);
+            assert!(in_band || at_limit, "k {k}: rests at {e:?}, peak {p}");
+            if e.lines < cap {
+                // The gain is kept low: below the cap at most one line's worth above 1x,
+                // rounded up to a sixteenth.
+                let (l, g) = (u32::from(e.lines), u32::from(e.gain_sixteenths));
+                assert!(g <= 16 + 16u32.div_ceil(l), "k {k}: {e:?}");
+            }
+        }
+    }
 }

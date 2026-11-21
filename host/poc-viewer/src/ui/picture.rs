@@ -1,20 +1,31 @@
 //! The picture in its area: fitted, or zoomed with the wheel and moved by dragging, with the
-//! pixel under the pointer.
+//! pixel under the pointer, and the board's blobs drawn over it in image coordinates (so they
+//! follow the zoom and the pan). With frames off, a dark canvas of the sensor's size takes the
+//! picture's place under the blobs.
 
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{
-    Align2, CursorIcon, Pos2, Rect, Role, Sense, Stroke, StrokeKind, Ui, Vec2, WidgetInfo, pos2,
-    vec2,
+    Align2, Color32, CursorIcon, Pos2, Rect, Role, Sense, Stroke, StrokeKind, Ui, Vec2, WidgetInfo,
+    pos2, vec2,
 };
 use espion_proto::cam::Encoding;
-use poc_viewer::net::Frame;
+use poc_viewer::{
+    blobs::{TrailPoint, px},
+    net::{BlobFrame, Frame},
+};
 
-use super::theme::{self, BODY, LINE, MUTED, RADIUS_SMALL, TEXT, WELL};
-use crate::display::{ImageCallback, Shown, UploadTiming};
+use super::theme::{self, BODY, LINE, MUTED, RADIUS_SMALL, SMALL, TEXT, WELL};
+use crate::display::{ImageCallback, Mask, Shown, UploadTiming};
 
 /// Most screen points per image pixel.
 const SCALE_MAX: f32 = 64.0;
+
+/// Trail points drawn at most (an even sample of the trail beyond).
+const TRAIL_MAX: usize = 6000;
+
+/// The canvas under the blobs when no frames come.
+const CANVAS: Color32 = Color32::from_rgb(0x16, 0x17, 0x1a);
 
 /// How the picture sits in its area.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,6 +37,23 @@ pub enum View {
     /// `scale` screen points per image pixel, the image point `centre` (pixels) at the centre
     /// of the area.
     Free { scale: f32, centre: Vec2 },
+}
+
+/// What the area shows under the blobs.
+pub enum Content<'a> {
+    /// A frame, with the threshold mask if on.
+    Frame(&'a Arc<Shown>, Option<Mask>),
+    /// A dark canvas of this size (frames off).
+    Canvas { width: u16, height: u16 },
+}
+
+/// The blobs drawn over the picture.
+pub struct Overlay<'a> {
+    /// The blobs of the frame shown (or the newest, on the canvas), each a cross and a circle.
+    pub blobs: Option<&'a BlobFrame>,
+    /// The trail, faded by age.
+    pub trail: &'a [TrailPoint],
+    pub colour: Color32,
 }
 
 /// The pixel `(x, y)` of a RAW8 or packed RAW10 frame, at the frame's depth.
@@ -41,19 +69,24 @@ fn pixel(f: &Frame, x: usize, y: usize) -> Option<u16> {
     }
 }
 
-/// Shows `shown` in the space left and handles the pointer: the wheel zooms about the pointer,
-/// dragging moves a zoomed picture, a double click fits it again. `view` is updated.
+/// Shows `content` in the space left with `overlay` over it, and handles the pointer: the
+/// wheel zooms about the pointer, dragging moves a zoomed picture, a double click fits it
+/// again. `view` is updated.
 pub fn show(
     ui: &mut Ui,
     view: &mut View,
-    shown: &Arc<Shown>,
+    content: &Content<'_>,
     gain: f32,
+    overlay: &Overlay<'_>,
     timing: &Arc<Mutex<UploadTiming>>,
 ) {
     let area = ui.available_rect_before_wrap();
     let response = ui.allocate_rect(area, Sense::click_and_drag());
-    let f = &shown.frame;
-    let image = vec2(f32::from(f.width), f32::from(f.height));
+    let (w, h) = match content {
+        Content::Frame(s, _) => (s.frame.width, s.frame.height),
+        Content::Canvas { width, height } => (*width, *height),
+    };
+    let image = vec2(f32::from(w), f32::from(h));
     let fit = (area.width() / image.x).min(area.height() / image.y);
     let pixels = 1.0 / ui.ctx().pixels_per_point();
     let (mut scale, mut centre) = match *view {
@@ -99,29 +132,62 @@ pub fn show(
     };
     response.widget_info(|| WidgetInfo {
         label: Some("Picture".to_owned()),
-        current_text_value: Some(format!("{}x{}, frame {}", f.width, f.height, f.number)),
+        current_text_value: Some(match content {
+            Content::Frame(s, _) => format!("{w}x{h}, frame {}", s.frame.number),
+            Content::Canvas { .. } => format!("{w}x{h}, frames off: blobs only"),
+        }),
         ..WidgetInfo::new(Role::Image)
     });
 
     let painter = ui.painter_at(area);
     painter.rect_filled(area, 0.0, WELL);
     let rect = Rect::from_min_size(area.center() - centre * scale, image * scale);
-    let vis = rect.intersect(area);
-    if vis.width() > 0.0 && vis.height() > 0.0 {
-        let uv0 = (vis.min - rect.min) / rect.size();
-        let uv1 = (vis.max - rect.min) / rect.size();
-        painter.add(
-            ImageCallback {
-                shown: shown.clone(),
-                uv: [uv0.x, uv0.y, uv1.x, uv1.y],
-                gain,
-                timing: timing.clone(),
+    match content {
+        Content::Frame(shown, mask) => {
+            let vis = rect.intersect(area);
+            if vis.width() > 0.0 && vis.height() > 0.0 {
+                let uv0 = (vis.min - rect.min) / rect.size();
+                let uv1 = (vis.max - rect.min) / rect.size();
+                painter.add(
+                    ImageCallback {
+                        shown: (*shown).clone(),
+                        uv: [uv0.x, uv0.y, uv1.x, uv1.y],
+                        gain,
+                        mask: *mask,
+                        timing: timing.clone(),
+                    }
+                    .paint(vis),
+                );
             }
-            .paint(vis),
-        );
+        }
+        Content::Canvas { .. } => {
+            painter.rect(
+                rect,
+                0.0,
+                CANVAS,
+                Stroke::new(1.0, LINE),
+                StrokeKind::Outside,
+            );
+            painter.text(
+                rect.left_top() + vec2(10.0, 10.0),
+                Align2::LEFT_TOP,
+                "Frames off: the board's blobs only",
+                theme::sans(BODY),
+                MUTED,
+            );
+        }
     }
 
+    // Image pixel (x, y), its centre at (x + 0.5, y + 0.5) of the texture: the detector puts
+    // pixel centres on integers.
+    let at = |x: f64, y: f64| rect.min + vec2(x as f32 + 0.5, y as f32 + 0.5) * scale;
+    paint_overlay(ui, &painter, area, overlay, at, scale);
+
     // The pixel under the pointer.
+    let Content::Frame(shown, _) = content else {
+        return;
+    };
+    let f = &shown.frame;
     let Some(p) = response.hover_pos() else {
         return;
     };
@@ -156,6 +222,60 @@ pub fn show(
             Stroke::new(1.0, MUTED),
             StrokeKind::Inside,
         );
+    }
+}
+
+/// The trail (dots fading with age), then each blob: a cross at its centre, a circle of twice
+/// its width, its number; each blob an accessible `Marker N: x .. y ..`.
+fn paint_overlay(
+    ui: &Ui,
+    painter: &eframe::egui::Painter,
+    area: Rect,
+    overlay: &Overlay<'_>,
+    at: impl Fn(f64, f64) -> Pos2,
+    scale: f32,
+) {
+    let colour = overlay.colour;
+    let step = overlay.trail.len().div_ceil(TRAIL_MAX).max(1);
+    for t in overlay.trail.iter().step_by(step) {
+        let p = at(t.x, t.y);
+        if area.contains(p) {
+            painter.circle_filled(p, 1.6, theme::fade(colour, 0.8 * (1.0 - t.age)));
+        }
+    }
+    let Some(frame) = overlay.blobs else {
+        return;
+    };
+    let stroke = Stroke::new(1.5, colour);
+    let shadow = Stroke::new(3.5, Color32::from_black_alpha(160));
+    for (i, b) in frame.blobs.iter().enumerate() {
+        let (x, y) = (px(b.x), px(b.y));
+        let p = at(x, y);
+        if !area.expand(20.0).contains(p) {
+            continue;
+        }
+        let radius = (2.0 * px(u32::from(b.width)) as f32 * scale).max(5.0);
+        let arm = 7.0;
+        for s in [shadow, stroke] {
+            painter.line_segment([p - vec2(arm, 0.0), p + vec2(arm, 0.0)], s);
+            painter.line_segment([p - vec2(0.0, arm), p + vec2(0.0, arm)], s);
+            painter.circle_stroke(p, radius, s);
+        }
+        painter.text(
+            p + vec2(radius * 0.72 + 3.0, -radius * 0.72 - 3.0),
+            Align2::LEFT_BOTTOM,
+            (i + 1).to_string(),
+            theme::mono(SMALL),
+            colour,
+        );
+        let id = ui.make_persistent_id(("marker", i));
+        let name = format!("Marker {}: x {x:.3} y {y:.3}", i + 1);
+        ui.interact(
+            Rect::from_center_size(p, Vec2::splat(14.0)),
+            id,
+            Sense::hover(),
+        )
+        .widget_info(|| WidgetInfo::labeled(Role::Label, true, &name));
     }
 }
 

@@ -7,8 +7,11 @@ camera stream of `espion-proto`, `docs/protocol.md`), on Ethernet and IPv6 with 
 driver and embassy-net. Not part of the product.
 
 The `Stream` service (the default) streams the camera as greyscale JPEG from the P4's hardware
-encoder (`esp32p4-jpeg`), or raw; the `Bench` service (the network test it was built on) stays
-selectable.
+encoder (`esp32p4-jpeg`), or raw, while core 1, started bare (`espion-core1`), takes each frame
+strip by strip: it copies the strips into a frame buffer for the stream and finds the IR
+markers on them, and the board sends their blobs (`FrameBlobs`, protocol version 5;
+[Detection on core 1](#detection-on-core-1)); the `Bench` service (the network test it was
+built on) stays selectable.
 
 - Addressing: IPv6 only, the fixed link-local address `fe80::4553:9281/64`, neighbour discovery
   by smoltcp; no IPv4, no DHCP, no SLAAC. The MAC is the chip's factory MAC from eFuse
@@ -92,7 +95,8 @@ python3 firmware/poc-p4-stream/tools/streamdiag.py mark     # the board's CPU re
 python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report,
 python3 firmware/poc-p4-stream/tools/streamdiag.py irq      # the interrupt handlers,
 python3 firmware/poc-p4-stream/tools/streamdiag.py net      # the send path (copies, driver)
-python3 firmware/poc-p4-stream/tools/streamdiag.py path     # and the frame path (encode, prefetch)
+python3 firmware/poc-p4-stream/tools/streamdiag.py path     # the frame path (encode, prefetch)
+python3 firmware/poc-p4-stream/tools/streamdiag.py strips   # and the strip path (laps, copies)
 ```
 
 Cargo features: `accounting` (default) builds the CPU accounts; `--no-default-features`
@@ -223,6 +227,7 @@ and without `accounting` alike.
 | File | What |
 |---|---|
 | `src/main.rs` | Boot: log baud, chip, PSRAM, the network, the service selected by `SERVICE`, the RAM report |
+| `src/stack.rs` | The main stack's high-water mark: painted at boot, the bytes never used logged every 10 s by the detect task |
 | `src/net/mod.rs` | The network module: pins and their sources, PHY reset, esp-hal's EMAC bring-up and its one-descriptor storage in its linker section, embassy-net with the static IPv6 address, the runner and link tasks, EMAC register snapshot |
 | `src/net/eth.rs` | The EMAC's DMA rings and the `embassy-net-driver` driver: descriptors through the non-cacheable alias, one cache call per frame, TX threshold mode, TX completion interrupt every 8th frame, the RX checks, the `ETH_MAC` handler |
 | `src/net/ip101.rs` | IP101 PHY driver (`Phy` trait): link polled every 500 ms, speed and duplex from ANAR and ANLPAR, the last report for the log |
@@ -230,26 +235,29 @@ and without `accounting` alike.
 | `src/cpu.rs` | Cycle counter, per-task CPU time and polls from the executor's `trace` hooks (feature `accounting`), the idle counter (feature `idle-counter`), timed events (count, cycles, longest) |
 | `src/prefetch.rs` | The cache prefetch around the CPU's reads of PSRAM (the datagram body copies, the RAW10-to-RAW8 selection): the modes, why no stale line reaches the CPU |
 | `src/irq.rs` | Interrupt-handler wrappers: calls and own cycles per handler and core, the time outside executor passes, the wake and sleep paths (feature `accounting`) |
-| `src/camera.rs` | OV9281 and CSI receiver: set-up, any mode's start (lanes checked in their stop state before stream-on), controls, stop, the newest frame, the fault switch of the stream's error-path test |
+| `src/camera.rs` | OV9281 and the two receivers: set-up, the strip plan of each mode (`strip_plan`), any mode's start on strips or whole frames (lanes checked in their stop state before stream-on), controls, stop (on strips core 1 drops what it holds), the newest whole frame, the fault switch of the stream's error-path test |
 | `src/stream/mod.rs` | The camera stream service: the shared stream state, the control task (requests, all-or-nothing `SetCamera`, repeats), the hand-off to the capture, encode and send tasks |
 | `src/stream/check.rs` | The `SetCamera` checks in the protocol's order, as the viewer's fake camera makes them |
-| `src/stream/capture.rs` | The capture task: frames, counters, the stream rules, mode changes and recovery |
+| `src/stream/capture.rs` | The capture task: on strips the receiver's service every millisecond, core 1's settings and results; whole frames otherwise; counters, the stream rules, mode changes and recovery |
 | `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
-| `src/stream/send.rs` | The send task: answers through the socket; frame chunks beside smoltcp (`net/chunk.rs`: `espion_proto` writes the chunk header, PIE copies the bytes), through the socket until the host's MAC is known |
+| `src/stream/detect.rs` | Detection: core 1 and its copy channel started at boot, the settings core 1 takes, its results (area filter, next threshold, `DetectState`, `FrameBlobs`), the detect task (automatic exposure, core 1's watch, the log lines) |
+| `src/stream/frames.rs` | The frames the image path holds, one holder each: a whole-frame receiver's `Frame`, or a strip frame in a buffer of the pool (five in PSRAM, core 1's free set); dropping it gives the buffer back |
+| `src/stream/send.rs` | The send task: answers through the socket; the `FrameBlobs` datagrams and the frame chunks beside smoltcp (`net/chunk.rs`: `espion_proto` writes the chunk header, PIE copies the bytes), through the socket until the host's MAC is known |
 | `src/net/chunk.rs` | UDP datagrams sent beside smoltcp, straight onto the TX ring: the peer's MAC learned from received frames, the headers, a PIE copy of the payload into the descriptor's buffer, the UDP checksum (PIE), the checksum self-test |
-| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only, prefetch mode |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only, prefetch mode, core 1's autoload |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports, the `vision` request (`Service::BenchVision`) |
 | `src/vision.rs` | `Service::BenchVision`'s camera side on core 0: the pixel check's reference (whole frames, once), core 1 and the strip receiver started at the first request, each run's set-up, the monitor every millisecond and its lines once a second, the run's totals |
-| `../espion-core1` (crate) | Core 1's runner (bare: the detector or the pixel check on each strip, the result queue) and core 0's handle and monitor |
+| `../espion-core1` (crate) | Core 1's runner (bare: on each strip the detector, the pixel check, or the stream job: the copy into a frame buffer, the detector, the background sample, the refined measure per frame; the result queue) and core 0's handle and monitor |
 | `dram_dma.x` | Linker section for esp-hal's Ethernet DMA storage at 0x4FF40000 or above (see below) |
 | `tools/netbench.py` | Host side of the test service |
 
 ## The camera stream
 
 `src/stream/`: the protocol of `espion_proto::cam` (`docs/protocol.md`, "Camera stream",
-version 4) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
-the reference) does, with the real sensor.
+version 5) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
+the reference) does, with the real sensor, and the blob detector on core 1
+([Detection](#detection-on-core-1)).
 
 - **Requests.** `GetState` and `Poll` answer the full state; `SetStream` checks the encoding
   against the running mode (`Encoding::check`: RAW10 only from a RAW10 mode; JPEG only from a
@@ -259,9 +267,12 @@ the reference) does, with the real sensor.
   the `ov9281` builder (size, alignment, window, rate), the receiver's geometry (`esp32p4-csi`'s
   rules), the stream's encoding against the new mode (the same `Encoding::check`), exposure
   (1..=the mode's longest) and gain (16..=248), and applies nothing unless all pass; the answer
-  is the state or the error with its values. Start-up settings are the fake's: 1280x800 RAW8
-  crop, 120 Hz +- 0.5, exposure 200 lines, gain 2x, stream on, JPEG at quality 90 with the
-  automatic quality, no limit. Every valid request makes its source the destination and
+  is the state or the error with its values. `SetDetect` checks the threshold against the
+  running format (1..=255 RAW8, 1..=1023 RAW10, `Threshold { min, max }`) and the area bounds
+  (`Area`), as `DetectSettings::check` says. Start-up settings are the fake's: 1280x800 RAW8
+  crop, 120 Hz +- 0.5, exposure 200 lines, gain 2x, automatic exposure, stream on, JPEG at
+  quality 90 with the automatic quality, no limit, detection on with the automatic threshold
+  and area filter. Every valid request makes its source the destination and
   restarts the 3 s stream timeout; anything else on the port is counted and dropped. A repeat
   of the last request (same number, op and source, which the host sends while it waits) gets
   that request's result and is not executed again.
@@ -275,35 +286,144 @@ the reference) does, with the real sensor.
   error, the receiver, lanes not in stop state, no first frame) answers `SensorBus` or
   `Receiver`, and the previous mode is started again, so the next request finds a running
   camera; if that fails too, the capture task retries every second and on every request.
-- **Frames.** Four whole-frame buffers of 1 286 144 B (1280x800 RAW10) at the start of PSRAM,
-  the newest complete frame taken. Frame numbers count captured frames from boot; each one is
+- **Frames.** Modes on strips (below): core 1 assembles each frame in one of five frame buffers
+  of 1 286 144 B (1280x800 RAW10) in PSRAM. Other modes: the whole-frame receiver's four
+  buffers of the same size at the start of PSRAM, the newest complete frame taken. Each frame
+  has one holder at a time (`frames.rs`). Frame numbers count captured frames from boot (on
+  strips: the frames captured before the run plus the frame ends between its start and the
+  frame, so both paths number a frame as the captured-frame count before it); each one is
   counted, and goes out only while a host polls and the stream is on, `max_fps` honoured
   (frames held back by it are not counted), the chunks in order on the 1409-byte grid to the
   last request's source. Raw: one in flight (a frame completing meanwhile counts as skipped,
-  as do frames the receiver overwrote before the task took them); RAW10 goes out packed, or as
-  RAW8 (the first 4 bytes of every 5, taken as each chunk is copied). JPEG: through the encode
-  task ([JPEG](#jpeg)). Capture errors count short frames, the receiver's DMA, CSI host and
-  bridge error interrupts, frames the receiver dropped for lack of a buffer, and frames that
-  did not come within two periods (the camera is then restarted). The state carries the last
-  frame sent whole and its time on the board (`State::timing`): the encode task stamps the
-  start and the end of its encode into the frame's job, the send task the moment it took the
-  frame and the moment its last chunk was handed to the MAC, all as µs after the frame's
-  timestamp (the capture task's clock reading when it took the frame).
-- **Where it runs.** All on core 0, in the one embassy executor, with the network: control,
-  capture, encode, send, diag, the runner and the link task; the EMAC, CSI, JPEG and 2D-DMA
-  interrupts are on core 0 too. The send task sends each chunk beside smoltcp
+  as do frames lost before the task took them: overwritten by the whole-frame receiver, or not
+  copied by core 1); RAW10 goes out packed, or as RAW8 (the first 4 bytes of every 5, taken as
+  each chunk is copied). JPEG: through the encode task ([JPEG](#jpeg)). Capture errors count
+  short frames, the receiver's DMA, CSI host and bridge error interrupts, frames the receiver
+  dropped for lack of a buffer, and frames that did not come within two periods plus 500 ms
+  (the camera is then restarted). The state carries the last frame sent whole and its time on
+  the board (`State::timing`): the encode task stamps the start and the end of its encode into
+  the frame's job, the send task the moment it took the frame and the moment its last chunk was
+  handed to the MAC, all as µs after the frame's timestamp (whole frames: the capture task's
+  clock reading when it took the frame; strips: when core 1 took the frame's last strip).
+- **Where it runs.** On core 0, in the one embassy executor, with the network: control,
+  capture, encode, detect, send, diag, the runner and the link task; the EMAC, CSI, JPEG and
+  2D-DMA interrupts are on core 0 too. Core 1, started bare at boot (`espion-core1`), runs
+  only the strip path's copies and detection. The send task sends each chunk beside smoltcp
   (`net/chunk.rs`): `FrameChunk::encode_header` writes the chunk's header after the Ethernet,
   IPv6 and UDP headers in a TX descriptor's buffer, PIE copies the bytes from PSRAM after it
   (`Pie::copy`, any alignment), the one CPU copy of the pixels or of the JPEG file (RAW10
   sent as RAW8 is reduced to its high bits in that place instead), and PIE sums the payload
   for the UDP checksum. Until a frame from the host was received (its MAC unknown), chunks go
-  through the socket, PIE copying the bytes into its ring. Core 1 stays off (below: the
-  two-core attempt hung).
-- **RAM** (boot log, 2026-11-11): 134 272 B of internal RAM static, of which the network's
-  DMA rings and esp-hal's storage are 53 376 B and the service's sockets and buffers 22 740 B
-  (camera socket: 8 x 1452 B TX ring, 4 KiB RX ring; the hooks' socket); 447 296 B left for
-  the main stack. PSRAM: the four frame buffers, 5 144 576 B, then the encoder's three output
-  buffers, 6 291 456 B.
+  through the socket, PIE copying the bytes into its ring. The camera task does not move to
+  core 1 (below: the two-core attempt hung); a bare core 1 has no scheduler to hang.
+- **RAM** (boot logs, 2026-11-21): 521 408 B of internal RAM static in the first strip build
+  (218 368 B before the strip path). The largest part is the strip ring, `camera::RING_BYTES`
+  = 307 200 B (three 64-row strips of 1280-wide RAW10; each mode cuts it into its own
+  strips); the rest includes the network's DMA rings, the service's sockets and buffers, the
+  detector's state, `espion-core1`'s statics (core 1's 16 KiB stack, four frame results of
+  256 blobs and their refined measures) and the detector's and `refine`'s code in RAM
+  (`.rwtext`). The final build leaves 60 032 B for the main stack. PSRAM: the whole-frame
+  receiver's four buffers, 5 144 576 B, the strip path's five, 6 430 720 B, then the encoder's
+  three output buffers, 6 291 456 B.
+
+### Detection on core 1
+
+`src/stream/detect.rs`, `src/stream/capture.rs`, `src/stream/frames.rs`, the strip plan in
+`src/camera.rs`; core 1's side is `espion-core1`'s stream job (its README, "The stream job").
+The rules are the protocol's ("Detection"); the fake camera is the reference.
+
+- **Start.** At boot `espion_core1::start` brings up core 1 bare (no scheduler, no interrupt,
+  its own trap vector and 16 KiB stack), with the `DefaultDetector` and its blob scratch in
+  internal RAM, PIE on its own token (the log says `detect: core 1's dark skip Pie`), and a
+  `DmaCopy` on DW-GDMA channel 1 for the strip copies (the receiver has channel 0).
+- **Strips.** A start of a mode `camera::strip_plan` accepts runs the strip receiver: strips
+  of the fewest rows that are whole bridge bursts, do not divide the height (the short last
+  strip ends the frame) and last at least 200 µs of sensor time, as many as fit the 307 200 B
+  ring in internal RAM (3 to 16). 1280x800 RAW8: 48 rows x 5 strips, one every 436 µs. Each
+  start makes the receiver afresh and hands its reader to core 1 (`Core1::hand_over`).
+- **Whole frames, no detection.** The modes the plan refuses (128x2, RAW10 320x200, 1280x64,
+  RAW10 1216x704) run on the whole-frame receiver with `DetectState::available` false: nothing
+  is detected, the settings are kept for the next mode. So does a start that still finds
+  whole frames held after 100 ms (a later whole-frame receiver would write into them), and
+  every start after a core-1 fault (below).
+- **Per strip, on core 1.** The strip's DMA copy into the frame's buffer starts; the
+  background sample runs on the whole strip, then the detector in one bounded call
+  (`push_rows_until`) while the copy runs; core 1 waits for the copy and releases the strip.
+- **Strip budget and cut.** A strip may be held for (strips - 1) strip periods before the DMA
+  comes round to it (`esp32p4-csi` README, "A reader that falls behind"). Core 1's budget is
+  seven eighths of that (`StreamRun::budget_cycles`); the rest is left for the copy's end and
+  the release. It counts from a lower bound of the end of the strip's block, so time the strip
+  lay done before core 1 took it counts too. The detector stops at a row boundary once the
+  strip's age passes the budget less its longest step (the larger of one worst-case row,
+  width x 144 cycles, and one skip over the strip, 1 cycle a byte). Stopped short, detection
+  stops for the rest of that frame. The frame is still copied and sent; its result is `cut`,
+  and core 0 counts it in `detect.frames_skipped` and in the log's `cut`.
+- **Laps.** A strip whose copy ended while it was still intact keeps its frame if the DMA
+  laps it later: only the rest of that frame's detection is dropped (`cut`). A lap before the
+  copy ended loses the frame. The log's `lapped N (after the copy M)` counts both kinds.
+- **One holder per frame.** The pool has five frame buffers in PSRAM: one being assembled, one
+  being measured, one with the send task (raw) or two at the encode stage (JPEG), a spare.
+  Core 1 claims a free one at a frame's first strip and hands it to core 0 with the result;
+  the capture task wraps it in a `FrameBuf` and passes it to the send task or the encode task,
+  or drops it, and the drop gives the buffer back to core 1 (`give_frame`). A whole-frame
+  receiver's `Frame` goes the same way in a `FrameBuf`. A frame core 1 found no free buffer
+  for is detected but neither measured nor sent: skipped, for detection and for the image.
+- **Frame end, on core 1.** The frame buffer's cache lines are invalidated, the blobs the area
+  filter keeps (at most `FRAME_BLOBS_MAX`, 201) are measured on the assembled frame
+  (`espion_vision::refine`: the centre, width and flux), one per loop turn between strips, and
+  the result goes to core 0 with the buffer. If the next frame ends first, the frame goes out
+  with the blobs measured so far; core 0 counts the rest in `blobs_dropped`.
+- **Settings** (the capture task, every millisecond): on or off, the threshold of the next
+  frame, the area bounds and the detection serial go to core 1 when they change
+  (`Core1::set_detect`); core 1 takes them at each frame's first strip.
+- **Results** (the capture task drains core 1's queue every millisecond): results of other
+  settings (another serial) count as `stale` and are not used, results of an earlier run give
+  their buffer back unused. Then the area filter's counts (`DetectSettings::keeps`, the others
+  in `blobs_filtered`); the next frame's threshold, automatic (`threshold_raw8`/
+  `threshold_raw10` of the frame's background and the highest peak among the blobs kept) or
+  the set one; `DetectState` (threshold, background median and σ, frames detected, detect
+  time mean and maximum since the last state); and, while a host polls, the `FrameBlobs`
+  datagram with the refined centre, width and flux and the thresholded area and peak of each
+  blob kept (blobs beyond 201, or lost by the detector, set the overflow flag and count in
+  `blobs_dropped`). The send task sends it after the answers and before the next chunk of a
+  frame.
+- **Mode changes and stops.** The serial is bumped, so results of earlier frames are not
+  used. Stopping the strip receiver asks core 1 to drop what it holds (`abort_stream`: the
+  frame being assembled and the one being measured, with their buffers, once the copy in
+  flight ended); the capture task waits up to 20 ms for the answer (`stream_idle`), then gives
+  back the buffers of results still queued. A start in the other format scales the settings
+  (`for_format`) and starts the threshold again from the settings (with the automatic
+  threshold, the first frame sampled then sets it).
+- **Frames stop.** No frame end within two frame periods plus 500 ms: a capture error, and
+  the camera restarts.
+- **Automatic exposure** (the detect task, every 100 ms, with `auto_exposure` on):
+  `cam::auto_exposure` of the exposure and gain in use, the highest peak of the blobs sent in
+  the period (none without a host: it holds), and the mode's cap (0.5 ms in lines); a change
+  goes to the capture task as a controls write, no restart. Its first step brings the boot
+  exposure (200 lines) within the cap even without a blob: 54 lines at 1280x800 120 Hz.
+  `State::camera` then reports the values in use. A `SetCamera` with it on writes its
+  exposure and gain if they differ from the ones in use: the starting point.
+- **Watch.** Once a second the detect task checks core 1's trap record and heartbeat
+  (`espion_core1::health`). On a trap or a stalled heartbeat: `DetectState::fault`, an error
+  line, no detection until the board restarts. Core 1 also copies the strips, so a dead core
+  1 stops the strip path: frames stop, the camera restarts, and that start and every later one
+  run on whole frames.
+- **L1 data autoload** over each strip core 1's detector reads: on from boot;
+  `streamdiag.py autoload 0|1` switches it for the next camera start. While it is on core 1
+  owns the autoload registers and the prefetch modes that write them are refused.
+- **Log.** While the strip path runs, three lines a second (a log line masks interrupts on
+  core 0 for about 0.7 to 0.9 ms, which the strip path does not mind: core 1 polls the
+  strips):
+  `detect: <detected> of <captured> frames (<coverage>%), skipped <n>, detect mean <us> max
+  <us> us (<k> kins), refine mean <us> max <us> us, capture to result mean <us> max <us> us`,
+  `strips: <rows> rows x <n> in the ring (one every <us> us), frames <n> copied <n> not copied
+  <n>, copy errors <n>, lapped <n> (after the copy <n>), dropped results <n>, per strip hold
+  mean <us> max <us> us (budget <us> us), detect max <us> us, copy wait mean <us> max <us>
+  us` (the budget printed there is the whole (strips - 1) periods; `lapped` counts the laps
+  that lost a frame) and `detect:   blobs <min>..<max> kept <n> sent
+  <n>, threshold <t> auto, background <median> sigma <σ>, exposure <lines> gain
+  <sixteenths>, stale <n> unmeasured <n> cut <n>, capture errors <n>, heartbeat <turns>/s`.
+  Every 10 s: `stack: main <n> B of <size> never used, core 1 <n> B of 16384 never used`.
 
 ### JPEG
 
@@ -316,12 +436,13 @@ a RAW8 frame; no CPU pass over the pixels. `src/stream/jpeg.rs`.
 1. The capture task offers every RAW8 frame it would send to the encode task: the frame waits
    in a one-frame slot. A newer frame arriving before the encoder took it replaces it, and the
    replaced one counts as a frame the encoder could not take (`encoder.frames_skipped`; frames
-   the receiver overwrote before the capture task took them count there too). At most two
-   captured frames are held (the one being encoded, the one waiting), which the receiver's
-   four buffers allow (0 receiver drops in every run).
+   lost before the capture task got them count there too: overwritten by the whole-frame
+   receiver, or not copied by core 1). At most two captured frames are held (the one being
+   encoded, the one waiting), which the whole-frame receiver's four buffers and the strip
+   path's five allow.
 2. The encode task sets the encoder to the frame's size and the quality in use (only when they
    change: `Encoder::set_config`, header and tables), takes a free output buffer, encodes
-   (`Encoder::encode` in a 100 ms timeout) and gives the receiver's buffer back at once.
+   (`Encoder::encode` in a 100 ms timeout) and gives the frame's buffer back at once.
 3. The file waits for the send task in the next one-frame slot (`JOB`). A newer file finished
    before the send task took it replaces it, and the replaced one counts as skipped because
    the link was busy (`counters.frames_skipped`). So the link never waits for an encode, and
@@ -330,11 +451,11 @@ a RAW8 frame; no CPU pass over the pixels. `src/stream/jpeg.rs`.
    PSRAM into a TX descriptor's buffer.
 
 **Buffers.** Three output buffers (one being sent, one waiting, one being encoded into) of
-`JPEG_FRAME_MAX` = 2 MiB each in PSRAM after the receiver's buffers, 128-byte aligned (the
+`JPEG_FRAME_MAX` = 2 MiB each in PSRAM after the frame buffers, 128-byte aligned (the
 driver's rule for PSRAM). The encoder gets the part `Config::max_output_len` gives for the
 size (the header and 2 bytes per pixel, 2 048 384 B at 1280x800), so any file the protocol
 allows fits. A buffer is freed when its file is sent, replaced or abandoned (an `Out` handle,
-as the receiver's `Frame`).
+as a captured frame's `FrameBuf`).
 
 **Errors.** A file that does not fit (`OutputTooSmall`), a codec or DMA error, or no end
 within 100 ms costs that frame: it counts in `encoder.errors`, the driver resets the hardware
@@ -691,6 +812,134 @@ not checked.
 For the detector the interaction costs 6 % of core 0's TX cycles (7 360 against 6 940):
 keep `preload_ahead`, or use `l2` (8 159) if the autoload's share grows.
 
+### Measured: detection on strips, 2026-11-21
+
+This board, the default boot settings unless named (1280x800 RAW8 crop at 120 Hz on 48-row
+strips, 5 in the ring, one every 436 µs), PIE skip, L1 data autoload on. Logs in
+`/tmp/poc-p4-stream-strips/`. "Before" is the whole-frame design it replaced (core 1 took
+whole frames from PSRAM; [below](#measured-detection-on-core-1-2026-11-21)). "Now" is the
+first strip build, except where the final build (`f3.elf`, with the bounded detector call
+below) is named.
+
+| | Before (whole frames) | Now (strips) |
+|---|---|---|
+| Raw 1280x800 RAW8, host fps | 11.0 detection off, 6.7 on | 11.00 on (equal to off) |
+| Coverage, 1280x800 120 Hz | 99.6 % no host, 74 % with a host | 100 % no host; with a host 120 of 120 frames a second, RAW8 and RAW10 (final build, below) |
+| Detect per frame, mean | 6.9 ms | 1.39 ms (0.09 ms per strip) |
+| Hold per strip (take to release) | | 85 µs mean, 95 µs max (strip period 436 µs) |
+| Wait for the copy after the detector | | 0 µs |
+| Capture to result | 7.6 ms mean | 0.57 ms mean, 1.1–1.9 ms max |
+| Capture errors, 640x400 binned 250 Hz | 2 | 0 |
+| Internal RAM, static | 218 368 B | 521 408 B |
+| Main stack never used | | 56 604 of 60 032 B (final build) |
+| Core 1 stack never used | | 11 432 of 16 384 B, the lowest seen (final build) |
+
+**Gate A, `DmaCopy` beside the stream** (`gate-A.log`): with live capture, the JPEG encoder
+and core 1's detection running, 539 copies of a known pattern: 0 wrong bytes, 0 overwrites of
+the guard after the destination, 0 errors. A 61 440 B copy (one 48-row strip) took 156 µs
+mean, 248 µs max. The fallback planned for a failure here, copies through the 2D-DMA, was not
+needed.
+
+**Colour test patterns: why the detector call is bounded.** On the mono sensor the colour
+test patterns alternate pixel by pixel: about 324 runs per 1280-pixel row, so every row fills
+the detector's 256-run buffer, and a row takes 230–354 µs on core 1, RAW8 and RAW10 alike
+(about 2 µs in a normal scene). In the first strip build the first 16-row chunk of a RAW10
+strip took 3667 µs, more than the whole 3-strip RAW10 ring (1746 µs): every delivered frame
+was lapped, the DMA stalled, the bridge discarded data and the reader resynchronised, about 40
+laps a second, never recovering. The final build makes the detector one bounded call per
+strip (`push_rows_until`, the `espion-vision` README) with the budget at 7/8, the step at
+width x 144 cycles (worst measured: 351 µs per 1280-pixel row, about 110 cycles a pixel; 387
+µs, 121, with a copy and a lap in flight) and the strip's age counted from a lower bound of
+its block's end; and a frame whose copy ended intact survives a later lap.
+
+| 1280x800, every test pattern, detection on | Before (first strip build) | After (final build) |
+|---|---|---|
+| RAW10 frames a second | 0 | 120 |
+| RAW10 laps, capture errors a second | 40, 160 | 0, 0 |
+| RAW10 detection | stuck | cut every frame (skipped) |
+| RAW10 worst hold | 3682 µs | at most 1141 µs (lap point 1164 µs) |
+| RAW8 (5 strips) worst hold | | at most 1392 µs (lap point 1744 µs) |
+
+- **Recovery.** A lap forced without a stall (budget 1400 µs): 4–6 laps a second, all after
+  the copy, 120 of 120 frames kept, 0 capture errors. A stall forced (budget 50 ms, then
+  back to normal): full rate and 0 errors the next second.
+- **Cost in a normal scene**, detect per frame (`s2.elf` → `f3.elf`): RAW8 1280x800 1456 →
+  1429–1441 µs; RAW10 1280x800 2016 → 1993–2001 µs.
+- **The ring stays as it is.** 3 RAW10 strips are enough; 4 would need about 100 KB more
+  internal RAM, which is full.
+
+**While the host streams** (final build, `cov-f3.txt`):
+
+| Mode | MB/s detection off / on | Detected a second | Detect per frame | Hold max on (off) |
+|---|---|---|---|---|
+| 1280x800 RAW8 120 Hz | 11.37 / 11.37 | 120 of 120 | 1438 µs | 183 µs (123) |
+| 1280x800 RAW10 120 Hz | 11.36 / 11.37 | 120 of 120 | 1997 µs | 297 µs (184) |
+| 640x400 binned 250 Hz | not measured / 10.88 | 250 of 250 | 388 µs | 78 µs |
+
+1280x800 RAW8: 0 laps, 0 capture errors. In the board test's refusals section the RAW8
+1280x800 base mode reached 11.00 fps at the host (expected 10.91–11.32).
+
+**`poc-viewer` board test** (final build):
+
+- **Settings** (`settings-f8.log`): every section passes, 0 failed checks. The build before
+  (`settings-f3.log`) failed 9 JPEG encoder-error checks (1–6 errors per mode) that HEAD's
+  firmware passes (`jpeg-head.log`): with the CSI and the strip copies writing memory, the
+  2D-DMA's `SUC_EOF` was sometimes seen before its RX descriptor's write-back, so the encoder
+  read a stale length and failed the frame (`Dma { tx: 0, rx: 2 }`). `esp32p4-jpeg` now waits
+  (bounded) for the descriptor's owner bit; 19 such frames in the `jpeg` and `quality`
+  sections all encoded (`Stats::late_writebacks`).
+- **Markers** (the IR marker test, `markers-f3.log`): passes. Settled after 1.52 s at exposure
+  19 lines, gain 1.06x, threshold 107, period peaks 215–219. Coverage 100 % with 0 skipped
+  and 0 capture errors: 1280x800 RAW8 244 of 244 (detect 1.49 ms), RAW10 245 of 245 (2.01
+  ms), 640x400 binned 120 Hz 244 of 244 (0.41 ms), 250 Hz 506 of 506, 302 Hz 613 of 613,
+  320x200 binned 557 Hz 1126 of 1126 (0.13 ms). Jitter over 10 s: 1200 frames, each with
+  one blob, σ x 0.0454 px, y 0.0242 px, width 10.24 px.
+- **Soak**, 600 s (`soak-f3.log`, `soak-board.log`): passes. 30 mode changes, 29 940 whole
+  frames at the host, 0 capture errors, 0 laps, 145 685 of 145 755 frames detected, 0
+  skipped.
+
+### Measured: detection on core 1, 2026-11-21
+
+The whole-frame design measured here (core 0 lent each whole frame to core 1) was replaced by
+the strip path the same day ([Measured: detection on strips](#measured-detection-on-strips-2026-11-21)).
+
+This board, the default boot settings (1280x800 RAW8 crop at 120 Hz, JPEG, automatic
+exposure, detection on with the automatic threshold and area filter), the user's one IR
+source in view, no host (so no frame and no `FrameBlobs` went out, and the automatic exposure
+held at its 0.5 ms cap: 54 lines, gain 2x). Serial log only, one boot per build, logs in
+`/tmp/poc-p4-stream-markers/` (`seg.py` sums the per-second lines). Core 1 used the PIE skip.
+The first second after boot is left out.
+
+| Build, L1 data autoload | Seconds | Detected of captured (coverage) | Detect mean / max | Instructions per frame | Capture to result mean / max | Log |
+|---|---|---|---|---|---|---|
+| No refined measure (a test build), on | 15 | 99-100 % per second | 6 477-6 527 / 8 474 us | 256 k | 7 275-7 401 / 9 199 us | `exp-norefine.log` |
+| First `refine`, on | 78 | 6 217 of 9 363 (66.4 %) | 8 826 / 12 117 us | 521 k | 9 887 / 13 325 us | `stream-75s.log` |
+| First `refine`, on (an earlier boot) | 8 | 80-95 % per second | 7 705-7 839 / 11 402 us | | | `autoload.log` |
+| First `refine`, off | 8 | 50 % | 11 202-11 876 / 13 806 us | | | `autoload.log` |
+| Final `refine` (in RAM), on | 80 | 9 570 of 9 604 (99.6 %) | 6 894 / 9 631 us | 378 k | 7 586 / 10 551 us | `stream-refined.log` |
+| Final `refine`, off | 19 | 1 140 of 2 280 (50.0 %) | 10 946 / 11 995 us | 374 k | 11 649 / 12 641 us | `stream-refined.log` |
+| Final `refine`, on again | 18 | 2 161 of 2 161 (100 %) | 6 892 / 8 000 us | 377 k | 7 580 / 9 312 us | `stream-refined.log` |
+
+In every run: every second had exactly one blob per detected frame with the autoload on (the
+background median 4, σ 0, the automatic threshold 28 to 33), 0 capture errors, 0 results
+dropped, 0 stale, no trap, no stalled heartbeat, no warning. In the final build's autoload-off
+stretch two seconds had up to 6 blobs and one ended on threshold 128 (a peak of 255 for a
+frame: something else bright in view for a moment [INFERENCE]); the autoload has no part in
+which pixels are found.
+
+- **Where the time goes.** Core 1 reads the whole 1 MB frame from PSRAM while the receiver
+  writes the next one: 256 k instructions take 6.5 ms (about 0.1 instruction a cycle), against
+  0.75 ms for the same detector on strips in internal RAM ([Co-load](#co-load-the-detector-on-core-1-beside-the-wire-rate-2026-11-11)).
+  The refined measure of the one blob adds about 120 k instructions and 0.4 ms in its final
+  form (the first form: 265 k and 1.3 to 2.2 ms, from flash, with a sort for the ring median).
+- **The L1 data autoload** over each 64-row chunk cuts the detect time from 10.9-11.9 ms to
+  6.9 ms: without it core 1 takes every other frame (50 %). It stays on (the boot setting).
+- **Coverage** is 99.6 % to 100 % at 120 Hz with the final build, the frame period being 8.33
+  ms: 1.4 ms of slack on the mean, and a frame that takes longer than a period costs the next
+  frame. Faster modes will skip more (not measured).
+- Not measured here: core 0's load and the link rate with a host and detection on, RAW10, the
+  binned modes, the `FrameBlobs` on the wire (the viewer's board test, plan step 7).
+
 ## Marker pins (feature `markers`)
 
 Performance plan step 0.4, as in `poc-p4-eth` (its README, "Marker pins", has the full
@@ -702,8 +951,8 @@ Off by default; `cargo build --release --features markers` (also with
 | Signal | GPIO | 40-pin header | Driven by | Toggles when |
 |---|---|---|---|---|
 | datagram queued | GPIO26 | pin 29 | core 0, dedicated-IO channel 0 (`markers::DATAGRAM`) | `net::chunk::send` has handed a datagram to the EMAC's TX ring (`eth::tx_queue`): every bench datagram and every camera-stream chunk on the direct path |
-| core 1 strip | GPIO20 | pin 35 | core 1, channel 0 (`espion_core1::MARKER_STRIP`) | `Service::BenchVision`: core 1's reader has handed out a strip, before the detector |
-| core 1 frame | GPIO21 | pin 34 | core 1, channel 1 (`MARKER_FRAME`) | `Service::BenchVision`: the frame's blobs are final |
+| core 1 strip | GPIO20 | pin 35 | core 1, channel 0 (`espion_core1::MARKER_STRIP`) | `Service::BenchVision` and the stream's strip path: core 1's reader has handed out a strip, before the detector |
+| core 1 frame | GPIO21 | pin 34 | core 1, channel 1 (`MARKER_FRAME`) | `Service::BenchVision` and the stream's strip path: the frame's blobs are final |
 | GND | | pins 28, 33 | | |
 | STROBE | | not on the board: the camera module's STROBE back pad | OV9281 | Once per frame |
 
@@ -1457,10 +1706,15 @@ multicast, the EMAC's PTP clock and timestamps.
   cycles a datagram since the preload of the next chunk
   ([plan step 6.2](#measured-plan-step-62-cache-prefetch-of-the-psram-reads-2026-11-11)):
   the copy (1 100-1 400), the headers and the checksum (1 200), the descriptor and the waits.
-  The detector runs on a bare core 1 beside the wire rate in `Service::BenchVision`
-  ([Co-load](#co-load-the-detector-on-core-1-beside-the-wire-rate-2026-11-11)); the stream
-  service itself still runs on core 0 alone ([the two-core attempt](#the-two-core-attempt)).
+  In the stream, core 1 does the strip path's copies and detection
+  ([Detection on core 1](#detection-on-core-1)); everything else runs on core 0
+  ([the two-core attempt](#the-two-core-attempt)).
   Sending the bytes from PSRAM without the copy failed on TX underflows (step 3).
+- **Detection only on strips**: the modes the strip plan refuses, and every start after a
+  core-1 fault, stream without detection (`DetectState::available` false, or `fault`).
+- **Colour test patterns**: their detection is cut on every frame (counted skipped), so the
+  automatic threshold keeps its last value while one runs
+  ([why](#measured-detection-on-strips-2026-11-21)).
 - Not verified: an encoder timeout (never seen; the path is the same as the driver's errors),
   the encoder's codec and DMA errors on this firmware (only `OutputTooSmall` was provoked),
   quality below 20 on the camera, a scene in daylight (the room was dark for every run).

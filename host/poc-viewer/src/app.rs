@@ -10,26 +10,28 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use eframe::egui::{self, Margin, Sense, Stroke, Ui, vec2};
 use espion_proto::cam::{
-    CameraSettings, Encoding, Format, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, Op, Origin, Readout,
-    TestPattern,
+    AUTO_MIN_AREA, CameraSettings, DetectSettings, Encoding, Format, JPEG_QUALITY_MAX,
+    JPEG_QUALITY_MIN, Op, Origin, Readout, TestPattern,
 };
 use poc_viewer::{
+    blobs::{Markers, TrailPoint, px},
     camera,
     decode::{DecodeStats, Decoder, Picture},
+    echo::Echoes,
     fake::{self, FakeCamera},
-    net::{Client, Command, RETRY_INTERVAL, Stats},
+    net::{BlobFrame, Client, Command, RETRY_INTERVAL, Stats},
     stream::{AUTO_QUALITY_CEILING, StreamEdit},
     timing::{HostFrame, Sensor, Stage, Timing},
 };
 
 use crate::{
-    display::{self, Shown, UploadTiming},
+    display::{self, Mask, Shown, UploadTiming},
     selftest::{Probe, SelfTest, SelfTestConfig},
     ui::{
         diagram::Diagram,
         hz, on_off,
-        picture::{self, View},
-        theme::{self, BODY, FAULT, GAP, MUTED, NEUTRAL, PAD, TEXT, hue},
+        picture::{self, Content, Overlay, View},
+        theme::{self, BODY, FAULT, GAP, MARKER, MUTED, NEUTRAL, PAD, TEXT, hue},
         widgets::{
             self, Choice, History, Scale, Tone, button, caption, chip, figure, notice, number, row,
             section, segmented, slider, stat, stat_toned, switch,
@@ -82,6 +84,10 @@ struct Meter {
     rx_history: History,
     shown_history: History,
     mbps_history: History,
+    blob_frames: u64,
+    /// Blob frames received per second: frames the board detected.
+    detected_fps: f64,
+    detected_history: History,
 }
 
 impl Meter {
@@ -107,6 +113,9 @@ impl Meter {
             rx_history: History::default(),
             shown_history: History::default(),
             mbps_history: History::default(),
+            blob_frames: 0,
+            detected_fps: 0.0,
+            detected_history: History::default(),
         }
     }
 
@@ -140,6 +149,9 @@ impl Meter {
         self.rx_history.push(self.rx_fps as f32);
         self.shown_history.push(self.shown_fps as f32);
         self.mbps_history.push(self.mbps as f32);
+        self.detected_fps = (s.blob_frames - self.blob_frames) as f64 / dt;
+        self.detected_history.push(self.detected_fps as f32);
+        self.blob_frames = s.blob_frames;
         (self.at, self.whole, self.bytes, self.presented) =
             (now, s.frames_whole, s.bytes, presented);
         (self.jpeg_whole, self.jpeg_bytes) = (s.jpeg_whole, s.jpeg_bytes);
@@ -196,6 +208,34 @@ pub struct App {
     expanded: bool,
     /// The counters drawer is open.
     drawer: bool,
+    /// The detection settings being edited.
+    detect: DetectSettings,
+    /// The detection settings sent and not yet shown by the board: their echoes are not
+    /// changes to take, while a change of the board's own (a mode change to the other format
+    /// scales the threshold) is.
+    detect_echoes: Echoes<DetectSettings>,
+    /// The board's blobs of the last seconds.
+    markers: Markers,
+    blob_buf: Vec<BlobFrame>,
+    trail: Vec<TrailPoint>,
+    show_centroids: bool,
+    show_trail: bool,
+    show_mask: bool,
+    /// Trail length and statistics window, seconds.
+    trail_s: f64,
+    stats_s: f64,
+}
+
+/// Display choices at start.
+const TRAIL_S: f64 = 2.0;
+const STATS_S: f64 = 5.0;
+
+/// Said in the rail and the Markers panel when the board's mode has no detection.
+const UNAVAILABLE: &str = "Not available in this mode: the board detects on strips of rows.";
+
+/// The board detects in its mode (`DetectState::available`); true until it says.
+fn detection_available(s: &Stats) -> bool {
+    s.state.is_none_or(|st| st.detect.available)
 }
 
 impl App {
@@ -270,6 +310,16 @@ impl App {
             latency_history: History::default(),
             expanded: false,
             drawer: false,
+            detect: DetectSettings::DEFAULT,
+            detect_echoes: Echoes::default(),
+            markers: Markers::default(),
+            blob_buf: Vec::new(),
+            trail: Vec::new(),
+            show_centroids: true,
+            show_trail: true,
+            show_mask: false,
+            trail_s: TRAIL_S,
+            stats_s: STATS_S,
         })
     }
 
@@ -294,6 +344,24 @@ impl App {
                 encoding: Encoding::Raw8,
                 ..self.stream
             },
+        }
+    }
+
+    /// Takes the blob frames that arrived since the last pass, drops those older than the
+    /// trail and the statistics window need, and makes the trail.
+    fn take_blobs(&mut self) {
+        let mut buf = std::mem::take(&mut self.blob_buf);
+        self.client.blob_frames_since(self.markers.seq(), &mut buf);
+        for f in buf.drain(..) {
+            self.markers.push(f);
+        }
+        self.blob_buf = buf;
+        self.markers
+            .prune((self.trail_s.max(self.stats_s) * 1e6) as u64);
+        self.trail.clear();
+        if self.show_trail {
+            self.trail
+                .extend(self.markers.trail((self.trail_s * 1e6) as u64));
         }
     }
 
@@ -392,6 +460,18 @@ impl App {
                 &m.mbps_history,
                 stage(Stage::Send),
             );
+            figure(
+                ui,
+                "Detected",
+                &if detection_available(s) {
+                    format!("{:.1}", m.detected_fps)
+                } else {
+                    "–".to_owned()
+                },
+                "fps",
+                &m.detected_history,
+                MARKER,
+            );
             let latency = self
                 .diagram
                 .snapshot()
@@ -418,8 +498,8 @@ impl App {
                     )
                     .on_hover_text(
                         "Frames dropped for a missing chunk and decode failures since the viewer \
-                         started; the board's capture and encoder errors since it booted. The \
-                         counters drawer has each.",
+                         started; the board's capture and encoder errors since it booted, and a \
+                         detector stopped by a fault. The counters drawer has each.",
                     );
                 }
                 if s.pending {
@@ -440,6 +520,7 @@ impl App {
             let what = match r.op {
                 Op::SetCamera(_) => "camera settings",
                 Op::SetStream(_) => "stream settings",
+                Op::SetDetect(_) => "detection settings",
                 Op::GetState | Op::Poll => "request",
             };
             notice(
@@ -456,7 +537,99 @@ impl App {
         self.mode_section(ui, s);
         self.controls_section(ui, s);
         self.stream_section(ui, s);
+        self.markers_section(ui, s);
         self.display_section(ui);
+    }
+
+    fn markers_section(&mut self, ui: &mut Ui, s: &Stats) {
+        let h = MARKER;
+        let format = s.state.map_or(self.edit.format, |st| st.camera.format);
+        let in_use = s.state.map(|st| st.detect);
+        let available = detection_available(s);
+        section(ui, "Markers", h, |ui| {
+            caption(
+                ui,
+                "Found on the board in every frame it can take, sent with frames on or off. \
+                 Applied at once.",
+            );
+            if !available {
+                // The settings stay editable: the board keeps them for the next mode.
+                caption(ui, UNAVAILABLE);
+            }
+            let d = &mut self.detect;
+            let mut changed = switch(ui, "Detect markers", h, &mut d.enabled).changed();
+            changed |= switch(ui, "Automatic threshold", h, &mut d.auto_threshold)
+                .on_hover_text(
+                    "The board takes each frame's threshold from the one before: half the \
+                     brightest marker's peak, never below the background's noise floor \
+                     (median + 6 sigma, at least 8 levels). The threshold set on the slider \
+                     applies with this off.",
+                )
+                .changed();
+            let max = DetectSettings::threshold_max(format);
+            let scale = Scale {
+                range: 1.0..=f64::from(max),
+                step: 1.0,
+                logarithmic: false,
+            };
+            if d.auto_threshold {
+                let t = in_use.map_or(d.threshold, |st| st.threshold);
+                let mut v = f64::from(t);
+                ui.add_enabled_ui(false, |ui| {
+                    slider(
+                        ui,
+                        "Threshold",
+                        h,
+                        &mut v,
+                        &scale,
+                        &format!("{t} (board, automatic)"),
+                    );
+                });
+            } else {
+                let mut v = f64::from(d.threshold.clamp(1, max));
+                let shown = format!("{} of {max}", d.threshold);
+                if slider(ui, "Threshold", h, &mut v, &scale, &shown) {
+                    d.threshold = v as u16;
+                    changed = true;
+                }
+            }
+            changed |= switch(ui, "Automatic area filter", h, &mut d.auto_area)
+                .on_hover_text(format!(
+                    "Keeps the blobs of at least {AUTO_MIN_AREA} pixels: a lone hot pixel is \
+                     dropped. The bounds set below apply with this off."
+                ))
+                .changed();
+            let (mut lo, mut hi) = if d.auto_area {
+                (AUTO_MIN_AREA, u16::MAX)
+            } else {
+                (d.min_area, d.max_area)
+            };
+            ui.add_enabled_ui(!d.auto_area, |ui| {
+                row(ui, "Min area", |ui| {
+                    let w = ui.available_width();
+                    changed |= number(ui, "Min area", &mut lo, 1..=u16::MAX, 1.0, 0, w);
+                });
+                row(ui, "Max area", |ui| {
+                    let w = ui.available_width();
+                    changed |= number(ui, "Max area", &mut hi, 1..=u16::MAX, 1.0, 0, w);
+                });
+            });
+            if !d.auto_area {
+                (d.min_area, d.max_area) = (lo, hi);
+            }
+            caption(
+                ui,
+                "Area in pixels at or above the threshold, both bounds kept.",
+            );
+            let verdict = d.check(format);
+            if let Err(e) = verdict {
+                notice(ui, Tone::Fault, &format!("Refused here: {e}"));
+            }
+            if changed && verdict.is_ok() {
+                self.detect_echoes.sent(*d);
+                self.client.send(Command::SetDetect(*d));
+            }
+        });
     }
 
     fn mode_section(&mut self, ui: &mut Ui, s: &Stats) {
@@ -644,49 +817,59 @@ impl App {
         section(ui, "Exposure and gain", h, |ui| {
             caption(ui, "Applied at once, without restarting the stream.");
             let e = &mut self.edit;
-            let mut changed = false;
-            let mut lines = f64::from(e.exposure_lines);
-            let shown = match line_ns {
-                Some(ns) => format!(
-                    "{:.3} ms  {} lines",
-                    lines * f64::from(ns) / 1e6,
-                    e.exposure_lines
-                ),
-                None => format!("{} lines", e.exposure_lines),
-            };
-            if slider(
-                ui,
-                "Exposure",
-                h,
-                &mut lines,
-                &Scale {
-                    range: 1.0..=f64::from(max),
-                    step: 1.0,
-                    logarithmic: max > 400,
-                },
-                &shown,
-            ) {
-                e.exposure_lines = lines as u16;
-                changed = true;
-            }
-            let mut gain = f64::from(e.gain_sixteenths);
-            let shown = format!("{:.2}x", gain / 16.0);
-            if slider(
-                ui,
-                "Gain",
-                h,
-                &mut gain,
-                &Scale {
-                    range: f64::from(ov9281::limits::GAIN_MIN)
-                        ..=f64::from(ov9281::limits::GAIN_MAX),
-                    step: 1.0,
-                    logarithmic: false,
-                },
-                &shown,
-            ) {
-                e.gain_sixteenths = gain as u8;
-                changed = true;
-            }
+            let mut changed = switch(ui, "Automatic exposure", h, &mut e.auto_exposure)
+                .on_hover_text(
+                    "The board sets exposure and gain to keep the brightest marker's peak \
+                     between 200 and 240: the exposure first, up to 0.5 ms, then the gain. The \
+                     sliders show the values in use and set them with this off.",
+                )
+                .changed();
+            let auto = e.auto_exposure;
+            let suffix = if auto { " (board)" } else { "" };
+            ui.add_enabled_ui(!auto, |ui| {
+                let mut lines = f64::from(e.exposure_lines);
+                let shown = match line_ns {
+                    Some(ns) => format!(
+                        "{:.3} ms  {} lines{suffix}",
+                        lines * f64::from(ns) / 1e6,
+                        e.exposure_lines
+                    ),
+                    None => format!("{} lines{suffix}", e.exposure_lines),
+                };
+                if slider(
+                    ui,
+                    "Exposure",
+                    h,
+                    &mut lines,
+                    &Scale {
+                        range: 1.0..=f64::from(max),
+                        step: 1.0,
+                        logarithmic: max > 400,
+                    },
+                    &shown,
+                ) {
+                    e.exposure_lines = lines as u16;
+                    changed = true;
+                }
+                let mut gain = f64::from(e.gain_sixteenths);
+                let shown = format!("{:.2}x{suffix}", gain / 16.0);
+                if slider(
+                    ui,
+                    "Gain",
+                    h,
+                    &mut gain,
+                    &Scale {
+                        range: f64::from(ov9281::limits::GAIN_MIN)
+                            ..=f64::from(ov9281::limits::GAIN_MAX),
+                        step: 1.0,
+                        logarithmic: false,
+                    },
+                    &shown,
+                ) {
+                    e.gain_sixteenths = gain as u8;
+                    changed = true;
+                }
+            });
             ui.label(egui::RichText::new("Test pattern").color(MUTED));
             changed |= segmented(
                 ui,
@@ -710,6 +893,7 @@ impl App {
                     exposure_lines: self.edit.exposure_lines,
                     gain_sixteenths: self.edit.gain_sixteenths,
                     test_pattern: self.edit.test_pattern,
+                    auto_exposure: self.edit.auto_exposure,
                     ..base
                 }));
             }
@@ -860,6 +1044,151 @@ impl App {
                 "Brightness on screen only. Over the picture: the wheel zooms, dragging moves, \
                  a double click fits.",
             );
+            let m = MARKER;
+            switch(ui, "Show centroids", m, &mut self.show_centroids)
+                .on_hover_text("A cross at each blob's centre, a circle of twice its width.");
+            switch(ui, "Show trail", m, &mut self.show_trail)
+                .on_hover_text("The centres of the last seconds, fading with age.");
+            switch(ui, "Threshold mask", m, &mut self.show_mask).on_hover_text(
+                "Tints the pixels at or above the threshold the frame shown was detected with. \
+                 On a JPEG frame the decoded values, so about them.",
+            );
+            let seconds = |range| Scale {
+                range,
+                step: 0.0,
+                logarithmic: true,
+            };
+            let shown = format!("{:.1} s", self.trail_s);
+            slider(
+                ui,
+                "Trail length (s)",
+                m,
+                &mut self.trail_s,
+                &seconds(0.2..=30.0),
+                &shown,
+            );
+            let shown = format!("{:.1} s", self.stats_s);
+            slider(
+                ui,
+                "Statistics window (s)",
+                m,
+                &mut self.stats_s,
+                &seconds(0.5..=60.0),
+                &shown,
+            );
+        });
+    }
+
+    // ── Markers ─────────────────────────────────────────────────────────────────────────────
+
+    /// The panel under the picture: the single-marker statistics of the window, and the blobs
+    /// of the newest detected frame.
+    fn markers_panel(&self, ui: &mut Ui, s: &Stats) {
+        let window_us = (self.stats_s * 1e6) as u64;
+        let st = self.markers.stats(window_us);
+        let newest = self.markers.newest();
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Markers")
+                    .font(theme::strong(BODY))
+                    .color(TEXT),
+            );
+            let what = match (s.state.map(|st| st.detect.settings.enabled), newest) {
+                _ if !detection_available(s) => UNAVAILABLE.to_owned(),
+                (Some(false), _) => "Detection is off.".to_owned(),
+                (_, None) => "No blobs from the board yet.".to_owned(),
+                (_, Some(b)) => format!(
+                    "Frame #{}: {} blobs, threshold {}{}, detected in {} µs.",
+                    b.frame,
+                    b.blobs.len(),
+                    b.threshold,
+                    if b.flags & espion_proto::cam::FrameBlobs::AUTO_THRESHOLD != 0 {
+                        " (automatic)"
+                    } else {
+                        ""
+                    },
+                    b.detect_us
+                ),
+            };
+            caption(ui, &what);
+        });
+        if !detection_available(s) {
+            return;
+        }
+        ui.columns(2, |cols| {
+            let ui = &mut cols[0];
+            stat(
+                ui,
+                "One marker",
+                &if st.single > 0 {
+                    format!("x {:.3}  y {:.3} px", st.mean_x, st.mean_y)
+                } else {
+                    "-".to_owned()
+                },
+            );
+            stat(
+                ui,
+                "Spread (sigma x, y)",
+                &if st.single > 1 {
+                    format!("{:.4}  {:.4} px", st.sigma_x, st.sigma_y)
+                } else {
+                    "-".to_owned()
+                },
+            );
+            stat(
+                ui,
+                "Peak, area, width, flux",
+                &if st.single > 0 {
+                    format!(
+                        "{:.0}, {:.1} px, {:.2} px, {:.0}",
+                        st.mean_peak, st.mean_area, st.mean_width, st.mean_flux
+                    )
+                } else {
+                    "-".to_owned()
+                },
+            );
+            stat(
+                ui,
+                "Detection rate",
+                &format!(
+                    "{:.1} % of {} frames ({} with one blob) in {:.1} s",
+                    st.detection_rate() * 100.0,
+                    st.frames,
+                    st.single,
+                    self.stats_s
+                ),
+            );
+            let ui = &mut cols[1];
+            let Some(b) = newest else {
+                caption(ui, "Blob table: none yet.");
+                return;
+            };
+            caption(
+                ui,
+                "Newest frame: x, y (px), width (px), flux, area (px), peak",
+            );
+            const ROWS: usize = 6;
+            for (i, o) in b.blobs.iter().take(ROWS).enumerate() {
+                stat(
+                    ui,
+                    &format!("Blob {}", i + 1),
+                    &format!(
+                        "{:9.3} {:8.3}  {:5.2}  {:7}  {:5}  {:3}",
+                        px(o.x),
+                        px(o.y),
+                        px(u32::from(o.width)),
+                        o.flux,
+                        o.area,
+                        o.peak
+                    ),
+                );
+            }
+            if b.blobs.len() > ROWS {
+                caption(ui, &format!("and {} more", b.blobs.len() - ROWS));
+            }
+            if b.overflow() {
+                stat_toned(ui, "Blobs lost", "more than the board holds or sends", true);
+            }
         });
     }
 
@@ -911,15 +1240,65 @@ impl App {
     // ── Picture ─────────────────────────────────────────────────────────────────────────────
 
     fn picture(&mut self, ui: &mut Ui, s: &Stats, now: Instant) {
-        match self.shown.clone() {
-            Some(shown) => {
-                picture::show(ui, &mut self.view, &shown, self.display_gain, &self.timing)
-            }
-            None => picture::empty(
+        let frames_off = s.state.filter(|st| !st.stream.enabled);
+        let trail: &[TrailPoint] = if self.show_trail { &self.trail } else { &[] };
+        // Without detection in this mode nothing new is drawn; the trail fades out.
+        let available = detection_available(s);
+        let centroids = self.show_centroids && available;
+        if let Some(st) = frames_off {
+            // No frames: the blobs on a canvas of the sensor's output size.
+            let overlay = Overlay {
+                blobs: self.markers.newest().filter(|_| centroids),
+                trail,
+                colour: MARKER.line,
+            };
+            let content = Content::Canvas {
+                width: st.camera.width,
+                height: st.camera.height,
+            };
+            picture::show(
+                ui,
+                &mut self.view,
+                &content,
+                self.display_gain,
+                &overlay,
+                &self.timing,
+            );
+        } else if let Some(shown) = self.shown.clone() {
+            let f = &shown.frame;
+            let blobs = self.markers.of_frame(f.generation, f.number);
+            let mask = (self.show_mask && available)
+                .then(|| blobs.or(self.markers.newest()))
+                .flatten()
+                .map(|b| Mask {
+                    // The texture is RAW10 only for a RAW10 frame; RAW8 from a RAW10 sensor
+                    // compares its 8 high bits.
+                    threshold: if b.format == Format::Raw10 && f.encoding != Encoding::Raw10 {
+                        b.threshold.div_ceil(4)
+                    } else {
+                        b.threshold
+                    },
+                    tint: MARKER.line,
+                });
+            let overlay = Overlay {
+                blobs: blobs.filter(|_| centroids),
+                trail,
+                colour: MARKER.line,
+            };
+            picture::show(
+                ui,
+                &mut self.view,
+                &Content::Frame(&shown, mask),
+                self.display_gain,
+                &overlay,
+                &self.timing,
+            );
+        } else {
+            picture::empty(
                 ui,
                 "Waiting for frames",
                 &format!("From {}", self.client.camera()),
-            ),
+            );
         }
         if !s.connected(now) {
             let area = ui.max_rect();
@@ -1146,6 +1525,76 @@ impl App {
             );
             stat(ui, "UI frame time", &format!("{:.2} ms", m.cpu_ms));
         });
+        section(ui, "Detector", MARKER, |ui| {
+            let Some(dt) = st.map(|st| st.detect) else {
+                caption(ui, "No state from the board yet.");
+                return;
+            };
+            let units = st.map_or("", |st| match st.camera.format {
+                Format::Raw8 => "8-bit",
+                Format::Raw10 => "10-bit",
+            });
+            stat(
+                ui,
+                "Detection",
+                &format!(
+                    "{}, threshold {}, area {}",
+                    on_off(dt.settings.enabled),
+                    if dt.settings.auto_threshold {
+                        "automatic"
+                    } else {
+                        "manual"
+                    },
+                    if dt.settings.auto_area {
+                        "automatic"
+                    } else {
+                        "manual"
+                    }
+                ),
+            );
+            stat(ui, "Frames detected", &dt.frames_detected.to_string());
+            stat(
+                ui,
+                "Skipped by detector (busy)",
+                &dt.frames_skipped.to_string(),
+            );
+            stat(
+                ui,
+                "Detect time mean / max",
+                &format!(
+                    "{:.2} ms / {:.2} ms",
+                    f64::from(dt.detect_us_mean) / 1e3,
+                    f64::from(dt.detect_us_max) / 1e3
+                ),
+            );
+            stat(
+                ui,
+                "Threshold in use",
+                &format!("{} ({units})", dt.threshold),
+            );
+            stat(
+                ui,
+                "Background median / sigma",
+                &format!("{} / {} (8-bit)", dt.background_median, dt.background_sigma),
+            );
+            stat(
+                ui,
+                "Blobs dropped (overflow)",
+                &dt.blobs_dropped.to_string(),
+            );
+            stat(ui, "Blobs filtered (area)", &dt.blobs_filtered.to_string());
+            stat_toned(
+                ui,
+                "Detector fault",
+                if dt.fault { "stopped" } else { "none" },
+                dt.fault,
+            );
+            stat(
+                ui,
+                "Blob frames received",
+                &format!("{:.1} fps, {} in all", m.detected_fps, s.blob_frames),
+            );
+        });
         section(ui, "Board", NEUTRAL, |ui| {
             stat(
                 ui,
@@ -1177,10 +1626,12 @@ impl App {
 }
 
 /// Faults since start: frames dropped for a missing chunk, capture and encoder errors, decode
-/// failures.
+/// failures, a detector stopped by a fault.
 fn faults(s: &Stats, d: &DecodeStats) -> u64 {
     let board = s.state.map_or(0, |st| {
-        u64::from(st.counters.capture_errors) + u64::from(st.encoder.errors)
+        u64::from(st.counters.capture_errors)
+            + u64::from(st.encoder.errors)
+            + u64::from(st.detect.fault)
     });
     s.frames_incomplete + board + d.failures
 }
@@ -1246,8 +1697,23 @@ impl eframe::App for App {
             self.centred = st.camera.origin.is_none();
             self.origin = st.camera.origin.unwrap_or(Origin { x: 0, y: 0 });
             self.stream.adopt(st.stream);
+            self.detect = st.detect.settings;
+            self.detect_echoes.adopted(st.detect.settings);
             self.adopt = false;
         }
+        if let Some(st) = stats.state {
+            // The board changed its detection settings itself: the editor follows.
+            if let Some(d) = self.detect_echoes.board(st.detect.settings) {
+                self.detect = d;
+            }
+            // With automatic exposure the sliders show the values in use, and set them
+            // from there when it is turned off.
+            if st.camera.auto_exposure && self.edit.auto_exposure {
+                self.edit.exposure_lines = st.camera.exposure_lines;
+                self.edit.gain_sixteenths = st.camera.gain_sixteenths;
+            }
+        }
+        self.take_blobs();
         self.meter.update(now, &stats, &dstats, self.presented);
         self.time_pipeline(ui.ctx(), now, &stats);
 
@@ -1305,6 +1771,20 @@ impl eframe::App for App {
                 bottom: 12,
             }))
             .show(ui, |ui| self.timing_strip(ui));
+        egui::Panel::bottom("markers")
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BG)
+                    .stroke(Stroke::new(1.0, theme::LINE))
+                    .inner_margin(Margin {
+                        left: PAD as i8 + 4,
+                        right: PAD as i8 + 4,
+                        top: 10,
+                        bottom: 8,
+                    }),
+            )
+            .show(ui, |ui| self.markers_panel(ui, &stats));
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::WELL))
             .show(ui, |ui| self.picture(ui, &stats, now));
@@ -1322,6 +1802,8 @@ impl eframe::App for App {
                     cpu: &mut self.cpu,
                     shown: self.shown.as_deref(),
                     pipeline: self.pipeline.snapshot(),
+                    markers: self.markers.stats((self.stats_s * 1e6) as u64),
+                    stats_s: self.stats_s,
                 },
             );
         }

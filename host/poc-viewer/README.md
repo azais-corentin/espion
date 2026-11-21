@@ -1,27 +1,35 @@
 # poc-viewer
 
 Live view and control of the OV9281 camera of the ESP32-P4-ETH proof of concept, over the
-camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 4). The
+camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 5). The
 board runs `firmware/poc-p4-stream` with its `Stream` service; the viewer shows its frames as
 they arrive and sends every camera setting the `ov9281` driver knows (format, size, crop or 2x2
-binning, origin, frame rate and tolerance, exposure, gain, test pattern) and the stream settings
-(on or off, JPEG, RAW8 or RAW10 on the wire, the JPEG quality and automatic quality, a
-frame-rate limit). Not part of the product.
+binning, origin, frame rate and tolerance, exposure or automatic exposure, gain, test pattern),
+the stream settings (on or off, JPEG, RAW8 or RAW10 on the wire, the JPEG quality and automatic
+quality, a frame-rate limit) and the marker detection settings (on or off, the threshold, the
+area filter). It draws the markers the board finds (IR spots) over the picture, with their
+trails and their statistics. Not part of the product.
 
 - `src/net.rs`: the network thread: one request in flight, repeated every 200 ms until answered,
   a poll every 250 ms (which keeps the board's stream alive), chunk reassembly into the newest
-  complete frame, statistics.
+  complete frame, the last 1024 blob frames, statistics.
+- `src/blobs.rs`: the markers as the window shows them: the blob frames of the last seconds,
+  the statistics of one marker (mean, spread, detection rate) and the trails.
 - `src/camera.rs`: the board's checks of a `SetCamera`, run here as the user edits, so the
   window shows the driver's verdict (and the HTS, VTS, clock and longest exposure it chose)
   before anything is sent. The board's answer stays authoritative.
 - `src/stream.rs`: the stream settings as the window edits them: the JPEG quality set by hand,
   kept apart from the ceiling sent with automatic quality.
+- `src/echo.rs`: the detection settings sent and not yet shown by the board, so the board's
+  answer to an older request does not undo a newer edit while a change the board makes itself
+  (the threshold scaled by a mode change to the other format) reaches the editor.
 - `src/jpeg.rs`: JPEG frames: the header check (one baseline, 8-bit, greyscale file of the
   frame's size, SOI to EOI) and decoding to RAW8 with `zune-jpeg`.
 - `src/decode.rs`: the decoding stage between the network thread and the window, on its own
   thread: it decodes only what can be shown (below).
 - `src/fake.rs`: a fake camera speaking the whole protocol, with synthetic frames, JPEG
-  included; the reference behaviour of the firmware, and what the end-to-end tests run against.
+  included, and marker detection; the reference behaviour of the firmware, and what the
+  end-to-end tests run against.
 - `src/timing.rs`: where a frame's time goes from the start of its exposure to the GPU (below,
   "Pipeline timing").
 - `src/main.rs`, `src/app.rs`, `src/display.rs`, `src/ui/`: the window. `src/ui/` holds its
@@ -47,7 +55,8 @@ come back as replies. The viewer adopts the board's settings at its first answer
 after the link was lost or the board restarted. Settings can also be sent at start, for example
 `--size 640x400 --binned --rate 250`, `--format raw10 --encoding raw10` or `--encoding jpeg
 --quality 75 --auto-quality false` (`--help` lists them; `--quality` applies with automatic
-quality off).
+quality off). Automatic exposure is on unless `--exposure` or `--gain` is given;
+`--auto-exposure false` turns it off.
 
 Against the fake camera (on loopback, no board):
 
@@ -70,6 +79,38 @@ there counts (`encoder.frames_skipped`, `frames_skipped`). Automatic quality tak
 `espion_proto::cam::auto_quality` every 200 ms with the link's busy share of the period, so
 with `--fake-mbps` it settles where the frames fit. What the firmware must match is in
 `docs/protocol.md`; the fake is the reference for it.
+
+With the test pattern off it shows a **markers scene**: a dark background (level 40 of 1023
+with noise of 4, the same for every frame number but shifted row by row), the frame number in
+dark digits (level 0, so it never makes a blob), and three Gaussian spots (sigma 1.5 px, peak
+brightness 1.0, 0.85 and 0.7 of the brightest) that move along Lissajous paths, each in its
+third of the picture, by more than half a pixel per frame. Their brightness grows with exposure
+times gain, so automatic exposure has something to settle on. The true centres are known
+(`fake::marker_centres`), which is what the accuracy test checks the blobs against. The test
+patterns keep their white bar and white frame number.
+
+Detection runs as on the board: a detector thread takes each captured frame while it is free;
+a frame captured while it is busy is not detected and counts in `detect.frames_skipped`. It runs
+whether or not frames are sent. It works in two steps: the threshold **finds** the blobs
+(`espion-vision`'s detector, RAW8 or RAW10 at the sensor's depth), then
+`espion_vision::refine` **measures** each one (an iterated Gaussian-weighted centroid with the
+local background, the median of a ring around the
+spot, taken off), giving its centre, width (sigma) and flux. The area filter, the automatic
+threshold (from the frame's background and the highest peak kept) and the overflow count follow
+`docs/protocol.md`; the blob frames go to an active host only, after pending answers. Automatic
+exposure takes one step every 100 ms with the highest peak of the blobs sent in that period.
+
+Measured against the true centres (`blobs_are_at_the_true_centres_of_their_frame`, 1280x800,
+120 blobs per stream):
+
+| Stream | Largest error | Mean signed error x / y |
+|---|---|---|
+| RAW8 | 0.024 px | +0.0002 / −0.0009 px |
+| RAW10 | 0.027 px | −0.0000 / −0.0006 px |
+| JPEG | as RAW8 (the blobs come from the sensor's frame, not the JPEG) | |
+
+The threshold alone (the centroid of the pixels above it) was off by up to 0.2 px: it cuts the
+spot's skirt unevenly, which pulls the centre towards the pixel grid. Refining removes that.
 
 `jpeg-encoder` is under `(MIT OR Apache-2.0) AND IJG`: a binary that includes the fake camera
 (both of this crate's) is "based in part on the work of the Independent JPEG Group".
@@ -105,17 +146,20 @@ the dev shell and is the decoder the header check already uses.
 ## The window
 
 Dark neutral greys around the picture; colour means a pipeline stage (exposure amber, readout
-teal, encode indigo, send rust, decode blue, draw rose), the same in the timing diagrams, on the
-settings that act on that stage and on its counters. Red is for faults and refusals only. Type is
-IBM Plex Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open Font
-License 1.1, `OFL.txt`).
+teal, encode indigo, send rust, decode blue, draw rose, detection lime), the same in the timing
+diagrams, on the settings that act on that stage and on its counters. The markers drawn over
+the picture are detection's lime: a yellow-green no other stage uses and far from the grey
+picture, so a cross shows on any frame. Red is for faults and refusals only. Type is IBM Plex
+Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open Font License
+1.1, `OFL.txt`).
 
 - **Status bar** (top): the link (Connected, or Disconnected after 1.5 s without an answer)
   and the camera's address; frames per second received whole and presented, Mbit/s of UDP
-  payload and the latency from the pipeline timing, each with its last minute as a line; the
-  number of faults when there are any (frames dropped for a missing chunk and decode failures
-  since the viewer started, the board's capture and encoder errors since it booted); "Waiting
-  for an answer" while a request is unanswered;
+  payload, frames per second **Detected** (blob frames received) and the latency from the
+  pipeline timing, each with its last minute as a line; the number of faults when there are any
+  (frames dropped for a missing chunk and decode failures since the viewer started, the
+  board's capture and encoder errors since it booted, a detector fault); "Waiting for an
+  answer" while a request is unanswered;
   **Counters** opens the drawer.
 - **Rail** (left, 340 points, scrolls). At its top, in red, the board's last refusal (`The
   board refused the camera settings: ...`, with its values) until a request of the same kind
@@ -128,19 +172,37 @@ License 1.1, `OFL.txt`).
     the edit differs from the board's mode). Changing the readout keeps the window's place on
     the sensor (binning halves the size, cropping doubles it). When the stream's encoding cannot
     be made of the edited mode the rail says so and Apply moves the stream to RAW8 first.
-  - **Exposure and gain** (applied at once): exposure (in ms and lines, up to the mode's
-    longest), gain, test pattern. The board changes them without restarting the stream.
+  - **Exposure and gain** (applied at once): **Automatic exposure**, exposure (in ms and lines,
+    up to the mode's longest), gain, test pattern. The board changes them without restarting
+    the stream. With automatic exposure on, the board chooses exposure and gain, the sliders
+    are disabled and show the values it has in use ("board").
   - **Stream** (applied at once): **Send frames**; the encoding (**JPEG**, **RAW8**, **RAW10
     packed**; one the board's mode cannot make is disabled and says why); **Automatic JPEG
     quality**; **JPEG quality**; frames per second at most. With automatic quality on, the
     board chooses the quality, up to 90 (sent as the ceiling), and the slider shows the quality
     it has in use. With it off, the slider sets the quality; the viewer keeps that value while
     automatic quality is on and sends it again when it is turned off.
+  - **Markers** (applied at once): **Detect markers**; **Automatic threshold** and
+    **Threshold** (disabled while automatic, then showing the board's threshold in use, at the
+    sensor's depth); **Automatic area filter**, **Min area** and **Max area** (pixels at or
+    above the threshold, both bounds kept; automatic keeps from 2 up). A value the board would
+    refuse is said in the rail before it is sent. In a mode the board streams as whole frames
+    only, it does not detect: the rail, the Markers panel and the Detected figure say so, the
+    settings stay editable and are kept for the next mode.
   - **Display**: **Fit**, **1:1** or the zoom, and the display gain (brightness on screen
-    only).
+    only); **Show centroids** (a cross at each blob's centre, a circle of twice its width, its
+    number), **Show trail** (each marker's centres over **Trail length**, fading), **Threshold
+    mask** (the pixels at or above the threshold in use, tinted lime) and the **Statistics
+    window** of the Markers panel.
 - **Picture**: fitted, or zoomed with the wheel about the pointer and moved by dragging; a
   double click fits it again. The pixel under the pointer is shown (x, y and its value at the
-  frame's depth).
+  frame's depth). With frames off, an empty canvas of the mode's size with the markers on it
+  ("Frames off: the board's blobs only"). Each marker drawn is also an accessible label
+  (`Marker N: x .. y ..`).
+- **Markers** (under the picture): the newest blob frame (number, blobs, threshold, detect
+  time, overflow), each of its blobs (x, y, width, flux, area, peak), and, when the window
+  holds frames with exactly one blob, that marker's statistics over the statistics window:
+  mean position, spread (sigma x, y), peak, area, width, flux and the detection rate.
 - **Pipeline timing** (under the picture): the ribbon, always; **Expand timing** adds the
   staircase (next section).
 - **Counters** (drawer, right): everything the board and the viewer count, by stage. Sensor:
@@ -150,7 +212,9 @@ License 1.1, `OFL.txt`).
   size and ratio, frames sent and skipped by the board, datagrams, frames dropped for a missing
   chunk or cut by a mode change, the request round trip, the addresses and the receive buffer.
   Decode: frames per second, time, failures. Display: presented, replaced before shown, the
-  frame shown, the UI frame time. Board: generation, uptime, stream.
+  frame shown, the UI frame time. Board: generation, uptime, stream. Detector: the settings,
+  frames detected and skipped (busy), detect time mean and max, the threshold in use and the
+  background (median, sigma).
 
 Every control has its own accessible name (an option of a choice is `name: option`, e.g.
 `Readout: 2x2 binned`), so the `egui` MCP tools find it.
@@ -165,7 +229,7 @@ typical frame of the last 2 s, redrawn once a second (a new figure glides into p
 |---|---|
 | Exposure | Computed: exposure lines x line time, right before the readout |
 | Readout | Computed: output lines x line time, ending at the frame's capture time |
-| Encode (JPEG) | The board (`State::timing`, protocol version 4) |
+| Encode (JPEG) | The board (`State::timing`, protocol version 4 and later) |
 | Send | From the board taking the frame to its last chunk arriving here |
 | Decode (JPEG) | Here, every frame presented |
 | Draw | Here: the pass that took the picture, to the end of its texture upload |
@@ -248,7 +312,9 @@ frames between two refreshes are replaced without being decoded.
 prints the statistics (received and presented frames per second, Mbit/s, dropped and replaced
 frames, UI frame time mean / p50 / p99 / max, texture upload time, JPEG frames and their mean
 size, decoded frames per second and the decode time, the board's counters and encoder over
-the window, round trip, the pipeline timing's last snapshot), saves a screenshot
+the window, the detector (settings, frames detected and skipped, detect time, blob frames
+received per second) and the one marker's statistics, round trip, the pipeline timing's last
+snapshot), saves a screenshot
 (`--screenshot PATH`, default `/tmp/poc-p4-eth/viewer/selftest.png`) and exits. `--no-vsync`
 presents without vsync.
 
@@ -265,9 +331,15 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   refusals; switching encodings; loss with variable-length frames; chunks that disagree with
   their frame; a board that restarts its frame numbers; only the frames taken are decoded; a
   frame that does not decode; the state's timing of the last frame sent and its join with the
-  frame's arrival), the checks, the JPEG header check, the address parsing and the pipeline
-  timing (unit tests: the steps chained in order, the clock offset from the fastest datagram,
-  raw streams, the window and the interval, the axis). No board needed.
+  frame's arrival; the markers: blobs within 0.1 px of the true centres with a mean error under
+  0.02 px per axis, detection and automatic exposure on at start, blobs with frames off and
+  none with detection off, a manual threshold and area filter applied and echoed, the
+  automatic threshold following its rule, automatic exposure bringing the brightest peak into
+  its band, and the detection refusals), the checks, the JPEG header check, the address
+  parsing, the markers scene, the marker statistics and the pipeline timing (unit tests: the
+  steps chained in order, the clock offset from the fastest datagram, raw streams, the window
+  and the interval, the axis). No board needed. The throughput tests (link limit, automatic
+  quality, missing chunks, decoding only the frames taken) need a quiet machine.
 - `tests/board.rs`, against the real board, ignored by default. With the board on `eth0`
   running `poc-p4-stream` (`POC_CAMERA` overrides the address):
 
@@ -279,7 +351,7 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
 
   `settings` has the sections `sizes`, `rates`, `refusals`, `brightness`, `patterns`, `raw10`,
   `stream`, `jpeg`, `quality`, `auto`, `jpeg_refusals`, `switching`, `agreement`, `rtt`,
-  `faults`, `garbage` and `timeout`: it applies each setting, checks the answer
+  `faults`, `garbage`, `timeout` and `markers`: it applies each setting, checks the answer
   against the `ov9281` driver run here (the state, or the refusal with its values), and for each
   accepted mode the frames: right size and layout, whole, numbers increasing, the rate at the
   host against the sensor rate and the link rate for that frame size, no capture error on the
@@ -288,6 +360,12 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   lowers and raises the quality, the refusals carry their values, and a JPEG frame agrees with
   a raw frame of the same scene (`POC_ONLY=jpeg,quality,auto,jpeg_refusals,switching,agreement`
   runs only those). It prints one line per step and fails at the end with every failed check.
+  `markers` (`POC_ONLY=markers`) needs one IR source in the camera's view: everything
+  automatic settles within 5 s, then every frame has exactly one blob and the brightest peak is
+  in the automatic exposure's band; a manual threshold and area filter are applied; detection
+  off sends nothing; with frames off the blobs come at the sensor rate less the skipped frames;
+  per mode the coverage (frames detected / captured) and the detect time; and it prints the
+  source's jitter (sigma x, y) over 10 s.
   `soak`
   streams for `POC_SOAK_SECS` with a mode change every 20 s, dropping and restarting the client
   and sending malformed datagrams in between. Both use the board's test hooks on UDP 5010

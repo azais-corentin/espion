@@ -32,8 +32,9 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CamError, CameraSettings, Encoding, FrameChunk, FrameTiming, MAX_DATAGRAM, Message, Op, Reply,
-    Request, Response, State, StreamSettings, chunk_count,
+    Blob, CamError, CameraSettings, DetectSettings, Encoding, Format, FrameBlobs, FrameChunk,
+    FrameTiming, MAX_DATAGRAM, Message, Op, Reply, Request, Response, State, StreamSettings,
+    chunk_count,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -65,14 +66,18 @@ pub enum Command {
     SetCamera(CameraSettings),
     /// Apply stream settings.
     SetStream(StreamSettings),
+    /// Apply detection settings.
+    SetDetect(DetectSettings),
 }
 
 impl Command {
-    fn op(self) -> Op {
+    /// The request's operation.
+    pub fn op(self) -> Op {
         match self {
             Self::GetState => Op::GetState,
             Self::SetCamera(c) => Op::SetCamera(c),
             Self::SetStream(s) => Op::SetStream(s),
+            Self::SetDetect(d) => Op::SetDetect(d),
         }
     }
 
@@ -117,6 +122,46 @@ pub struct BoardFrame {
     /// When its last chunk arrived here.
     pub completed: Instant,
 }
+
+/// The blobs the board's detector found in one frame ([`FrameBlobs`]), as received.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobFrame {
+    /// Arrival order: [`Stats::blob_frames`] when it arrived (the first is 1).
+    pub seq: u64,
+    /// The board's frame number ([`Frame::number`] of the same frame).
+    pub frame: u32,
+    /// Configuration generation of the frame.
+    pub generation: u32,
+    /// The board's capture time, µs since its boot.
+    pub timestamp_us: u64,
+    /// Sensor format: the units of `threshold`.
+    pub format: Format,
+    /// Frame width in pixels.
+    pub width: u16,
+    /// Frame height in lines.
+    pub height: u16,
+    /// Threshold the frame was detected with.
+    pub threshold: u16,
+    /// The board's detect time, µs.
+    pub detect_us: u32,
+    /// [`FrameBlobs::OVERFLOW`], [`FrameBlobs::AUTO_THRESHOLD`].
+    pub flags: u8,
+    /// The blobs, in the detector's order.
+    pub blobs: Vec<Blob>,
+    /// When it arrived.
+    pub arrived: Instant,
+}
+
+impl BlobFrame {
+    /// The board lost blobs of this frame (more than it holds or sends).
+    pub const fn overflow(&self) -> bool {
+        self.flags & FrameBlobs::OVERFLOW != 0
+    }
+}
+
+/// Blob frames kept for [`Client::blob_frames_since`] and [`Client::blob_frame`]: over a
+/// second at the sensor's fastest rate.
+pub const BLOB_FRAMES_KEPT: usize = 1024;
 
 /// A request the board refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,6 +233,10 @@ pub struct Stats {
     pub refusal: Option<Refusal>,
     /// A request is waiting for its answer.
     pub pending: bool,
+    /// Blob frames received ([`FrameBlobs`]), one per frame the board detected.
+    pub blob_frames: u64,
+    /// Blobs in them.
+    pub blobs: u64,
 }
 
 impl Stats {
@@ -203,6 +252,8 @@ struct Inner {
     stats: Stats,
     latest: Option<Frame>,
     pool: Vec<Vec<u8>>,
+    /// The newest blob frames, oldest first, at most [`BLOB_FRAMES_KEPT`].
+    blob_frames: VecDeque<BlobFrame>,
 }
 
 type Shared = Arc<(Mutex<Inner>, Condvar)>;
@@ -335,6 +386,26 @@ impl Client {
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         }
+    }
+
+    /// Appends to `out` the blob frames kept that arrived after the one numbered `seq`
+    /// ([`BlobFrame::seq`]; 0: all kept), oldest first; returns the number of the newest kept
+    /// (`seq` when none is kept), to pass next time. With `u64::MAX` it appends none: a start
+    /// from now.
+    pub fn blob_frames_since(&self, seq: u64, out: &mut Vec<BlobFrame>) -> u64 {
+        let inner = lock(&self.shared);
+        out.extend(inner.blob_frames.iter().filter(|b| b.seq > seq).cloned());
+        inner.blob_frames.back().map_or(seq, |b| b.seq)
+    }
+
+    /// The blob frame of frame `frame` of `generation`, if it is still kept.
+    pub fn blob_frame(&self, generation: u32, frame: u32) -> Option<BlobFrame> {
+        lock(&self.shared)
+            .blob_frames
+            .iter()
+            .rev()
+            .find(|b| (b.generation, b.frame) == (generation, frame))
+            .cloned()
     }
 
     /// The camera's address.
@@ -505,8 +576,44 @@ impl Worker {
         match Message::decode(d) {
             Ok(Message::Chunk(c)) => self.chunk(&c),
             Ok(Message::Response(r)) => self.response(r),
+            Ok(Message::Blobs(b)) => self.blobs(&b),
             Ok(Message::Request(_)) | Err(_) => self.stats.undecodable += 1,
         }
+    }
+
+    /// A frame's blobs: kept in the ring (the oldest's buffer reused when it is full) for the
+    /// window and the tests; the statistics go with the next publication.
+    fn blobs(&mut self, b: &FrameBlobs<'_>) {
+        self.stats.blob_frames += 1;
+        self.stats.blobs += b.blob_count() as u64;
+        let mut inner = lock(&self.shared);
+        let mut blobs = if inner.blob_frames.len() >= BLOB_FRAMES_KEPT {
+            inner
+                .blob_frames
+                .pop_front()
+                .map(|f| f.blobs)
+                .unwrap_or_default()
+        } else {
+            Vec::with_capacity(b.blob_count())
+        };
+        blobs.clear();
+        blobs.extend(b.blobs());
+        inner.blob_frames.push_back(BlobFrame {
+            seq: self.stats.blob_frames,
+            frame: b.frame,
+            generation: b.generation,
+            timestamp_us: b.timestamp_us,
+            format: b.format,
+            width: b.width,
+            height: b.height,
+            threshold: b.threshold,
+            detect_us: b.detect_us,
+            flags: b.flags,
+            blobs,
+            arrived: Instant::now(),
+        });
+        drop(inner);
+        (self.wake)();
     }
 
     fn response(&mut self, r: Response) {

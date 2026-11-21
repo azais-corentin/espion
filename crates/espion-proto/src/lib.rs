@@ -4,7 +4,7 @@
 //! header (magic, protocol version, message kind) followed by one postcard-encoded body; see
 //! `docs/protocol.md`. Any change to the format bumps [`VERSION`] and updates that document.
 //!
-//! - [`cam`]: the camera stream (kinds `0x20`..=`0x22`), used by the `poc-p4-stream` firmware
+//! - [`cam`]: the camera stream (kinds `0x20`..=`0x23`), used by the `poc-p4-stream` firmware
 //!   and the `poc-viewer` host app.
 //! - The tracking messages (kinds `0x01`, `0x02`, `0x10`, `0x11`) are a draft and not
 //!   implemented yet: [`read_header`] reports them as [`Error::Kind`].
@@ -21,7 +21,7 @@ pub mod cam;
 pub const MAGIC: [u8; 2] = *b"ES";
 
 /// Protocol version. Firmware and host must match exactly.
-pub const VERSION: u8 = 4;
+pub const VERSION: u8 = 5;
 
 /// Length of the raw header: magic (2), version (1), kind (1).
 pub const HEADER_LEN: usize = 4;
@@ -44,6 +44,8 @@ pub mod kind {
     pub const CAM_RESPONSE: u8 = 0x21;
     /// Camera frame chunk, board to host ([`crate::cam::FrameChunk`]).
     pub const FRAME_CHUNK: u8 = 0x22;
+    /// Blobs of one frame, board to host ([`crate::cam::FrameBlobs`]).
+    pub const FRAME_BLOBS: u8 = 0x23;
 }
 
 /// Why a datagram could not be encoded or decoded.
@@ -68,6 +70,9 @@ pub enum Error {
     ChunkLayout,
     /// A frame chunk with more than [`cam::CHUNK_MAX`] bytes of data.
     ChunkTooLong,
+    /// Frame blobs that are not whole blobs or more than [`cam::FRAME_BLOBS_MAX`]
+    /// ([`cam::FrameBlobs`]).
+    BlobsLayout,
 }
 
 impl fmt::Display for Error {
@@ -82,6 +87,7 @@ impl fmt::Display for Error {
             Self::BufferFull => f.write_str("buffer too small for the message"),
             Self::ChunkLayout => f.write_str("frame chunk off the chunk grid of its frame"),
             Self::ChunkTooLong => f.write_str("frame chunk longer than the maximum"),
+            Self::BlobsLayout => f.write_str("frame blobs not whole blobs or too many"),
         }
     }
 }

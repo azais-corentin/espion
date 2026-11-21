@@ -55,6 +55,20 @@
 //! the remaining blocks of the frame are tracked and checked without being delivered, exactly
 //! as in the probation state.
 //!
+//! A consumer that copies the strip (a DMA copy to a frame buffer) can keep its frame across
+//! a lap: it waits for the copy's end, then asks [`StripRef::intact`]. The copy's reads all
+//! came before its end was seen; `intact` then finding `k - 1` not done again means the DMA had
+//! not reached `k` when it looked (same \[INFERENCE\] as above), so every byte the copy read
+//! was the strip's. [`StripRef::release_copied`] then counts a lap found at the release in
+//! [`StripControl::strips_lapped_copied`] only, and the reader goes on delivering the frame:
+//! its later blocks were written after `k`'s and are checked at their own releases. What the
+//! consumer read from the strip itself after the `intact` check is what a lap spoils.
+//!
+//! The age of a strip, for a consumer that must release it in time, counts from
+//! [`StripRef::queued_at_cycles`]: the reader's last look that found the block (or one before
+//! it) unfinished, a lower bound of the block's end. So time the strip lay done before the poll
+//! that took it (the consumer busy elsewhere) counts against its hold.
+//!
 //! A reader more than a ring behind (one that does not poll for a whole ring) still halts the
 //! DMA: it reaches an item the reader has not taken yet, which is still invalid. Core 0 then
 //! counts a stall and, once the reader has taken every finished block (every item valid),
@@ -116,7 +130,7 @@ use crate::{
 const READER_WAIT_CYCLES: u32 = 4_000_000;
 
 /// Words of the reader's published counters (see [`stat_words`]).
-const STAT_WORDS: usize = 13;
+const STAT_WORDS: usize = 14;
 
 /// What the two halves share: atomics only. Each field names its one writer.
 struct Shared {
@@ -188,10 +202,10 @@ fn link_valid(link: usize) -> bool {
     unsafe { ptr::read_volatile(link_word(link, LLI_CTL1)) & CTL1_LLI_VALID != 0 }
 }
 
-/// The reader's counters, in the order of `SHARED.stats`; `lapped` is the reader's own count
-/// of lapped strips (not in [`StripStats`], whose size the firmware crates' stack-frame
-/// limit depends on).
-fn stat_words(st: &StripStats, lapped: u32) -> [u32; STAT_WORDS] {
+/// The reader's counters, in the order of `SHARED.stats`; `lapped` and `lapped_copied` are
+/// the reader's own counts of lapped strips (not in [`StripStats`], whose size the firmware
+/// crates' stack-frame limit depends on).
+fn stat_words(st: &StripStats, lapped: u32, lapped_copied: u32) -> [u32; STAT_WORDS] {
     [
         st.strips_done,
         st.strips_delivered,
@@ -206,6 +220,7 @@ fn stat_words(st: &StripStats, lapped: u32) -> [u32; STAT_WORDS] {
         st.invalidate_cycles_total as u32,
         (st.invalidate_cycles_total >> 32) as u32,
         st.invalidate_cycles_max,
+        lapped_copied,
     ]
 }
 
@@ -419,6 +434,8 @@ impl<'d> CsiStrips<'d> {
             stats,
             stats_reset_seen: SHARED.stats_reset.load(Ordering::Relaxed),
             lapped: 0,
+            lapped_copied: 0,
+            open_at: 0,
         };
         // Still on this core: the reader has not moved yet, so it is the only writer.
         reader.publish_stats();
@@ -488,9 +505,16 @@ impl StripControl<'_> {
     }
 
     /// Strips the reader handed out that the DMA wrote over before their release (the reader
-    /// was lapped), as it last published them. Zeroed with the other counters.
+    /// was lapped) and whose frame was lost with them, as it last published them. Zeroed with
+    /// the other counters.
     pub fn strips_lapped(&self) -> u32 {
         reader_words()[3]
+    }
+
+    /// Strips lapped after their consumer's copy was found intact
+    /// ([`StripRef::release_copied`]): their frame went on. Zeroed with the other counters.
+    pub fn strips_lapped_copied(&self) -> u32 {
+        reader_words()[13]
     }
 
     /// Zeroes the counters; the reader zeroes its own at its next poll.
@@ -538,8 +562,26 @@ pub struct StripReader {
     /// Block and frame counters; the error counters in it stay unused.
     stats: StripStats,
     stats_reset_seen: u32,
-    /// Strips found lapped at their release.
+    /// Strips found lapped at their release: their frame lost, or (`lapped_copied`) kept by
+    /// [`StripRef::release_copied`].
     lapped: u32,
+    lapped_copied: u32,
+    /// `mcycle` of the last look that found the next block unfinished (or of the start): the
+    /// next delivered strip's [`StripRef::queued_at_cycles`].
+    open_at: u32,
+}
+
+/// What [`StripRef::release_copied`] found at the release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Released {
+    /// The DMA did not write the strip since it was handed out and the driver kept running:
+    /// everything read from it is the strip's data.
+    Intact,
+    /// The DMA wrote the strip again before the release (the reader was lapped): what was
+    /// read from it after the copy was found intact is not the strip's data.
+    Lapped,
+    /// The driver was stopped or restarted: discard the strip's frame.
+    Stopped,
 }
 
 const _: () = {
@@ -601,6 +643,7 @@ impl StripReader {
             self.stats_reset_seen = reset;
             self.stats = StripStats::ZERO;
             self.lapped = 0;
+            self.lapped_copied = 0;
             self.publish_stats();
         }
         let mut found = None;
@@ -608,7 +651,10 @@ impl StripReader {
         for _ in 0..self.count {
             let slot = self.next;
             let link = self.links[idx(slot)];
+            let looked = cycles();
             if !link_done(link) {
+                // The block finishes after this look: the bound its strip's age counts from.
+                self.open_at = looked;
                 break;
             }
             fence(Ordering::SeqCst);
@@ -619,10 +665,14 @@ impl StripReader {
             SHARED.next.store(pack(run, self.next), Ordering::Release);
             rearm_link(link);
             took = true;
-            if let Some(meta) = self
+            if let Some(mut meta) = self
                 .track
                 .complete(&self.geom, items, damaged, &mut self.stats)
             {
+                // Not when the block was classified but the last look that found it (or a
+                // block before it) unfinished: the time the strip lay done before this poll
+                // counts against its hold.
+                meta.queued_at = self.open_at;
                 let addr = self.strips[idx(slot)];
                 let len = meta.rows as usize * self.geom.line_bytes as usize;
                 // Cache lines are a power of two (64 or 128 B); no division, so no panic path.
@@ -672,6 +722,7 @@ impl StripReader {
         self.track = Tracker::NEW;
         self.next = 0;
         self.loss_seen = SHARED.loss.load(Ordering::Acquire);
+        self.open_at = cycles();
         SHARED.next.store(pack(run, 0), Ordering::Release);
         SHARED.synced.store(false, Ordering::Relaxed);
     }
@@ -688,8 +739,22 @@ impl StripReader {
         raw || new
     }
 
-    /// Release check of the strip in slot `slot`, handed out in run `run`.
-    fn finish(&mut self, slot: u8, run: u32, meta: &Meta) -> bool {
+    /// The DMA has not written strip `slot` (handed out in run `run`) again since it was
+    /// handed out, and the driver was neither stopped nor restarted: as of now.
+    fn intact(&self, slot: u8, run: u32) -> bool {
+        // The consumer's reads (or its copy's end) come before the checks.
+        fence(Ordering::SeqCst);
+        let prev = if slot == 0 { self.count - 1 } else { slot - 1 };
+        let lapped = link_done(self.links[idx(prev)]);
+        fence(Ordering::SeqCst);
+        !lapped
+            && SHARED.run.load(Ordering::SeqCst) == run
+            && SHARED.instance.load(Ordering::SeqCst) == self.instance
+    }
+
+    /// Release check of the strip in slot `slot`, handed out in run `run`. `copied`: the
+    /// consumer kept a copy it found intact; a lap then ends nothing.
+    fn finish(&mut self, slot: u8, run: u32, meta: &Meta, copied: bool) -> Released {
         // The consumer's reads of the strip come before both checks.
         fence(Ordering::SeqCst);
         let prev = if slot == 0 { self.count - 1 } else { slot - 1 };
@@ -699,16 +764,25 @@ impl StripReader {
             || SHARED.instance.load(Ordering::SeqCst) != self.instance
         {
             // Stopped or restarted: the next poll takes up the new state.
-            return false;
+            return Released::Stopped;
         }
         if lapped {
-            self.lapped = self.lapped.wrapping_add(1);
-            self.track.lapped(meta, &mut self.stats);
-            SHARED.synced.store(false, Ordering::Relaxed);
+            if copied {
+                self.lapped_copied = self.lapped_copied.wrapping_add(1);
+            } else {
+                self.lapped = self.lapped.wrapping_add(1);
+                self.track.lapped(meta, &mut self.stats);
+                SHARED.synced.store(false, Ordering::Relaxed);
+            }
             self.publish_stats();
-            return false;
+            return Released::Lapped;
         }
-        true
+        // The next block not finished yet: its strip's age counts from here.
+        let looked = cycles();
+        if !link_done(self.links[idx(self.next)]) {
+            self.open_at = looked;
+        }
+        Released::Intact
     }
 
     /// Writes the counters to `SHARED.stats` under the sequence lock.
@@ -718,10 +792,11 @@ impl StripReader {
             .stats_seq
             .store(seq.wrapping_add(1), Ordering::Relaxed);
         fence(Ordering::Release);
-        for (a, v) in SHARED
-            .stats
-            .iter()
-            .zip(stat_words(&self.stats, self.lapped))
+        for (a, v) in
+            SHARED
+                .stats
+                .iter()
+                .zip(stat_words(&self.stats, self.lapped, self.lapped_copied))
         {
             a.store(v, Ordering::Relaxed);
         }
@@ -749,7 +824,8 @@ pub struct StripRef<'r> {
 }
 
 impl StripRef<'_> {
-    /// Frame number: frame ends seen since the start. Gaps mean frames were lost.
+    /// Frame number: frame ends seen since the start before this strip's frame (its own end
+    /// not included). Gaps mean frames were lost.
     pub fn frame(&self) -> u32 {
         self.meta.frame
     }
@@ -769,9 +845,19 @@ impl StripRef<'_> {
         self.meta.last
     }
 
-    /// `mcycle` (low 32 bits, of the reader's core) when the reader classified the block.
+    /// `mcycle` (low 32 bits, of the reader's core) of the reader's last look that found this
+    /// strip's block (or one before it) unfinished: the DMA finished the block after it, so
+    /// the strip's age counted from it includes any time it lay done before the poll that
+    /// took it.
     pub fn queued_at_cycles(&self) -> u32 {
         self.meta.queued_at
+    }
+
+    /// The DMA has not written the strip again since it was handed out and the driver still
+    /// runs, as of this call: everything read from it before the call (by the CPU, or by a
+    /// DMA copy whose end was seen before the call) is the strip's data. Changes nothing.
+    pub fn intact(&self) -> bool {
+        self.reader.intact(self.slot, self.run)
     }
 
     /// Ends the use of the strip. `true`: the DMA did not write it since it was handed out and
@@ -781,7 +867,18 @@ impl StripRef<'_> {
     /// `frames_truncated` if it was lapped).
     pub fn release(mut self) -> bool {
         self.released = true;
-        self.reader.finish(self.slot, self.run, &self.meta)
+        self.reader.finish(self.slot, self.run, &self.meta, false) == Released::Intact
+    }
+
+    /// Ends the use of a strip the consumer has copied, its copy's end seen and
+    /// [`StripRef::intact`] `true` after it: the copy holds the strip's data whatever
+    /// happens next. A lap found now ([`Released::Lapped`], counted in
+    /// [`StripControl::strips_lapped_copied`]) spoils only what was read from the strip after that
+    /// check; the frame goes on: the reader keeps delivering its next strips, each checked
+    /// at its own release.
+    pub fn release_copied(mut self) -> Released {
+        self.released = true;
+        self.reader.finish(self.slot, self.run, &self.meta, true)
     }
 }
 
@@ -796,7 +893,7 @@ impl Drop for StripRef<'_> {
     fn drop(&mut self) {
         if !self.released {
             let (slot, run, meta) = (self.slot, self.run, self.meta);
-            self.reader.finish(slot, run, &meta);
+            self.reader.finish(slot, run, &meta, false);
         }
     }
 }

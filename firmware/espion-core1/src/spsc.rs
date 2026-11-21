@@ -4,7 +4,8 @@
 //! when the queue is full it counts the item as dropped and keeps going.
 //!
 //! Items are filled and read in place ([`Producer::push_with`], [`Consumer::pop_with`]), so a
-//! large item is never copied through a stack.
+//! large item is never copied through a stack. A slot can also be reserved, filled over
+//! several steps and published later ([`Producer::reserve`], [`Producer::commit`]).
 //!
 //! No dependency at all, so the host tests run without the firmware build:
 //! `rustc --edition 2024 --test src/spsc.rs -o /tmp/spsc-test && /tmp/spsc-test`.
@@ -50,7 +51,13 @@ impl<T, const N: usize> Spsc<T, N> {
         if self.taken.swap(true, Ordering::AcqRel) {
             return None;
         }
-        Some((Producer { q: self }, Consumer { q: self }))
+        Some((
+            Producer {
+                q: self,
+                held: false,
+            },
+            Consumer { q: self },
+        ))
     }
 
     /// The slot of the wrapping index `i`.
@@ -63,24 +70,62 @@ impl<T, const N: usize> Spsc<T, N> {
 /// The producing end. `Send`: move it to the producing core.
 pub struct Producer<T: 'static, const N: usize> {
     q: &'static Spsc<T, N>,
+    /// A slot is reserved ([`Producer::reserve`]) and not yet published.
+    held: bool,
 }
 
 impl<T, const N: usize> Producer<T, N> {
-    /// Fills the next free slot with `fill` and publishes it. If every slot is full, counts a
-    /// drop, does not call `fill` and returns `false`.
+    /// Fills the next free slot with `fill` and publishes it. If every slot is full, or a slot
+    /// is reserved, counts a drop, does not call `fill` and returns `false`.
     pub fn push_with(&mut self, fill: impl FnOnce(&mut T)) -> bool {
+        if !self.reserve() {
+            return false;
+        }
+        if let Some(slot) = self.reserved() {
+            fill(slot);
+        }
+        self.commit();
+        true
+    }
+
+    /// Reserves the next free slot, to be filled in place over several steps
+    /// ([`Producer::reserved`]) and published by [`Producer::commit`] (or given up by
+    /// [`Producer::cancel`]). If every slot is full, or one is reserved already, counts a drop
+    /// and returns `false`.
+    pub fn reserve(&mut self) -> bool {
         let q = self.q;
         let tail = q.tail.load(Ordering::Relaxed);
-        if tail.wrapping_sub(q.head.load(Ordering::Acquire)) as usize >= N {
+        if self.held || tail.wrapping_sub(q.head.load(Ordering::Acquire)) as usize >= N {
             let d = q.dropped.load(Ordering::Relaxed);
             q.dropped.store(d.wrapping_add(1), Ordering::Relaxed);
             return false;
         }
-        // SAFETY: the slot lies between `head + N` and `tail`: the consumer has released it
-        // (Acquire above) and does not touch it until `tail` is published below.
-        fill(unsafe { &mut *q.slot(tail) });
-        q.tail.store(tail.wrapping_add(1), Ordering::Release);
+        self.held = true;
         true
+    }
+
+    /// The reserved slot (its old contents until filled); `None` if none is reserved.
+    pub fn reserved(&mut self) -> Option<&mut T> {
+        if !self.held {
+            return None;
+        }
+        // SAFETY: `reserve` saw the slot at `tail` free: between `head + N` and `tail`, which
+        // the consumer has released (Acquire there) and does not touch until `tail` moves,
+        // which only `commit` does.
+        Some(unsafe { &mut *self.q.slot(self.q.tail.load(Ordering::Relaxed)) })
+    }
+
+    /// Publishes the reserved slot (nothing if none is reserved).
+    pub fn commit(&mut self) {
+        if core::mem::take(&mut self.held) {
+            let tail = self.q.tail.load(Ordering::Relaxed);
+            self.q.tail.store(tail.wrapping_add(1), Ordering::Release);
+        }
+    }
+
+    /// Gives the reserved slot up unpublished.
+    pub fn cancel(&mut self) {
+        self.held = false;
     }
 }
 
@@ -149,6 +194,28 @@ mod tests {
             assert_eq!(c.pop_with(|&v| v), Some(v));
         }
         assert_eq!(c.pop_with(|&v| v), None);
+    }
+
+    #[test]
+    fn reserve_commit_cancel() {
+        let (mut p, mut c) = queue!(2).split().unwrap();
+        assert!(p.reserved().is_none());
+        assert!(p.reserve());
+        // One reserved: neither a second reservation nor a push.
+        assert!(!p.reserve());
+        assert!(!p.push_with(|s| *s = 9));
+        assert_eq!(c.dropped(), 2);
+        *p.reserved().unwrap() = 7;
+        assert_eq!(c.pop_with(|&v| v), None);
+        p.commit();
+        assert!(p.reserved().is_none());
+        assert_eq!(c.pop_with(|&v| v), Some(7));
+        assert!(p.reserve());
+        *p.reserved().unwrap() = 8;
+        p.cancel();
+        assert_eq!(c.pop_with(|&v| v), None);
+        assert!(p.push_with(|s| *s = 5));
+        assert_eq!(c.pop_with(|&v| v), Some(5));
     }
 
     #[test]

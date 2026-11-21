@@ -13,16 +13,29 @@
 //! counted (`encoder.frames_skipped`, `frames_skipped`). The automatic quality takes one step of
 //! [`auto_quality`] every [`AUTO_QUALITY_PERIOD_MS`] with the link's busy share of the period.
 //!
+//! Detection goes as on the board: every captured frame the detector can take (its own thread;
+//! a frame captured while it is busy is not detected and counts in `detect.frames_skipped`),
+//! whether a host polls and frames are sent or not. The detector is
+//! `espion-vision`'s on the frame in the sensor's format (RAW8, or RAW10 with the 10-bit
+//! threshold), with its background sample; the engine applies the area filter, takes the next
+//! automatic threshold, and sends one [`FrameBlobs`] per detected frame while a host polls,
+//! whatever "Send frames" and `max_fps` say, after any answer and before the next chunk. The
+//! automatic exposure takes one step of [`auto_exposure`] every [`AUTO_EXPOSURE_PERIOD_MS`] with
+//! the highest peak of the blobs sent in the period.
+//!
 //! The frames ([`render`]) are synthetic and deterministic from the settings and the frame
-//! number: diagonal stripes that move every frame, scaled by exposure x gain, a white bar that
-//! moves 8 pixels per frame (tearing shows as a broken bar) and the frame number in large
-//! digits (repeats and drops show as the number). The test patterns replace the stripes.
+//! number. With the test pattern off, the scene is [`MARKERS`] soft spots on a dark, noisy
+//! background, each on its own Lissajous path with sub-pixel centres ([`marker_centres`]), their
+//! brightness proportional to exposure x gain, and the frame number in dark digits top left
+//! (repeats and drops show as the number, with some display gain). The test patterns replace
+//! the scene, with a white bar that moves 8 pixels per frame (tearing shows as a broken bar) and
+//! the frame number in white digits on black.
 
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
     sync::{
-        Arc, Condvar, Mutex, MutexGuard,
+        Arc, Condvar, LazyLock, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
     },
@@ -31,9 +44,16 @@ use std::{
 };
 
 use espion_proto::cam::{
-    AUTO_QUALITY_PERIOD_MS, CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding,
-    Format, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM, Message, Op, Readout, Reply,
-    Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings, TestPattern, auto_quality,
+    AUTO_EXPOSURE_PERIOD_MS, AUTO_QUALITY_PERIOD_MS, BLOB_BYTES, Blob, CHUNK_MAX, CamError,
+    CameraSettings, Counters, DetectSettings, DetectState, EncoderState, Encoding, Exposure,
+    Format, FrameBlobs, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM, Message, Op,
+    Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings, TestPattern,
+    auto_exposure, auto_exposure_cap, auto_quality, pack_blobs,
+};
+use espion_vision::{
+    DefaultDetector,
+    auto::{self, Background, Histogram},
+    refine,
 };
 use ov9281::Mode;
 
@@ -43,7 +63,8 @@ use crate::camera;
 /// Ethernet header (14) and FCS (4), preamble and start delimiter (8), inter-frame gap (12).
 pub const WIRE_OVERHEAD: usize = 8 + 40 + 14 + 4 + 8 + 12;
 
-/// The camera settings the fake starts with: the full window, RAW8, 120 Hz.
+/// The camera settings the fake starts with: the full window, RAW8, 120 Hz, automatic
+/// exposure.
 pub const fn default_camera() -> CameraSettings {
     CameraSettings {
         format: Format::Raw8,
@@ -56,8 +77,12 @@ pub const fn default_camera() -> CameraSettings {
         exposure_lines: 200,
         gain_sixteenths: 32,
         test_pattern: TestPattern::Off,
+        auto_exposure: true,
     }
 }
+
+/// Period of the automatic exposure ([`AUTO_EXPOSURE_PERIOD_MS`]).
+const EXPOSURE_PERIOD: Duration = Duration::from_millis(AUTO_EXPOSURE_PERIOD_MS as u64);
 
 /// Period of the automatic quality ([`AUTO_QUALITY_PERIOD_MS`]).
 const AUTO_PERIOD: Duration = Duration::from_millis(AUTO_QUALITY_PERIOD_MS as u64);
@@ -89,6 +114,8 @@ pub struct FakeConfig {
     pub camera: CameraSettings,
     /// Stream settings at start.
     pub stream: StreamSettings,
+    /// Detection settings at start (checked against the camera's format).
+    pub detect: DetectSettings,
 }
 
 impl Default for FakeConfig {
@@ -100,6 +127,7 @@ impl Default for FakeConfig {
             seed: 0x9281,
             camera: default_camera(),
             stream: default_stream(),
+            detect: DetectSettings::DEFAULT,
         }
     }
 }
@@ -120,6 +148,7 @@ impl FakeCamera {
         cfg.stream
             .check(cfg.camera.format, cfg.camera.width, cfg.camera.height)
             .map_err(invalid)?;
+        cfg.detect.check(cfg.camera.format).map_err(invalid)?;
         let sock = UdpSocket::bind(cfg.bind)?;
         let addr = sock.local_addr()?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -143,19 +172,25 @@ impl FakeCamera {
             })?;
 
         let slot: Arc<EncoderSlot> = Arc::default();
-        let (estop, eslot) = (stop.clone(), slot.clone());
+        let (estop, eslot, etx) = (stop.clone(), slot.clone(), tx.clone());
         let encoder = thread::Builder::new()
             .name("fake-cam-jpeg".into())
-            .spawn(move || encoder_thread(&eslot, &tx, &estop))?;
+            .spawn(move || encoder_thread(&eslot, &etx, &estop))?;
+
+        let detect: Arc<DetectSlot> = Arc::default();
+        let (dstop, dslot) = (stop.clone(), detect.clone());
+        let detector = thread::Builder::new()
+            .name("fake-cam-detect".into())
+            .spawn(move || detector_thread(&dslot, &tx, &dstop))?;
 
         let estop = stop.clone();
         let engine = thread::Builder::new()
             .name("fake-cam".into())
-            .spawn(move || Engine::new(sock, rx, slot, cfg, mode).run(&estop))?;
+            .spawn(move || Engine::new(sock, rx, slot, detect, cfg, mode).run(&estop))?;
         Ok(Self {
             addr,
             stop,
-            threads: vec![receiver, encoder, engine],
+            threads: vec![receiver, encoder, detector, engine],
         })
     }
 
@@ -182,6 +217,8 @@ enum Event {
     Encoded(Encoded),
     /// The encoder failed on a frame (its output buffer back for reuse).
     EncodeFailed(Vec<u8>),
+    /// The detector finished a frame.
+    Detected(Detected),
 }
 
 /// A captured frame for the encoder.
@@ -282,6 +319,132 @@ fn encoder_thread(slot: &EncoderSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
     }
 }
 
+/// A captured frame for the detector.
+struct DetectJob {
+    frame: u32,
+    generation: u32,
+    camera: CameraSettings,
+    timestamp_us: u64,
+    /// Threshold to detect with, in the sensor format's units.
+    threshold: u16,
+    /// The threshold was chosen automatically.
+    auto: bool,
+    /// The detection epoch the job was made in ([`Engine::detect_epoch`]).
+    epoch: u32,
+}
+
+/// A frame the detector went through: every blob it found (before the area filter), each
+/// measured on the frame (`espion_vision::refine`).
+struct Detected {
+    job: DetectJob,
+    blobs: Vec<Blob>,
+    /// Items the detector lost (`Stats::overflow`: runs, components and blobs beyond its
+    /// capacity); with the kept blobs beyond `FRAME_BLOBS_MAX` they make `blobs_dropped`.
+    lost: u32,
+    /// The frame's background sample.
+    background: Option<Background>,
+    detect_us: u32,
+}
+
+/// The frame handed to the detector, whether it is busy (a frame handed and not yet done),
+/// and the blob buffers.
+#[derive(Default)]
+struct DetectSlot {
+    state: Mutex<DetectSlotState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct DetectSlotState {
+    job: Option<DetectJob>,
+    busy: bool,
+    pool: Vec<Vec<Blob>>,
+}
+
+impl DetectSlot {
+    fn lock(&self) -> MutexGuard<'_, DetectSlotState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Most blobs the detector returns per frame (its capacity, `DefaultDetector`).
+const DETECT_BLOBS: usize = 256;
+
+/// The fake's detector: takes the frame handed to it, renders it in the sensor's format, finds
+/// its blobs, measures each on the frame, samples its background, and hands them to the
+/// engine; then it is free for the next captured frame.
+fn detector_thread(slot: &DetectSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBool) {
+    let mut detector: Box<DefaultDetector> = Box::default();
+    let mut found = vec![espion_vision::Blob::default(); DETECT_BLOBS];
+    let mut raw = Vec::new();
+    let mut hist = Histogram::new();
+    while !stop.load(Ordering::Relaxed) {
+        let (job, mut blobs) = {
+            let mut s = slot.lock();
+            if s.job.is_none() {
+                let _ = slot
+                    .wake
+                    .wait_timeout(s, Duration::from_millis(50))
+                    .unwrap_or_else(|e| e.into_inner());
+                continue;
+            }
+            let job = s.job.take().expect("checked above");
+            (job, s.pool.pop().unwrap_or_default())
+        };
+        let c = &job.camera;
+        let raw10 = c.format == Format::Raw10;
+        let encoding = if raw10 {
+            Encoding::Raw10
+        } else {
+            Encoding::Raw8
+        };
+        render(c, encoding, job.frame, &mut raw);
+        let t = Instant::now();
+        let n = if raw10 {
+            detector.process_frame_raw10(&raw, c.width, job.threshold, &mut found)
+        } else {
+            let t8 = job.threshold.min(255) as u8;
+            detector.process_frame(&raw, c.width, t8, &mut found)
+        };
+        let lost = detector.stats().overflow;
+        hist.clear();
+        if raw10 {
+            auto::sample_raw10(&raw, c.width, 0, &mut hist);
+        } else {
+            auto::sample_raw8(&raw, c.width, 0, &mut hist);
+        }
+        let background = Background::from_histogram(&hist);
+        blobs.clear();
+        blobs.extend(found[..n].iter().map(|b| {
+            let s = if raw10 {
+                refine::refine_raw10(&raw, c.width, c.height, b)
+            } else {
+                refine::refine_raw8(&raw, c.width, c.height, b)
+            };
+            Blob {
+                x: s.x,
+                y: s.y,
+                width: s.width,
+                flux: s.flux,
+                area: b.area,
+                peak: b.peak,
+            }
+        }));
+        let detect_us = us_between(t, Instant::now());
+        let event = Event::Detected(Detected {
+            job,
+            blobs,
+            lost,
+            background,
+            detect_us,
+        });
+        if tx.send(event).is_err() {
+            return;
+        }
+        slot.lock().busy = false;
+    }
+}
+
 /// The frame being sent.
 struct Sending {
     frame: u32,
@@ -342,6 +505,23 @@ struct Engine {
     /// The frame being sent (raw: rendered here; JPEG: the encoder's file).
     pixels: Vec<u8>,
     out: [u8; MAX_DATAGRAM],
+
+    detect_slot: Arc<DetectSlot>,
+    /// The detector as a state reports it: `threshold` is the next frame's, the detect times
+    /// are those since the last state (`detect_us_mean` unused here: [`Engine::detect_us`]).
+    detect: DetectState,
+    /// Changes with the detection settings and the mode: results of frames handed to the
+    /// detector before are dropped.
+    detect_epoch: u32,
+    /// The last background sampled in this epoch.
+    background: Option<Background>,
+    /// Detect time sum and frames since the last state.
+    detect_us: (u64, u32),
+    /// Automatic exposure: end of the current period, highest blob peak sent in it.
+    exposure_due: Instant,
+    exposure_peak: Option<u8>,
+    /// A FrameBlobs' blob bytes.
+    blob_bytes: Vec<u8>,
 }
 
 /// Most chunks sent in a row before requests and captures are looked at again.
@@ -355,6 +535,7 @@ impl Engine {
         sock: UdpSocket,
         rx: Receiver<Event>,
         slot: Arc<EncoderSlot>,
+        detect_slot: Arc<DetectSlot>,
         cfg: FakeConfig,
         mode: Mode,
     ) -> Self {
@@ -395,6 +576,27 @@ impl Engine {
             skipped_at: 0,
             pixels: Vec::new(),
             out: [0; MAX_DATAGRAM],
+            detect_slot,
+            detect: DetectState {
+                settings: cfg.detect,
+                threshold: cfg.detect.threshold,
+                background_median: 0,
+                background_sigma: 0,
+                detect_us_mean: 0,
+                detect_us_max: 0,
+                frames_detected: 0,
+                frames_skipped: 0,
+                blobs_dropped: 0,
+                blobs_filtered: 0,
+                fault: false,
+                available: true,
+            },
+            detect_epoch: 0,
+            background: None,
+            detect_us: (0, 0),
+            exposure_due: now + EXPOSURE_PERIOD,
+            exposure_peak: None,
+            blob_bytes: vec![0; MAX_DATAGRAM],
         }
     }
 
@@ -406,6 +608,9 @@ impl Engine {
             let now = Instant::now();
             if now >= self.auto_due {
                 self.auto_quality(now);
+            }
+            if now >= self.exposure_due {
+                self.auto_exposure(now);
             }
             if now >= self.next_capture {
                 if now - self.next_capture > self.period * 8 {
@@ -445,6 +650,7 @@ impl Engine {
             let mut until = self
                 .next_capture
                 .min(self.auto_due)
+                .min(self.exposure_due)
                 .saturating_duration_since(now);
             if let Some(w) = wait_tokens {
                 until = until.min(w);
@@ -465,7 +671,108 @@ impl Engine {
                 self.encoder.errors = self.encoder.errors.wrapping_add(1);
                 self.slot.lock().pool.push(buf);
             }
+            Event::Detected(d) => self.detected(d),
         }
+    }
+
+    /// A frame through the detector: the area filter, the next automatic threshold, the
+    /// counters, and its blobs to the host while one polls.
+    fn detected(&mut self, d: Detected) {
+        let Detected {
+            job,
+            blobs,
+            lost,
+            background,
+            detect_us,
+        } = d;
+        if job.epoch != self.detect_epoch {
+            self.detect_slot.lock().pool.push(blobs);
+            return;
+        }
+        let det = &mut self.detect;
+        det.frames_detected = det.frames_detected.wrapping_add(1);
+        det.detect_us_max = det.detect_us_max.max(detect_us);
+        self.detect_us.0 += u64::from(detect_us);
+        self.detect_us.1 += 1;
+        let settings = det.settings;
+        let kept = blobs.iter().filter(|b| settings.keeps(b.area));
+        let filtered = blobs.len() - kept.clone().count();
+        let peak = kept.clone().map(|b| b.peak).max();
+        let (n, all) = pack_blobs(kept.clone().copied(), &mut self.blob_bytes);
+        let sent = &self.blob_bytes[..n];
+        let dropped = lost as usize + (blobs.len() - filtered) - n / BLOB_BYTES;
+        det.blobs_filtered = det.blobs_filtered.wrapping_add(filtered as u32);
+        det.blobs_dropped = det.blobs_dropped.wrapping_add(dropped as u32);
+        if let Some(bg) = background {
+            self.background = Some(bg);
+            (det.background_median, det.background_sigma) = (bg.median, bg.sigma);
+        }
+        det.threshold = match (settings.auto_threshold, self.background) {
+            (true, Some(bg)) => next_threshold(self.camera.format, bg, peak),
+            (true, None) => det.threshold,
+            (false, _) => settings.threshold,
+        };
+        let now = Instant::now();
+        let Some(peer) = self.peer.filter(|_| self.host_active(now)) else {
+            self.detect_slot.lock().pool.push(blobs);
+            return;
+        };
+        let sent_peak = sent
+            .as_chunks::<BLOB_BYTES>()
+            .0
+            .iter()
+            .map(|b| Blob::from_bytes(*b).peak)
+            .max();
+        self.exposure_peak = self.exposure_peak.max(sent_peak);
+        let c = &job.camera;
+        let mut flags = 0;
+        if dropped > 0 || !all {
+            flags |= FrameBlobs::OVERFLOW;
+        }
+        if job.auto {
+            flags |= FrameBlobs::AUTO_THRESHOLD;
+        }
+        let n = FrameBlobs {
+            frame: job.frame,
+            generation: job.generation,
+            timestamp_us: job.timestamp_us,
+            format: c.format,
+            width: c.width,
+            height: c.height,
+            threshold: job.threshold,
+            detect_us,
+            flags,
+            blobs: sent,
+        }
+        .encode(&mut self.out)
+        .expect("FrameBlobs fit a datagram")
+        .len();
+        self.detect_slot.lock().pool.push(blobs);
+        if self.rate.is_some() {
+            // Blobs share the line; like the answers they may overdraw the bucket.
+            self.tokens -= (n + WIRE_OVERHEAD) as f64;
+        }
+        self.transmit(n, peer);
+    }
+
+    /// One step of the automatic exposure at the end of a period (`cam::auto_exposure`), on
+    /// the highest peak of the blobs sent in it. A controls change: the stream goes on.
+    fn auto_exposure(&mut self, now: Instant) {
+        if self.camera.auto_exposure {
+            let cap = auto_exposure_cap(self.mode.line_ns(), self.mode.max_exposure_lines());
+            let next = auto_exposure(
+                Exposure {
+                    lines: self.camera.exposure_lines,
+                    gain_sixteenths: self.camera.gain_sixteenths,
+                },
+                self.exposure_peak,
+                cap,
+            );
+            self.camera.exposure_lines = next.lines;
+            self.camera.gain_sixteenths = next.gain_sixteenths;
+        }
+        self.exposure_peak = None;
+        self.exposure_due = (self.exposure_due + EXPOSURE_PERIOD).max(now);
     }
 
     /// A JPEG file from the encoder: sent now if the link is free, else it waits in the
@@ -563,16 +870,42 @@ impl Engine {
         }
     }
 
-    fn active(&self, now: Instant) -> bool {
-        self.stream.enabled
-            && self.peer.is_some()
+    /// A host polls: answers and blobs go to it.
+    fn host_active(&self, now: Instant) -> bool {
+        self.peer.is_some()
             && now - self.last_request < Duration::from_millis(STREAM_TIMEOUT_MS as u64)
+    }
+
+    /// Frames go to the host.
+    fn active(&self, now: Instant) -> bool {
+        self.stream.enabled && self.host_active(now)
     }
 
     fn capture(&mut self, at: Instant, now: Instant) {
         self.counters.frames_captured = self.counters.frames_captured.wrapping_add(1);
         let number = self.frame;
         self.frame = self.frame.wrapping_add(1);
+        // The frame's timestamp, which its chunks and its blobs carry.
+        let timestamp_us = (at - self.start).as_micros() as u64;
+        if self.detect.settings.enabled && !self.detect.fault {
+            let job = DetectJob {
+                frame: number,
+                generation: self.generation,
+                camera: self.camera,
+                timestamp_us,
+                threshold: self.detect.threshold,
+                auto: self.detect.settings.auto_threshold,
+                epoch: self.detect_epoch,
+            };
+            let mut s = self.detect_slot.lock();
+            if s.busy {
+                self.detect.frames_skipped = self.detect.frames_skipped.wrapping_add(1);
+            } else {
+                (s.job, s.busy) = (Some(job), true);
+            }
+            drop(s);
+            self.detect_slot.wake.notify_one();
+        }
         if !self.active(now) {
             return;
         }
@@ -590,7 +923,6 @@ impl Engine {
             let interval = Duration::from_secs_f64(1.0 / self.stream.max_fps as f64);
             self.next_send = (self.next_send + interval).max(at + interval - slack);
         }
-        let timestamp_us = (at - self.start).as_micros() as u64;
         if jpeg {
             let job = EncodeJob {
                 frame: number,
@@ -698,6 +1030,7 @@ impl Engine {
                 Op::GetState | Op::Poll => Ok(()),
                 Op::SetCamera(c) => self.set_camera(&c, now),
                 Op::SetStream(s) => self.set_stream(s, now),
+                Op::SetDetect(d) => self.set_detect(d),
             },
         };
         self.last = Some((src, req, reply));
@@ -726,6 +1059,13 @@ impl Engine {
             let layout = |c: &CameraSettings| (c.format, c.width, c.height, c.readout, c.origin);
             if layout(&applied) != layout(&self.camera) {
                 self.generation = self.generation.wrapping_add(1);
+                // The detector starts over in the new layout, from the settings (the manual
+                // threshold in the new format's units).
+                let settings = self
+                    .detect
+                    .settings
+                    .for_format(self.camera.format, applied.format);
+                self.restart_detection(settings);
             }
             self.mode = mode;
             self.period = Duration::from_nanos(mode.frame_ns() as u64);
@@ -734,6 +1074,34 @@ impl Engine {
         }
         self.camera = applied;
         Ok(())
+    }
+
+    fn set_detect(&mut self, d: DetectSettings) -> Result<(), CamError> {
+        d.check(self.camera.format)?;
+        let background = self.background;
+        self.restart_detection(d);
+        // With the automatic threshold, the floor of the background known so far.
+        if d.auto_threshold
+            && let Some(bg) = background
+        {
+            self.background = background;
+            self.detect.threshold = next_threshold(self.camera.format, bg, None);
+        }
+        Ok(())
+    }
+
+    /// New detection settings: the frames handed to the detector before are dropped, the next
+    /// threshold is the settings'.
+    fn restart_detection(&mut self, settings: DetectSettings) {
+        self.detect_epoch = self.detect_epoch.wrapping_add(1);
+        let mut s = self.detect_slot.lock();
+        if s.job.take().is_some() {
+            s.busy = false;
+        }
+        drop(s);
+        self.detect.settings = settings;
+        self.detect.threshold = settings.threshold;
+        self.background = None;
     }
 
     fn set_stream(&mut self, s: StreamSettings, now: Instant) -> Result<(), CamError> {
@@ -751,7 +1119,14 @@ impl Engine {
         Ok(())
     }
 
-    fn state(&self, now: Instant) -> State {
+    /// The state; the detect times start over.
+    fn state(&mut self, now: Instant) -> State {
+        let (sum, n) = std::mem::take(&mut self.detect_us);
+        let detect = DetectState {
+            detect_us_mean: sum.checked_div(u64::from(n)).unwrap_or(0) as u32,
+            ..self.detect
+        };
+        self.detect.detect_us_max = 0;
         State {
             camera: self.camera,
             stream: self.stream,
@@ -761,7 +1136,16 @@ impl Engine {
             encoder: self.encoder,
             uptime_us: (now - self.start).as_micros() as u64,
             timing: self.timing,
+            detect,
         }
+    }
+}
+
+/// The automatic threshold for the next frame in `format`'s units (`espion_vision::auto`).
+fn next_threshold(format: Format, bg: Background, peak: Option<u8>) -> u16 {
+    match format {
+        Format::Raw8 => u16::from(auto::threshold_raw8(bg, peak)),
+        Format::Raw10 => auto::threshold_raw10(bg, peak),
     }
 }
 
@@ -784,6 +1168,7 @@ pub fn encode_jpeg(
 
 /// Frame `number` of the fake for these settings, in the raw `encoding`, into `out` (resized
 /// to the frame length). Deterministic: the tests compare received frames with it bit for bit.
+/// With the test pattern off, the markers scene ([`marker_centres`]).
 ///
 /// # Panics
 ///
@@ -797,29 +1182,14 @@ pub fn render(c: &CameraSettings, encoding: Encoding, number: u32, out: &mut Vec
     };
     let lb = raw_line(c.width);
     out.resize(lb * h, 0);
-    let mut line = vec![0u16; w + 1024];
-    let mut packed = vec![0u8; raw_line((w + 1024) as u16)];
+    if c.test_pattern == TestPattern::Off {
+        render_markers(c, encoding, number, out);
+        return;
+    }
+    let mut line = vec![0u16; w];
+    let mut packed = vec![0u8; lb];
     match c.test_pattern {
-        TestPattern::Off => {
-            // Stripes: one base line, each row a slice of it shifted by a multiple of 4
-            // pixels (so RAW10 rows stay on whole 5-byte groups).
-            let gain = c.exposure_lines as f32 * c.gain_sixteenths as f32 / (16.0 * 400.0);
-            for (i, v) in line.iter_mut().enumerate() {
-                let p = (i % 1024) as f32;
-                let tri = if p < 512.0 {
-                    p * 2.0
-                } else {
-                    (1023.0 - p) * 2.0
-                };
-                *v = (tri * gain).min(1023.0) as u16;
-            }
-            encode_line(encoding, &line, &mut packed);
-            for (y, row) in out.chunks_exact_mut(lb).enumerate() {
-                let shift = 4 * ((y + 2 * number as usize) % 256);
-                let at = raw_line(shift as u16);
-                row.copy_from_slice(&packed[at..at + lb]);
-            }
-        }
+        TestPattern::Off => unreachable!("rendered above"),
         TestPattern::Bars | TestPattern::RollingBars => {
             let roll = if c.test_pattern == TestPattern::RollingBars {
                 number as usize * 4
@@ -875,30 +1245,147 @@ pub fn render(c: &CameraSettings, encoding: Encoding, number: u32, out: &mut Vec
     // The moving bar, 8 pixels per frame.
     let bar_x = (number as usize * 8) % w.saturating_sub(8).max(1);
     canvas.fill(bar_x, 0, 8, h, 1023);
-    // The frame number on a black box, top left.
-    let scale = (h / 100).max(1);
-    let digits = number.to_string();
-    let (x0, y0) = (2 * scale, 2 * scale);
-    canvas.fill(
-        x0 - scale,
-        y0 - scale,
-        digits.len() * 4 * scale + scale,
-        7 * scale,
-        0,
-    );
-    for (i, d) in digits.bytes().enumerate() {
-        let glyph = FONT[(d - b'0') as usize];
-        for gy in 0..5 {
-            for gx in 0..3 {
-                if glyph >> (14 - (gy * 3 + gx)) & 1 == 1 {
-                    canvas.fill(
-                        x0 + (i * 4 + gx) * scale,
-                        y0 + gy * scale,
-                        scale,
-                        scale,
-                        1023,
-                    );
-                }
+    // The frame number in white on a black box, top left.
+    canvas.number(number, true);
+}
+
+/// Soft spots of the markers scene.
+pub const MARKERS: usize = 3;
+
+/// Standard deviation of a spot, pixels.
+pub const MARKER_SIGMA: f64 = 1.5;
+
+/// Brightness of the brightest spot above the background, 10-bit units per exposure line at
+/// a gain of 1x: a spot's peak is proportional to exposure x gain ([`marker_amplitudes`]).
+pub const MARKER_BRIGHTNESS: f64 = 30.0;
+
+/// Each spot's brightness against the brightest.
+const MARKER_LEVELS: [f64; MARKERS] = [1.0, 0.85, 0.7];
+
+/// Each spot's Lissajous path: x and y frequencies (times [`MARKER_RATE`]) and x phase.
+const MARKER_PATHS: [(f64, f64, f64); MARKERS] = [
+    (2.0, 3.0, std::f64::consts::FRAC_PI_4),
+    (3.0, 4.0, std::f64::consts::PI / 5.0),
+    (1.0, 1.0, std::f64::consts::FRAC_PI_2),
+];
+
+/// Base angular rate of the paths, radians per frame: at 640x400 every spot moves more than
+/// half a pixel from one frame to the next (a blob matched to the wrong frame shows).
+const MARKER_RATE: f64 = 0.015;
+
+/// Background level, 10-bit.
+const BACKGROUND: u16 = 40;
+
+/// Half-width of the background's uniform noise, 10-bit.
+const NOISE: u16 = 4;
+
+/// Pixels of the noise sequence each row is a slice of; a multiple of 4.
+const NOISE_LEN: usize = 8192;
+
+/// The true centre of each spot in frame `number`, pixels, pixel centres at integer
+/// coordinates (the detector's convention). Each spot keeps to its third of the frame's width
+/// (x within 0.12 width of the third's centre, y within 0.28 height of 0.55 height), so the
+/// spots never touch each other or the frame number.
+pub fn marker_centres(c: &CameraSettings, number: u32) -> [(f64, f64); MARKERS] {
+    let (w, h) = (f64::from(c.width), f64::from(c.height));
+    let t = f64::from(number) * MARKER_RATE;
+    std::array::from_fn(|i| {
+        let (fx, fy, phase) = MARKER_PATHS[i];
+        let cx = w * (2 * i + 1) as f64 / 6.0;
+        (
+            cx + 0.12 * w * (fx * t + phase).sin(),
+            0.55 * h + 0.28 * h * (fy * t).sin(),
+        )
+    })
+}
+
+/// Each spot's peak above the background in these settings, 10-bit (before clipping at 1023).
+pub fn marker_amplitudes(c: &CameraSettings) -> [f64; MARKERS] {
+    let brightness =
+        f64::from(c.exposure_lines) * f64::from(c.gain_sixteenths) / 16.0 * MARKER_BRIGHTNESS;
+    MARKER_LEVELS.map(|l| l * brightness)
+}
+
+/// The background noise: one sequence of 10-bit values, also as RAW8 and as packed RAW10.
+struct Noise {
+    v10: Vec<u16>,
+    raw8: Vec<u8>,
+    raw10: Vec<u8>,
+}
+
+impl Noise {
+    fn new() -> Self {
+        let mut s = 0x2545_F491_4F6C_DD1Du64;
+        let v10: Vec<u16> = (0..NOISE_LEN)
+            .map(|_| {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                BACKGROUND - NOISE + ((s >> 32) % u64::from(2 * NOISE + 1)) as u16
+            })
+            .collect();
+        let mut raw8 = vec![0; NOISE_LEN];
+        let mut raw10 = vec![0; NOISE_LEN / 4 * 5];
+        encode_line(Encoding::Raw8, &v10, &mut raw8);
+        encode_line(Encoding::Raw10, &v10, &mut raw10);
+        Self { v10, raw8, raw10 }
+    }
+}
+
+static NOISE_TABLE: LazyLock<Noise> = LazyLock::new(Noise::new);
+
+/// Where row `y` of frame `number` starts in the noise sequence: a multiple of 4 (whole RAW10
+/// groups) with `width` pixels after it.
+fn noise_offset(y: usize, number: u32, width: usize) -> usize {
+    // splitmix64
+    let mut z = ((y as u64) << 32 | u64::from(number)).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    let slots = (NOISE_LEN.saturating_sub(width) / 4).max(1) as u64;
+    (z % slots) as usize * 4
+}
+
+/// The markers scene: each row a slice of the noise sequence (copied as encoded), the frame
+/// number in dark digits, then the spots added to the noise, clipped at full scale.
+fn render_markers(c: &CameraSettings, encoding: Encoding, number: u32, out: &mut [u8]) {
+    let (w, h) = (c.width as usize, c.height as usize);
+    let lb = out.len() / h.max(1);
+    let n = &*NOISE_TABLE;
+    for (y, row) in out.chunks_exact_mut(lb).enumerate() {
+        let at = noise_offset(y, number, w);
+        match encoding {
+            Encoding::Raw8 => row.copy_from_slice(&n.raw8[at..at + lb]),
+            Encoding::Raw10 => row.copy_from_slice(&n.raw10[at / 4 * 5..][..lb]),
+            Encoding::Jpeg => unreachable!("render makes raw encodings"),
+        }
+    }
+    let mut canvas = Canvas {
+        encoding,
+        w,
+        h,
+        lb,
+        buf: out,
+    };
+    canvas.number(number, false);
+    let two_var = 2.0 * MARKER_SIGMA * MARKER_SIGMA;
+    for ((cx, cy), a) in marker_centres(c, number)
+        .into_iter()
+        .zip(marker_amplitudes(c))
+    {
+        // Out to where the spot adds less than half a level.
+        let reach = (two_var * (2.0 * a).max(1.0).ln()).sqrt().ceil() + 1.0;
+        let span = |centre: f64, size: usize| {
+            let lo = (centre - reach).max(0.0) as usize;
+            let hi = ((centre + reach).max(0.0) as usize).min(size.saturating_sub(1));
+            lo..=hi
+        };
+        for y in span(cy, h) {
+            let at = noise_offset(y, number, w);
+            for x in span(cx, w) {
+                let r2 = (x as f64 - cx).powi(2) + (y as f64 - cy).powi(2);
+                let v = f64::from(n.v10[at + x]) + a * (-r2 / two_var).exp();
+                canvas.fill(x, y, 1, 1, v.round().min(1023.0) as u16);
             }
         }
     }
@@ -969,6 +1456,40 @@ impl Canvas<'_> {
             }
         }
     }
+
+    /// The frame number in large digits, top left: white on a black box (`white`), or black
+    /// on the picture.
+    fn number(&mut self, number: u32, white: bool) {
+        let scale = (self.h / 100).max(1);
+        let digits = number.to_string();
+        let (x0, y0) = (2 * scale, 2 * scale);
+        if white {
+            self.fill(
+                x0 - scale,
+                y0 - scale,
+                digits.len() * 4 * scale + scale,
+                7 * scale,
+                0,
+            );
+        }
+        let ink = if white { 1023 } else { 0 };
+        for (i, d) in digits.bytes().enumerate() {
+            let glyph = FONT[(d - b'0') as usize];
+            for gy in 0..5 {
+                for gx in 0..3 {
+                    if glyph >> (14 - (gy * 3 + gx)) & 1 == 1 {
+                        self.fill(
+                            x0 + (i * 4 + gx) * scale,
+                            y0 + gy * scale,
+                            scale,
+                            scale,
+                            ink,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1023,11 +1544,79 @@ mod tests {
         render(&c, Encoding::Raw8, 2, &mut b);
         assert_ne!(a, b);
         let dim = CameraSettings {
-            exposure_lines: 20,
+            exposure_lines: 5,
             ..c
         };
         render(&dim, Encoding::Raw8, 1, &mut b);
-        let mean = |f: &[u8]| f.iter().map(|&v| v as u64).sum::<u64>() / f.len() as u64;
-        assert!(mean(&b) < mean(&a));
+        let sum = |f: &[u8]| f.iter().map(|&v| u64::from(v)).sum::<u64>();
+        assert!(sum(&b) < sum(&a));
+    }
+
+    /// The 10-bit pixel `(x, y)` of a RAW10 frame `width` wide.
+    fn pixel10(raw: &[u8], width: usize, x: usize, y: usize) -> u16 {
+        unpack(&raw[y * width / 4 * 5..][..width / 4 * 5])[x]
+    }
+
+    #[test]
+    fn spots_peak_at_their_centres_in_proportion_to_exposure_and_gain() {
+        let c = CameraSettings {
+            format: Format::Raw10,
+            exposure_lines: 10,
+            gain_sixteenths: 32,
+            ..default_camera()
+        };
+        let mut raw = Vec::new();
+        for number in [0, 77, 1000] {
+            render(&c, Encoding::Raw10, number, &mut raw);
+            for ((cx, cy), a) in marker_centres(&c, number)
+                .into_iter()
+                .zip(marker_amplitudes(&c))
+            {
+                let (x, y) = (cx.round() as usize, cy.round() as usize);
+                let v = f64::from(pixel10(&raw, 1280, x, y));
+                let r2 = (x as f64 - cx).powi(2) + (y as f64 - cy).powi(2);
+                let want = a * (-r2 / (2.0 * MARKER_SIGMA * MARKER_SIGMA)).exp();
+                assert!(
+                    (v - f64::from(BACKGROUND) - want).abs() <= f64::from(NOISE) + 1.0,
+                    "frame {number}: {v} at ({x}, {y}), spot {want:.1}"
+                );
+            }
+        }
+        assert_eq!(marker_amplitudes(&c)[0], 600.0);
+        // Clipped at full scale.
+        let bright = CameraSettings {
+            exposure_lines: 200,
+            ..c
+        };
+        render(&bright, Encoding::Raw10, 5, &mut raw);
+        let (cx, cy) = marker_centres(&bright, 5)[0];
+        let v = pixel10(&raw, 1280, cx.round() as usize, cy.round() as usize);
+        assert_eq!(v, 1023);
+    }
+
+    #[test]
+    fn spots_keep_apart_and_move_more_than_half_a_pixel_per_frame() {
+        let c = CameraSettings {
+            width: 640,
+            height: 400,
+            readout: Readout::Binned,
+            ..default_camera()
+        };
+        let mut slowest = f64::MAX;
+        let mut closest = f64::MAX;
+        let mut prev = marker_centres(&c, 0);
+        for n in 1..5000 {
+            let now = marker_centres(&c, n);
+            for (i, &(x, y)) in now.iter().enumerate() {
+                assert!((0.0..640.0).contains(&x) && (100.0..400.0).contains(&y));
+                slowest = slowest.min((x - prev[i].0).hypot(y - prev[i].1));
+                for &(ox, oy) in &now[i + 1..] {
+                    closest = closest.min((x - ox).hypot(y - oy));
+                }
+            }
+            prev = now;
+        }
+        assert!(slowest > 0.5, "{slowest} px per frame");
+        assert!(closest > 30.0, "{closest} px apart");
     }
 }

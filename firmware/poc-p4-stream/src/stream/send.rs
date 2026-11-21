@@ -1,26 +1,42 @@
 //! The send task: the only sender on the camera port. Answers go first, through the socket;
-//! the frame in flight (a raw frame or a JPEG file) goes out chunk by chunk on the protocol's
-//! grid, each chunk beside smoltcp (`net::chunk`): `espion_proto` writes the chunk's header
-//! into a TX descriptor's buffer and PIE copies the bytes from PSRAM after it (the one copy).
-//! A RAW10 frame sent as RAW8 has its 8-bit pixels written after the header instead. Until a
-//! frame from the peer was received (its MAC unknown), chunks go through the socket: the
-//! header written into the socket's ring, PIE copying the bytes.
+//! then the detector's `FrameBlobs` datagrams (the detect task encoded them; each goes beside
+//! smoltcp, `net::chunk`, as a body copied from internal RAM); the frame in flight (a raw
+//! frame or a JPEG file) goes out chunk by chunk on the protocol's grid, each chunk beside
+//! smoltcp: `espion_proto` writes the chunk's header into a TX descriptor's buffer and PIE
+//! copies the bytes from PSRAM after it (the one copy). A RAW10 frame sent as RAW8 has its
+//! 8-bit pixels written after the header instead. Answers and blobs are sent before every
+//! chunk. Until a frame from the peer was received (its MAC unknown), datagrams go through
+//! the socket: the header written into the socket's ring, PIE copying the bytes.
 
 use core::cell::RefCell;
 use core::future::{Future, poll_fn};
 use core::pin::pin;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either3, select3};
 use embassy_net::IpEndpoint;
 use embassy_net::udp::{SendError, UdpSocket};
 use embassy_time::Instant;
 use esp32p4_pie::Pie;
 use espion_proto::cam::{CAM_PORT, CHUNK_MAX, FrameChunk, FrameTiming, MAX_DATAGRAM, Span};
+use static_cell::ConstStaticCell;
 
+use super::detect::{BLOBS_READY, BlobsRx};
 use super::{JOB, Job, Outgoing, RESPONSES, SEND_BUSY_US, shared};
 use crate::cpu::{self, Counter64};
 use crate::net::chunk;
+
+/// The `FrameBlobs` datagram being sent, copied out of the detect task's queue.
+static BLOBS_BUF: ConstStaticCell<[u8; MAX_DATAGRAM]> = ConstStaticCell::new([0; MAX_DATAGRAM]);
+
+/// Bytes of internal RAM the send task's own buffer takes.
+pub const RAM_BYTES: usize = MAX_DATAGRAM;
+
+/// The send task's queue of `FrameBlobs` datagrams and its buffer for the one being sent.
+struct Blobs {
+    rx: BlobsRx,
+    buf: &'static mut [u8; MAX_DATAGRAM],
+}
 
 #[allow(
     clippy::large_stack_frames,
@@ -29,12 +45,21 @@ use crate::net::chunk;
     main stack, which has most of internal RAM"
 )]
 #[embassy_executor::task]
-pub(super) async fn task(sock: &'static RefCell<UdpSocket<'static>>, pie: &'static Pie) {
+pub(super) async fn task(
+    sock: &'static RefCell<UdpSocket<'static>>,
+    pie: &'static Pie,
+    rx: BlobsRx,
+) {
     cpu::name_current("send");
+    let mut blobs = Blobs {
+        rx,
+        buf: BLOBS_BUF.take(),
+    };
     loop {
-        match select(RESPONSES.receive(), JOB.wait()).await {
-            Either::First(r) => respond(sock, &r).await,
-            Either::Second(job) => send_frame(sock, pie, job).await,
+        match select3(RESPONSES.receive(), BLOBS_READY.wait(), JOB.wait()).await {
+            Either3::First(r) => respond(sock, &r).await,
+            Either3::Second(()) => send_blobs(sock, pie, &mut blobs).await,
+            Either3::Third(job) => send_frame(sock, pie, &mut blobs, job).await,
         }
     }
 }
@@ -117,12 +142,44 @@ async fn respond(sock: &RefCell<UdpSocket<'static>>, r: &Outgoing) {
     }
 }
 
+/// Sends the `FrameBlobs` datagrams queued, in order, while a host polls (dropped otherwise).
+async fn send_blobs(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, b: &mut Blobs) {
+    loop {
+        let Blobs { rx, buf } = b;
+        let Some(len) = rx.pop_with(|o| {
+            let len = o.len.min(MAX_DATAGRAM);
+            buf[..len].copy_from_slice(&o.datagram[..len]);
+            len
+        }) else {
+            return;
+        };
+        let now = Instant::now();
+        let Some(to) = shared(|s| s.peer.filter(|_| s.host_active(now))) else {
+            continue;
+        };
+        let datagram = &buf[..len];
+        let sent = match chunk::send(pie, to, CAM_PORT, |_| 0, datagram).await {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                send(sock, to, |out| {
+                    out[..len].copy_from_slice(datagram);
+                    len
+                })
+                .await
+            }
+        };
+        if sent.is_ok() {
+            shared(|s| s.counters.datagrams_sent = s.counters.datagrams_sent.wrapping_add(1));
+        }
+    }
+}
+
 /// Sends `job`'s chunks in order; gives up when the stream stops (new mode or encoding, stream
 /// off, no request for the timeout) or the socket refuses. The time it takes counts as the
 /// link's busy time ([`SEND_BUSY_US`]).
-async fn send_frame(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: Job) {
+async fn send_frame(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, b: &mut Blobs, job: Job) {
     let start = Instant::now();
-    send_chunks(sock, pie, &job, start).await;
+    send_chunks(sock, pie, b, &job, start).await;
     // No preload of the buffer may run once it goes back (`prefetch` module docs).
     crate::prefetch::settle();
     drop(job);
@@ -135,12 +192,21 @@ async fn send_frame(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: Job) {
     clippy::large_stack_frames,
     reason = "polled inside the send task's future, see `task`"
 )]
-async fn send_chunks(sock: &RefCell<UdpSocket<'static>>, pie: &Pie, job: &Job, start: Instant) {
+async fn send_chunks(
+    sock: &RefCell<UdpSocket<'static>>,
+    pie: &Pie,
+    b: &mut Blobs,
+    job: &Job,
+    start: Instant,
+) {
     let len = job.len;
     let mut offset = 0;
     while offset < len {
         while let Ok(r) = RESPONSES.try_receive() {
             respond(sock, &r).await;
+        }
+        if BLOBS_READY.try_take().is_some() {
+            send_blobs(sock, pie, b).await;
         }
         let now = Instant::now();
         let to = shared(|s| {

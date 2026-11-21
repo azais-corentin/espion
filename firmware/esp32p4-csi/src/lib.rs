@@ -71,6 +71,7 @@
 
 #![no_std]
 
+pub mod copy;
 mod dphy;
 mod ldo;
 pub mod strips;
@@ -96,11 +97,12 @@ use esp32p4 as pac;
 // Cache maintenance, behind the lock shared with every other cache operation of the firmware.
 use esp32p4_cache as cache;
 
+pub use copy::{CopyError, DmaCopy};
 pub use dphy::{MAX_MBPS, MIN_MBPS, PhyStatus, hsfreqrange};
 pub use ldo::{LdoChannel, LdoError, LdoSetting, disable_ldo, enable_ldo};
 pub use strips::{
-    CsiStrips, MAX_STRIPS, Strip, StripControl, StripDebug, StripError, StripLink, StripReader,
-    StripRef, StripStats,
+    CsiStrips, MAX_STRIPS, Released, Strip, StripControl, StripDebug, StripError, StripLink,
+    StripReader, StripRef, StripStats,
 };
 
 /// Number of active data lanes. Fixed: the P4 has two and this driver uses both.
@@ -967,21 +969,33 @@ fn enable_clocks() {
     });
 }
 
+/// Enables the DW-GDMA's bus clocks, and resets and enables the controller if nobody enabled
+/// it yet (`dw_gdma_hal_init`): once enabled it is never reset, since that would stop every
+/// channel, the receiver's and a copier's ([`DmaCopy`]) included.
+fn enable_controller() {
+    let d = dma();
+    critical_section::with(|_| {
+        let c = clkrst();
+        c.soc_clk_ctrl0()
+            .modify(|_, w| w.gdma_cpu_clk_en().set_bit());
+        c.soc_clk_ctrl1()
+            .modify(|_, w| w.gdma_sys_clk_en().set_bit());
+        if d.cfg0().read().dmac_en().bit_is_clear() {
+            c.hp_rst_en0().modify(|_, w| w.rst_en_gdma().set_bit());
+            c.hp_rst_en0().modify(|_, w| w.rst_en_gdma().clear_bit());
+            d.reset0().write(|w| w.dmac_rst().set_bit());
+            while d.reset0().read().dmac_rst().bit_is_set() {}
+            d.cfg0()
+                .modify(|_, w| w.dmac_en().set_bit().int_en().set_bit());
+        }
+    });
+}
+
 /// One-time DW-GDMA controller and channel setup (`dw_gdma_hal_init`, `dw_gdma_new_channel`
 /// with the IDF CSI allocation config). The controller is reset only if nobody enabled it yet.
 fn init_dma_channel(ch: u8, multblk_type: u8, signals: u32) {
     let d = dma();
-    if d.cfg0().read().dmac_en().bit_is_clear() {
-        critical_section::with(|_| {
-            let c = clkrst();
-            c.hp_rst_en0().modify(|_, w| w.rst_en_gdma().set_bit());
-            c.hp_rst_en0().modify(|_, w| w.rst_en_gdma().clear_bit());
-        });
-        d.reset0().write(|w| w.dmac_rst().set_bit());
-        while d.reset0().read().dmac_rst().bit_is_set() {}
-        d.cfg0()
-            .modify(|_, w| w.dmac_en().set_bit().int_en().set_bit());
-    }
+    enable_controller();
     channel_enable(ch, false);
     let c = d.ch(ch as usize);
     // Multi-block type for source and destination: 0 = contiguous (one block per transfer),

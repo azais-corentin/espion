@@ -355,7 +355,8 @@ fn start_core1<'d>(
     cpu: CPU_CTRL<'static>,
     vdma: VDMA_CH0<'d>,
 ) -> Option<(&'static mut Core1, StripControl<'d>, (usize, usize))> {
-    let Some(core1) = core1::start(cpu, DETECTOR.take(), BLOBS.take(), SkipChoice::Pie) else {
+    let Some(core1) = core1::start(cpu, DETECTOR.take(), BLOBS.take(), SkipChoice::Pie, None)
+    else {
         error!("vision: core 1 did not start");
         return None;
     };

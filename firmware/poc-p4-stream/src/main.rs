@@ -39,6 +39,7 @@ mod irq;
 mod markers;
 mod net;
 mod prefetch;
+mod stack;
 mod stream;
 mod vision;
 
@@ -83,6 +84,7 @@ const PIE_TEST_CASES: u32 = 4096;
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
+    stack::paint();
     esp_println::logger::init_logger_from_env();
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     let baud_divider = LOG_BAUD.map(set_log_baud);
@@ -150,6 +152,8 @@ async fn main(spawner: Spawner) -> ! {
                 psram,
                 i2c0: p.I2C0,
                 vdma: p.VDMA_CH0,
+                vdma1: p.VDMA_CH1,
+                cpu: p.CPU_CTRL,
                 pie,
             },
         ),

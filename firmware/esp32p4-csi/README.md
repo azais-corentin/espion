@@ -4,15 +4,53 @@ MIPI CSI-2 receiver for the ESP32-P4 (`no_std`, on the `esp32p4` PAC, written in
 style), for the OV9281 in RAW8 or RAW10 over two lanes. Two drivers share the hardware, one
 at a time:
 
-- `Csi`: whole frames into a few frame buffers (PSRAM or internal RAM), one DMA block per
-  frame.
+- `Csi`: whole frames into 2 to `MAX_BUFFERS` (4) frame buffers (PSRAM or internal RAM), one
+  DMA block per frame.
 - `CsiStrips`: every frame as a sequence of strips of a fixed number of rows in a small ring
   of internal-RAM buffers, so a row-incremental consumer (the blob detector) works on a frame
-  while the sensor still sends it. The frame-boundary method, stall recovery and measured
-  interrupt cost are in the `strips` module docs.
+  while the sensor still sends it. `CsiStrips::new` takes the ring as an array (its size fixed
+  at build time); `CsiStrips::from_slices` takes slices, so the caller picks the number of
+  strips per mode at run time (2 to `MAX_STRIPS` = 16, one list item per strip, same checks).
+  The frame-boundary method, stall recovery and measured interrupt cost are in the `strips`
+  module docs.
+
+Beside them, `DmaCopy` copies memory to memory on another DW-GDMA channel (below).
 
 Cache maintenance goes through `firmware/esp32p4-cache` (one cross-core lock for every cache
 operation).
+
+## Memory-to-memory copies: `DmaCopy`
+
+`src/copy.rs`. One copy at a time on a DW-GDMA channel the receiver does not use (in
+`poc-p4-stream` the receiver has channel 0 and the copier channel 1), one contiguous block per
+copy, the DMA its own flow controller. Made for the strip path: a strip in internal RAM
+copied into a frame buffer in PSRAM by a bare core 1.
+
+- `DmaCopy::new(channel)` runs on core 0: it enables the DMA's clocks and the controller if
+  nobody did yet (behind esp-hal's critical section) and sets the channel up. After that
+  `start(src, dst, len)`, `poll()` (never waits), `wait(max_cycles)` (spins, aborts on
+  timeout), `is_busy()` and `abort()` are plain register accesses: no critical section, no
+  interrupt, no lock, no esp-hal call. So core 1 may own it (`DmaCopy` is `Send`). Dropping it
+  aborts a copy in progress.
+- Ends in internal L2MEM or PSRAM only (the DMA's master 1); anything else, a length of 0 or
+  more than one block is `CopyError::Range`. The widest transfer width the addresses and the
+  length allow (8 bytes for strips and frame buffers), bursts as the receiver's channel.
+- Priority 0, below the receiver's 1 (the higher number wins): a copy never takes the bus
+  from the receiver.
+- No interrupt: the DW-GDMA has one interrupt line for its four channels, bound to the
+  receiver's handler, so a copy channel that signalled would run that handler for nothing.
+  The end is the channel's `TFR_DONE` status bit, polled. An error bit stops the channel and
+  comes back as `CopyError::Dma` with the status.
+- No controller reset once it is enabled, for the copier and the receiver alike: a reset
+  stops every channel, a capture in progress included. Do not create esp-hal's DSI
+  `VdmaChannel`: it resets the controller every time.
+- Cache: the DMA reads and writes memory, not the caches. The source must have no dirty
+  lines (write it back if the CPU wrote it), and the CPU must invalidate the destination's
+  lines after the copy before it reads them. The copier does no cache maintenance itself.
+
+Checked on the board beside live capture, the JPEG encoder and core 1's detector:
+`poc-p4-stream` README, [Measured: detection on strips](../poc-p4-stream/README.md#measured-detection-on-strips-2026-11-21)
+(gate A).
 
 ## Strips on two cores: `CsiStrips::split`
 
@@ -24,9 +62,9 @@ Run on the board on 2026-11-11 with the reader on a bare core 1 (`poc-p4-eth`,
 
 | Half | Where | What |
 |---|---|---|
-| `StripControl<'d>` | the core that created the driver (core 0) | `start`, `stop`, `set_config`, `is_running`, `stats`, `strips_lapped`, `reset_stats`, `debug_status`, `phy_status`, and `service()`: restarts a halted channel (stall or DMA error) once the reader has caught up; call it about every millisecond |
+| `StripControl<'d>` | the core that created the driver (core 0) | `start`, `stop`, `set_config`, `is_running`, `stats`, `strips_lapped` (laps that lost a frame), `strips_lapped_copied` (laps after an intact copy, frame kept), `reset_stats`, `debug_status`, `phy_status`, and `service()`: restarts a halted channel (stall or DMA error) once the reader has caught up; call it about every millisecond |
 | `StripReader` (`Send`) | moved once to the bare second core (core 1) | `poll() -> Option<StripRef<'_>>`, never waits; `is_running()` |
-| `StripRef<'r>` | core 1 | derefs to the strip's bytes; `frame()`, `first_row()`, `rows()`, `is_last()`, `queued_at_cycles()`; `release() -> bool` (also run by its drop) |
+| `StripRef<'r>` | core 1 | derefs to the strip's bytes; `frame()`, `first_row()`, `rows()`, `is_last()`, `queued_at_cycles()` (below); `intact()`; `release() -> bool` (also run by its drop); `release_copied() -> Released` (`Intact`, `Lapped`, `Stopped`) |
 
 Interrupts after the split: the per-strip `BLOCK_TFR_DONE` signal is masked, so core 0 takes
 no interrupt per strip. The DMA error and stall interrupt, the CSI host and the bridge error
@@ -78,7 +116,7 @@ consumer is done. With N strips in the ring and T the time the DMA takes for one
 | The consumer keeps one strip for | Effect |
 |---|---|
 | less than (N - 1) T | nothing lost |
-| (N - 1) T to about N T (the DMA comes round to the strip being read) | `release()` returns `false`; counted in `StripControl::strips_lapped()` and `frames_truncated`; the rest of that frame is tracked but not delivered; delivery resumes at the next frame start, no probation frame (the DMA never stopped, so the blocks stay aligned) |
+| (N - 1) T to about N T (the DMA comes round to the strip being read) | `release()` returns `false`; counted in `StripControl::strips_lapped()` and `frames_truncated`; the rest of that frame is tracked but not delivered; delivery resumes at the next frame start, no probation frame (the DMA never stopped, so the blocks stay aligned). A strip released with `release_copied` after an intact copy keeps its frame (below) |
 | longer (the DMA reaches an item the reader has not taken yet) | the DMA halts; core 0 counts a stall; once every item is valid again, `service()` restarts the ISP and bridge and resumes the channel; the reader resynchronises with a probation frame, as on one core |
 
 Lap detection: strip `k` is overwritten only after the DMA finished item `k - 1` once more,
@@ -97,7 +135,21 @@ hold loop reads four done bits and 16 bytes per turn, a turn of a few microsecon
 `k`; this is a measurement on this chip and these timings, not a guarantee from the TRM.
 
 The consumer must treat what it computed from a frame as valid only if every strip of the
-frame released `true`.
+frame released `true`, with one exception for a consumer that copies each strip.
+
+**A copy survives a lap.** A consumer that copies the strip (a DMA copy into a frame buffer)
+waits for the copy's end, then asks `StripRef::intact()`: `k - 1` not done again means the
+DMA had not reached `k`, so every byte the copy read was the strip's (same [INFERENCE] as
+above). It then releases with `release_copied()`. A lap found there returns
+`Released::Lapped`, counts in `strips_lapped_copied` only, and the reader goes on delivering
+the frame; only what the consumer read from the strip itself after the `intact` check is
+spoilt. `Released::Stopped`: the driver stopped or restarted, drop the frame.
+
+**Strip age.** On the split reader `queued_at_cycles()` is not the poll that took the strip
+but the reader's last look that found the block (or one before it) unfinished: a lower bound
+of the block's end, refreshed at each release. So time the strip lay done before the poll
+counts against the consumer's hold. (The one-core driver's `queued_at_cycles()` is still the
+DMA handler's time.)
 
 ### Stop and restart while the reader polls
 

@@ -47,8 +47,10 @@
 //! # The loop
 //!
 //! Take a new [`StripReader`] from the mailbox if core 0 left one; answer a clock request
-//! ([`Core1::clock_offset`]); poll; on a strip, do the run's [`Job`], release the strip.
-//! Between empty polls it waits [`POLL_GAP_CYCLES`]. It increments [`HEARTBEAT`] every turn.
+//! ([`Core1::clock_offset`]); handle an abort request ([`Core1::abort_stream`]); poll; on a
+//! strip, do the run's job, release the strip; without one, measure the next blob of a stream
+//! frame waiting for its spots ([`refine_step`]), or wait [`POLL_GAP_CYCLES`]. Every turn it
+//! increments [`HEARTBEAT`] and stores its `mcycle` in [`NOW`].
 //!
 //! - [`Job::Detect`]: the detector on the strip's rows ([`detect_rows`], the only detector
 //!   call: `push_rows_with` with the skip chosen at the entry), or on a synthetic strip core 0
@@ -58,12 +60,34 @@
 //!   core 0 took from whole frames of the sensor's random test pattern, the strip sequence,
 //!   and the test holds of the lap and stall tests, with the L1 data autoload over the strip
 //!   if the run asks for it; counters in [`CHECK`] and [`CHECK_MAX`].
+//! - The stream job ([`Core1::set_stream`], [`stream_strip`]): at a frame's first strip its
+//!   detection settings ([`Core1::set_detect`]) and a frame buffer claimed from [`FREE`] (none
+//!   free: the frame is detected, not copied, [`NOT_COPIED`]). Per strip: its hold counted
+//!   from a lower bound of its block's end ([`strip_bound`]), the DMA copy of the strip to
+//!   its rows in the frame buffer started ([`DmaCopy`], one block), the detector and the
+//!   background sample (`espion_vision::auto`) on the strip while the copy runs (with the L1
+//!   data autoload over the strip if the run asks for it). The detector is one bounded call
+//!   (`push_rows_until`) that stops at a row boundary once its next step could end past
+//!   [`StreamRun::budget_cycles`]; stopped short, the rest of the frame is copied only
+//!   ([`FrameResult::cut`]). Then the copy waited for (at most [`COPY_MAX_CYCLES`]) and the
+//!   strip released. A strip whose copy ended while it was intact is released with
+//!   `release_copied`: lapped after that, the frame goes on without detection. Any other
+//!   strip released `false` abandons the frame and its buffer goes back. After the last
+//!   strip ([`stream_end`]): `finish`, the
+//!   background, the frame buffer's lines invalidated, a reserved result slot; the kept blobs
+//!   (area filter, at most [`StreamDetect::spots`]) are measured on the assembled frame
+//!   (`espion_vision::refine`) one per loop turn between strips, and the result is published
+//!   after the last, handing the buffer to core 0. The next frame's end finishes a waiting
+//!   one first. An abort request or a new reader drops the frame being assembled and the one
+//!   waiting, with their buffers, once the copy in flight has ended ([`stream_drop`]).
 //!
 //! What core 1 may call: atomics, `mcycle`/`minstret`, the strip reader (no critical
-//! section, no esp-hal driver call, see `esp32p4-csi`'s README), `esp32p4-cache` (the reader's
-//! invalidate, the flush of a synthetic strip and the autoload registers), `esp32p4-perf`,
-//! and the detector. Never `critical_section`, `log`/`esp-println`, esp-rtos, embassy or an
-//! esp-hal driver.
+//! section, no esp-hal driver call, see `esp32p4-csi`'s README), the copier's register
+//! accesses (`DmaCopy::start`, `poll`, `wait`, `abort`: no critical section, no interrupt),
+//! `esp32p4-cache` (the reader's invalidate, the frame buffer's invalidate, the flush of a
+//! synthetic strip and the autoload registers), `esp32p4-perf`, the detector, the background
+//! sample and the refined measure. Never `critical_section`, `log`/`esp-println`, esp-rtos,
+//! embassy or an esp-hal driver.
 //!
 //! # L1 data autoload on core 1
 //!
@@ -87,8 +111,10 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use esp_hal::peripherals::CPU_CTRL;
 use esp_hal::system::{AppCoreGuard, CpuControl, Stack};
 use esp32p4_cache::prefetch::{self, Autoload, Level, Order, Section, Trigger};
-use esp32p4_csi::{StripReader, StripRef};
+use esp32p4_csi::{DmaCopy, Released, StripReader, StripRef};
 use esp32p4_perf::{CpuSample, cycles};
+use espion_vision::auto::{self, Background, Histogram};
+use espion_vision::refine::{self, Spot};
 use espion_vision::{Blob, DefaultDetector, Scalar, Skip, Stats};
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -100,46 +126,116 @@ use crate::spsc::{Consumer, Producer, Spsc};
 const STACK_BYTES: usize = 16 * 1024;
 /// Blobs per frame result: the detector's own capacity (`DefaultDetector`).
 pub const MAX_BLOBS: usize = 256;
+/// Blobs per frame [`Job::Stream`] measures with `espion_vision::refine` (the kept ones, at
+/// most the limit of [`StreamDetect::spots`]).
+pub const MAX_SPOTS: usize = 128;
+/// [`FrameResult::buffer`] of a frame that was not copied.
+pub const NO_BUFFER: u8 = 0xFF;
+/// Most frame buffers of [`Job::Stream`] (one bit each of [`FREE`]).
+pub const MAX_FRAME_BUFFERS: usize = 8;
 /// Frame results in flight: a few frames (33 ms at 120 fps) of slack for core 0.
 const QUEUE_FRAMES: usize = 4;
 /// Cycles core 1 waits between two polls that found nothing: 10 us at 400 MHz, a sixtieth of
 /// a 1280x800 strip (0.64 ms). Polls share the L2MEM bus with the DMA.
 const POLL_GAP_CYCLES: u32 = 4_000;
+/// Longest a strip's copy may take before core 1 gives it up (and the frame): 4 ms at
+/// 400 MHz. A 100 KiB strip takes under 0.5 ms beside live capture and the JPEG encoder.
+const COPY_MAX_CYCLES: u32 = 1_600_000;
+/// The stream job's detector's longest step between two of its stop questions
+/// (`push_rows_until`), per pixel of a row: one row of the worst case, every other pixel
+/// bright (the sensor's colour test patterns on a mono sensor: 324 runs per 1280-pixel row).
+/// Measured on the board (2026-11-21, 1280 wide, RAW8 and RAW10, every test pattern): at most
+/// 351 us per row (110 cycles per pixel), 387 us (121) with the strip's copy and a lap in
+/// flight; this leaves 19 % above that.
+const STEP_CYCLES_PER_PIXEL: u32 = 144;
+/// The other kind of step, one skip over the dark rest of a strip, per byte of the strip:
+/// measured at most 0.6 cycles per byte (152 us for a 1280x64 RAW10 strip of a scene).
+const SKIP_CYCLES_PER_BYTE: u32 = 1;
+/// The word [`start`] paints core 1's stack with, for [`Core1::stack_unused`].
+const PAINT: u32 = 0x5A5A_C0DE;
+/// Bytes at the bottom of core 1's stack the scan skips: esp-hal's closure and guard word.
+const PAINT_SKIP: usize = 256;
 
 static STACK: ConstStaticCell<Stack<STACK_BYTES>> = ConstStaticCell::new(Stack::new());
 static CORE1: StaticCell<Core1> = StaticCell::new();
 
 /// One finished frame, from core 1 to core 0.
 pub struct FrameResult {
-    /// The strip path's frame number.
+    /// The strip path's frame number: frame ends since the receiver's start before this frame
+    /// (its own end not included).
     pub frame: u32,
-    /// Strips of the frame fed to the detector.
+    /// [`Job::Stream`]: the run number of [`StreamRun::run`] (0 for the other jobs).
+    pub run: u32,
+    /// [`Job::Stream`]: the frame buffer holding the assembled frame, now core 0's (give it
+    /// back with [`give_frame`]); [`NO_BUFFER`] if the frame was not copied.
+    pub buffer: u8,
+    /// [`Job::Stream`]: the detector ran on the frame (detection on), and the detection
+    /// serial its settings came with ([`StreamDetect::serial`]).
+    pub detected: bool,
+    pub serial: u32,
+    /// [`Job::Stream`]: detection was on but cut short for this frame: the detector's next
+    /// step on a strip could have ended past the hold the ring allows
+    /// ([`StreamRun::budget_cycles`]), or a strip was lapped after its copy, so the rest of
+    /// the frame was copied but not detected (`detected` is false).
+    pub cut: bool,
+    /// Strips of the frame taken.
     pub strips: u16,
     /// Strips consumed more than one strip period after the reader took them (the detector
-    /// fell behind the DMA there).
+    /// fell behind the DMA there; [`Job::Stream`]: released after that).
     pub late_strips: u16,
     /// Valid entries of `blobs`.
     pub blob_count: u16,
     /// The detector's counters for the frame.
     pub stats: Stats,
-    /// Core-1 cycles and instructions in the detector (rows and `finish`).
+    /// Core-1 cycles and instructions in the detector (rows, `finish`; [`Job::Stream`]: also
+    /// the background sample).
     pub cycles: u32,
     pub instructions: u32,
-    /// Longest time from a strip's `queued_at_cycles` (the reader took the block) to the end
-    /// of its detector call, in cycles.
+    /// Longest time from a strip's `queued_at_cycles` (a lower bound of its block's end,
+    /// [`Job::Stream`]: [`strip_bound`]) to the end of its detector call ([`Job::Stream`]: to
+    /// its release), in cycles.
     pub worst_latency: u32,
     /// Longest time from a strip's `queued_at_cycles` to the start of its detector call.
     pub start_latency: u32,
     /// From the last strip's `queued_at_cycles` to the publication of this result.
     pub ready: u32,
+    /// The last strip's `queued_at_cycles` (core 1's `mcycle`, see [`age`]).
+    pub queued_at: u32,
     /// Core 1's `mcycle` at the publication (see [`Core1::clock_offset`]).
     pub pushed_at: u32,
+    /// Threshold the frame was detected with, in its format's units, and its format.
+    pub threshold: u16,
+    pub raw10: bool,
+    /// [`Job::Stream`]: the background of the frame's sample (`None` for an empty sample and
+    /// for the other jobs).
+    pub background: Option<Background>,
     pub blobs: [Blob; MAX_BLOBS],
+    /// [`Job::Stream`], copied frames: the kept blobs (area filter) measured on the assembled
+    /// frame (`espion_vision::refine`: Gaussian-weighted centroid over the local background),
+    /// at most [`StreamDetect::spots`]; `spot_blob[i]` is the index in `blobs` of `spots[i]`.
+    pub spot_count: u16,
+    pub spots: [Spot; MAX_SPOTS],
+    pub spot_blob: [u8; MAX_SPOTS],
+    /// [`Job::Stream`]: core-1 cycles of the refined measure (the frame's invalidate included).
+    pub refine_cycles: u32,
+    /// [`Job::Stream`]: per strip, cycles from the reader's take to the release (total and
+    /// longest), of the detector (longest), and spent waiting for the copy after the detector
+    /// (total and longest).
+    pub hold_total: u32,
+    pub hold_max: u32,
+    pub detect_max: u32,
+    pub copy_wait_total: u32,
+    pub copy_wait_max: u32,
 }
 
 impl FrameResult {
     const EMPTY: Self = Self {
         frame: 0,
+        run: 0,
+        buffer: NO_BUFFER,
+        detected: false,
+        cut: false,
+        serial: 0,
         strips: 0,
         late_strips: 0,
         blob_count: 0,
@@ -154,13 +250,31 @@ impl FrameResult {
         worst_latency: 0,
         start_latency: 0,
         ready: 0,
+        queued_at: 0,
         pushed_at: 0,
+        threshold: 0,
+        raw10: false,
+        background: None,
         blobs: [Blob {
             x: 0,
             y: 0,
             area: 0,
             peak: 0,
         }; MAX_BLOBS],
+        spot_count: 0,
+        spots: [Spot {
+            x: 0,
+            y: 0,
+            width: 0,
+            flux: 0,
+        }; MAX_SPOTS],
+        spot_blob: [0; MAX_SPOTS],
+        refine_cycles: 0,
+        hold_total: 0,
+        hold_max: 0,
+        detect_max: 0,
+        copy_wait_total: 0,
+        copy_wait_max: 0,
     };
 }
 
@@ -168,15 +282,78 @@ impl FrameResult {
 static RESULTS: Spsc<FrameResult, QUEUE_FRAMES> =
     Spsc::new([const { UnsafeCell::new(FrameResult::EMPTY) }; QUEUE_FRAMES]);
 
+/// [`Job::Stream`]'s run parameters. Writer: core 0 ([`Core1::set_stream`]), only while the
+/// strip path is stopped (published to core 1 like [`PARAMS`]).
+struct StreamParams {
+    /// Width (bits 0..16), RAW10 (bit 31).
+    format: AtomicU32,
+    height: AtomicU32,
+    line_bytes: AtomicU32,
+    /// The frame buffers: the first's address, the distance between two, their count, and the
+    /// bytes of a frame.
+    base: AtomicUsize,
+    stride: AtomicUsize,
+    count: AtomicU32,
+    frame_bytes: AtomicUsize,
+    run: AtomicU32,
+}
+
+static STREAM: StreamParams = StreamParams {
+    format: AtomicU32::new(0),
+    height: AtomicU32::new(0),
+    line_bytes: AtomicU32::new(0),
+    base: AtomicUsize::new(0),
+    stride: AtomicUsize::new(0),
+    count: AtomicU32::new(0),
+    frame_bytes: AtomicUsize::new(0),
+    run: AtomicU32::new(0),
+};
+
+/// [`Job::Stream`]'s detection settings, read by core 1 at each frame's first strip. Writer:
+/// core 0 ([`Core1::set_detect`]), any time: the other words first, `serial` last (Release);
+/// core 1 loads `serial` first (Acquire).
+struct DetectParams {
+    /// Threshold (bits 0..10), detection on (bit 31).
+    word: AtomicU32,
+    /// Minimum area (bits 0..16), maximum area (16..32).
+    area: AtomicU32,
+    spots: AtomicU32,
+    serial: AtomicU32,
+}
+
+static DETECT: DetectParams = DetectParams {
+    word: AtomicU32::new(0),
+    area: AtomicU32::new(0),
+    spots: AtomicU32::new(0),
+    serial: AtomicU32::new(0),
+};
+
+/// [`Job::Stream`]'s free frame buffers, one bit each: core 1 claims one at a frame's first
+/// strip (compare and swap) and gives back those it does not publish; core 0 gives back each
+/// frame it was handed once it is done with it ([`give_frame`]).
+static FREE: AtomicU32 = AtomicU32::new(0);
+
+/// Core 0's abort requests ([`Core1::abort_stream`]) and core 1's acknowledgement: the request
+/// number it handled, stored once it holds no frame buffer and its copy is idle.
+static ABORT_REQ: AtomicU32 = AtomicU32::new(0);
+static ABORT_ACK: AtomicU32 = AtomicU32::new(0);
+
 /// Writer: core 1, once per turn of its loop. Core 0 reports core 1 stalled when it stops.
 static HEARTBEAT: AtomicU32 = AtomicU32::new(0);
+/// Writer: core 1, once per turn of its loop: its `mcycle` then ([`age`]).
+static NOW: AtomicU32 = AtomicU32::new(0);
 /// Writer: core 1. Frames begun but not published: a strip released `false` (lapped, or the
 /// run stopped), or a new frame began before the last strip.
 static ABANDONED: AtomicU32 = AtomicU32::new(0);
+/// Writer: core 1. [`Job::Stream`]: frames begun without a free frame buffer (detected, not
+/// copied), and copies that failed (the channel's error or [`COPY_MAX_CYCLES`]).
+static NOT_COPIED: AtomicU32 = AtomicU32::new(0);
+static COPY_ERRORS: AtomicU32 = AtomicU32::new(0);
+/// The lowest word of core 1's stack ([`Core1::stack_unused`]).
+static STACK_BOTTOM: AtomicUsize = AtomicUsize::new(0);
 /// Writer: core 1, once, at its entry: which skip the detector runs with ([`SkipUsed`] as
 /// `u32`; 0 until core 1 got there).
 static SKIP_USED: AtomicU32 = AtomicU32::new(0);
-
 /// The skip core 1 runs with, as [`skip_used`] reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkipUsed {
@@ -212,12 +389,15 @@ pub enum Job {
 /// stopped; the reader's start publishes them to core 1 (they are stored before the start's
 /// SeqCst run number, which core 1 loads before it uses them).
 struct Params {
-    /// 0 [`Job::Detect`], 1 [`Job::Check`].
+    /// 0 [`Job::Detect`], 1 [`Job::Check`], 2 the stream job ([`Core1::set_stream`]).
     job: AtomicU32,
     /// Width (bits 0..16), threshold (16..26), RAW10 (bit 31).
     format: AtomicU32,
     /// A strip consumed later than this many cycles after the reader took it counts as late.
     late: AtomicU32,
+    /// [`Job::Stream`]: cycles of sensor time per row, 15/16 of the mode's line time: a block
+    /// finishes at least its rows' time after the block before it.
+    row: AtomicU32,
     /// 1: L1 data autoload (miss and hit) over each strip the detector reads.
     autoload: AtomicU32,
     /// Synthetic strip the detector reads instead of each strip (address, bytes; 0: live).
@@ -239,12 +419,21 @@ struct Params {
     links: AtomicUsize,
     strip_bytes: AtomicU32,
     count: AtomicU32,
+    /// [`Job::Stream`]: cycles from the end of a strip's block within which the detector
+    /// ends ([`StreamRun::budget_cycles`]).
+    budget: AtomicU32,
+    /// [`Job::Stream`]: the detector's longest step, cycles (see [`STEP_CYCLES_PER_PIXEL`]):
+    /// it starts no step later than `budget - step` after the strip's block ended.
+    step: AtomicU32,
 }
 
 static PARAMS: Params = Params {
     job: AtomicU32::new(0),
     format: AtomicU32::new(0),
     late: AtomicU32::new(u32::MAX),
+    row: AtomicU32::new(0),
+    budget: AtomicU32::new(u32::MAX),
+    step: AtomicU32::new(0),
     autoload: AtomicU32::new(0),
     synth: AtomicUsize::new(0),
     synth_len: AtomicUsize::new(0),
@@ -434,19 +623,27 @@ pub struct Run {
 
 /// Starts core 1 with `det` and `scratch` (where a frame's blobs go when the queue is full),
 /// its detector running the dark skip `skip` ([`SkipChoice::Pie`]: PIE enabled on core 1 by
-/// its entry, the scalar skip if `Pie::enable` refuses). Call once; `None` if core 1 runs
-/// already.
+/// its entry, the scalar skip if `Pie::enable` refuses), and `copy`, the DMA channel of the
+/// stream job's strip copies (`None`: that job copies nothing). Paints core 1's stack first
+/// ([`Core1::stack_unused`]). Call once; `None` if core 1 runs already.
 #[inline(never)]
 pub fn start(
     cpu: CPU_CTRL<'static>,
     det: &'static mut DefaultDetector,
     scratch: &'static mut [Blob; MAX_BLOBS],
     skip: SkipChoice,
+    copy: Option<DmaCopy<'static>>,
 ) -> Option<&'static mut Core1> {
     let (producer, results) = RESULTS.split()?;
     let stack = STACK.try_take()?;
+    let bottom = stack.bottom();
+    for i in 0..stack.len() / 4 {
+        // SAFETY: the stack's words, not in use: core 1 has not started.
+        unsafe { bottom.add(i).write_volatile(PAINT) };
+    }
+    STACK_BOTTOM.store(bottom as usize, Ordering::Relaxed);
     let guard = CpuControl::new(cpu)
-        .start_app_core(stack, move || entry(skip, det, scratch, producer))
+        .start_app_core(stack, move || entry(skip, det, scratch, producer, copy))
         .ok()?;
     Some(CORE1.init(Core1 {
         results,
@@ -584,6 +781,156 @@ impl Core1 {
         let half = t1.wrapping_sub(t0) / 2;
         Some((c1.wrapping_sub(t0.wrapping_add(half)), half))
     }
+
+    /// The parameters of the next stream run, and the stream job for it (instead of
+    /// [`Core1::set_run`]'s): per strip the detector (when [`Core1::set_detect`] has it on),
+    /// the background sample and the copy into the frame's buffer; per frame the refined
+    /// measure of the kept blobs on the assembled frame and one [`FrameResult`]. Only while
+    /// the strip path is stopped.
+    pub fn set_stream(&mut self, run: &StreamRun) {
+        let s = &STREAM;
+        s.format.store(
+            u32::from(run.width) | u32::from(run.raw10) << 31,
+            Ordering::Relaxed,
+        );
+        s.height.store(u32::from(run.height), Ordering::Relaxed);
+        s.line_bytes.store(run.line_bytes, Ordering::Relaxed);
+        s.base.store(run.frames.base, Ordering::Relaxed);
+        s.stride.store(run.frames.stride, Ordering::Relaxed);
+        s.count.store(
+            u32::from(run.frames.count).min(MAX_FRAME_BUFFERS as u32),
+            Ordering::Relaxed,
+        );
+        s.frame_bytes
+            .store(run.frames.frame_bytes, Ordering::Relaxed);
+        s.run.store(run.run, Ordering::Relaxed);
+        let p = &PARAMS;
+        p.late.store(run.late_cycles, Ordering::Relaxed);
+        let lines = u32::from(run.strip_lines).max(1);
+        p.row
+            .store(run.late_cycles / lines / 16 * 15, Ordering::Relaxed);
+        p.budget.store(run.budget_cycles, Ordering::Relaxed);
+        let row = u32::from(run.width) * STEP_CYCLES_PER_PIXEL;
+        let skip = run.line_bytes * u32::from(run.strip_lines) * SKIP_CYCLES_PER_BYTE;
+        p.step.store(row.max(skip), Ordering::Relaxed);
+        p.autoload.store(u32::from(run.autoload), Ordering::Relaxed);
+        p.synth.store(0, Ordering::Relaxed);
+        p.job.store(2, Ordering::Relaxed);
+    }
+
+    /// The detection settings of the stream job's next frames (any time; a frame takes them
+    /// at its first strip). The threshold is clamped to the format's range.
+    pub fn set_detect(&mut self, d: &StreamDetect) {
+        let raw10 = STREAM.format.load(Ordering::Relaxed) >> 31 != 0;
+        let max = if raw10 { 0x3FF } else { 0xFF };
+        let word = u32::from(d.threshold.clamp(1, max)) | u32::from(d.enabled) << 31;
+        let p = &DETECT;
+        p.word.store(word, Ordering::Relaxed);
+        p.area.store(
+            u32::from(d.min_area) | u32::from(d.max_area) << 16,
+            Ordering::Relaxed,
+        );
+        p.spots
+            .store(u32::from(d.spots).min(MAX_SPOTS as u32), Ordering::Relaxed);
+        p.serial.store(d.serial, Ordering::Release);
+    }
+
+    /// Asks core 1 to drop what the stream job holds: the frame being assembled, the frame
+    /// waiting for its refined measure (its result is not published), each with its buffer,
+    /// after the copy in flight ends (at most [`COPY_MAX_CYCLES`]). Core 1 does it between
+    /// two strips or two blobs; [`Core1::stream_idle`] says when it has. Returns the request.
+    pub fn abort_stream(&mut self) -> u32 {
+        let req = ABORT_REQ.load(Ordering::Relaxed).wrapping_add(1);
+        ABORT_REQ.store(req, Ordering::Release);
+        req
+    }
+
+    /// Core 1 has handled abort request `req` ([`Core1::abort_stream`]): it holds no frame
+    /// buffer and its copy is idle until the next run's first strip.
+    pub fn stream_idle(&self, req: u32) -> bool {
+        ABORT_ACK.load(Ordering::Acquire) == req
+    }
+
+    /// Bytes of core 1's stack never written since [`start`] painted it (from its bottom up,
+    /// past esp-hal's closure and guard word).
+    pub fn stack_unused(&self) -> usize {
+        let bottom = STACK_BOTTOM.load(Ordering::Relaxed);
+        let words = STACK_BYTES / 4;
+        let skip = PAINT_SKIP / 4;
+        let painted = (skip..words)
+            // SAFETY: words of core 1's stack (a static), read only; a racing write by core 1
+            // only ends the count there.
+            .take_while(|&i| unsafe { ((bottom + i * 4) as *const u32).read_volatile() } == PAINT)
+            .count();
+        painted * 4
+    }
+}
+
+/// Frame buffers of the stream job (PSRAM): `count` buffers of at least `frame_bytes`, the
+/// first at `base`, `stride` bytes apart; start and stride multiples of the cache line.
+#[derive(Clone, Copy)]
+pub struct FrameBuffers {
+    pub base: usize,
+    pub stride: usize,
+    pub count: u8,
+    pub frame_bytes: usize,
+}
+
+/// The parameters of a stream run ([`Core1::set_stream`]).
+#[derive(Clone, Copy)]
+pub struct StreamRun {
+    /// Row width in pixels, rows, RAW10 or RAW8, bytes per row.
+    pub width: u16,
+    pub height: u16,
+    pub raw10: bool,
+    pub line_bytes: u32,
+    /// Rows of a full strip.
+    pub strip_lines: u16,
+    pub frames: FrameBuffers,
+    /// Cycles after which a strip counts as late.
+    pub late_cycles: u32,
+    /// Cycles from the end of a strip's block (as [`strip_bound`] bounds it) within which the
+    /// detector must end: the ring's hold ((strips - 1) strip periods) less a margin for the
+    /// copy's end and the release. The detector starts no step later than this less its
+    /// longest step ([`STEP_CYCLES_PER_PIXEL`]); stopped short, it stops for the rest of the
+    /// frame ([`FrameResult::cut`]), which is still copied.
+    pub budget_cycles: u32,
+    /// L1 data autoload over each strip the detector reads: core 0 must have given the
+    /// autoload registers to core 1 (module docs).
+    pub autoload: bool,
+    /// Core 0's number for the run, echoed in its results ([`FrameResult::run`]).
+    pub run: u32,
+}
+
+/// The stream job's detection settings ([`Core1::set_detect`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamDetect {
+    pub enabled: bool,
+    /// Foreground threshold, in the format's units.
+    pub threshold: u16,
+    /// Blobs of an area in `min_area..=max_area` are kept: measured on the frame.
+    pub min_area: u16,
+    pub max_area: u16,
+    /// Most kept blobs measured per frame (at most [`MAX_SPOTS`]).
+    pub spots: u16,
+    /// Echoed in the results of the frames detected with these settings.
+    pub serial: u32,
+}
+
+/// Cycles since core 1's `mcycle` read `then` (a [`FrameResult::queued_at`]), as of core 1's
+/// last loop turn (at most one strip's or one blob's work late, 10 us when idle). 0 if `then`
+/// is later than that turn (a strip's bound can be, by up to one poll).
+pub fn age(then: u32) -> u32 {
+    let d = NOW.load(Ordering::Relaxed).wrapping_sub(then);
+    if (d as i32) < 0 { 0 } else { d }
+}
+
+/// Gives frame buffer `index` to the stream job (core 0: every buffer once at the start,
+/// then each one a [`FrameResult::buffer`] handed over, once done with it).
+pub fn give_frame(index: u8) {
+    if usize::from(index) < MAX_FRAME_BUFFERS {
+        FREE.fetch_or(1 << index, Ordering::Release);
+    }
 }
 
 /// Core 1's heartbeat (turns of its loop).
@@ -594,6 +941,15 @@ pub fn heartbeat() -> u32 {
 /// Frames core 1 abandoned.
 pub fn abandoned() -> u32 {
     ABANDONED.load(Ordering::Relaxed)
+}
+
+/// Stream job: frames detected without a free frame buffer (not copied), and strip copies
+/// that failed.
+pub fn copy_counts() -> (u32, u32) {
+    (
+        NOT_COPIED.load(Ordering::Relaxed),
+        COPY_ERRORS.load(Ordering::Relaxed),
+    )
 }
 
 /// The skip core 1 runs the detector with.
@@ -660,6 +1016,7 @@ fn entry(
     det: &'static mut DefaultDetector,
     scratch: &'static mut [Blob; MAX_BLOBS],
     out: Producer<FrameResult, QUEUE_FRAMES>,
+    copy: Option<DmaCopy<'static>>,
 ) {
     // SAFETY: machine mode on core 1. Clearing MIE only keeps interrupts away; setting
     // `mtvec` changes this core's trap entry only (the CSR is per hart), keeping its mode
@@ -680,10 +1037,23 @@ fn entry(
         SkipChoice::Pie => esp32p4_pie::Pie::enable().ok(),
         SkipChoice::Scalar => None,
     };
+    let st = Core1State {
+        det,
+        scratch,
+        out,
+        open: None,
+        check: None,
+        hold_end: None,
+        hist: Histogram::new(),
+        copy,
+        asm: None,
+        pending: None,
+        bound: None,
+    };
     match &pie {
         Some(p) => {
             SKIP_USED.store(SKIP_PIE, Ordering::Release);
-            run(p, det, scratch, out)
+            run(p, st)
         }
         None => {
             let used = match skip {
@@ -691,7 +1061,7 @@ fn entry(
                 SkipChoice::Scalar => SKIP_SCALAR,
             };
             SKIP_USED.store(used, Ordering::Release);
-            run(&Scalar, det, scratch, out)
+            run(&Scalar, st)
         }
     }
 }
@@ -716,6 +1086,48 @@ struct CheckOpen {
     stops: u32,
 }
 
+/// The frame the stream job is assembling.
+struct Asm {
+    frame: u32,
+    /// Its frame buffer ([`NO_BUFFER`]: not copied).
+    buffer: u8,
+    /// Every copy so far completed.
+    copy_ok: bool,
+    /// Detection on, with these settings ([`DETECT`] at the first strip).
+    detect: bool,
+    serial: u32,
+    threshold: u16,
+    area: (u16, u16),
+    spots: u16,
+    strips: u16,
+    late: u16,
+    cycles: u32,
+    instructions: u32,
+    worst: u32,
+    start: u32,
+    hold_total: u32,
+    detect_max: u32,
+    copy_wait_total: u32,
+    copy_wait_max: u32,
+    /// Detection was on and was cut short for this frame ([`FrameResult::cut`]).
+    cut: bool,
+}
+
+/// A finished frame of the stream job whose result slot is reserved and filled but for the
+/// spots: the kept blobs are measured one per loop turn, between strips.
+struct Pending {
+    /// Next index of the result's `blobs` to look at.
+    next: u16,
+    buffer: u8,
+    area: (u16, u16),
+    spots: u16,
+    /// The assembled frame, and its geometry.
+    frame: &'static [u8],
+    width: u16,
+    height: u16,
+    raw10: bool,
+}
+
 /// Core 1's state between strips.
 struct Core1State<'a> {
     det: &'a mut DefaultDetector,
@@ -726,28 +1138,25 @@ struct Core1State<'a> {
     /// `mcycle` at the end of the last test hold and [`STOPS`] then, until the next good
     /// frame of the same run ends.
     hold_end: Option<(u32, u32)>,
+    /// The background sample of the frame being detected (stream job).
+    hist: Histogram,
+    /// The stream job's strip copies.
+    copy: Option<DmaCopy<'static>>,
+    asm: Option<Asm>,
+    pending: Option<Pending>,
+    /// The stream job: the last strip's lower bound of the end of its block ([`strip_bound`]).
+    bound: Option<u32>,
 }
 
 /// Core 1's loop with the dark skip `skip`. Never returns.
 #[inline(never)]
-fn run<S: Skip>(
-    skip: &S,
-    det: &mut DefaultDetector,
-    scratch: &mut [Blob; MAX_BLOBS],
-    out: Producer<FrameResult, QUEUE_FRAMES>,
-) -> ! {
+fn run<S: Skip>(skip: &S, mut st: Core1State<'_>) -> ! {
     let mut reader: Option<&'static mut StripReader> = None;
     let mut current = 0;
-    let mut st = Core1State {
-        det,
-        scratch,
-        out,
-        open: None,
-        check: None,
-        hold_end: None,
-    };
+    let mut abort_seen = 0;
     loop {
         HEARTBEAT.fetch_add(1, Ordering::Relaxed);
+        NOW.store(cycles(), Ordering::Relaxed);
         let posted = MAILBOX.posted.load(Ordering::Acquire);
         if posted != current {
             current = posted;
@@ -760,15 +1169,27 @@ fn run<S: Skip>(
                 ABANDONED.fetch_add(1, Ordering::Relaxed);
             }
             st.check = None;
+            stream_drop(&mut st);
+            st.bound = None;
         }
         answer_clock();
+        let abort = ABORT_REQ.load(Ordering::Acquire);
+        if abort != abort_seen {
+            abort_seen = abort;
+            stream_drop(&mut st);
+            ABORT_ACK.store(abort, Ordering::Release);
+        }
         let strip = match reader.as_mut() {
             Some(r) => r.poll(),
             None => None,
         };
         match strip {
-            Some(s) if PARAMS.job.load(Ordering::Relaxed) == 1 => check_strip(&mut st, s),
-            Some(s) => on_strip(skip, &mut st, s),
+            Some(s) => match PARAMS.job.load(Ordering::Relaxed) {
+                1 => check_strip(&mut st, s),
+                2 => stream_strip(skip, &mut st, s),
+                _ => on_strip(skip, &mut st, s),
+            },
+            None if st.pending.is_some() => refine_step(&mut st),
             None => pause(),
         }
     }
@@ -862,7 +1283,7 @@ fn on_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
     if autoload {
         autoload_on(rows);
     }
-    detect_rows(skip, det, rows, s.first_row());
+    detect_rows(skip, det, rows, s.first_row(), || false);
     if autoload {
         prefetch::autoload_disable(Level::L1Data);
     }
@@ -905,12 +1326,468 @@ fn on_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
         let now = cycles();
         r.ready = now.wrapping_sub(queued_at);
         r.pushed_at = now;
+        let format = PARAMS.format.load(Ordering::Relaxed);
+        r.threshold = (format >> 16) as u16 & 0x3FF;
+        r.raw10 = format >> 31 != 0;
+        r.run = 0;
+        r.buffer = NO_BUFFER;
+        r.detected = true;
+        r.queued_at = queued_at;
+        r.background = None;
+        r.spot_count = 0;
     });
     if !queued {
         // Counted as dropped by the queue; the detector still has to close the frame.
         det.finish(st.scratch);
     }
     mark(crate::MARKER_FRAME);
+}
+
+/// Claims a free frame buffer of the stream run (the lowest), or [`NO_BUFFER`].
+fn claim_buffer() -> u8 {
+    let count = STREAM.count.load(Ordering::Relaxed);
+    let mask = (1u32 << count.min(MAX_FRAME_BUFFERS as u32)) - 1;
+    let mut v = FREE.load(Ordering::Acquire);
+    loop {
+        let avail = v & mask;
+        if avail == 0 {
+            return NO_BUFFER;
+        }
+        let bit = avail.isolate_lowest_one();
+        match FREE.compare_exchange_weak(v, v & !bit, Ordering::Acquire, Ordering::Acquire) {
+            Ok(_) => return bit.trailing_zeros() as u8,
+            Err(now) => v = now,
+        }
+    }
+}
+
+/// Gives frame buffer `b` back to [`FREE`] ([`NO_BUFFER`]: nothing).
+fn return_buffer(b: u8) {
+    if b != NO_BUFFER {
+        give_frame(b);
+    }
+}
+
+/// The address of frame buffer `b`.
+fn buffer_addr(b: u8) -> usize {
+    STREAM.base.load(Ordering::Relaxed) + usize::from(b) * STREAM.stride.load(Ordering::Relaxed)
+}
+
+/// Drops what the stream job holds, after the copy in flight ends: the frame being assembled
+/// and the frame waiting for its spots (unpublished), with their buffers. On an abort request
+/// and when core 0 posts a new reader.
+#[inline(never)]
+fn stream_drop(st: &mut Core1State<'_>) {
+    if let Some(c) = st.copy.as_mut()
+        && c.is_busy()
+        && c.wait(COPY_MAX_CYCLES).is_err()
+    {
+        bump(&COPY_ERRORS, 1);
+    }
+    if let Some(a) = st.asm.take() {
+        return_buffer(a.buffer);
+    }
+    if let Some(p) = st.pending.take() {
+        st.out.cancel();
+        return_buffer(p.buffer);
+    }
+}
+
+/// The first strip of stream frame `frame`: its detection settings, a free frame buffer (if
+/// any; else the frame is detected but not copied), the detector and the background sample
+/// begun. A frame still open is abandoned.
+fn stream_begin(st: &mut Core1State<'_>, frame: u32) {
+    if let Some(a) = st.asm.take() {
+        ABANDONED.fetch_add(1, Ordering::Relaxed);
+        return_buffer(a.buffer);
+    }
+    let d = &DETECT;
+    let serial = d.serial.load(Ordering::Acquire);
+    let word = d.word.load(Ordering::Relaxed);
+    let area = d.area.load(Ordering::Relaxed);
+    let spots = d.spots.load(Ordering::Relaxed) as u16;
+    let format = STREAM.format.load(Ordering::Relaxed);
+    let (width, raw10) = (format as u16, format >> 31 != 0);
+    let detect = word >> 31 != 0;
+    let threshold = if raw10 {
+        word as u16 & 0x3FF
+    } else {
+        (word as u16 & 0x3FF).min(0xFF)
+    };
+    let buffer = match st.copy {
+        Some(_) => claim_buffer(),
+        None => NO_BUFFER,
+    };
+    if buffer == NO_BUFFER {
+        bump(&NOT_COPIED, 1);
+    }
+    if detect {
+        if raw10 {
+            st.det.begin_frame_raw10(width, threshold);
+        } else {
+            st.det.begin_frame(width, threshold as u8);
+        }
+        st.hist.clear();
+    }
+    st.asm = Some(Asm {
+        frame,
+        buffer,
+        copy_ok: true,
+        detect,
+        serial,
+        threshold,
+        area: (area as u16, (area >> 16) as u16),
+        spots,
+        strips: 0,
+        late: 0,
+        cycles: 0,
+        instructions: 0,
+        worst: 0,
+        start: 0,
+        hold_total: 0,
+        detect_max: 0,
+        copy_wait_total: 0,
+        copy_wait_max: 0,
+        cut: false,
+    });
+}
+
+/// One strip of the stream job: the copy into the frame's buffer started, the detector and
+/// the background sample on the strip meanwhile, the copy waited for, the release check, and
+/// after the last strip the frame's end ([`stream_end`]).
+#[inline(never)]
+fn stream_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
+    mark(crate::MARKER_STRIP);
+    let queued_at = strip_bound(&mut st.bound, &s);
+    if s.first_row() == 0 {
+        stream_begin(st, s.frame());
+    }
+    let Core1State {
+        det,
+        hist,
+        copy,
+        asm,
+        ..
+    } = st;
+    let Some(a) = asm.as_mut().filter(|a| a.frame == s.frame()) else {
+        // Not part of a frame begun here: give it back unused.
+        let _ = s.release();
+        return;
+    };
+    let t0 = CpuSample::now();
+    a.start = a.start.max(t0.cycles.wrapping_sub(queued_at));
+    // The copy first: the DMA reads the strip while the detector does.
+    let mut copying = false;
+    if a.buffer != NO_BUFFER
+        && a.copy_ok
+        && let Some(c) = copy.as_mut()
+    {
+        let off = usize::from(s.first_row()) * STREAM.line_bytes.load(Ordering::Relaxed) as usize;
+        if off + s.len() <= STREAM.frame_bytes.load(Ordering::Relaxed) {
+            // SAFETY: the strip is the DMA's again only once released, after the copy ends
+            // (or the release reports it written over and the frame is dropped); the frame
+            // buffer was claimed from `FREE` for this frame: nobody else touches it until
+            // its result is published.
+            copying = unsafe { c.start(s.as_ptr() as usize, buffer_addr(a.buffer) + off, s.len()) }
+                .is_ok();
+        }
+        if !copying {
+            a.copy_ok = false;
+            bump(&COPY_ERRORS, 1);
+        }
+    }
+    // The copy's end, once seen (while the detector runs, between its rows, or after it), and
+    // whether the strip was intact right after: then the frame buffer holds the strip's rows
+    // whatever the DMA writes into the strip later.
+    let mut copy_end = None;
+    let mut copy_intact = false;
+    if a.detect {
+        let autoload = PARAMS.autoload.load(Ordering::Relaxed) != 0;
+        if autoload {
+            autoload_on(&s);
+        }
+        let budget = PARAMS.budget.load(Ordering::Relaxed);
+        // The strip must be released within the budget: the detector stops at a row boundary
+        // once its next step (one row's worst case, or one skip over the rest of the strip)
+        // could end past it; the rest of the frame is then copied only.
+        let last_start = budget.saturating_sub(PARAMS.step.load(Ordering::Relaxed));
+        let format = STREAM.format.load(Ordering::Relaxed);
+        // The background sample first, over the whole strip (a frame cut short has none).
+        if format >> 31 != 0 {
+            auto::sample_raw10(&s, format as u16, s.first_row(), hist);
+        } else {
+            auto::sample_raw8(&s, format as u16, s.first_row(), hist);
+        }
+        let rows = detect_rows(skip, det, &s, s.first_row(), || {
+            let age = cycles().wrapping_sub(queued_at);
+            // No lap before the budget: the copy's end is worth a look (a register read) only
+            // once the strip is past half of it, for a detector that might still overrun.
+            if copying
+                && copy_end.is_none()
+                && age > budget / 2
+                && let Some(c) = copy.as_mut()
+            {
+                copy_end = c.poll();
+                copy_intact = copy_end == Some(Ok(())) && s.intact();
+            }
+            age > last_start
+        });
+        if rows < usize::from(s.rows()) {
+            a.detect = false;
+            a.cut = true;
+        }
+        if autoload {
+            prefetch::autoload_disable(Level::L1Data);
+        }
+    }
+    let d = CpuSample::now().since(&t0);
+    let w0 = cycles();
+    if copying
+        && copy_end.is_none()
+        && let Some(c) = copy.as_mut()
+    {
+        copy_end = Some(c.wait(COPY_MAX_CYCLES));
+        copy_intact = copy_end == Some(Ok(())) && s.intact();
+    }
+    if copying && copy_end != Some(Ok(())) {
+        a.copy_ok = false;
+        bump(&COPY_ERRORS, 1);
+    }
+    let wait = cycles().wrapping_sub(w0);
+    let last = s.is_last();
+    let kept = if copy_intact {
+        match s.release_copied() {
+            Released::Intact => true,
+            Released::Lapped => {
+                // The copy is the strip's, the detector's reads after its check may not be:
+                // the frame goes on without detection.
+                if a.detect {
+                    a.detect = false;
+                    a.cut = true;
+                }
+                true
+            }
+            Released::Stopped => false,
+        }
+    } else {
+        s.release()
+    };
+    let hold = cycles().wrapping_sub(queued_at);
+    a.strips = a.strips.wrapping_add(1);
+    if a.detect {
+        a.cycles = a.cycles.wrapping_add(d.cycles);
+        a.instructions = a.instructions.wrapping_add(d.instructions);
+        a.detect_max = a.detect_max.max(d.cycles);
+    }
+    a.worst = a.worst.max(hold);
+    a.hold_total = a.hold_total.wrapping_add(hold);
+    a.copy_wait_total = a.copy_wait_total.wrapping_add(wait);
+    a.copy_wait_max = a.copy_wait_max.max(wait);
+    if hold > PARAMS.late.load(Ordering::Relaxed) {
+        a.late = a.late.wrapping_add(1);
+    }
+    if !kept {
+        // Lapped or stopped: neither the copy nor the detector read this frame's rows.
+        ABANDONED.fetch_add(1, Ordering::Relaxed);
+        return_buffer(a.buffer);
+        *asm = None;
+        return;
+    }
+    if last {
+        stream_end(st, queued_at);
+    }
+}
+
+/// The lower bound of the end of strip `s`'s block that its hold counts from: the reader's
+/// ([`StripRef::queued_at_cycles`]: its last look that found the block unfinished), or, if
+/// later, the bound of the strip before (`prev`) plus `s`'s rows of sensor time: the sensor
+/// sends `s`'s rows after the rows of every block before it, and a block ends after its last
+/// row arrived. Never later than now. Updates `prev`.
+fn strip_bound(prev: &mut Option<u32>, s: &StripRef<'_>) -> u32 {
+    let q = s.queued_at_cycles();
+    let now = cycles();
+    let b = match *prev {
+        // Bounds more than a second apart (2^28 cycles at 400 MHz) are not compared.
+        Some(p) if (q.wrapping_sub(p) as i32).unsigned_abs() < 1 << 28 => {
+            let min = p.wrapping_add(u32::from(s.rows()) * PARAMS.row.load(Ordering::Relaxed));
+            if (min.wrapping_sub(q) as i32) > 0 && (now.wrapping_sub(min) as i32) >= 0 {
+                min
+            } else {
+                q
+            }
+        }
+        _ => q,
+    };
+    *prev = Some(b);
+    b
+}
+
+/// The stream frame's last strip was released: the frame waiting for its spots is finished
+/// first (unless core 0 asks for an abort); then a result slot, `finish`, the background, the
+/// copied frame's lines invalidated, and the spots measured one per loop turn
+/// ([`refine_step`]) or the result published at once (nothing to measure).
+#[inline(never)]
+fn stream_end(st: &mut Core1State<'_>, queued_at: u32) {
+    let Some(a) = st.asm.take() else {
+        return;
+    };
+    if st.pending.is_some() {
+        if ABORT_REQ.load(Ordering::Acquire) != ABORT_ACK.load(Ordering::Relaxed) {
+            // The loop's abort drops the waiting frame.
+            return_buffer(a.buffer);
+            return;
+        }
+        // The frame before still has blobs to measure (strips came back to back since):
+        // it goes out with the spots measured so far, the rest counted as dropped by core 0.
+        // Measuring them all here would hold the next frame's strips past their budget.
+        st.pending = None;
+        publish(st);
+    }
+    let buffer = if a.copy_ok {
+        a.buffer
+    } else {
+        return_buffer(a.buffer);
+        NO_BUFFER
+    };
+    if !st.out.reserve() {
+        // Counted as dropped by the queue; the detector still has to close the frame.
+        if a.detect {
+            st.det.finish(st.scratch);
+        }
+        return_buffer(buffer);
+        mark(crate::MARKER_FRAME);
+        return;
+    }
+    let Some(r) = st.out.reserved() else {
+        return;
+    };
+    let t0 = CpuSample::now();
+    let (n, stats, background) = if a.detect {
+        let n = st.det.finish(&mut r.blobs) as u16;
+        (n, st.det.stats(), Background::from_histogram(&st.hist))
+    } else {
+        (
+            0,
+            Stats {
+                pixels: 0,
+                runs: 0,
+                blobs: 0,
+                overflow: 0,
+            },
+            None,
+        )
+    };
+    let d = CpuSample::now().since(&t0);
+    let format = STREAM.format.load(Ordering::Relaxed);
+    r.frame = a.frame;
+    r.run = STREAM.run.load(Ordering::Relaxed);
+    r.buffer = buffer;
+    r.detected = a.detect;
+    r.cut = a.cut;
+    r.serial = a.serial;
+    r.strips = a.strips;
+    r.late_strips = a.late;
+    r.blob_count = n;
+    r.stats = stats;
+    r.cycles = a.cycles.wrapping_add(if a.detect { d.cycles } else { 0 });
+    r.instructions = a
+        .instructions
+        .wrapping_add(if a.detect { d.instructions } else { 0 });
+    r.worst_latency = a.worst;
+    r.start_latency = a.start;
+    r.queued_at = queued_at;
+    r.threshold = a.threshold;
+    r.raw10 = format >> 31 != 0;
+    r.background = background;
+    r.spot_count = 0;
+    r.refine_cycles = 0;
+    r.hold_total = a.hold_total;
+    r.hold_max = a.worst;
+    r.detect_max = a.detect_max;
+    r.copy_wait_total = a.copy_wait_total;
+    r.copy_wait_max = a.copy_wait_max;
+    if buffer != NO_BUFFER {
+        // The copies wrote PSRAM behind the caches: drop the buffer's lines (both cores
+        // share the L1 data cache and the L2), so the measure here and core 0 read the frame.
+        let base = buffer_addr(buffer);
+        let bytes = STREAM.frame_bytes.load(Ordering::Relaxed);
+        let line = esp32p4_cache::line_size(base);
+        let t = cycles();
+        esp32p4_cache::invalidate(base, bytes.wrapping_add(line - 1) & !(line - 1));
+        r.refine_cycles = cycles().wrapping_sub(t);
+        if a.detect && n > 0 && a.spots > 0 {
+            st.pending = Some(Pending {
+                next: 0,
+                buffer,
+                area: a.area,
+                spots: a.spots,
+                // SAFETY: the frame buffer is this frame's until its result is published
+                // (claimed from `FREE`); its copies are complete and its lines invalidated.
+                frame: unsafe { core::slice::from_raw_parts(base as *const u8, bytes) },
+                width: format as u16,
+                height: STREAM.height.load(Ordering::Relaxed) as u16,
+                raw10: format >> 31 != 0,
+            });
+            return;
+        }
+    }
+    publish(st);
+}
+
+/// Publishes the reserved result.
+fn publish(st: &mut Core1State<'_>) {
+    if let Some(r) = st.out.reserved() {
+        let now = cycles();
+        r.ready = now.wrapping_sub(r.queued_at);
+        r.pushed_at = now;
+    }
+    st.out.commit();
+    mark(crate::MARKER_FRAME);
+}
+
+/// The next kept blob of the frame waiting for its spots measured on the frame
+/// (`espion_vision::refine`), at most one per call; the result published after the last.
+#[inline(never)]
+fn refine_step(st: &mut Core1State<'_>) {
+    let Core1State { out, pending, .. } = st;
+    let (Some(p), Some(r)) = (pending.as_mut(), out.reserved()) else {
+        *pending = None;
+        return;
+    };
+    let t0 = cycles();
+    let limit = usize::from(p.spots).min(MAX_SPOTS);
+    while p.next < r.blob_count {
+        let i = p.next;
+        p.next += 1;
+        let Some(b) = r.blobs.get(usize::from(i)) else {
+            break;
+        };
+        if b.area < p.area.0 || b.area > p.area.1 {
+            continue;
+        }
+        let n = usize::from(r.spot_count);
+        let (Some(spot), Some(index)) = (r.spots.get_mut(n), r.spot_blob.get_mut(n)) else {
+            p.next = r.blob_count;
+            break;
+        };
+        if n >= limit {
+            p.next = r.blob_count;
+            break;
+        }
+        *spot = if p.raw10 {
+            refine::refine_raw10(p.frame, p.width, p.height, b)
+        } else {
+            refine::refine_raw8(p.frame, p.width, p.height, b)
+        };
+        *index = i as u8;
+        r.spot_count += 1;
+        break;
+    }
+    r.refine_cycles = r.refine_cycles.wrapping_add(cycles().wrapping_sub(t0));
+    if p.next >= r.blob_count {
+        *pending = None;
+        publish(st);
+    }
 }
 
 /// Toggles core 1's marker channel `channel` (feature `markers`; nothing without it).
@@ -944,11 +1821,17 @@ fn autoload_on(strip: &[u8]) {
     prefetch::autoload_enable(Level::L1Data);
 }
 
-/// The detector on one strip's rows with the dark skip `skip`: the only detector call of the
-/// runner.
+/// The detector on one strip's rows with the dark skip `skip`, stopping at a row boundary once
+/// `stop` says so (`push_rows_until`); the rows done. The only detector call of the runner.
 #[inline(always)]
-fn detect_rows<S: Skip>(skip: &S, det: &mut DefaultDetector, rows: &[u8], first_row: u16) {
-    det.push_rows_with(skip, rows, first_row);
+fn detect_rows<S: Skip>(
+    skip: &S,
+    det: &mut DefaultDetector,
+    rows: &[u8],
+    first_row: u16,
+    stop: impl FnMut() -> bool,
+) -> usize {
+    det.push_rows_until(skip, rows, first_row, stop)
 }
 
 /// Checksum of one row, the one [`Job::Check`] compares: two running sums over its

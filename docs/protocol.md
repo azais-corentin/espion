@@ -6,7 +6,7 @@ protocol version and updates this page and its changelog in the same commit.
 > **Status.** The tracking messages (`0x01`..`0x11`) are a draft, not implemented. Settled:
 > header, versioning (exact match), boards identified by their Ethernet MAC, Q11.5 blob
 > coordinates; their other fields may still change. The [camera stream](#camera-stream)
-> (`0x20`..`0x22`) is implemented (version 4).
+> (`0x20`..`0x23`) is implemented (version 5).
 
 ## Transport (tracking)
 
@@ -61,6 +61,7 @@ Tracking (draft, not implemented):
 | `0x20` | CamRequest | host → board | [Camera stream](#camera-stream) |
 | `0x21` | CamResponse | board → host | [Camera stream](#camera-stream) |
 | `0x22` | FrameChunk | board → host | [Camera stream](#camera-stream) |
+| `0x23` | FrameBlobs | board → host | [Camera stream](#camera-stream) |
 
 Times on the wire are **network time**: PTP nanoseconds on the current grandmaster's clock
 (see [timing.md](timing.md)), as `u64`.
@@ -121,7 +122,7 @@ the `poc-viewer` host app; not by the tracking path above.
 | Field | Type | Meaning |
 |---|---|---|
 | seq | `u32` | Sequence number, echoed by the response |
-| op | `Op` | `GetState`, `SetCamera(CameraSettings)`, `SetStream(StreamSettings)` or `Poll` |
+| op | `Op` | `GetState`, `SetCamera(CameraSettings)`, `SetStream(StreamSettings)`, `SetDetect(DetectSettings)` or `Poll` |
 
 - `GetState` reads the state; `Poll` is the host's periodic keep-alive and reads the state
   (with its counters) too. Any valid request refreshes the destination and the timeout.
@@ -134,6 +135,8 @@ the `poc-viewer` host app; not by the tracking path above.
 - `SetStream` is all or nothing too: the encoding against the running mode
   (`Encoding::check`), then the JPEG quality (`StreamSettings::check`). It sets the quality
   in use (`EncoderState::quality`) to the set quality.
+- `SetDetect` is all or nothing: the threshold against the running sensor format, then the
+  area bounds (`DetectSettings::check`), checked whether the automatic choices are on or not.
 - To go from JPEG to a RAW10 mode the host first sets a raw encoding, then the mode (and
   from a RAW10 mode to JPEG: the RAW8 mode first, then the encoding).
 
@@ -150,6 +153,7 @@ the `poc-viewer` host app; not by the tracking path above.
 | exposure_lines | `u16` | Exposure, 1..=max for the mode |
 | gain_sixteenths | `u8` | Analog gain, 16 = 1x .. 248 = 15.5x |
 | test_pattern | `TestPattern` | `Off`, `Bars`, `RollingBars`, `GreySquares`, `BlackWhiteSquares`, `Random` |
+| auto_exposure | `bool` | Automatic exposure (below, "Detection"): the board sets `exposure_lines` and `gain_sixteenths`, and a state reports the values in use; those of a `SetCamera` are checked as usual and are where it starts |
 
 `StreamSettings`:
 
@@ -160,6 +164,16 @@ the `poc-viewer` host app; not by the tracking path above.
 | max_fps | `u16` | Most frames sent per second; 0: no limit |
 | jpeg_quality | `u8` | JPEG quality, 1..=100 (`JPEG_QUALITY_MIN`..=`JPEG_QUALITY_MAX`, IJG scale); with `auto_quality` the ceiling. Checked and kept whatever the encoding |
 | auto_quality | `bool` | Automatic JPEG quality (below) |
+
+`DetectSettings`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| enabled | `bool` | Detect, and send `FrameBlobs` while a host polls, whether frames are sent or not |
+| auto_threshold | `bool` | Automatic threshold (below, "Detection"); `threshold` is kept for when it is turned off |
+| threshold | `u16` | Threshold with `auto_threshold` off, in the sensor format's units: 1..=255 RAW8, 1..=1023 RAW10. A mode change to the other format scales it (× 4 to RAW10, ÷ 4 to RAW8, at least 1) |
+| auto_area | `bool` | Automatic area filter: keep the blobs of at least 2 pixels (`AUTO_MIN_AREA`); `min_area` and `max_area` are kept for when it is turned off |
+| min_area, max_area | `u16`, `u16` | Area bounds with `auto_area` off, pixels, both inclusive: 1 ≤ `min_area` ≤ `max_area` |
 
 ### `0x21` CamResponse (board → host)
 
@@ -180,6 +194,7 @@ the `poc-viewer` host app; not by the tracking path above.
 | encoder | `EncoderState` | The JPEG encoder (below) |
 | uptime_us | `u64` | µs since boot, the clock of the frame timestamps |
 | timing | `Option<FrameTiming>` | The last frame sent whole and its time on the board (below); `None` before the first |
+| detect | `DetectState` | The blob detector (below) |
 
 `ModeInfo`: `sensor_clock_mhz: u8` (80 or 96), `exceeds_datasheet_clock: bool` (96 MHz),
 `hts: u16`, `vts: u16`, `psv: bool`, `frame_rate_mhz: u32` (at the nominal 24 MHz XVCLK),
@@ -195,6 +210,21 @@ the `poc-viewer` host app; not by the tracking path above.
 | encode_us | `u32` | Time the encoder took for that frame, µs |
 | errors | `u32` | Encoder errors since boot (output too small, codec or DMA error, timeout); that frame is lost. Wraps |
 | frames_skipped | `u32` | Captured frames the encoder could not take since boot because it was still busy with the previous one; not in `counters.frames_skipped` (the link). Wraps |
+
+`DetectState`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| settings | `DetectSettings` | As applied |
+| threshold | `u16` | Threshold the next frame is detected with (the automatic one or `settings.threshold`), in the sensor format's units |
+| background_median, background_sigma | `u8`, `u8` | The last detected frame's background sample: its median and its 84th percentile minus the median, 8-bit units |
+| detect_us_mean, detect_us_max | `u32`, `u32` | Detect time of the frames detected since the previous state was made, µs (0 when none) |
+| frames_detected | `u32` | Frames detected since boot. Wraps |
+| frames_skipped | `u32` | Captured frames the detector could not take because it was busy (detection on). Wraps |
+| blobs_dropped | `u32` | Items the detector lost: runs and components beyond its capacity (a blob that lost some comes out split, shrunk or not at all), blobs beyond its capacity or `FRAME_BLOBS_MAX`. Wraps |
+| blobs_filtered | `u32` | Blobs found but dropped by the area filter. Wraps |
+| fault | `bool` | The detector stopped after a fault (the board: its core trapped or stopped beating); nothing is detected until the board restarts |
+| available | `bool` | The running mode can be detected; `false` for the modes the board streams as whole frames only (its detector works on strips of rows): nothing is detected, the settings are kept for the next mode. The fake camera detects every mode |
 
 `FrameTiming`, the board's part of one frame's latency. A `Span` is `start_us`, `end_us`
 (`u32`, `start_us` ≤ `end_us`): µs after that frame's `timestamp_us`.
@@ -226,6 +256,8 @@ chunk arrived no earlier than `timestamp_us + send.end_us`.
 | Encoding | `format: Format`, `encoding: Encoding` | The encoding cannot be made from the format (RAW10 from a RAW8 sensor) |
 | Jpeg | `reason: JpegRefusal`, `format: Format`, `width: u16`, `height: u16` | JPEG cannot be made of the mode (values: the mode's): `reason` `Format` (a RAW10 sensor format; checked first) or `Size` (width or height not a multiple of 8, `JPEG_ALIGN`) |
 | Quality | `min: u8`, `max: u8` | JPEG quality outside `min..=max` (1..=100) |
+| Threshold | `min: u16`, `max: u16` | Detection threshold outside `min..=max` for the sensor format (1..=255 RAW8, 1..=1023 RAW10) |
+| Area | — | Detection area bounds: `min_area` below 1 or above `max_area` |
 
 ### `0x22` FrameChunk (board → host)
 
@@ -287,8 +319,10 @@ Chunks are self-describing: a host shows a frame without having seen any respons
   so below 80 % busy less the step's expected growth (72 % at 90, 53 % at 97, 40 % at 98),
   and holds otherwise: it settles below the link's limit instead of oscillating against it.
   Never above `jpeg_quality`. With `auto_quality` off the quality in use is `jpeg_quality`.
-- **Start-up defaults** (board and fake camera): 1280x800 RAW8 crop, 120 Hz, stream on,
-  encoding `Jpeg`, quality 90, automatic quality on, no `max_fps` limit.
+- **Start-up defaults** (board and fake camera): 1280x800 RAW8 crop, 120 Hz, automatic
+  exposure on, stream on, encoding `Jpeg`, quality 90, automatic quality on, no `max_fps`
+  limit; detection on with the automatic threshold and area filter (`DetectSettings::DEFAULT`,
+  manual threshold 128, area 2..=65535).
 - **Loss.** No retransmission. A frame with a missing chunk is dropped by the host, never
   repaired: when a chunk of a newer frame arrives (or after a timeout), the incomplete frame
   is discarded and counted.
@@ -299,6 +333,80 @@ Chunks are self-describing: a host shows a frame without having seen any respons
   quality 90 on the encoder's test scene, `firmware/esp32p4-jpeg`) takes 32 chunks: at most
   254 fps, so the sensor's 153.98 Hz fits with room.
 
+### `0x23` FrameBlobs (board → host)
+
+The blobs the board's detector found in one frame, after the area filter. One datagram per
+detected frame.
+
+| Field | Type | Meaning |
+|---|---|---|
+| frame | `u32` | Frame number, as in the frame's chunks |
+| generation | `u32` | `State::generation` of the frame |
+| timestamp_us | `u64` | Board time of the capture, as in the frame's chunks |
+| format | `Format` | Sensor format of the frame: the units of `threshold` |
+| width, height | `u16`, `u16` | Frame size |
+| threshold | `u16` | Threshold the frame was detected with |
+| detect_us | `u32` | Time the detector took for the frame, µs |
+| flags | `u8` | Bit 0 (`OVERFLOW`): blobs were lost (the detector's capacity or `FRAME_BLOBS_MAX`). Bit 1 (`AUTO_THRESHOLD`): the threshold was chosen automatically |
+| blobs | `[u8]` | The blobs, 17 bytes each (`BLOB_BYTES`), in the detector's order (postcard: length, then the bytes) |
+
+A blob is, all little-endian: `x`, `y` (`u32`), `width` (`u16`), `flux` (`u32`), `area`
+(`u16`), then `peak` (`u8`). The threshold only finds the blob: `area` is its pixels at or
+above the threshold, `peak` its brightest pixel, 8-bit (RAW10: its top 8 bits). The rest is
+measured on the frame around it, so the threshold does not bias it (below, "Position"):
+`x` and `y` the spot's centre in 1/256 pixel (`SUBPIXEL`), pixel centres at integer
+coordinates; `width` its standard deviation in 1/256 pixel; `flux` the sum of its pixels
+above the local background, in the format's units. This is not the tracking draft's `Blob`
+(Q11.5 in `u16`), which is too coarse for this precision. At most **82 blobs**
+(`FRAME_BLOBS_MAX`): header 4 bytes plus the largest varints of frame (5), generation (5),
+timestamp (10), format (1), width (3), height (3), threshold (3), detect time (5), flags (1)
+and the blob bytes' length (2) is 42 bytes (`FRAME_BLOBS_OVERHEAD_MAX`), and 42 + 82 × 17 =
+1436 ≤ 1452. A receiver rejects blob bytes that are not whole blobs or more than that.
+
+#### Detection
+
+- **Which frames.** With detection on, the detector takes every captured frame it can; one
+  that arrives while it is busy with the previous one is counted (`detect.frames_skipped`)
+  and not detected. Detection is independent of the frame stream: `FrameBlobs` go out while
+  a host polls, whether frames are sent or not and whatever `max_fps` says. The board sends
+  them after any answer and before the next frame chunk. A frame that is both sent and
+  detected carries the same number, generation and timestamp in its chunks and its blobs.
+- **Position** (board and fake camera share `espion_vision::refine`, integer arithmetic, so
+  both give the same result for the same frame): for each blob, from its thresholded
+  centroid, an iterated Gaussian-weighted centroid on the frame. The window width comes from
+  the blob's area, the window spans 4 widths each side, and the local background is the
+  median of the pixels on a square just outside it. Each pixel weighs (value − background)
+  × a Gaussian of its distance to the current estimate. Each step moves twice the weighted
+  mean offset, up to 8 steps, until it moves less than 1/512 pixel. Its fixed point is the
+  centre of any symmetric spot, whatever the threshold or the window width. `width` is the
+  standard deviation of the Gaussian spot with the same Gaussian-weighted second moments
+  (background-subtracted, the window's width and the pixel's own size removed); `flux` the
+  sum over the final window above the background. A spot within 4
+  widths of the frame's edge has its window clipped, so its centre may be biased towards the
+  inside.
+- **Automatic threshold** (`auto_threshold` on; board and fake camera share
+  `espion_vision::auto`): the detector samples every 4th pixel of every 16th row of each
+  frame (RAW10: the top 8 bits) into a histogram. The background is its median and its
+  84th percentile minus the median (σ). The next frame's threshold is
+  `max(median + max(6σ, 8), ⌈peak / 2⌉)` in 8-bit units, between 1 and 255, with `peak` the
+  highest peak of this frame's blobs that the area filter keeps (a lone hot pixel does not
+  raise it). With no such blob it is the floor alone. RAW10 uses 4 times that value, so it
+  selects the same pixels.
+- **Automatic exposure** (`CameraSettings::auto_exposure` on): at the end of every 100 ms
+  (`AUTO_EXPOSURE_PERIOD_MS`) the board takes one step of
+  `cam::auto_exposure(now, peak, cap)`, shared with the fake camera. `peak` is the highest
+  blob peak sent in the period (`None` without a blob). `cap` is `auto_exposure_cap(line_ns,
+  max_exposure_lines)`: 0.5 ms (`AUTO_EXPOSURE_CAP_NS`, the product's LED pulse) in whole
+  lines, within the mode's longest exposure. It holds with no blob or a peak within
+  200..=240 (`AUTO_EXPOSURE_LOW`, `AUTO_EXPOSURE_HIGH`). Otherwise it aims lines × gain at
+  the present product × 220 / peak (`AUTO_EXPOSURE_TARGET`), at most twice and at least half
+  of it, and half of it for a saturated peak (255). It keeps the gain low: the exposure is
+  the longest whole number of lines that reaches the aim at 1x (aim / 16, between 1 and the
+  cap), and the gain makes up the rest, rounded up to a sixteenth (up to 15.5x). That lands
+  within a sixteenth of the aim, finer than the band, so the step does not jump over the band
+  even at exposures of a few lines, where one line is coarser than the band. Exposure and gain
+  go to the sensor without restarting the stream.
+
 ## Changelog
 
 | Version | Change |
@@ -307,3 +415,4 @@ Chunks are self-describing: a host shows a frame without having seen any respons
 | 2 | Camera stream added (`0x20` CamRequest, `0x21` CamResponse, `0x22` FrameChunk) over IPv6 link-local, port 5009, for `poc-p4-stream` and `poc-viewer`. The tracking kinds are unchanged and still a draft |
 | 3 | Camera stream: encoding `Jpeg` (one baseline greyscale JPEG file per frame, variable `frame_len` up to `JPEG_FRAME_MAX`, RAW8 modes with both sides multiples of 8); `StreamSettings` gains `jpeg_quality` and `auto_quality`; `State` gains `encoder: EncoderState`; `CamError` gains `Jpeg` and `Quality`; start-up default `Jpeg` at quality 90 with automatic quality. Everything else of version 2 stays |
 | 4 | Camera stream: `State` gains `timing: Option<FrameTiming>` (the last frame sent whole: its number, the span of its JPEG encode and the span of its send, µs after its `timestamp_us`). The chunks and everything else of version 3 stay |
+| 5 | Camera stream: blob detection on the board. New kind `0x23` FrameBlobs (one frame's blobs, at most 82: centre in 1/256 pixel, width and flux measured on the frame without the threshold's bias, area and peak from the threshold); `Op::SetDetect(DetectSettings)`; `State` gains `detect: DetectState`; `CameraSettings` gains `auto_exposure`; `CamError` gains `Threshold` and `Area`; `Error::BlobsLayout`. Start-up defaults: automatic exposure, detection on with the automatic threshold and area filter. Everything else of version 4 stays |

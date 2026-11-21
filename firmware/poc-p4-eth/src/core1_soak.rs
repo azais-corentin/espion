@@ -312,7 +312,7 @@ fn setup(
     let (det, scratch, synth) = soak::take_detector();
     let (internal, links, hammer_int) = split_internal(internal)?;
     let ring = strip_soak::Ring::take(links);
-    let Some(core1) = core1::start(cpu, det, scratch, CORE1_SKIP) else {
+    let Some(core1) = core1::start(cpu, det, scratch, CORE1_SKIP, None) else {
         fail("could not start", &());
         return None;
     };

@@ -6,11 +6,12 @@
 //! 1. The capture task offers every captured RAW8 frame it would send ([`offer`]): the frame
 //!    waits in [`INPUT`], a one-frame slot. A frame already waiting there is replaced and
 //!    counted as one the encoder could not take ([`EncoderState::frames_skipped`]), so the
-//!    encoder always gets the newest frame. A captured frame is held at most twice (the one
-//!    being encoded, the one waiting), which the receiver's four buffers allow.
+//!    encoder always gets the newest frame. The encode stage holds at most two captured
+//!    frames (the one being encoded, the one waiting), which the whole-frame receiver's four
+//!    buffers and the strip path's five allow.
 //! 2. The encode task ([`task`]) takes it and encodes it with the hardware encoder straight
-//!    from the receiver's buffer (no CPU pass over the pixels) into a free output buffer, then
-//!    gives the receiver's buffer back at once.
+//!    from the frame's buffer (no CPU pass over the pixels) into a free output buffer, then
+//!    lets go of the frame's buffer at once.
 //! 3. The file goes to the send task as the next [`Job`] (`JOB`, a one-frame slot). A file
 //!    still waiting there (the send task is busy with the one before) is replaced and counted
 //!    as skipped because the link was busy ([`Counters::frames_skipped`]): the send task
@@ -41,11 +42,11 @@ use critical_section::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, with_timeout};
-use esp32p4_csi::Frame;
 use esp32p4_jpeg::{Config, Encoder, Error};
 use espion_proto::cam::{AUTO_QUALITY_PERIOD_MS, Encoding, JPEG_FRAME_MAX, Span};
-use log::{error, info};
+use log::{error, info, warn};
 
+use super::frames::FrameBuf;
 use super::{JOB, Job, Payload, SEND_BUSY_US, shared};
 use crate::cpu::{self, Timed};
 use crate::irq;
@@ -61,7 +62,8 @@ const ENCODE_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// A captured frame for the encoder, with what its chunks will carry.
 pub(super) struct Input {
-    pub frame: Frame,
+    /// The captured frame (its buffer goes back once the encode is done).
+    pub frame: FrameBuf,
     pub number: u32,
     pub generation: u32,
     pub epoch: u32,
@@ -284,7 +286,7 @@ fn prepare(enc: &mut Encoder, input: &Input) -> Option<(Blank, usize)> {
     Some((blank, cap))
 }
 
-/// Gives the receiver's buffer back, counts the result (`Err(None)`: no end within
+/// Gives the frame's buffer back, counts the result (`Err(None)`: no end within
 /// [`ENCODE_TIMEOUT`]) and hands the file on: the newest file waits for the send task,
 /// replacing (and counting as skipped because the link was busy) one still waiting.
 #[inline(never)]
@@ -306,6 +308,7 @@ fn finish(input: Input, blank: Blank, r: Result<usize, Option<Error>>, start: In
             return;
         }
         Err(Some(e)) => {
+            log_failed(&e, number, width, height, us);
             fail(e_name(&e), us);
             return;
         }
@@ -359,6 +362,12 @@ fn fail(what: &'static str, us: u32) {
     shared(|s| s.encoder.errors = s.encoder.errors.wrapping_add(1));
     critical_section::with(|cs| LAST_ERROR.borrow(cs).set(what));
     LAST_ERROR_US.store(us, Ordering::Relaxed);
+}
+
+/// An encoder error in the log, with its raw bits (rare: the stream goes on).
+#[inline(never)]
+fn log_failed(e: &Error, number: u32, width: u16, height: u16, us: u32) {
+    warn!("jpeg: frame {number} ({width}x{height}) not encoded after {us} us: {e:?}");
 }
 
 /// The error's name in the test hooks' report (one word).

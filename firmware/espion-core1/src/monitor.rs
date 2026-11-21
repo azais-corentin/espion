@@ -516,3 +516,31 @@ pub fn report_dead(what: &str) {
         heartbeat()
     );
 }
+
+/// What [`health`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Health {
+    Alive,
+    /// Core 1 trapped ([`trap`]): it waits for ever in its trap vector and reads nothing.
+    Trapped,
+    /// Its heartbeat did not move: it may still be inside a frame.
+    Stalled,
+}
+
+/// Core 1's trap record, then whether its heartbeat moved since `last` (which becomes the
+/// heartbeat now). A trap or a stall is logged ([`report_trap`], [`report_dead`]). Core 0,
+/// about once a second.
+#[inline(never)]
+pub fn health(last: &mut u32) -> Health {
+    if let Some(t) = trap() {
+        report_trap(&t);
+        return Health::Trapped;
+    }
+    let now = heartbeat();
+    if now == *last {
+        report_dead("heartbeat stopped for 1 s");
+        return Health::Stalled;
+    }
+    *last = now;
+    Health::Alive
+}

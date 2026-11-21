@@ -29,6 +29,15 @@
 //! error: no worse than the same raw frame encoded here at the same quality).
 //! Run only these with `POC_ONLY=jpeg,quality,auto,jpeg_refusals,switching,agreement`.
 //!
+//! `markers` needs the board's one real IR source in view (it may move a little, but stays in
+//! the frame): everything automatic settles within 5 s, then every detected frame has exactly
+//! one blob and the brightest peak sits in the automatic exposure's band (or exposure and gain
+//! are at a limit); a manual threshold and area filter are applied and echoed; detection off
+//! sends no blobs; with frames off the blobs still come at about the sensor rate, less the
+//! frames the detector skipped; per mode the coverage (detected / captured), the detect time
+//! and no capture error; and it prints the jitter (sigma x, y) of the source over 10 s.
+//! Run it alone with `POC_ONLY=markers`.
+//!
 //! `soak` streams 640x400 binned at the link rate and changes the mode every 20 s, restarts the
 //! client and sends malformed datagrams in between, for `POC_SOAK_SECS` (default 600).
 
@@ -40,14 +49,17 @@ use std::{
 };
 
 use espion_proto::cam::{
-    AUTO_QUALITY_MIN, CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding,
-    Format, FrameChunk, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, Op,
-    Origin, Readout, Reply, Request, STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern,
-    chunk_count,
+    AUTO_EXPOSURE_HIGH, AUTO_EXPOSURE_LOW, AUTO_EXPOSURE_PERIOD_MS, AUTO_QUALITY_MIN, CHUNK_MAX,
+    CamError, CameraSettings, Counters, DetectSettings, EncoderState, Encoding, Format, FrameBlobs,
+    FrameChunk, GAIN_MAX, GAIN_MIN, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM,
+    Message, Op, Origin, Readout, Reply, Request, STREAM_TIMEOUT_MS, State, StreamSettings,
+    TestPattern, auto_exposure_cap, chunk_count,
 };
 use poc_viewer::{
-    addr, camera, jpeg,
-    net::{Client, Command, Frame, Stats},
+    addr,
+    blobs::Markers,
+    camera, jpeg,
+    net::{BlobFrame, Client, Command, Frame, Stats},
 };
 
 /// The board's test hooks (`firmware/poc-p4-stream/src/stream/diag.rs`).
@@ -174,11 +186,7 @@ impl Board {
     fn ask(&self, cmd: Command) -> Reply {
         let before = self.c().stats().answers;
         self.c().send(cmd);
-        let op = match cmd {
-            Command::GetState => Op::GetState,
-            Command::SetCamera(c) => Op::SetCamera(c),
-            Command::SetStream(s) => Op::SetStream(s),
-        };
+        let op = cmd.op();
         let s = self
             .c()
             .wait_until(ANSWER_WAIT, |s| {
@@ -479,6 +487,8 @@ fn expected_fps(st: &State, mean_len: f64) -> (f64, f64) {
     (lo, hi)
 }
 
+/// A crop mode with a fixed exposure (the sections that check brightness or compare frames
+/// need it fixed; `markers` turns the automatic exposure on).
 fn crop(format: Format, w: u16, h: u16, hz: f64) -> CameraSettings {
     CameraSettings {
         format,
@@ -491,6 +501,7 @@ fn crop(format: Format, w: u16, h: u16, hz: f64) -> CameraSettings {
         exposure_lines: 100,
         gain_sixteenths: 32,
         test_pattern: TestPattern::Off,
+        auto_exposure: false,
     }
 }
 
@@ -611,7 +622,7 @@ fn settings() {
     b.set_stream(stream(Encoding::Raw8, 0))
         .expect("RAW8 stream");
 
-    let sections: [(&str, Section); 17] = [
+    let sections: [(&str, Section); 18] = [
         ("sizes", sizes),
         ("rates", rates),
         ("refusals", refusals),
@@ -629,6 +640,7 @@ fn settings() {
         ("faults", faults),
         ("garbage", garbage),
         ("timeout", timeout),
+        ("markers", markers),
     ];
     for (name, run) in sections {
         if section(name) {
@@ -1219,6 +1231,325 @@ fn timeout(b: &mut Board) {
     let st = b.state();
     let w = b.measure(&st, Duration::from_millis(500), 2.0);
     b.judge("resumed after the timeout", &st, &w);
+}
+
+/// The blob frames that arrive within `secs`, oldest first.
+fn blob_window(b: &Board, secs: f64) -> Vec<BlobFrame> {
+    let c = b.c();
+    let mut seq = c.blob_frames_since(u64::MAX, &mut Vec::new());
+    let end = Instant::now() + Duration::from_secs_f64(secs);
+    let mut got = Vec::new();
+    while Instant::now() < end {
+        thread::sleep(Duration::from_millis(20));
+        seq = c.blob_frames_since(seq, &mut got);
+    }
+    got
+}
+
+/// The highest peak of each group of frames spanning an automatic exposure period.
+fn period_peaks(frames: &[BlobFrame]) -> Vec<u8> {
+    let period_us = u64::from(AUTO_EXPOSURE_PERIOD_MS) * 1000;
+    let mut out = Vec::new();
+    let mut start = None;
+    let mut top = 0u8;
+    for f in frames {
+        let s = *start.get_or_insert(f.timestamp_us);
+        top = top.max(f.blobs.iter().map(|o| o.peak).max().unwrap_or(0));
+        if f.timestamp_us - s >= period_us {
+            out.push(top);
+            (start, top) = (None, 0);
+        }
+    }
+    out
+}
+
+/// The exposure is settled: every period's brightest peak in the band, or exposure and gain
+/// at a limit of the automatic exposure.
+fn exposure_settled(st: &State, peaks: &[u8]) -> bool {
+    let band = AUTO_EXPOSURE_LOW..=AUTO_EXPOSURE_HIGH;
+    let cap = auto_exposure_cap(st.mode.line_ns, st.mode.max_exposure_lines);
+    let c = st.camera;
+    let at_limit = (c.exposure_lines >= cap && c.gain_sixteenths >= GAIN_MAX)
+        || (c.exposure_lines <= 1 && c.gain_sixteenths <= GAIN_MIN);
+    !peaks.is_empty() && (at_limit || peaks.iter().all(|p| band.contains(p)))
+}
+
+impl Board {
+    fn set_detect(&self, d: DetectSettings) -> Result<State, CamError> {
+        match self.ask(Command::SetDetect(d)) {
+            Reply::State(st) => Ok(st),
+            Reply::Error(e) => Err(e),
+        }
+    }
+}
+
+/// The board's marker detection against its one real IR source (module docs).
+fn markers(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 10))
+        .expect("RAW8 stream");
+    b.set_detect(DetectSettings::DEFAULT).expect("detection on");
+    let auto = CameraSettings {
+        auto_exposure: true,
+        ..crop(Format::Raw8, 1280, 800, 120.0)
+    };
+    let st = b.set_camera(auto).expect("1280x800 automatic exposure");
+    b.check(
+        st.camera.auto_exposure && st.detect.settings.enabled,
+        || {
+            format!(
+                "markers: settings not echoed: {:?} {:?}",
+                st.camera, st.detect
+            )
+        },
+    );
+
+    // Everything automatic settles within 5 s.
+    let start = Instant::now();
+    let settled = loop {
+        let w = blob_window(b, 0.5);
+        let st = b.state();
+        let one = !w.is_empty() && w.iter().all(|f| f.blobs.len() == 1);
+        if one && exposure_settled(&st, &period_peaks(&w)) {
+            break Some(start.elapsed());
+        }
+        if start.elapsed() > Duration::from_secs(5) {
+            break None;
+        }
+    };
+    println!("  settled after {settled:?}");
+    if !b.check(settled.is_some(), || {
+        "markers: automatic threshold and exposure did not settle within 5 s".into()
+    }) {
+        return;
+    }
+    let w = blob_window(b, 2.0);
+    let st = b.state();
+    let counts: Vec<usize> = w.iter().map(|f| f.blobs.len()).collect();
+    let peaks = period_peaks(&w);
+    println!(
+        "  {} blob frames in 2 s, exposure {} lines gain {:.2}x, threshold {}, background {} / {}, \
+         period peaks {peaks:?}",
+        w.len(),
+        st.camera.exposure_lines,
+        f32::from(st.camera.gain_sixteenths) / 16.0,
+        st.detect.threshold,
+        st.detect.background_median,
+        st.detect.background_sigma
+    );
+    b.check(counts.iter().all(|&n| n == 1), || {
+        let other = counts.iter().filter(|&&n| n != 1).count();
+        format!(
+            "markers: {other} of {} frames without exactly one blob",
+            counts.len()
+        )
+    });
+    b.check(exposure_settled(&st, &peaks), || {
+        format!("markers: brightest peaks {peaks:?} out of the band")
+    });
+    let source = w.last().and_then(|f| f.blobs.first().copied());
+
+    // A manual threshold and area filter, echoed and applied.
+    let peak = source.map_or(200, |s| s.peak);
+    let manual = DetectSettings {
+        auto_threshold: false,
+        threshold: u16::from(peak / 2).max(1),
+        auto_area: false,
+        min_area: 1,
+        max_area: u16::MAX,
+        ..DetectSettings::DEFAULT
+    };
+    match b.set_detect(manual) {
+        Ok(st) => {
+            b.check(
+                st.detect.settings == manual && st.detect.threshold == manual.threshold,
+                || format!("markers: manual settings not echoed: {:?}", st.detect),
+            );
+            let w = blob_window(b, 0.5);
+            b.check(
+                !w.is_empty()
+                    && w.iter().all(|f| {
+                        f.threshold == manual.threshold && f.flags & FrameBlobs::AUTO_THRESHOLD == 0
+                    }),
+                || {
+                    format!(
+                        "markers: frames not detected at threshold {}",
+                        manual.threshold
+                    )
+                },
+            );
+            let area = w
+                .iter()
+                .flat_map(|f| &f.blobs)
+                .map(|o| o.area)
+                .max()
+                .unwrap_or(1);
+            // Twice the largest area seen: the real source's area moves from frame to frame.
+            let above = DetectSettings {
+                min_area: area.saturating_mul(2),
+                ..manual
+            };
+            let before = b.state().detect.blobs_filtered;
+            b.set_detect(above).expect("area above the source");
+            let w = blob_window(b, 0.5);
+            let after = b.state().detect.blobs_filtered;
+            b.check(
+                w.iter().all(|f| f.blobs.is_empty()) && after > before,
+                || {
+                    format!(
+                        "markers: min area {} kept blobs or filtered none ({before} -> {after})",
+                        above.min_area
+                    )
+                },
+            );
+        }
+        Err(e) => {
+            b.check(false, || format!("markers: manual threshold refused: {e}"));
+        }
+    }
+
+    // Detection off: no blobs.
+    let off = DetectSettings {
+        enabled: false,
+        ..DetectSettings::DEFAULT
+    };
+    let st = b.set_detect(off).expect("detection off");
+    let w = blob_window(b, 1.0);
+    let after = b.state();
+    b.check(
+        w.is_empty() && after.detect.frames_detected == st.detect.frames_detected,
+        || format!("markers: {} blob frames with detection off", w.len()),
+    );
+    b.set_detect(DetectSettings::DEFAULT).expect("detection on");
+
+    // Frames off: the blobs keep coming at the sensor rate, less the skipped frames.
+    b.set_stream(StreamSettings {
+        enabled: false,
+        ..stream(Encoding::Raw8, 0)
+    })
+    .expect("frames off");
+    thread::sleep(Duration::from_millis(500));
+    let a = b.state();
+    let w = blob_window(b, 2.0);
+    let z = b.state();
+    let captured = z
+        .counters
+        .frames_captured
+        .wrapping_sub(a.counters.frames_captured);
+    let skipped = z
+        .detect
+        .frames_skipped
+        .wrapping_sub(a.detect.frames_skipped);
+    let expected = f64::from(captured - skipped.min(captured));
+    println!(
+        "  frames off: {} blob frames, {captured} captured, {skipped} skipped by the detector",
+        w.len()
+    );
+    b.check((w.len() as f64) >= 0.9 * expected - 5.0, || {
+        format!(
+            "markers: {} blob frames with frames off, expected about {expected}",
+            w.len()
+        )
+    });
+
+    // Per mode: coverage and detect time.
+    let modes = [
+        (
+            "crop 1280x800 RAW8 120 Hz",
+            crop(Format::Raw8, 1280, 800, 120.0),
+        ),
+        (
+            "crop 1280x800 RAW10 120 Hz",
+            crop(Format::Raw10, 1280, 800, 120.0),
+        ),
+        (
+            "binned 640x400 RAW8 120 Hz",
+            binned(Format::Raw8, 640, 400, 120.0),
+        ),
+        (
+            "binned 640x400 RAW8 250 Hz",
+            binned(Format::Raw8, 640, 400, 250.0),
+        ),
+        (
+            "binned 640x400 RAW8 302 Hz",
+            binned(Format::Raw8, 640, 400, 302.189),
+        ),
+        (
+            "binned 320x200 RAW8 557 Hz",
+            binned(Format::Raw8, 320, 200, 557.874),
+        ),
+    ];
+    for (label, m) in modes {
+        let m = CameraSettings {
+            auto_exposure: true,
+            ..m
+        };
+        if let Err(e) = b.set_camera(m) {
+            b.check(false, || format!("markers {label}: refused: {e}"));
+            continue;
+        }
+        thread::sleep(Duration::from_secs(1));
+        let a = b.state();
+        if !a.detect.available {
+            println!("  {label}: detection not available");
+            continue;
+        }
+        let (mut mean_sum, mut means, mut max) = (0u64, 0u32, 0u32);
+        let end = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < end {
+            thread::sleep(Duration::from_millis(250));
+            let d = b.state().detect;
+            if d.detect_us_mean > 0 {
+                (mean_sum, means) = (mean_sum + u64::from(d.detect_us_mean), means + 1);
+            }
+            max = max.max(d.detect_us_max);
+        }
+        let z = b.state();
+        let captured = z
+            .counters
+            .frames_captured
+            .wrapping_sub(a.counters.frames_captured);
+        let detected = z
+            .detect
+            .frames_detected
+            .wrapping_sub(a.detect.frames_detected);
+        let errors = z
+            .counters
+            .capture_errors
+            .wrapping_sub(a.counters.capture_errors);
+        println!(
+            "  {label}: coverage {:.1} % ({detected} of {captured}), detect mean {:.2} ms max {:.2} \
+             ms, {} skipped, capture errors {errors}, fault {}",
+            f64::from(detected) * 100.0 / f64::from(captured.max(1)),
+            mean_sum as f64 / f64::from(means.max(1)) / 1e3,
+            f64::from(max) / 1e3,
+            z.detect
+                .frames_skipped
+                .wrapping_sub(a.detect.frames_skipped),
+            z.detect.fault
+        );
+        b.check(errors == 0 && !z.detect.fault && detected > 0, || {
+            format!(
+                "markers {label}: {errors} capture errors, fault {}, {detected} detected",
+                z.detect.fault
+            )
+        });
+    }
+
+    // The jitter of the source over 10 s.
+    b.set_camera(auto).expect("1280x800");
+    thread::sleep(Duration::from_secs(2));
+    let mut m = Markers::default();
+    for f in blob_window(b, 10.0) {
+        m.push(f);
+    }
+    let s = m.stats(u64::MAX);
+    println!(
+        "  jitter over 10 s: {} frames, {} with one blob, mean x {:.3} y {:.3} px, sigma x {:.4} y \
+         {:.4} px, peak {:.0}, width {:.2} px",
+        s.frames, s.single, s.mean_x, s.mean_y, s.sigma_x, s.sigma_y, s.mean_peak, s.mean_width
+    );
+    b.set_stream(stream(Encoding::Raw8, 0))
+        .expect("RAW8 stream");
 }
 
 /// JPEG at quality 90, automatic quality off: windows at 120 Hz and at their fastest rate.

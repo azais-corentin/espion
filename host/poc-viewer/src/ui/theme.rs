@@ -2,7 +2,9 @@
 //!
 //! The picture is greyscale, so the chrome is neutral grey and colour means one thing: a stage
 //! of the pipeline ([`hue`]). A stage has the same hue in the timing diagram, on the settings
-//! that act on it and on its counters. Red ([`FAULT`]) is for faults and refusals only.
+//! that act on it and on its counters. The board's marker detection is lime ([`MARKER`]): its
+//! settings, its counters, and the overlay and mask on the picture. Red ([`FAULT`]) is for
+//! faults and refusals only.
 //!
 //! Type is IBM Plex (`assets/fonts`, SIL Open Font License 1.1): Plex Sans for words, Plex
 //! Mono for every number that changes, so digits keep their place.
@@ -99,6 +101,14 @@ pub const fn hue(stage: Stage) -> Hue {
         text: rgb(text),
     }
 }
+
+/// The board's marker detection: lime, apart from every stage's hue and from red, and bright
+/// on the grey picture.
+pub const MARKER: Hue = Hue {
+    fill: rgb(0x3a4d10),
+    line: rgb(0xa8e23a),
+    text: rgb(0xd8f6a2),
+};
 
 const SEMIBOLD: &str = "plex-sans-semibold";
 const MONO_MEDIUM: &str = "plex-mono-medium";

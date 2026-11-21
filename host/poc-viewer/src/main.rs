@@ -98,6 +98,11 @@ struct InitArgs {
     /// Test pattern.
     #[arg(long)]
     pattern: Option<PatternArg>,
+    /// Automatic exposure: the board sets exposure and gain to keep the brightest marker's
+    /// peak in 200..=240 (starting from `--exposure` and `--gain`). Default: on, off when
+    /// `--exposure` or `--gain` is given.
+    #[arg(long)]
+    auto_exposure: Option<bool>,
     /// Pixel encoding on the wire.
     #[arg(long)]
     encoding: Option<EncodingArg>,
@@ -167,7 +172,8 @@ impl InitArgs {
             || self.tolerance.is_some()
             || self.exposure.is_some()
             || self.gain.is_some()
-            || self.pattern.is_some();
+            || self.pattern.is_some()
+            || self.auto_exposure.is_some();
         if !given {
             return None;
         }
@@ -200,6 +206,9 @@ impl InitArgs {
                 Some(PatternArg::BwSquares) => TestPattern::BlackWhiteSquares,
                 Some(PatternArg::Random) => TestPattern::Random,
             },
+            auto_exposure: self
+                .auto_exposure
+                .unwrap_or(self.exposure.is_none() && self.gain.is_none() && d.auto_exposure),
         })
     }
 

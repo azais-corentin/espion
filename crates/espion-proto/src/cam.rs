@@ -1,13 +1,15 @@
 //! Camera stream: live frames from one board's OV9281 and remote control of its settings.
 //!
 //! Used by the `poc-p4-stream` firmware and the `poc-viewer` host app over IPv6 link-local
-//! (`docs/protocol.md`, "Camera stream"). Three kinds:
+//! (`docs/protocol.md`, "Camera stream"). Four kinds:
 //!
 //! - [`Request`] (`0x20`, host to board): read the state, set the camera or the stream
 //!   settings, or poll. Each carries a sequence number that the [`Response`] echoes. Every
 //!   request is idempotent, so the host repeats it until it is answered.
 //! - [`Response`] (`0x21`, board to host): the complete [`State`] or a [`CamError`].
 //! - [`FrameChunk`] (`0x22`, board to host): [`CHUNK_MAX`] bytes of one frame, self-describing.
+//! - [`FrameBlobs`] (`0x23`, board to host): the blobs the board's detector found in one frame,
+//!   sent for every frame it detected, whether frames are sent or not.
 //!
 //! The board answers and streams only to the address and port the last valid request came
 //! from, and stops sending frames when no valid request arrived for [`STREAM_TIMEOUT_MS`].
@@ -117,6 +119,115 @@ pub const fn auto_quality(in_use: u8, set: u8, skipped: bool, busy_pct: u8) -> u
         in_use + 1
     } else {
         in_use
+    }
+}
+
+/// Period of the automatic exposure ([`auto_exposure`]), ms: several sensor frames, so that a
+/// step sees frames exposed with the setting of the step before (the sensor applies a new
+/// exposure a frame or two after it is written).
+pub const AUTO_EXPOSURE_PERIOD_MS: u32 = 100;
+
+/// Lowest peak (8-bit) of the brightest blob the automatic exposure accepts without a step.
+pub const AUTO_EXPOSURE_LOW: u8 = 200;
+
+/// Highest peak (8-bit) of the brightest blob the automatic exposure accepts without a step.
+pub const AUTO_EXPOSURE_HIGH: u8 = 240;
+
+/// The peak a step of the automatic exposure aims for.
+pub const AUTO_EXPOSURE_TARGET: u8 = 220;
+
+/// Longest exposure the automatic exposure sets, ns: the product's LED pulse.
+pub const AUTO_EXPOSURE_CAP_NS: u32 = 500_000;
+
+/// Smallest analog gain, sixteenths (1x).
+pub const GAIN_MIN: u8 = 16;
+
+/// Largest analog gain, sixteenths (15.5x).
+pub const GAIN_MAX: u8 = 248;
+
+/// Exposure and gain as the automatic exposure sets them ([`auto_exposure`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Exposure {
+    /// Exposure, lines.
+    pub lines: u16,
+    /// Analog gain, sixteenths.
+    pub gain_sixteenths: u8,
+}
+
+const fn clamp_u32(v: u32, lo: u32, hi: u32) -> u32 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+/// Longest exposure the automatic exposure sets in a mode, lines: [`AUTO_EXPOSURE_CAP_NS`] in
+/// whole lines of `line_ns` ([`ModeInfo::line_ns`]), at least 1, at most `max_lines`
+/// ([`ModeInfo::max_exposure_lines`]).
+pub const fn auto_exposure_cap(line_ns: u32, max_lines: u16) -> u16 {
+    let lines = match AUTO_EXPOSURE_CAP_NS.checked_div(line_ns) {
+        Some(l) => l,
+        None => u32::MAX,
+    };
+    clamp_u32(lines, 1, if max_lines == 0 { 1 } else { max_lines as u32 }) as u16
+}
+
+/// One step of the automatic exposure, taken at the end of every [`AUTO_EXPOSURE_PERIOD_MS`]
+/// while [`CameraSettings::auto_exposure`] is on: the exposure and gain for the next period.
+///
+/// - `now`: the exposure and gain in use.
+/// - `peak`: the highest [`Blob::peak`] of the blobs sent in the period (8-bit; a RAW10
+///   blob's top 8 bits); `None` when no blob was found.
+/// - `cap_lines`: [`auto_exposure_cap`] of the mode.
+///
+/// The exposure is first brought within `1..=cap_lines` and the gain within
+/// [`GAIN_MIN`]`..=`[`GAIN_MAX`]. With no blob, or a peak within
+/// [`AUTO_EXPOSURE_LOW`]`..=`[`AUTO_EXPOSURE_HIGH`], it holds. Otherwise it aims the brightness
+/// (lines x gain) at `now` x [`AUTO_EXPOSURE_TARGET`]` / peak`, at most twice and at least half
+/// of `now`, and half of it for a saturated peak (255). The gain is kept low: the exposure is
+/// the longest that 1x reaches the aim with (`aim / 16` lines, within `1..=cap_lines`), and
+/// the gain makes up the rest, rounded up (`aim / lines` sixteenths). The result is within a
+/// sixteenth of the aim (less than one line of gain on top of whole lines at 1x), finer than
+/// the band, so a step towards a linear sensor's band lands in it rather than over it, even
+/// at exposures of a few lines where one line is coarser than the band.
+pub const fn auto_exposure(now: Exposure, peak: Option<u8>, cap_lines: u16) -> Exposure {
+    let cap = if cap_lines == 0 { 1 } else { cap_lines as u32 };
+    let lines = clamp_u32(now.lines as u32, 1, cap);
+    let gain = clamp_u32(now.gain_sixteenths as u32, GAIN_MIN as u32, GAIN_MAX as u32);
+    let p = match peak {
+        Some(p) if p < AUTO_EXPOSURE_LOW || p > AUTO_EXPOSURE_HIGH => p,
+        _ => {
+            return Exposure {
+                lines: lines as u16,
+                gain_sixteenths: gain as u8,
+            };
+        }
+    };
+    let (num, den) = if p == u8::MAX {
+        (1, 2)
+    } else {
+        let (n, d) = (
+            AUTO_EXPOSURE_TARGET as u32,
+            if p == 0 { 1 } else { p as u32 },
+        );
+        if n > 2 * d {
+            (2, 1)
+        } else if 2 * n < d {
+            (1, 2)
+        } else {
+            (n, d)
+        }
+    };
+    // At most 65535 x 248 x 220: fits a u32.
+    let aim = lines * gain * num / den;
+    let lines = clamp_u32(aim / GAIN_MIN as u32, 1, cap);
+    let gain = clamp_u32(aim.div_ceil(lines), GAIN_MIN as u32, GAIN_MAX as u32);
+    Exposure {
+        lines: lines as u16,
+        gain_sixteenths: gain as u8,
     }
 }
 
@@ -281,6 +392,10 @@ pub struct CameraSettings {
     pub gain_sixteenths: u8,
     /// Test pattern instead of the image.
     pub test_pattern: TestPattern,
+    /// Automatic exposure ([`auto_exposure`]): the board sets `exposure_lines` and
+    /// `gain_sixteenths`, and a [`State`] reports the values in use; those of a `SetCamera`
+    /// are checked as usual and are where it starts.
+    pub auto_exposure: bool,
 }
 
 impl CameraSettings {
@@ -341,6 +456,99 @@ impl StreamSettings {
     }
 }
 
+/// Smallest blob area (pixels) the automatic area filter keeps: a lone hot pixel is dropped.
+pub const AUTO_MIN_AREA: u16 = 2;
+
+/// The board's blob detection ([`Op::SetDetect`]): the blobs of every frame the detector takes,
+/// sent as [`FrameBlobs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DetectSettings {
+    /// Detect, and send [`FrameBlobs`] while a host polls, whether frames are sent or not.
+    pub enabled: bool,
+    /// Automatic threshold: the board chooses it from the background and the brightest blob
+    /// of the frames before (`espion_vision::auto`); `threshold` is kept for when it is turned
+    /// off.
+    pub auto_threshold: bool,
+    /// Threshold with `auto_threshold` off, in the sensor format's units:
+    /// 1..=[`DetectSettings::threshold_max`]. A mode change to the other format scales it
+    /// ([`DetectSettings::for_format`]).
+    pub threshold: u16,
+    /// Automatic area filter: keep the blobs of at least [`AUTO_MIN_AREA`] pixels;
+    /// `min_area` and `max_area` are kept for when it is turned off.
+    pub auto_area: bool,
+    /// Smallest area kept with `auto_area` off, pixels, at least 1.
+    pub min_area: u16,
+    /// Largest area kept with `auto_area` off, pixels, at least `min_area`.
+    pub max_area: u16,
+}
+
+impl DetectSettings {
+    /// The start-up settings (board and fake camera): detection on, automatic threshold and
+    /// area filter, the manual values at their middle and widest.
+    pub const DEFAULT: Self = Self {
+        enabled: true,
+        auto_threshold: true,
+        threshold: 128,
+        auto_area: true,
+        min_area: AUTO_MIN_AREA,
+        max_area: u16::MAX,
+    };
+
+    /// Largest threshold of a sensor format: 255 RAW8, 1023 RAW10.
+    pub const fn threshold_max(format: Format) -> u16 {
+        match format {
+            Format::Raw8 => 255,
+            Format::Raw10 => 1023,
+        }
+    }
+
+    /// The checks of a `SetDetect` against the running sensor format: the threshold
+    /// ([`CamError::Threshold`]), then the area bounds ([`CamError::Area`]). Checked whether
+    /// the automatic choices are on or not.
+    pub const fn check(&self, format: Format) -> Result<(), CamError> {
+        let max = Self::threshold_max(format);
+        if self.threshold < 1 || self.threshold > max {
+            return Err(CamError::Threshold { min: 1, max });
+        }
+        if self.min_area < 1 || self.min_area > self.max_area {
+            return Err(CamError::Area);
+        }
+        Ok(())
+    }
+
+    /// The area bounds in use, pixels, both inclusive.
+    pub const fn area_bounds(&self) -> (u16, u16) {
+        if self.auto_area {
+            (AUTO_MIN_AREA, u16::MAX)
+        } else {
+            (self.min_area, self.max_area)
+        }
+    }
+
+    /// Whether a blob of `area` pixels is kept.
+    pub const fn keeps(&self, area: u16) -> bool {
+        let (min, max) = self.area_bounds();
+        area >= min && area <= max
+    }
+
+    /// These settings for a mode of format `to` after one of format `from`: the threshold
+    /// times 4 from RAW8 to RAW10, divided by 4 (at least 1) the other way.
+    pub const fn for_format(self, from: Format, to: Format) -> Self {
+        let threshold = match (from, to) {
+            (Format::Raw8, Format::Raw10) => self.threshold * 4,
+            (Format::Raw10, Format::Raw8) => {
+                if self.threshold < 4 {
+                    1
+                } else {
+                    self.threshold / 4
+                }
+            }
+            _ => self.threshold,
+        };
+        Self { threshold, ..self }
+    }
+}
+
 /// The operation of a [`Request`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Op {
@@ -351,6 +559,9 @@ pub enum Op {
     SetCamera(CameraSettings),
     /// Apply the stream settings.
     SetStream(StreamSettings),
+    /// Apply the detection settings, checked against the running sensor format
+    /// ([`DetectSettings::check`]).
+    SetDetect(DetectSettings),
     /// Keep the stream alive and read the state (with its counters): the host's periodic
     /// request.
     Poll,
@@ -423,6 +634,45 @@ pub struct EncoderState {
     pub frames_skipped: u32,
 }
 
+/// The board's blob detector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DetectState {
+    /// Settings as applied.
+    pub settings: DetectSettings,
+    /// Threshold the next frame is detected with (the automatic one, or
+    /// `settings.threshold`), in the sensor format's units.
+    pub threshold: u16,
+    /// Median of the last detected frame's background sample, 8-bit units (0 before the
+    /// first).
+    pub background_median: u8,
+    /// Spread of that sample, the 84th percentile minus the median, 8-bit units.
+    pub background_sigma: u8,
+    /// Mean detect time of the frames detected since the previous [`State`] was made, µs (0
+    /// when none).
+    pub detect_us_mean: u32,
+    /// Longest detect time of those frames, µs.
+    pub detect_us_max: u32,
+    /// Frames detected since boot. Wraps at `u32::MAX`.
+    pub frames_detected: u32,
+    /// Captured frames the detector could not take since boot because it was still busy
+    /// (detection on). Wraps at `u32::MAX`.
+    pub frames_skipped: u32,
+    /// Items the detector lost since boot: runs and components beyond its capacity (a blob
+    /// that lost some comes out split, shrunk or not at all), blobs beyond its capacity or
+    /// beyond [`FRAME_BLOBS_MAX`]. Wraps at `u32::MAX`.
+    pub blobs_dropped: u32,
+    /// Blobs found but not sent since boot because the area filter dropped them. Wraps at
+    /// `u32::MAX`.
+    pub blobs_filtered: u32,
+    /// The detector stopped after a fault (the board: its core trapped or stopped beating);
+    /// nothing is detected until the board restarts.
+    pub fault: bool,
+    /// The running mode can be detected. `false` for the modes the board streams as whole
+    /// frames only (its detector works on strips of rows; `docs/protocol.md`, "Detection"):
+    /// nothing is detected, and the settings are kept for the next mode.
+    pub available: bool,
+}
+
 /// A stretch of a frame's way through the board: its start and its end, µs after the frame's
 /// capture time ([`FrameChunk::timestamp_us`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -466,6 +716,8 @@ pub struct State {
     pub uptime_us: u64,
     /// The last frame sent whole and its time on the board; `None` before the first.
     pub timing: Option<FrameTiming>,
+    /// The blob detector.
+    pub detect: DetectState,
 }
 
 /// Why the board refused a request. The first six mirror `ov9281::Error`, rates in
@@ -544,6 +796,15 @@ pub enum CamError {
         /// Highest quality.
         max: u8,
     },
+    /// Detection threshold outside `min..=max` for the sensor format.
+    Threshold {
+        /// Lowest threshold.
+        min: u16,
+        /// Highest threshold.
+        max: u16,
+    },
+    /// Area bounds of the detection: `min_area` below 1 or above `max_area`.
+    Area,
 }
 
 /// A rate in millihertz shown in hertz with three decimals.
@@ -630,6 +891,13 @@ impl fmt::Display for CamError {
             Self::Quality { min, max } => {
                 write!(f, "JPEG quality outside {min}..={max}")
             }
+            Self::Threshold { min, max } => write!(
+                f,
+                "detection threshold outside {min}..={max} for this sensor format"
+            ),
+            Self::Area => f.write_str(
+                "blob area bounds: the smallest must be at least 1 and at most the largest",
+            ),
         }
     }
 }
@@ -712,6 +980,163 @@ impl FrameChunk<'_> {
     }
 }
 
+/// Bytes of one blob in a [`FrameBlobs`] datagram, all little-endian: `x` and `y` (`u32`),
+/// `width` (`u16`), `flux` (`u32`), `area` (`u16`), then `peak`.
+pub const BLOB_BYTES: usize = 17;
+
+/// Bytes of a [`FrameBlobs`] datagram besides its blobs, at the largest value of every field:
+/// header, then the postcard varints of frame (5), generation (5), timestamp (10), format
+/// (1), width (3), height (3), threshold (3), detect time (5), flags (1) and the blob bytes'
+/// length (2).
+pub const FRAME_BLOBS_OVERHEAD_MAX: usize = HEADER_LEN + 5 + 5 + 10 + 1 + 3 + 3 + 3 + 5 + 1 + 2;
+
+/// Most blobs one [`FrameBlobs`] datagram carries; a frame with more sends these and sets
+/// [`FrameBlobs::OVERFLOW`].
+pub const FRAME_BLOBS_MAX: usize = (MAX_DATAGRAM - FRAME_BLOBS_OVERHEAD_MAX) / BLOB_BYTES;
+
+/// Units per pixel of [`Blob::x`], [`Blob::y`] and [`Blob::width`].
+pub const SUBPIXEL: u32 = 256;
+
+/// One blob. The threshold finds it (`area`, `peak`); its position, width and flux are
+/// measured on the frame around it (`espion_vision::refine`: iterated Gaussian-weighted
+/// centroid with the local background subtracted), so the threshold does not bias them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Blob {
+    /// Centre column in 1/[`SUBPIXEL`] pixel, pixel centres at integer coordinates.
+    pub x: u32,
+    /// Centre row in 1/[`SUBPIXEL`] pixel, pixel centres at integer coordinates.
+    pub y: u32,
+    /// The spot's standard deviation in 1/[`SUBPIXEL`] pixel, mean of both axes: that of a
+    /// Gaussian spot with the same Gaussian-weighted second moments, the pixel's own size
+    /// removed.
+    pub width: u16,
+    /// Sum of the pixel values above the local background around the spot, in the sensor
+    /// format's units (RAW10: 10-bit).
+    pub flux: u32,
+    /// Pixels at or above the threshold, saturating at `u16::MAX`.
+    pub area: u16,
+    /// Brightest pixel, 8-bit (RAW10: its top 8 bits).
+    pub peak: u8,
+}
+
+impl Blob {
+    /// The blob's [`BLOB_BYTES`] on the wire.
+    pub const fn to_bytes(self) -> [u8; BLOB_BYTES] {
+        let [x0, x1, x2, x3] = self.x.to_le_bytes();
+        let [y0, y1, y2, y3] = self.y.to_le_bytes();
+        let [w0, w1] = self.width.to_le_bytes();
+        let [f0, f1, f2, f3] = self.flux.to_le_bytes();
+        let [a0, a1] = self.area.to_le_bytes();
+        [
+            x0, x1, x2, x3, y0, y1, y2, y3, w0, w1, f0, f1, f2, f3, a0, a1, self.peak,
+        ]
+    }
+
+    /// The blob of [`BLOB_BYTES`] from the wire.
+    pub const fn from_bytes(b: [u8; BLOB_BYTES]) -> Self {
+        Self {
+            x: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            y: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            width: u16::from_le_bytes([b[8], b[9]]),
+            flux: u32::from_le_bytes([b[10], b[11], b[12], b[13]]),
+            area: u16::from_le_bytes([b[14], b[15]]),
+            peak: b[16],
+        }
+    }
+
+    /// Centre column in pixels.
+    pub fn x_px(self) -> f32 {
+        self.x as f32 / SUBPIXEL as f32
+    }
+
+    /// Centre row in pixels.
+    pub fn y_px(self) -> f32 {
+        self.y as f32 / SUBPIXEL as f32
+    }
+
+    /// Standard deviation in pixels.
+    pub fn width_px(self) -> f32 {
+        self.width as f32 / SUBPIXEL as f32
+    }
+}
+
+/// Packs `blobs` into `out` for [`FrameBlobs::blobs`]: as many as fit `out` and
+/// [`FRAME_BLOBS_MAX`]. Returns the bytes written and whether every blob fitted.
+pub fn pack_blobs(blobs: impl IntoIterator<Item = Blob>, out: &mut [u8]) -> (usize, bool) {
+    let room = (out.len() / BLOB_BYTES).min(FRAME_BLOBS_MAX);
+    let mut n = 0;
+    for b in blobs {
+        if n == room {
+            return (n * BLOB_BYTES, false);
+        }
+        out[n * BLOB_BYTES..(n + 1) * BLOB_BYTES].copy_from_slice(&b.to_bytes());
+        n += 1;
+    }
+    (n * BLOB_BYTES, true)
+}
+
+/// Board to host (`0x23`): the blobs the detector found in one frame, after the area filter.
+///
+/// Sent for every frame detected while a host polls, whether frames are sent or not; it
+/// carries the frame's number, generation and timestamp as its [`FrameChunk`]s do, so a host
+/// matches the two. Sent before the next frame chunk, after any answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FrameBlobs<'a> {
+    /// Frame number ([`FrameChunk::frame`]).
+    pub frame: u32,
+    /// [`State::generation`] of the frame.
+    pub generation: u32,
+    /// Board time of the frame's capture ([`FrameChunk::timestamp_us`]).
+    pub timestamp_us: u64,
+    /// Sensor format of the frame: the units of `threshold`.
+    pub format: Format,
+    /// Frame width in pixels.
+    pub width: u16,
+    /// Frame height in lines.
+    pub height: u16,
+    /// Threshold the frame was detected with, in the format's units.
+    pub threshold: u16,
+    /// Time the detector took for the frame, µs.
+    pub detect_us: u32,
+    /// [`FrameBlobs::OVERFLOW`], [`FrameBlobs::AUTO_THRESHOLD`].
+    pub flags: u8,
+    /// The blobs, [`BLOB_BYTES`] each ([`pack_blobs`]; read with [`FrameBlobs::blobs`]), at
+    /// most [`FRAME_BLOBS_MAX`], in the detector's order.
+    #[serde(serialize_with = "serialize_bytes")]
+    pub blobs: &'a [u8],
+}
+
+impl<'a> FrameBlobs<'a> {
+    /// Flag: blobs were lost (beyond the detector's capacity or [`FRAME_BLOBS_MAX`]).
+    pub const OVERFLOW: u8 = 1;
+    /// Flag: the threshold was chosen automatically.
+    pub const AUTO_THRESHOLD: u8 = 2;
+
+    /// The blobs.
+    pub fn blobs(&self) -> impl ExactSizeIterator<Item = Blob> + 'a {
+        self.blobs
+            .as_chunks::<BLOB_BYTES>()
+            .0
+            .iter()
+            .map(|b| Blob::from_bytes(*b))
+    }
+
+    /// Number of blobs.
+    pub const fn blob_count(&self) -> usize {
+        self.blobs.len() / BLOB_BYTES
+    }
+
+    /// `true` when the blob bytes are whole blobs, at most [`FRAME_BLOBS_MAX`].
+    const fn well_formed(&self) -> bool {
+        self.blobs.len().is_multiple_of(BLOB_BYTES) && self.blob_count() <= FRAME_BLOBS_MAX
+    }
+
+    /// [`Message::encode`] for blobs.
+    pub fn encode<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], Error> {
+        Message::Blobs(*self).encode(buf)
+    }
+}
+
 /// A camera stream message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Message<'a> {
@@ -721,6 +1146,8 @@ pub enum Message<'a> {
     Response(Response),
     /// `0x22`.
     Chunk(FrameChunk<'a>),
+    /// `0x23`.
+    Blobs(FrameBlobs<'a>),
 }
 
 impl<'a> Message<'a> {
@@ -734,6 +1161,12 @@ impl<'a> Message<'a> {
                 let n = c.encode_header(buf)?;
                 buf[n..n + c.data.len()].copy_from_slice(c.data);
                 Ok(&buf[..n + c.data.len()])
+            }
+            Self::Blobs(b) => {
+                if !b.well_formed() {
+                    return Err(Error::BlobsLayout);
+                }
+                encode(kind::FRAME_BLOBS, b, buf)
             }
         }
     }
@@ -752,6 +1185,14 @@ impl<'a> Message<'a> {
                     Err(Error::ChunkLayout)
                 } else {
                     Ok(Self::Chunk(c))
+                }
+            }
+            kind::FRAME_BLOBS => {
+                let b: FrameBlobs<'a> = decode_body(body)?;
+                if b.well_formed() {
+                    Ok(Self::Blobs(b))
+                } else {
+                    Err(Error::BlobsLayout)
                 }
             }
             other => Err(Error::Kind(other)),

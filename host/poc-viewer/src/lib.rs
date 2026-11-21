@@ -17,10 +17,16 @@
 //! - [`timing`]: where a frame's time goes, from its exposure to the GPU: the board's times
 //!   from the state, this PC's from each frame presented, one typical frame a second.
 //! - [`addr`]: camera addresses with an interface scope, and the local address to bind.
+//! - [`blobs`]: the board's blobs as the window shows them: the frame that goes with the
+//!   picture, the single-marker statistics, the trail.
+//! - [`echo`]: settings sent and not yet shown by the board, told apart from changes the
+//!   board makes itself.
 
 pub mod addr;
+pub mod blobs;
 pub mod camera;
 pub mod decode;
+pub mod echo;
 pub mod fake;
 pub mod jpeg;
 pub mod net;

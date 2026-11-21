@@ -7,9 +7,10 @@ use std::{
 };
 
 use espion_proto::cam::{
-    CHUNK_MAX, CamError, CameraSettings, Counters, EncoderState, Encoding, Format, FrameChunk,
-    FrameTiming, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply, Request,
-    Response, Span, State, StreamSettings, TestPattern,
+    Blob, CHUNK_MAX, CamError, CameraSettings, Counters, DetectSettings, DetectState, EncoderState,
+    Encoding, Format, FrameBlobs, FrameChunk, FrameTiming, JpegRefusal, MAX_DATAGRAM, Message,
+    ModeInfo, Op, Origin, Readout, Reply, Request, Response, Span, State, StreamSettings,
+    TestPattern, pack_blobs,
 };
 
 struct Counting;
@@ -59,6 +60,7 @@ fn encode_and_decode_allocate_nothing() {
         exposure_lines: 100,
         gain_sixteenths: 32,
         test_pattern: TestPattern::Bars,
+        auto_exposure: true,
     };
     let stream = StreamSettings {
         enabled: true,
@@ -103,10 +105,37 @@ fn encode_and_decode_allocate_nothing() {
                 end_us: 9_950,
             },
         }),
+        detect: DetectState {
+            settings: DetectSettings::DEFAULT,
+            threshold: 300,
+            background_median: 9,
+            background_sigma: 2,
+            detect_us_mean: 4_100,
+            detect_us_max: 4_600,
+            frames_detected: 1_000,
+            frames_skipped: 3,
+            blobs_dropped: 0,
+            blobs_filtered: 12,
+            fault: false,
+            available: true,
+        },
     };
     let data = [0x5Au8; CHUNK_MAX];
     let frame_len = Encoding::Raw10.frame_bytes(1280, 800).unwrap() as u32;
     let jpeg_len = 45_123u32;
+    let mut packed = [0u8; 3 * espion_proto::cam::BLOB_BYTES];
+    let (blob_bytes, all) = pack_blobs(
+        (0..3u32).map(|i| Blob {
+            x: 100 * 256 + i,
+            y: 200 * 256 + i,
+            width: 384,
+            flux: 2_000 + i,
+            area: 12,
+            peak: 230,
+        }),
+        &mut packed,
+    );
+    assert!(all);
     let messages = [
         Message::Request(Request {
             seq: 1,
@@ -123,6 +152,22 @@ fn encode_and_decode_allocate_nothing() {
         Message::Request(Request {
             seq: 4,
             op: Op::Poll,
+        }),
+        Message::Request(Request {
+            seq: 6,
+            op: Op::SetDetect(DetectSettings::DEFAULT),
+        }),
+        Message::Blobs(FrameBlobs {
+            frame: 79,
+            generation: 4,
+            timestamp_us: 12_016_000,
+            format: Format::Raw10,
+            width: 1280,
+            height: 800,
+            threshold: 300,
+            detect_us: 4_100,
+            flags: FrameBlobs::AUTO_THRESHOLD,
+            blobs: &packed[..blob_bytes],
         }),
         Message::Response(Response {
             seq: 4,

@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use eframe::egui;
-use poc_viewer::{decode::DecodeStats, net::Stats, timing::Snapshot};
+use poc_viewer::{blobs::MarkerStats, decode::DecodeStats, net::Stats, timing::Snapshot};
 
 use crate::{
     display::{Shown, UploadTiming},
@@ -53,6 +53,10 @@ pub struct Probe<'a> {
     pub cpu: &'a mut Vec<f32>,
     pub shown: Option<&'a Shown>,
     pub pipeline: Option<&'a Snapshot>,
+    /// The single-marker statistics of the window's statistics window.
+    pub markers: MarkerStats,
+    /// That window, seconds.
+    pub stats_s: f64,
 }
 
 impl SelfTest {
@@ -102,6 +106,10 @@ impl SelfTest {
         println!("{}", pipeline_report(p.pipeline));
         println!(
             "{}",
+            detector_report(b, now, p.stats, &p.markers, p.stats_s)
+        );
+        println!(
+            "{}",
             report(
                 b,
                 now,
@@ -138,6 +146,69 @@ fn percentile(sorted: &[f32], p: f64) -> f32 {
         return 0.0;
     }
     sorted[((sorted.len() - 1) as f64 * p).round() as usize]
+}
+
+/// The board's detector over the measurement and the marker statistics, as the self-test
+/// prints them.
+fn detector_report(b: &Base, now: Instant, s: &Stats, m: &MarkerStats, stats_s: f64) -> String {
+    let dt = (now - b.at).as_secs_f64();
+    let received = (s.blob_frames - b.stats.blob_frames) as f64 / dt;
+    let board = match (b.stats.state, s.state) {
+        (Some(a), Some(z)) => {
+            let (a, z) = (a.detect, z.detect);
+            format!(
+                "detector: {} (threshold {}, area {}), {} frames detected, {} skipped (busy), \
+                 detect mean {:.3} ms max {:.3} ms (last state), threshold in use {}, background \
+                 median {} sigma {}, {} blobs dropped, {} filtered, fault {}",
+                on_off(z.settings.enabled),
+                if z.settings.auto_threshold {
+                    "automatic"
+                } else {
+                    "manual"
+                },
+                if z.settings.auto_area {
+                    "automatic"
+                } else {
+                    "manual"
+                },
+                z.frames_detected.wrapping_sub(a.frames_detected),
+                z.frames_skipped.wrapping_sub(a.frames_skipped),
+                f64::from(z.detect_us_mean) / 1e3,
+                f64::from(z.detect_us_max) / 1e3,
+                z.threshold,
+                z.background_median,
+                z.background_sigma,
+                z.blobs_dropped.wrapping_sub(a.blobs_dropped),
+                z.blobs_filtered.wrapping_sub(a.blobs_filtered),
+                on_off(z.fault),
+            )
+        }
+        _ => "detector: no state".to_owned(),
+    };
+    let marker = if m.single > 0 {
+        format!(
+            "x {:.3} y {:.3} px, sigma x {:.4} y {:.4} px, peak {:.0}, area {:.1} px, width {:.2} \
+             px, flux {:.0}",
+            m.mean_x,
+            m.mean_y,
+            m.sigma_x,
+            m.sigma_y,
+            m.mean_peak,
+            m.mean_area,
+            m.mean_width,
+            m.mean_flux
+        )
+    } else {
+        "no frame with one blob".to_owned()
+    };
+    format!(
+        "{board}\nblob frames: {received:.1} per second received, {} blobs\nmarkers over the last \
+         {stats_s:.1} s: {} frames, detection rate {:.1} %, {} with one blob: {marker}",
+        s.blobs - b.stats.blobs,
+        m.frames,
+        m.detection_rate() * 100.0,
+        m.single,
+    )
 }
 
 /// The pipeline timing's latest snapshot as the self-test prints it.

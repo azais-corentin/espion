@@ -203,7 +203,7 @@ use crate::{
 };
 
 pub mod split;
-pub use split::{StripControl, StripReader, StripRef};
+pub use split::{Released, StripControl, StripReader, StripRef};
 
 /// Most strip buffers in the ring.
 pub const MAX_STRIPS: usize = 16;
@@ -261,7 +261,7 @@ pub enum StripError {
     /// `lines` is 0 or not a multiple of `step` ([`CsiStrips::line_step`]): a strip must be a
     /// whole number of bridge bursts ([`BURST_BYTES`]).
     StripLines { step: u16 },
-    /// Fewer than 2 or more than [`MAX_STRIPS`] strip buffers.
+    /// Fewer than 2 or more than [`MAX_STRIPS`] strip buffers, or not one list item each.
     StripCount,
     /// Strip buffer `index` is shorter than [`CsiStrips::strip_bytes`].
     StripTooSmall { index: u8, needed: usize },
@@ -426,7 +426,7 @@ impl Meta {
 }
 
 /// CPU cycle counter (`mcycle`, low 32 bits).
-fn cycles() -> u32 {
+pub(crate) fn cycles() -> u32 {
     let c: u32;
     // SAFETY: reads a counter CSR; no side effects.
     unsafe { core::arch::asm!("csrr {0}, mcycle", out(reg) c) };
@@ -927,7 +927,8 @@ pub struct Strip {
 }
 
 impl Strip {
-    /// Frame number: frame ends seen since [`CsiStrips::start`]. Gaps mean frames were lost.
+    /// Frame number: frame ends seen since [`CsiStrips::start`] before this strip's frame (its
+    /// own end not included). Gaps mean frames were lost.
     pub fn frame(&self) -> u32 {
         self.meta.frame
     }
@@ -1037,14 +1038,27 @@ impl<'d> CsiStrips<'d> {
     ///   for 1280x800 and 1280x720, 128 for 640x400 (strips of 102 400 B).
     pub fn new<const N: usize>(
         vdma_channel: impl VdmaDmaChannel + 'd,
-        strips: [&'static mut [u8]; N],
+        mut strips: [&'static mut [u8]; N],
         links: &'static mut [StripLink; N],
+        config: Config,
+        lines: u16,
+    ) -> Result<Self, StripError> {
+        Self::from_slices(vdma_channel, &mut strips, links, config, lines)
+    }
+
+    /// [`CsiStrips::new`] with a ring size chosen at run time: `strips` and `links` of the
+    /// same length (2..=[`MAX_STRIPS`]).
+    pub fn from_slices(
+        vdma_channel: impl VdmaDmaChannel + 'd,
+        strips: &mut [&'static mut [u8]],
+        links: &'static mut [StripLink],
         config: Config,
         lines: u16,
     ) -> Result<Self, StripError> {
         let hsfreq = config.validate()?;
         check_geometry(&config, lines)?;
-        if !(2..=MAX_STRIPS).contains(&N) {
+        let n = strips.len();
+        if !(2..=MAX_STRIPS).contains(&n) || links.len() != n {
             return Err(StripError::StripCount);
         }
         let links_addr = links.as_ptr() as usize;
@@ -1064,7 +1078,7 @@ impl<'d> CsiStrips<'d> {
             }
             table[i] = (addr, len);
         }
-        check_lengths(&table[..N], &config, lines)?;
+        check_lengths(&table[..n], &config, lines)?;
         if TAKEN.swap(true, core::sync::atomic::Ordering::Acquire) {
             return Err(Error::AlreadyInUse.into());
         }
@@ -1072,11 +1086,14 @@ impl<'d> CsiStrips<'d> {
         // Stale dirty lines must never land on what the DMA and the non-cacheable accesses
         // write later.
         cache::writeback_invalidate(links_addr, links_len);
-        for &(addr, len) in &table[..N] {
+        for &(addr, len) in &table[..n] {
             cache::invalidate(addr, len);
         }
-        // The buffers and items now belong to the driver.
-        let _ = (strips, links);
+        // The buffers and items now belong to the driver: the caller keeps empty slices.
+        for b in strips.iter_mut() {
+            let _ = core::mem::take(b);
+        }
+        let _ = links;
 
         let generation = critical_section::with(|cs| {
             let mut s = STATE.borrow_ref_mut(cs);
@@ -1084,8 +1101,8 @@ impl<'d> CsiStrips<'d> {
             *s = State::new();
             s.generation = generation;
             s.channel = channel;
-            s.count = N as u8;
-            for (i, &entry) in table[..N].iter().enumerate() {
+            s.count = n as u8;
+            for (i, &entry) in table[..n].iter().enumerate() {
                 (s.strips[i], s.lens[i]) = entry;
                 s.links[i] = links_addr + i * core::mem::size_of::<StripLink>();
             }
