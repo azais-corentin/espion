@@ -52,7 +52,7 @@ pub const HERO: f32 = 28.0;
 pub const CONTROL: f32 = 26.0;
 /// Corner radius of controls.
 pub const RADIUS: CornerRadius = CornerRadius::same(6);
-/// Corner radius of bars and small marks.
+/// Corner radius of small marks.
 pub const RADIUS_SMALL: CornerRadius = CornerRadius::same(3);
 /// Padding of the panels.
 pub const PAD: f32 = 14.0;

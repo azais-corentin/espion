@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use eframe::egui::{self, Margin, Rect, Role, Sense, Stroke, Ui, WidgetInfo, pos2, vec2};
+use eframe::egui::{self, Margin, Sense, Stroke, Ui, vec2};
 use espion_proto::cam::{
     AUTO_MIN_AREA, CameraSettings, DetectSettings, Encoding, Format, JPEG_QUALITY_MAX,
     JPEG_QUALITY_MIN, Op, Origin, Readout, TestPattern,
@@ -33,8 +33,8 @@ use crate::{
         picture::{self, Content, Overlay, View},
         theme::{self, BODY, FAULT, GAP, MARKER, MUTED, NEUTRAL, PAD, TEXT, hue},
         widgets::{
-            self, Choice, History, Scale, Tone, button, caption, chip, disclosure, figure, notice,
-            number, row, section, segmented, slider, stat, stat_toned, switch,
+            self, Choice, History, Scale, Tone, button, caption, chip, figure, notice, number, row,
+            section, segmented, slider, stat, stat_toned, switch,
         },
         window_picker,
     },
@@ -57,10 +57,6 @@ pub struct Setup {
 const RAIL_WIDTH: f32 = 340.0;
 /// Width of the counters drawer, points.
 const DRAWER_WIDTH: f32 = 330.0;
-/// The expanded timing strip: the least height its border can be dragged to, and the least
-/// the picture keeps above it.
-const TIMING_MIN: f32 = 180.0;
-const PICTURE_MIN: f32 = 160.0;
 
 /// Rates over the last second, and their last minute.
 struct Meter {
@@ -209,15 +205,6 @@ pub struct App {
     overlay_timed: u64,
     diagram: Diagram,
     latency_history: History,
-    /// The timing strip shows the staircase.
-    expanded: bool,
-    /// Height the expanded timing strip's content needs, and the markers panel's, points (of
-    /// the last pass): they bound how far the strip's border can be dragged.
-    timing_natural: f32,
-    markers_height: f32,
-    /// The height the expanded strip's border was dragged to; `None`: as tall as its content
-    /// (within the room left), following it.
-    timing_dragged: Option<f32>,
     /// The counters drawer is open.
     drawer: bool,
     /// The detection settings being edited.
@@ -329,10 +316,6 @@ impl App {
             overlay_timed: 0,
             diagram: Diagram::default(),
             latency_history: History::default(),
-            expanded: false,
-            timing_natural: 0.0,
-            markers_height: 0.0,
-            timing_dragged: None,
             drawer: false,
             detect: DetectSettings::DEFAULT,
             detect_echoes: Echoes::default(),
@@ -1244,109 +1227,42 @@ impl App {
 
     // ── Timing strip ────────────────────────────────────────────────────────────────────────
 
-    /// The pipeline timing: its heading, the ribbon or (expanded) the staircase, and a last
-    /// row with the key and the toggle, which stays at the strip's bottom right in both.
-    fn timing_strip(&mut self, ui: &mut Ui, height: f32) {
-        if self.expanded {
-            self.timing_border(ui, height);
-        }
-        let heading = ui
-            .horizontal(|ui| {
-                // The status first, from the right, so the caption gets what is left and is
-                // shortened in a narrow window instead of pushing the strip wider.
-                widgets::from_right(ui, |ui| {
-                    if let Some(status) = self.diagram.status() {
-                        ui.label(
-                            egui::RichText::new(status)
-                                .font(theme::sans(theme::SMALL))
-                                .color(TEXT),
-                        );
-                    }
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new("Pipeline timing")
-                                .font(theme::strong(BODY))
-                                .color(TEXT),
-                        );
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(
-                                    "Medians of the last 2 s, updated every second; from the \
-                                     start of a frame's exposure. Point at a bar or a wait for \
-                                     its figures.",
-                                )
-                                .font(theme::sans(theme::SMALL))
-                                .color(MUTED),
+    /// The pipeline timing: its heading, the ribbon, and the key under it.
+    fn timing_strip(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            // The status first, from the right, so the caption gets what is left and is
+            // shortened in a narrow window instead of pushing the strip wider.
+            widgets::from_right(ui, |ui| {
+                if let Some(status) = self.diagram.status() {
+                    ui.label(
+                        egui::RichText::new(status)
+                            .font(theme::sans(theme::SMALL))
+                            .color(TEXT),
+                    );
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new("Pipeline timing")
+                            .font(theme::strong(BODY))
+                            .color(TEXT),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(
+                                "Median frame of the last 2 s, from the start of exposure. \
+                                 Hover a bar for details.",
                             )
-                            .truncate(),
-                        );
-                    });
+                            .font(theme::sans(theme::SMALL))
+                            .color(MUTED),
+                        )
+                        .truncate(),
+                    );
                 });
-            })
-            .response
-            .rect
-            .height();
+            });
+        });
         ui.add_space(4.0);
-        if self.expanded {
-            egui::ScrollArea::vertical()
-                .max_height((ui.available_height() - theme::CONTROL - GAP).max(0.0))
-                .auto_shrink([false, true])
-                .show(ui, |ui| self.diagram.staircase(ui));
-        } else {
-            self.diagram.ribbon(ui);
-        }
-        let key = ui
-            .horizontal(|ui| {
-                widgets::from_right(ui, |ui| {
-                    let text = if self.expanded {
-                        "Collapse timing"
-                    } else {
-                        "Expand timing"
-                    };
-                    // Its own id, whatever panels open around it.
-                    let toggle =
-                        ui.push_id("timing toggle", |ui| disclosure(ui, text, self.expanded));
-                    if toggle.inner.clicked() {
-                        self.expanded = !self.expanded;
-                    }
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        self.diagram.key(ui, self.expanded);
-                    });
-                });
-            })
-            .response
-            .rect
-            .height();
-        self.timing_natural = heading + 4.0 + self.diagram.staircase_height() + 2.0 * GAP + key;
-    }
-
-    /// The expanded strip's top border, `height` the strip's height now: dragging it sets the
-    /// height, a double click lets the strip follow its content again.
-    fn timing_border(&mut self, ui: &mut Ui, height: f32) {
-        let inner = ui.max_rect();
-        let side = PAD + 4.0;
-        let r = Rect::from_min_max(
-            pos2(inner.left() - side, inner.top() - 10.0),
-            pos2(inner.right() + side, inner.top() - 2.0),
-        );
-        let resp = ui.interact(
-            r,
-            ui.scope_id().with("timing border"),
-            Sense::click_and_drag(),
-        );
-        resp.widget_info(|| WidgetInfo::labeled(Role::Splitter, true, "Timing strip height"));
-        if resp.hovered() || resp.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-            ui.painter()
-                .hline(r.x_range(), r.top() + 1.0, Stroke::new(2.0, MUTED));
-        }
-        if resp.dragged() {
-            self.timing_dragged = Some(height - resp.drag_delta().y);
-        }
-        if resp.double_clicked() {
-            self.timing_dragged = None;
-        }
-        resp.on_hover_text("Drag to set the strip's height; double-click to fit the staircase.");
+        self.diagram.ribbon(ui);
+        self.diagram.key(ui);
     }
 
     // ── Picture ─────────────────────────────────────────────────────────────────────────────
@@ -1885,26 +1801,11 @@ impl eframe::App for App {
             top: 10,
             bottom: 12,
         });
-        if self.expanded {
-            // As tall as the staircase while the picture keeps PICTURE_MIN, or where its border
-            // was dragged (down to TIMING_MIN); the staircase scrolls when shorter.
-            let full = self.timing_natural + 22.0 + 2.0;
-            let room = ui.available_height() - self.markers_height - PICTURE_MIN;
-            let max = full.min(room).max(TIMING_MIN);
-            let height = self
-                .timing_dragged
-                .map_or(max, |h| h.clamp(TIMING_MIN, max));
-            egui::Panel::bottom("timing expanded")
-                .exact_size(height)
-                .frame(timing_frame)
-                .show(ui, |ui| self.timing_strip(ui, height));
-        } else {
-            egui::Panel::bottom("timing")
-                .resizable(false)
-                .frame(timing_frame)
-                .show(ui, |ui| self.timing_strip(ui, 0.0));
-        }
-        self.markers_height = egui::Panel::bottom("markers")
+        egui::Panel::bottom("timing")
+            .resizable(false)
+            .frame(timing_frame)
+            .show(ui, |ui| self.timing_strip(ui));
+        egui::Panel::bottom("markers")
             .resizable(false)
             .frame(
                 egui::Frame::new()
@@ -1917,10 +1818,7 @@ impl eframe::App for App {
                         bottom: 8,
                     }),
             )
-            .show(ui, |ui| self.markers_panel(ui, &stats))
-            .response
-            .rect
-            .height();
+            .show(ui, |ui| self.markers_panel(ui, &stats));
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::WELL))
             .show(ui, |ui| self.picture(ui, &stats, now));

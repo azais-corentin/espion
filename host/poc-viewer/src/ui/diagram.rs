@@ -1,22 +1,18 @@
-//! The pipeline timing diagrams, drawn from [`Snapshot`]s (one a second).
+//! The pipeline timing diagram (the ribbon), drawn from [`Snapshot`]s (one a second).
 //!
-//! - The ribbon (the timing strip collapsed): one row per way of the frame on one time axis in
-//!   ms: the sensor's (exposure, readout), the image's and the markers', each starting where
-//!   the readout feeds it. A way that is off keeps its row and says why, so the layout never
-//!   changes with the settings. Each stage is a bar with its name and median above it, or
-//!   below it where names would collide; the waits between stages are grey bands named
-//!   "wait"; each way has its latency on the right. Under the axis, the frames that start
-//!   meanwhile.
-//! - The staircase (expanded): one row per stage, grouped by way, each with three sub-rows:
-//!   the typical frame and the same one and two frame periods later, so the overlap of
-//!   successive frames shows without bars covering each other; the ends of core 1's strips on
-//!   the readout, and core 1's figures under the axis.
+//! One row per way of the frame on one time axis in ms: the sensor's (exposure, readout), the
+//! image's and the markers', each starting where the readout feeds it. A way that is off keeps
+//! its row and says why, so the layout never changes with the settings. Each stage is a bar
+//! with its name and median above it, or below it where names would collide; the waits
+//! between stages are grey bands named "wait"; each way has its latency on the right. Under
+//! the axis, the frames that start meanwhile.
 //!
 //! Measured bars are solid, computed ones hatched; a whisker reaches to the slowest sample of
 //! the window (an arrow where it leaves the axis); what follows a draw (the display) is not
 //! measured, a dotted tail. Every bar and wait has a tooltip and is a node of its own for the
-//! screen reader. A new snapshot and a new axis length glide into place in [`GLIDE`]; while
-//! the pointer is over a diagram it holds still, so its figures and tooltips can be read.
+//! screen reader. While the pointer is over the diagram, a cursor line follows it with its
+//! time on the axis. A new snapshot and a new axis length glide into place in [`GLIDE`]; while
+//! the pointer is over the diagram it holds still, so its figures and tooltips can be read.
 
 use std::{
     sync::Arc,
@@ -24,21 +20,21 @@ use std::{
 };
 
 use eframe::egui::{
-    self, Align, Align2, Color32, Galley, Layout, Painter, Rect, Role, Sense, Stroke, StrokeKind,
-    TextFormat, Ui, WidgetInfo, pos2, text::LayoutJob, vec2,
+    self, Align, Align2, Color32, CornerRadius, Galley, Layout, Painter, Rect, Role, Sense, Stroke,
+    StrokeKind, TextFormat, Ui, WidgetInfo, pos2, text::LayoutJob, vec2,
 };
 use poc_viewer::timing::{Axis, Core1, Detection, Lane, Snapshot, Stage, Step, WINDOW};
 
 use super::theme::{
-    self, BODY, FAINT, FAULT, FIGURE, HERO, Hue, LINE, MUTED, NEUTRAL, RADIUS_SMALL, SMALL, TEXT,
-    WAIT, hue,
+    self, BODY, FAINT, FAULT, FIGURE, HERO, Hue, LINE, MUTED, NEUTRAL, RAISED, SMALL, TEXT, WAIT,
+    hue,
 };
 
 /// How long a new snapshot takes to glide into place.
 const GLIDE: Duration = Duration::from_millis(150);
 
-/// The ribbon: the lane names' column, the latencies' column, a label's line, the space
-/// between a label and its bar, a bar, and one row (labels above and below the bar).
+/// The lane names' column, the latencies' column, a label's line, the space between a label
+/// and its bar, a bar, and one row (labels above and below the bar).
 const NAMES: f32 = 84.0;
 const SIDE: f32 = 232.0;
 const LABEL: f32 = 15.0;
@@ -51,17 +47,6 @@ const STARTS: f32 = 18.0;
 const FOOT: f32 = 18.0;
 /// Height of the ribbon.
 pub const RIBBON_HEIGHT: f32 = 3.0 * ROW + AXIS + STARTS + FOOT;
-
-/// The staircase: the stage names' and medians' columns, one stage's row, a frame's bar in
-/// it, a lane's heading, and the frames drawn.
-const STAIR_NAMES: f32 = 96.0;
-const STAIR_VALUE: f32 = 74.0;
-const PITCH: f32 = 28.0;
-const SUB: f32 = 7.0;
-const HEADING: f32 = 22.0;
-const FRAMES: usize = 3;
-/// The frames' opacity: the typical frame, then one and two periods later.
-const FRAME_ALPHA: [f32; FRAMES] = [1.0, 0.8, 0.62];
 
 /// The lanes, in the order of the rows.
 const LANES: [Lane; 3] = [Lane::Sensor, Lane::Image, Lane::Markers];
@@ -79,7 +64,7 @@ pub fn ms(us: f32) -> String {
     }
 }
 
-/// What the diagrams show: the latest snapshot, eased in from the one before.
+/// What the diagram shows: the latest snapshot, eased in from the one before.
 #[derive(Debug, Default)]
 pub struct Diagram {
     target: Option<Snapshot>,
@@ -88,18 +73,14 @@ pub struct Diagram {
     since: Option<Instant>,
     /// The steps shown now.
     shown: Vec<Step>,
-    /// The axes of the ribbon and of the staircase, and their lengths shown, gliding from
-    /// `axes_from` when the target arrived.
-    ribbon_axis: Axis,
-    stair_axis: Axis,
-    axes_from: [f32; 2],
-    axes: [f32; 2],
-    /// The pointer is over a diagram: it holds still.
+    /// The axis, and its length shown, gliding from `axis_from` when the target arrived.
+    axis: Axis,
+    axis_from: f32,
+    axis_len: f32,
+    /// The pointer is over the diagram: it holds still.
     hold: bool,
     /// A newer snapshot waits while the diagram holds.
     waiting: bool,
-    /// Height of the staircase last drawn.
-    stair_height: f32,
 }
 
 /// What a part of the ribbon under the pointer is.
@@ -115,10 +96,7 @@ impl Diagram {
     /// towards it. Returns whether they are still moving.
     pub fn update(&mut self, snapshot: Option<&Snapshot>, now: Instant) -> bool {
         let Some(s) = snapshot else {
-            *self = Self {
-                stair_height: self.stair_height,
-                ..Self::default()
-            };
+            *self = Self::default();
             return false;
         };
         if self.target.as_ref().is_none_or(|t| t.serial != s.serial) {
@@ -146,10 +124,7 @@ impl Diagram {
                 tail_us: ease(from.tail_us, to.tail_us),
                 ..*to
             }));
-        self.axes = [
-            ease(self.axes_from[0], self.ribbon_axis.len_us()),
-            ease(self.axes_from[1], self.stair_axis.len_us()),
-        ];
+        self.axis_len = ease(self.axis_from, self.axis.len_us());
         k < 1.0
     }
 
@@ -163,13 +138,11 @@ impl Diagram {
         self.from.clear();
         self.from
             .extend_from_slice(if same_stages { &self.shown } else { &s.steps });
-        self.ribbon_axis.fit(s.total_us);
-        self.stair_axis
-            .fit(s.total_us + (FRAMES - 1) as f32 * s.period_us);
-        self.axes_from = if self.axes[0] > 0.0 {
-            self.axes
+        self.axis.fit(s.total_us);
+        self.axis_from = if self.axis_len > 0.0 {
+            self.axis_len
         } else {
-            [self.ribbon_axis.len_us(), self.stair_axis.len_us()]
+            self.axis.len_us()
         };
         self.target = Some(s.clone());
         self.since = Some(now);
@@ -186,28 +159,19 @@ impl Diagram {
     pub fn status(&self) -> Option<String> {
         if self.hold {
             return Some(if self.waiting {
-                "Paused while the pointer is on the diagram; newer figures are waiting".to_owned()
+                "Paused while hovering, new data waiting".to_owned()
             } else {
-                "Paused while the pointer is on the diagram".to_owned()
+                "Paused while hovering".to_owned()
             });
         }
         let s = self.target.as_ref()?;
         (s.collected < WINDOW).then(|| {
             format!(
-                "Collecting since the change: {:.1} of {} s",
+                "Collecting data: {:.1} / {} s",
                 s.collected.as_secs_f32(),
                 WINDOW.as_secs()
             )
         })
-    }
-
-    /// Height of the staircase as last drawn (before the first, a typical one).
-    pub fn staircase_height(&self) -> f32 {
-        if self.stair_height > 0.0 {
-            self.stair_height
-        } else {
-            420.0
-        }
     }
 
     /// The steps shown of `lane`, in order (the steps are grouped by lane).
@@ -241,14 +205,14 @@ impl Diagram {
         match lane {
             Lane::Sensor => self
                 .end_of(Stage::Readout)
-                .map(|end| (end, "frame captured (end of readout)".to_owned())),
+                .map(|end| (end, "frame captured".to_owned())),
             Lane::Image => self.lane(Lane::Image).last().map(|last| {
                 (
                     last.end_us(),
                     if s.image_complete {
-                        "picture handed to the GPU".to_owned()
+                        "sent to the GPU".to_owned()
                     } else {
-                        "picture's last stage measured so far".to_owned()
+                        "measured so far".to_owned()
                     },
                 )
             }),
@@ -256,15 +220,13 @@ impl Diagram {
                 (
                     here,
                     match self.end_of(Stage::MarkerDraw) {
-                        Some(d) => format!("markers at this PC; drawn at {} ms", ms(d)),
-                        None => "markers at this PC".to_owned(),
+                        Some(d) => format!("received, drawn at {} ms", ms(d)),
+                        None => "received".to_owned(),
                     },
                 )
             }),
         }
     }
-
-    // ── Ribbon ──────────────────────────────────────────────────────────────────────────────
 
     /// The ribbon, as wide as the space left, [`RIBBON_HEIGHT`] tall.
     pub fn ribbon(&mut self, ui: &mut Ui) {
@@ -276,7 +238,7 @@ impl Diagram {
             ui.painter().text(
                 rect.left_center(),
                 Align2::LEFT_CENTER,
-                "Timing appears once the board answers.",
+                "Waiting for the board",
                 theme::sans(BODY),
                 MUTED,
             );
@@ -291,7 +253,7 @@ impl Diagram {
         let painter = ui.painter_at(rect);
         let left = rect.left() + NAMES;
         let right = rect.right() - SIDE - 24.0;
-        let len = this.axes[0].max(1.0);
+        let len = this.axis_len.max(1.0);
         let scale = (right - left) / len;
         let x = |us: f32| left + us.max(0.0) * scale;
         // Bars and whiskers stay in the plot; labels may reach a little past it.
@@ -351,7 +313,7 @@ impl Diagram {
         painter.text(
             pos2(rect.left(), ay + 3.0),
             Align2::LEFT_TOP,
-            "Time, ms",
+            "Time (ms)",
             theme::sans(SMALL),
             MUTED,
         );
@@ -390,12 +352,42 @@ impl Diagram {
             MUTED,
         );
 
+        // The cursor: a line at the pointer down to the axis, its time in a box over the
+        // axis' labels.
+        if this.hold
+            && let Some(p) = ui.input(|i| i.pointer.hover_pos())
+            && (left..=right).contains(&p.x)
+        {
+            painter.vline(
+                p.x,
+                rect.top()..=ay,
+                Stroke::new(1.0, theme::fade(TEXT, 0.7)),
+            );
+            let g = painter.layout_no_wrap(
+                format!("{} ms", ms((p.x - left) / scale)),
+                theme::mono(SMALL),
+                TEXT,
+            );
+            let r = Rect::from_center_size(
+                pos2(p.x, ay + 3.0 + (g.size().y + 2.0) / 2.0),
+                g.size() + vec2(10.0, 2.0),
+            );
+            painter.rect(
+                r,
+                CornerRadius::ZERO,
+                RAISED,
+                Stroke::new(1.0, MUTED),
+                StrokeKind::Inside,
+            );
+            painter.galley(r.center() - g.size() / 2.0, g, TEXT);
+        }
+
         for (i, (r, part)) in parts.into_iter().enumerate() {
             let resp = ui.interact(r, response.id.with(("part", i)), Sense::hover());
             resp.widget_info(|| part_info(&part));
             let steps = &this.shown;
             resp.on_hover_ui(|ui| match part {
-                Part::Step(st) => step_tip(ui, &st, steps, s.core1.as_ref(), None),
+                Part::Step(st) => step_tip(ui, &st, steps, s.core1.as_ref()),
                 Part::Wait(next, us) => wait_tip(ui, &next, us),
             });
         }
@@ -407,7 +399,7 @@ impl Diagram {
             return String::new();
         }
         let mut out = format!(
-            "A frame starts every {} ms ({:.1} Hz).",
+            "New frame every {} ms ({:.1} fps)",
             ms(s.period_us),
             1e6 / s.period_us
         );
@@ -415,16 +407,9 @@ impl Diagram {
         if let Some(end) = self.lane(Lane::Image).last().map(Step::end_us)
             && s.image_complete
         {
-            out.push_str(&format!(
-                " The picture reaches the GPU {:.1} frame periods after its exposure starts, so \
-                 that many frames are on their way at once.",
-                periods(end)
-            ));
+            out.push_str(&format!("  ·  picture latency: {:.1} frames", periods(end)));
         } else if let Some(here) = self.end_of(Stage::MarkerSend) {
-            out.push_str(&format!(
-                " The markers reach this PC {:.1} frame periods after the exposure starts.",
-                periods(here)
-            ));
+            out.push_str(&format!("  ·  marker latency: {:.1} frames", periods(here)));
         }
         out
     }
@@ -435,320 +420,16 @@ impl Diagram {
         let mut out = Vec::new();
         for lane in LANES {
             match self.latency(s, lane) {
-                Some((us, what)) => out.push(format!("{what}: {} ms", ms(us))),
+                Some((us, what)) => out.push(format!("{}: {} ms ({what})", lane.name(), ms(us))),
                 None => out.push(format!("{}: {}", lane.name(), idle(s, lane).0)),
             }
         }
-        out.push(format!("a frame starts every {} ms", ms(s.period_us)));
+        out.push(format!("new frame every {} ms", ms(s.period_us)));
         out.join("; ")
     }
 
-    // ── Staircase ───────────────────────────────────────────────────────────────────────────
-
-    /// The staircase, as wide as the space left; as tall as its rows need
-    /// ([`Diagram::staircase_height`]).
-    pub fn staircase(&mut self, ui: &mut Ui) {
-        let width = ui.available_width();
-        // Taken out while drawing, so the diagram's own fields can be set meanwhile.
-        let Some(snap) = self.target.take() else {
-            let (rect, _) = ui.allocate_exact_size(vec2(width, 40.0), Sense::hover());
-            ui.painter().text(
-                rect.left_center(),
-                Align2::LEFT_CENTER,
-                "Timing appears once the board answers.",
-                theme::sans(BODY),
-                MUTED,
-            );
-            self.hold = false;
-            return;
-        };
-        let s = &snap;
-        let painter = ui.painter().clone();
-        let headline = painter.layout_job(self.headline(s, width));
-        let left = STAIR_NAMES + STAIR_VALUE + 16.0;
-        let notes: Vec<Arc<Galley>> = [s.core1.as_ref().map(core1_job), self.presented(s)]
-            .into_iter()
-            .flatten()
-            .map(|mut job| {
-                job.wrap.max_width = width - left;
-                painter.layout_job(job)
-            })
-            .collect();
-        let rows_h: f32 = LANES
-            .iter()
-            .map(|&l| HEADING + self.lane(l).len().max(1) as f32 * PITCH)
-            .sum();
-        let head = headline.size().y + 10.0 + 20.0;
-        let height = head + rows_h + AXIS + notes.iter().map(|g| g.size().y + 4.0).sum::<f32>();
-        let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-        self.stair_height = height;
-        self.hold = ui.rect_contains_pointer(rect);
-        let this = &*self;
-        response.widget_info(|| WidgetInfo {
-            label: Some("Pipeline timing by stage and frame".to_owned()),
-            current_text_value: Some(format!(
-                "{} Three frames, {} ms apart: the typical frame and the same one one and two \
-                 frame periods later.",
-                headline.text(),
-                ms(s.period_us)
-            )),
-            ..WidgetInfo::new(Role::Figure)
-        });
-        let painter = painter.with_clip_rect(rect);
-        painter.galley(rect.left_top(), headline.clone(), TEXT);
-
-        let left = rect.left() + left;
-        let right = rect.right() - 8.0;
-        let len = this.axes[1].max(1.0);
-        let scale = (right - left) / len;
-        let x = |us: f32| left + us.max(0.0) * scale;
-        let top = rect.top() + headline.size().y + 10.0;
-        let rows_top = top + 20.0;
-        let bottom = rows_top + rows_h;
-
-        // The grid, the frames' headings and the medians' heading.
-        let tick = Axis::tick_us(len);
-        let mut i = 0;
-        while i as f32 * tick <= len * 1.0001 {
-            let gx = x(i as f32 * tick);
-            painter.vline(gx, rows_top..=bottom, Stroke::new(1.0, LINE));
-            // The last label ends at the axis' end, so the strip's edge does not cut it.
-            let last = (i + 1) as f32 * tick > len * 1.0001;
-            painter.text(
-                pos2(gx, bottom + 4.0),
-                if last {
-                    Align2::RIGHT_TOP
-                } else {
-                    Align2::CENTER_TOP
-                },
-                trim(i as f32 * tick / 1e3),
-                theme::mono(SMALL),
-                MUTED,
-            );
-            i += 1;
-        }
-        painter.text(
-            pos2(rect.left(), bottom + 4.0),
-            Align2::LEFT_TOP,
-            "Time, ms",
-            theme::sans(SMALL),
-            MUTED,
-        );
-        painter.text(
-            pos2(rect.left() + STAIR_NAMES + STAIR_VALUE, top + 2.0),
-            Align2::RIGHT_TOP,
-            "Median",
-            theme::sans(SMALL),
-            MUTED,
-        );
-        let room = s.period_us * scale;
-        for (k, alpha) in FRAME_ALPHA.into_iter().enumerate() {
-            let fx = x(k as f32 * s.period_us);
-            if fx > right - 8.0 {
-                break;
-            }
-            let text = if room >= 60.0 {
-                format!("Frame {}", k + 1)
-            } else {
-                format!("{}", k + 1)
-            };
-            painter.vline(fx, (top + 2.0)..=(rows_top - 2.0), Stroke::new(1.0, MUTED));
-            painter.text(
-                pos2(fx + 3.0, top + 2.0),
-                Align2::LEFT_TOP,
-                text,
-                theme::sans(SMALL),
-                theme::fade(MUTED, alpha.max(0.75)),
-            );
-        }
-
-        // The rows: each lane under its heading.
-        let mut rows: Vec<(f32, Step)> = Vec::with_capacity(this.shown.len());
-        let mut y = rows_top;
-        for lane in LANES {
-            painter.text(
-                pos2(rect.left(), y + HEADING - 4.0),
-                Align2::LEFT_BOTTOM,
-                lane.name(),
-                theme::strong(SMALL),
-                MUTED,
-            );
-            painter.hline(
-                (rect.left() + 64.0)..=right,
-                y + HEADING / 2.0 + 1.0,
-                Stroke::new(1.0, LINE),
-            );
-            y += HEADING;
-            let steps = this.lane(lane);
-            if steps.is_empty() {
-                let (text, color) = idle(s, lane);
-                painter.text(
-                    pos2(left + 4.0, y + PITCH / 2.0),
-                    Align2::LEFT_CENTER,
-                    text,
-                    theme::sans(SMALL),
-                    color,
-                );
-                y += PITCH;
-                continue;
-            }
-            for st in steps {
-                rows.push((y, *st));
-                y += PITCH;
-            }
-        }
-        let plot = painter.with_clip_rect(Rect::from_min_max(
-            pos2(left - 1.0, rect.top()),
-            pos2(right + 1.0, rect.bottom()),
-        ));
-        for &(ry, st) in &rows {
-            let cy = ry + PITCH / 2.0;
-            painter.text(
-                pos2(rect.left(), cy),
-                Align2::LEFT_CENTER,
-                st.stage.name(),
-                theme::sans(BODY),
-                TEXT,
-            );
-            painter.text(
-                pos2(rect.left() + STAIR_NAMES + STAIR_VALUE, cy),
-                Align2::RIGHT_CENTER,
-                format!("{} ms", ms(st.len_us)),
-                theme::mono(SMALL),
-                MUTED,
-            );
-            let h = hue(st.stage);
-            for (k, alpha) in FRAME_ALPHA.into_iter().enumerate() {
-                let offset = k as f32 * s.period_us;
-                let x0 = x(st.start_us + offset);
-                if x0 > right {
-                    continue;
-                }
-                let by = sub_row(ry, k);
-                let r = Rect::from_min_max(
-                    pos2(x0, by),
-                    pos2((x(st.end_us() + offset)).max(x0 + 3.0), by + SUB),
-                );
-                if st.measured && st.slowest_us > st.len_us * 1.02 {
-                    whisker(
-                        &plot,
-                        r.right(),
-                        x(st.start_us + offset + st.slowest_us),
-                        r.center().y,
-                        theme::fade(h.line, alpha),
-                        right,
-                        2.5,
-                    );
-                }
-                bar(&plot, r, h, st.measured, alpha);
-                tail_mark(&plot, r, &st, x, h, alpha);
-                // The strips' ends on the readout, as detection takes them.
-                if st.stage == Stage::Readout
-                    && let Some(c) = &s.core1
-                    && c.strips > 1
-                    && c.strip_us * scale >= 3.0
-                {
-                    let line = Stroke::new(1.0, theme::fade(hue(Stage::Detect).line, alpha));
-                    for i in 1..c.strips {
-                        let sx = x(st.start_us + offset + f32::from(i) * c.strip_us);
-                        if sx >= r.right() - 1.0 {
-                            break;
-                        }
-                        plot.vline(sx, (r.top() - 1.0)..=(r.bottom() + 1.0), line);
-                    }
-                }
-            }
-        }
-        let mut ny = bottom + AXIS;
-        for g in notes {
-            let h = g.size().y;
-            painter.galley(pos2(left, ny), g, TEXT);
-            ny += h + 4.0;
-        }
-
-        // Each row is a node, and its tooltip names the frame under the pointer.
-        for (i, &(ry, st)) in rows.iter().enumerate() {
-            let r = Rect::from_min_max(pos2(rect.left(), ry), pos2(right, ry + PITCH));
-            let resp = ui.interact(r, response.id.with(("row", i)), Sense::hover());
-            resp.widget_info(|| part_info(&Part::Step(st)));
-            let frame = resp.hover_pos().map(|p| {
-                let k = if p.x < left {
-                    0
-                } else {
-                    (0..FRAMES)
-                        .find(|&k| p.y < sub_row(ry, k) + SUB + 1.0)
-                        .unwrap_or(FRAMES - 1)
-                };
-                (k, s.period_us)
-            });
-            let steps = &this.shown;
-            resp.on_hover_ui(|ui| step_tip(ui, &st, steps, s.core1.as_ref(), frame));
-        }
-        self.target = Some(snap);
-    }
-
-    /// The staircase's heading: each way's latency in one line.
-    fn headline(&self, s: &Snapshot, width: f32) -> LayoutJob {
-        let mut job = LayoutJob::default();
-        job.wrap.max_width = width;
-        let words = TextFormat::simple(theme::sans(SMALL), MUTED);
-        let figure = TextFormat::simple(theme::mono_strong(FIGURE), TEXT);
-        for (i, lane) in [Lane::Image, Lane::Markers, Lane::Sensor]
-            .into_iter()
-            .enumerate()
-        {
-            if i > 0 {
-                job.append("   ·   ", 0.0, words.clone());
-            }
-            match self.latency(s, lane) {
-                Some((us, what)) => {
-                    let (what, after) = match what.split_once("; ") {
-                        Some((a, b)) => (a.to_owned(), format!(", {b}")),
-                        None => (what, String::new()),
-                    };
-                    job.append(&format!("{} ", capitalise(&what)), 0.0, words.clone());
-                    job.append(&ms(us), 0.0, figure.clone());
-                    job.append(&format!(" ms{after}"), 0.0, words.clone());
-                }
-                None => job.append(
-                    &format!("{}: {}", lane.name(), idle(s, lane).0),
-                    0.0,
-                    words.clone(),
-                ),
-            }
-        }
-        job
-    }
-
-    /// A note when this PC presents fewer frames than the sensor makes: frames 2 and 3 are
-    /// where the next frames would be, not frames that were all sent.
-    fn presented(&self, s: &Snapshot) -> Option<LayoutJob> {
-        let secs = s.collected.as_secs_f32();
-        if !s.lanes.frames || s.period_us <= 0.0 || secs < 0.5 || self.lane(Lane::Image).is_empty()
-        {
-            return None;
-        }
-        let rate = 1e6 / s.period_us;
-        let shown = s.host_frames as f32 / secs;
-        (shown < rate * 0.9).then(|| {
-            let mut job = LayoutJob::default();
-            job.append(
-                &format!(
-                    "This PC presents {shown:.1} of the {rate:.1} frames per second; frames 2 and \
-                     3 show when the next frames would go, not frames that all reach this PC."
-                ),
-                0.0,
-                TextFormat::simple(theme::sans(SMALL), MUTED),
-            );
-            job
-        })
-    }
-
-    // ── Key ─────────────────────────────────────────────────────────────────────────────────
-
-    /// What the marks mean, in one line of samples; the staircase's own marks when
-    /// `expanded`.
-    pub fn key(&self, ui: &mut Ui, expanded: bool) {
+    /// What the marks mean, in one line of samples.
+    pub fn key(&self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
             let sample = |ui: &mut Ui, draw: &dyn Fn(&Painter, Rect), text: &str| {
@@ -757,64 +438,33 @@ impl Diagram {
                 ui.label(theme_text(text, theme::sans(SMALL), MUTED));
                 ui.add_space(10.0);
             };
-            sample(ui, &|p, r| bar(p, r, NEUTRAL, true, 1.0), "measured");
-            sample(
-                ui,
-                &|p, r| bar(p, r, NEUTRAL, false, 1.0),
-                "computed from the mode",
-            );
-            if !expanded {
-                sample(ui, &|p, r| wait_band(p, r), "wait");
-            }
+            sample(ui, &|p, r| bar(p, r, NEUTRAL, true), "measured");
+            sample(ui, &|p, r| bar(p, r, NEUTRAL, false), "computed");
+            sample(ui, &|p, r| wait_band(p, r), "wait");
             sample(
                 ui,
                 &|p, r| {
-                    let y = r.center().y;
                     p.rect_filled(
                         Rect::from_min_max(r.min, pos2(r.left() + 8.0, r.bottom())),
-                        RADIUS_SMALL,
+                        CornerRadius::ZERO,
                         NEUTRAL.fill,
                     );
                     whisker(
                         p,
                         r.left() + 8.0,
                         r.right() - 1.0,
-                        y,
+                        r.center().y,
                         NEUTRAL.line,
                         r.right(),
-                        3.5,
                     );
                 },
-                "slowest frame",
+                "slowest",
             );
-            if expanded {
-                sample(
-                    ui,
-                    &|p, r| {
-                        bar(p, r, hue(Stage::Readout), false, 1.0);
-                        for i in 1..3 {
-                            p.vline(
-                                r.left() + i as f32 * r.width() / 3.0,
-                                r.y_range(),
-                                Stroke::new(1.0, hue(Stage::Detect).line),
-                            );
-                        }
-                    },
-                    "end of a strip of core 1",
-                );
-                ui.label(theme_text(
-                    "Each stage's three rows: the typical frame, then one and two frame periods \
-                     later.",
-                    theme::sans(SMALL),
-                    MUTED,
-                ));
-            } else {
-                sample(
-                    ui,
-                    &|p, r| not_measured(p, r.left(), r.right(), r.center().y),
-                    "after the draw: not measured",
-                );
-            }
+            sample(
+                ui,
+                &|p, r| not_measured(p, r.left(), r.right(), r.center().y),
+                "not measured",
+            );
         });
     }
 }
@@ -822,14 +472,14 @@ impl Diagram {
 /// Why a lane has no steps, and the colour to say it in.
 fn idle(s: &Snapshot, lane: Lane) -> (&'static str, Color32) {
     match lane {
-        Lane::Sensor => ("Waiting for the board's mode", MUTED),
-        Lane::Image if !s.lanes.frames => ("Frames off: the board sends no picture", MUTED),
-        Lane::Image => ("Waiting for a frame the board timed", MUTED),
+        Lane::Sensor => ("Waiting for the sensor mode", MUTED),
+        Lane::Image if !s.lanes.frames => ("Frames off", MUTED),
+        Lane::Image => ("Waiting for frames", MUTED),
         Lane::Markers => match s.lanes.detection {
             Detection::Off => ("Detection off", MUTED),
-            Detection::Unavailable => ("No detection in this mode (whole frames only)", MUTED),
-            Detection::Fault => ("Detection stopped by a fault", FAULT),
-            Detection::On => ("Waiting for blob frames", MUTED),
+            Detection::Unavailable => ("No detection in this mode", MUTED),
+            Detection::Fault => ("Detection stopped (fault)", FAULT),
+            Detection::On => ("Waiting for markers", MUTED),
         },
     }
 }
@@ -895,14 +545,13 @@ fn ribbon_row(
                 r.center().y,
                 hue(st.stage).line,
                 right,
-                3.5,
             );
         }
     }
     for (st, r) in steps.iter().zip(&bars) {
         let h = hue(st.stage);
-        bar(plot, *r, h, st.measured, 1.0);
-        tail_mark(plot, *r, st, x, h, 1.0);
+        bar(plot, *r, h, st.measured);
+        tail_mark(plot, *r, st, x, h);
         parts.push((r.expand2(vec2(2.0, 0.0)), Part::Step(*st)));
     }
     if let (Some(last), Some(r)) = (steps.last(), bars.last())
@@ -998,11 +647,6 @@ fn ticks(painter: &Painter, len: f32, x: impl Fn(f32) -> f32, ay: f32, right: f3
     }
 }
 
-/// The top of frame `k`'s bar in a staircase row starting at `ry`.
-fn sub_row(ry: f32, k: usize) -> f32 {
-    ry + (PITCH - (FRAMES as f32 * SUB + (FRAMES - 1) as f32 * 1.5)) / 2.0 + k as f32 * (SUB + 1.5)
-}
-
 /// A part's name and figures for the screen reader.
 fn part_info(part: &Part) -> WidgetInfo {
     let (label, value) = match part {
@@ -1017,7 +661,7 @@ fn part_info(part: &Part) -> WidgetInfo {
                 )
             } else {
                 format!(
-                    "{} ms, computed from the mode, starts at {} ms",
+                    "{} ms, computed, starts at {} ms",
                     ms(st.len_us),
                     ms(st.start_us)
                 )
@@ -1034,66 +678,6 @@ fn part_info(part: &Part) -> WidgetInfo {
         current_text_value: Some(value),
         ..WidgetInfo::new(Role::ListItem)
     }
-}
-
-/// Core 1's figures of the window, problems in red.
-fn core1_job(c: &Core1) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    let words = TextFormat::simple(theme::sans(SMALL), MUTED);
-    let value = |bad: bool| TextFormat::simple(theme::mono(SMALL), if bad { FAULT } else { TEXT });
-    let mut put = |text: &str, v: Option<(String, bool)>| {
-        job.append(text, 0.0, words.clone());
-        if let Some((v, bad)) = v {
-            job.append(&v, 0.0, value(bad));
-        }
-    };
-    put(
-        "Core 1, the longest per strip in the last 2 s: start ",
-        Some((ms(c.start_max_us), false)),
-    );
-    put(
-        " ms after the strip is read out · detect ",
-        Some((ms(c.detect_max_us), false)),
-    );
-    put(
-        " ms · wait for its copy ",
-        Some((ms(c.copy_wait_max_us), false)),
-    );
-    put(
-        " ms · held ",
-        Some((ms(c.hold_max_us), c.hold_max_us > c.hold_budget_us)),
-    );
-    put(" ms of ", Some((ms(c.hold_budget_us), false)));
-    put(" ms allowed.\n", None);
-    put(
-        &format!("{} ", plural(u32::from(c.strips), "strip", "strips")),
-        None,
-    );
-    put("of ", Some((c.strip_lines.to_string(), false)));
-    put(" lines, ", Some((ms(c.strip_us), false)));
-    put(" ms each · measure ", Some((ms(c.measure_us), false)));
-    put(
-        " ms per frame · strips held too long ",
-        Some((c.late_strips.to_string(), c.late_strips > 0)),
-    );
-    put(
-        " · frames cut short ",
-        Some((c.frames_cut.to_string(), c.frames_cut > 0)),
-    );
-    put(".", None);
-    job
-}
-
-/// `n` and the noun that goes with it.
-fn plural(n: u32, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
-}
-
-fn capitalise(s: &str) -> String {
-    let mut c = s.chars();
-    c.next()
-        .map(|f| f.to_uppercase().chain(c).collect())
-        .unwrap_or_default()
 }
 
 /// A tooltip's lines: names on the left, figures in a column on the right.
@@ -1114,21 +698,14 @@ fn tip_grid(ui: &mut Ui, id: &str, rows: &[(String, String, Color32)]) {
 
 /// A tooltip's set-up: a readable width and tight lines.
 fn tip_style(ui: &mut Ui) {
-    ui.set_max_width(400.0);
+    ui.set_max_width(320.0);
     let s = ui.spacing_mut();
     s.interact_size.y = 0.0;
     s.item_spacing.y = 4.0;
 }
 
-/// The figures of one stage, for a tooltip; `frame`: which of the staircase's frames (and the
-/// period), `None` for the ribbon's typical frame.
-fn step_tip(
-    ui: &mut Ui,
-    st: &Step,
-    steps: &[Step],
-    core1: Option<&Core1>,
-    frame: Option<(usize, f32)>,
-) {
+/// The figures of one stage, for a tooltip.
+fn step_tip(ui: &mut Ui, st: &Step, steps: &[Step], core1: Option<&Core1>) {
     tip_style(ui);
     let lane = st.stage.lane();
     // The step before in its lane, or the sensor's last for a lane's first.
@@ -1143,93 +720,56 @@ fn step_tip(
         .find(|s| s.stage == Stage::Readout)
         .map_or(0.0, Step::end_us);
     ui.label(theme_text(st.stage.label(), theme::strong(BODY), TEXT));
-    let (offset, which) = match frame {
-        Some((0, _)) | None => (
-            0.0,
-            "The typical frame: medians of the last 2 s. Times from the start of its exposure."
-                .to_owned(),
-        ),
-        Some((k, period)) => (
-            k as f32 * period,
-            format!(
-                "Frame {}: the typical frame, {} later. Times from the start of frame 1's \
-                 exposure.",
-                k + 1,
-                plural(k as u32, "frame period", "frame periods")
-            ),
-        ),
-    };
-    ui.label(theme_text(&which, theme::sans(SMALL), MUTED));
     let what = match st.stage {
-        Stage::Exposure => {
-            "Computed from the mode: exposure lines × line time, right before \
-                            the readout."
-        }
+        Stage::Exposure => "The sensor collecting light. Computed from the sensor settings.",
         Stage::Readout => {
-            "Computed from the mode: lines read × line time. It ends when the \
-                           board has the whole frame (the capture). In the expanded view, ticks \
-                           on it mark where core 1's strips end."
+            "The sensor sending the frame to the board, line by line. Computed from the sensor \
+             settings."
         }
         Stage::Encode => {
-            "Measured on the board: the hardware JPEG encode, from its first rows to the end of \
-             the file. Fed strip by strip it starts during the readout; the line across the bar \
-             marks when the frame's last rows were handed to it."
+            "The board compressing the frame to JPEG. It starts during the readout; the line in \
+             the bar marks when the last rows came in."
         }
         Stage::Send => {
-            "Measured: from the board taking the frame to its last chunk arriving at this PC. \
-             The two clocks are matched on the fastest datagram of the last 2 s, so this reads \
-             short by that datagram's own transit."
+            "The picture travelling from the board to this PC. May read slightly short: the \
+             clocks are matched on the fastest packet."
         }
-        Stage::Decode => "Measured on this PC: the JPEG decode.",
-        Stage::Draw => {
-            "Measured on this PC: the window's pass that took the picture, to the end of its \
-             upload to the GPU."
-        }
+        Stage::Decode => "This PC decompressing the JPEG.",
+        Stage::Draw => "This PC drawing the picture and uploading it to the GPU.",
         Stage::Detect => {
-            "Measured on the board: core 1's detector on the frame's strips, from its start on \
-             the first strip (during the readout) to the release of the last."
+            "The board finding bright spots, strip by strip, while the frame is still being \
+             read out."
         }
-        Stage::Measure => {
-            "Measured on the board: closing the frame and measuring its blobs on the assembled \
-             frame, to handing the result to core 0. The next frame's strips go first."
-        }
-        Stage::MarkerSend => {
-            "Measured: from the board queuing the blobs to their arrival at this PC (clocks \
-             matched as for the picture's send)."
-        }
+        Stage::Measure => "The board measuring each spot on the whole frame.",
+        Stage::MarkerSend => "The markers travelling from the board to this PC.",
         Stage::MarkerDraw => {
-            "Measured on this PC: the window's first pass that drew the blobs, to the \
-             renderer's hand-off. With frames on they wait for their picture, so this ends with \
-             the picture's draw."
+            "This PC drawing the markers. With frames on, they are drawn with their picture."
         }
     };
     ui.label(theme_text(what, theme::sans(SMALL), MUTED));
     let row = |k: &str, v: String| (k.to_owned(), v, TEXT);
     let mut rows = Vec::new();
     if st.measured {
-        rows.push(row("Median length", format!("{} ms", ms(st.len_us))));
+        rows.push(row("Median", format!("{} ms", ms(st.len_us))));
         rows.push(row("Slowest", format!("{} ms", ms(st.slowest_us))));
     } else {
-        rows.push(row("Length", format!("{} ms", ms(st.len_us))));
+        rows.push(row("Duration", format!("{} ms", ms(st.len_us))));
     }
-    rows.push(row("Starts at", format!("{} ms", ms(st.start_us + offset))));
+    rows.push(row("Starts at", format!("{} ms", ms(st.start_us))));
     if lane != Lane::Sensor && capture - st.start_us > 1.0 {
         rows.push(row(
-            "Starts before the capture by",
+            "Overlaps the readout by",
             format!("{} ms", ms(capture - st.start_us)),
         ));
     }
     if st.start_us - before > 1.0 {
         rows.push(row(
-            "Waited before",
+            "Wait before it",
             format!("{} ms", ms(st.start_us - before)),
         ));
     }
     if st.tail_us > 1.0 {
-        rows.push(row(
-            "Encoding after the last rows",
-            format!("{} ms", ms(st.tail_us)),
-        ));
+        rows.push(row("After the last rows", format!("{} ms", ms(st.tail_us))));
     }
     match (st.stage, core1) {
         (Stage::Detect, Some(c)) => {
@@ -1243,24 +783,20 @@ fn step_tip(
                 ),
             ));
             rows.push(row(
-                "Slowest start after a strip is read out",
+                "Start delay (max)",
                 format!("{} ms", ms(c.start_max_us)),
             ));
             rows.push(row(
-                "Slowest detect of a strip",
+                "Per strip (max)",
                 format!("{} ms", ms(c.detect_max_us)),
             ));
             rows.push(row(
-                "Slowest wait for a strip's copy",
+                "Copy wait (max)",
                 format!("{} ms", ms(c.copy_wait_max_us)),
             ));
             rows.push((
-                "Longest hold of a strip".to_owned(),
-                format!(
-                    "{} of {} ms allowed",
-                    ms(c.hold_max_us),
-                    ms(c.hold_budget_us)
-                ),
+                "Hold (max / allowed)".to_owned(),
+                format!("{} / {} ms", ms(c.hold_max_us), ms(c.hold_budget_us)),
                 if c.hold_max_us > c.hold_budget_us {
                     FAULT
                 } else {
@@ -1268,7 +804,7 @@ fn step_tip(
                 },
             ));
             rows.push((
-                "Strips held too long".to_owned(),
+                "Late strips".to_owned(),
                 c.late_strips.to_string(),
                 if c.late_strips > 0 { FAULT } else { TEXT },
             ));
@@ -1279,17 +815,14 @@ fn step_tip(
             ));
         }
         (Stage::Measure, Some(c)) => {
-            rows.push(row(
-                "Processor time, median",
-                format!("{} ms", ms(c.measure_us)),
-            ));
+            rows.push(row("CPU time", format!("{} ms", ms(c.measure_us))));
         }
         _ => {}
     }
     tip_grid(ui, "step tip", &rows);
     if matches!(st.stage, Stage::Draw | Stage::MarkerDraw) {
         ui.label(theme_text(
-            "From here to the display (vsync, compositor, scan-out) is not measured.",
+            "The time from here to the screen is not measured.",
             theme::sans(SMALL),
             MUTED,
         ));
@@ -1305,27 +838,25 @@ fn wait_tip(ui: &mut Ui, next: &Step, us: f32) {
         TEXT,
     ));
     let why = match next.stage {
-        Stage::Encode => "The frame waiting for the encoder.",
-        Stage::Send => "The frame waiting to be sent: the link still carries the frame before.",
+        Stage::Encode => "Waiting for the encoder.",
+        Stage::Send => "Waiting for the network: the previous frame is still being sent.",
         Stage::Decode => {
-            "The frame waiting for the decoding stage, which decodes the newest frame once the \
-             window took the picture before."
+            "Waiting for the decoder. It takes the newest frame once the previous one is drawn."
         }
-        Stage::Draw => "The picture waiting for the window's next pass (one per display refresh).",
+        Stage::Draw => "Waiting for the next screen refresh.",
         Stage::MarkerSend => {
-            "The blobs waiting for core 0, which takes core 1's results every millisecond, and \
-             for its network side."
+            "Waiting for the board to pick up the result (every 1 ms) and send it."
         }
         Stage::MarkerDraw => {
-            "The blobs waiting for the window's next pass; with frames on, for their picture."
+            "Waiting for the next screen refresh, or for their picture when frames are on."
         }
-        _ => "Time between the stage before and this one.",
+        _ => "Time between two stages.",
     };
     ui.label(theme_text(why, theme::sans(SMALL), MUTED));
     tip_grid(
         ui,
         "wait tip",
-        &[("Median wait".to_owned(), format!("{} ms", ms(us)), TEXT)],
+        &[("Median".to_owned(), format!("{} ms", ms(us)), TEXT)],
     );
 }
 
@@ -1350,20 +881,20 @@ fn trim(v: f32) -> String {
     }
 }
 
-/// A stage's bar: solid when measured, hatched when computed.
-fn bar(painter: &Painter, r: Rect, h: Hue, measured: bool, alpha: f32) {
+/// A stage's bar, square-cornered: solid when measured, hatched when computed.
+fn bar(painter: &Painter, r: Rect, h: Hue, measured: bool) {
     if measured {
         painter.rect(
             r,
-            RADIUS_SMALL,
-            theme::fade(h.fill, alpha),
-            Stroke::new(1.0, theme::fade(h.line, alpha)),
+            CornerRadius::ZERO,
+            h.fill,
+            Stroke::new(1.0, h.line),
             StrokeKind::Inside,
         );
     } else {
-        painter.rect_filled(r, RADIUS_SMALL, theme::fade(h.fill, 0.45 * alpha));
+        painter.rect_filled(r, CornerRadius::ZERO, theme::fade(h.fill, 0.45));
         let clip = painter.with_clip_rect(r.shrink(1.0).intersect(painter.clip_rect()));
-        let stroke = Stroke::new(1.0, theme::fade(h.line, 0.6 * alpha));
+        let stroke = Stroke::new(1.0, theme::fade(h.line, 0.6));
         let mut hx = r.left() - r.height();
         while hx < r.right() {
             clip.line_segment(
@@ -1374,16 +905,16 @@ fn bar(painter: &Painter, r: Rect, h: Hue, measured: bool, alpha: f32) {
         }
         painter.rect_stroke(
             r,
-            RADIUS_SMALL,
-            Stroke::new(1.0, theme::fade(h.line, alpha)),
+            CornerRadius::ZERO,
+            Stroke::new(1.0, h.line),
             StrokeKind::Inside,
         );
     }
 }
 
-/// A wait: a flat grey band.
+/// A wait: a flat grey band, square-cornered.
 fn wait_band(painter: &Painter, r: Rect) {
-    painter.rect_filled(r, RADIUS_SMALL, WAIT.fill);
+    painter.rect_filled(r, CornerRadius::ZERO, WAIT.fill);
 }
 
 /// What follows a draw: dotted, unmeasured.
@@ -1397,7 +928,7 @@ fn not_measured(painter: &Painter, x0: f32, x1: f32, y: f32) {
 
 /// The start of a stage's tail ([`Step::tail_us`]: the encode after the frame's last rows) in
 /// its bar `r`, a line across it; nothing when it has none or the tail is the whole bar.
-fn tail_mark(painter: &Painter, r: Rect, st: &Step, x: impl Fn(f32) -> f32, h: Hue, alpha: f32) {
+fn tail_mark(painter: &Painter, r: Rect, st: &Step, x: impl Fn(f32) -> f32, h: Hue) {
     if st.tail_us < 1.0 || st.tail_us >= st.len_us - 1.0 {
         return;
     }
@@ -1408,13 +939,15 @@ fn tail_mark(painter: &Painter, r: Rect, st: &Step, x: impl Fn(f32) -> f32, h: H
     painter.vline(
         tx,
         (r.top() + 1.0)..=(r.bottom() - 1.0),
-        Stroke::new(1.5, theme::fade(h.text, alpha)),
+        Stroke::new(1.5, h.text),
     );
 }
 
 /// From the median's end `x0` to the slowest sample's end `x1`, with a cap; an arrow at
-/// `right` where it leaves the axis. `cap`: half the cap's height.
-fn whisker(painter: &Painter, x0: f32, x1: f32, y: f32, c: Color32, right: f32, cap: f32) {
+/// `right` where it leaves the axis.
+fn whisker(painter: &Painter, x0: f32, x1: f32, y: f32, c: Color32, right: f32) {
+    /// Half the cap's height.
+    const CAP: f32 = 3.5;
     if x1 - x0 < 2.0 || x0 >= right {
         return;
     }
@@ -1422,9 +955,9 @@ fn whisker(painter: &Painter, x0: f32, x1: f32, y: f32, c: Color32, right: f32, 
     let end = x1.min(right);
     painter.hline(x0..=end, y, stroke);
     if x1 > right {
-        painter.line_segment([pos2(end - cap, y - cap), pos2(end, y)], stroke);
-        painter.line_segment([pos2(end - cap, y + cap), pos2(end, y)], stroke);
+        painter.line_segment([pos2(end - CAP, y - CAP), pos2(end, y)], stroke);
+        painter.line_segment([pos2(end - CAP, y + CAP), pos2(end, y)], stroke);
     } else {
-        painter.vline(end, (y - cap)..=(y + cap), stroke);
+        painter.vline(end, (y - CAP)..=(y + CAP), stroke);
     }
 }
