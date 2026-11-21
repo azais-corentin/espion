@@ -484,6 +484,50 @@ pub fn chip(ui: &mut Ui, text: &str, on: bool) -> Response {
     response
 }
 
+/// A small button that shows or hides a part of the window: a chevron pointing where the
+/// part grows (up, for a panel at the bottom) while it is hidden, down while it shows. Its
+/// accessible node says whether the part is expanded.
+pub fn disclosure(ui: &mut Ui, text: &str, expanded: bool) -> Response {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), theme::sans(BODY), TEXT);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(galley.size().x + 38.0, CONTROL), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, true, text));
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_expanded(expanded));
+    let (fill, line) = if response.hovered() {
+        (HOVER, MUTED)
+    } else {
+        (RAISED, LINE)
+    };
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        RADIUS,
+        fill,
+        Stroke::new(1.0, line),
+        StrokeKind::Inside,
+    );
+    let c = pos2(rect.left() + 15.0, rect.center().y);
+    let dy = if expanded { 2.5 } else { -2.5 };
+    painter.line(
+        vec![
+            pos2(c.x - 5.0, c.y - dy),
+            pos2(c.x, c.y + dy),
+            pos2(c.x + 5.0, c.y - dy),
+        ],
+        Stroke::new(1.5, TEXT),
+    );
+    painter.galley_with_override_text_color(
+        pos2(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        TEXT,
+    );
+    focus_ring(ui, &response, rect);
+    response
+}
+
 /// What a [`notice`] is about.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tone {

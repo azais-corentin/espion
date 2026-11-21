@@ -203,10 +203,11 @@ Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open
   frame's depth). With frames off, an empty canvas of the mode's size with the markers on it
   ("Frames off: the board's blobs only"). Each marker drawn is also an accessible label
   (`Marker N: x .. y ..`).
-- **Markers** (under the picture): the newest blob frame (number, blobs, threshold, detect
-  time, overflow), each of its blobs (x, y, width, flux, area, peak), and, when the window
-  holds frames with exactly one blob, that marker's statistics over the statistics window:
-  mean position, spread (sigma x, y), peak, area, width, flux and the detection rate.
+- **Markers** (under the picture): the newest blob frame in one line (number, blobs,
+  threshold, detect time). **Show marker details** (collapsed at start) opens each of its
+  blobs (x, y, width, flux, area, peak, overflow), and, when the window holds frames with
+  exactly one blob, that marker's statistics over the statistics window: mean position, spread
+  (sigma x, y), peak, area, width, flux and the detection rate.
 - **Pipeline timing** (under the picture): the ribbon (next section) and its key.
 - **Counters** (drawer, right): everything the board and the viewer count, by stage. Sensor:
   the mode as applied (HTS, VTS, PSV, rate and its error, line time, longest exposure, bytes per

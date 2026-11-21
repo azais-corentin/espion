@@ -33,8 +33,8 @@ use crate::{
         picture::{self, Content, Overlay, View},
         theme::{self, BODY, FAULT, GAP, MARKER, MUTED, NEUTRAL, PAD, TEXT, hue},
         widgets::{
-            self, Choice, History, Scale, Tone, button, caption, chip, figure, notice, number, row,
-            section, segmented, slider, stat, stat_toned, switch,
+            self, Choice, History, Scale, Tone, button, caption, chip, disclosure, figure, notice,
+            number, row, section, segmented, slider, stat, stat_toned, switch,
         },
         window_picker,
     },
@@ -207,6 +207,8 @@ pub struct App {
     latency_history: History,
     /// The counters drawer is open.
     drawer: bool,
+    /// The markers panel shows its details (statistics and blob table), not only its heading.
+    markers_open: bool,
     /// The detection settings being edited.
     detect: DetectSettings,
     /// The detection settings sent and not yet shown by the board: their echoes are not
@@ -317,6 +319,7 @@ impl App {
             diagram: Diagram::default(),
             latency_history: History::default(),
             drawer: false,
+            markers_open: false,
             detect: DetectSettings::DEFAULT,
             detect_echoes: Echoes::default(),
             markers: Markers::default(),
@@ -1114,38 +1117,57 @@ impl App {
 
     // ── Markers ─────────────────────────────────────────────────────────────────────────────
 
-    /// The panel under the picture: the single-marker statistics of the window, and the blobs
-    /// of the newest detected frame.
-    fn markers_panel(&self, ui: &mut Ui, s: &Stats) {
+    /// The panel under the picture: a heading with the newest detected frame in one line and,
+    /// when opened, the single-marker statistics of the window and the blobs of that frame.
+    fn markers_panel(&mut self, ui: &mut Ui, s: &Stats) {
         let window_us = (self.stats_s * 1e6) as u64;
         let st = self.markers.stats(window_us);
         let newest = self.markers.newest();
+        let mut open = self.markers_open;
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Markers")
-                    .font(theme::strong(BODY))
-                    .color(TEXT),
-            );
-            let what = match (s.state.map(|st| st.detect.settings.enabled), newest) {
-                _ if !detection_available(s) => UNAVAILABLE.to_owned(),
-                (Some(false), _) => "Detection is off.".to_owned(),
-                (_, None) => "No blobs from the board yet.".to_owned(),
-                (_, Some(b)) => format!(
-                    "Frame #{}: {} blobs, threshold {}{}, detected in {} µs.",
-                    b.frame,
-                    b.blobs.len(),
-                    b.threshold,
-                    if b.flags & espion_proto::cam::FrameBlobs::AUTO_THRESHOLD != 0 {
-                        " (automatic)"
+            widgets::from_right(ui, |ui| {
+                // Nothing to open without detection in this mode.
+                if detection_available(s) {
+                    let text = if open {
+                        "Hide marker details"
                     } else {
-                        ""
-                    },
-                    b.detect_us
-                ),
-            };
-            caption(ui, &what);
+                        "Show marker details"
+                    };
+                    // Its own id, whatever the label says.
+                    let toggle = ui.push_id("markers toggle", |ui| disclosure(ui, text, open));
+                    if toggle.inner.clicked() {
+                        open = !open;
+                    }
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new("Markers")
+                            .font(theme::strong(BODY))
+                            .color(TEXT),
+                    );
+                    let what = match (s.state.map(|st| st.detect.settings.enabled), newest) {
+                        _ if !detection_available(s) => UNAVAILABLE.to_owned(),
+                        (Some(false), _) => "Detection is off.".to_owned(),
+                        (_, None) => "No blobs from the board yet.".to_owned(),
+                        (_, Some(b)) => format!(
+                            "Frame #{}: {} blobs, threshold {}{}, detected in {} µs.",
+                            b.frame,
+                            b.blobs.len(),
+                            b.threshold,
+                            if b.flags & espion_proto::cam::FrameBlobs::AUTO_THRESHOLD != 0 {
+                                " (automatic)"
+                            } else {
+                                ""
+                            },
+                            b.detect_us
+                        ),
+                    };
+                    caption(ui, &what);
+                });
+            });
         });
-        if !detection_available(s) {
+        self.markers_open = open;
+        if !detection_available(s) || !open {
             return;
         }
         ui.columns(2, |cols| {
