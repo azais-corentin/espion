@@ -217,6 +217,10 @@ const JPEG_INT_ALL: u32 = (1 << 25) - 1;
 /// Bounded spin for a 2D-DMA channel's `RESET_AVAIL` (it is immediate when the channel is idle).
 const RESET_SPIN: u32 = 100_000;
 
+/// Bounded spin for the RX descriptor's write-back after `SUC_EOF`: reads of its first word
+/// through the non-cacheable alias until the owner bit is the CPU's again.
+const WRITEBACK_SPIN: u32 = 10_000;
+
 /// Encoder settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -306,6 +310,9 @@ pub struct Stats {
     pub last_jpeg: u32,
     pub last_tx: u32,
     pub last_rx: u32,
+    /// Frames whose RX descriptor still read as the DMA's when `SUC_EOF` was seen: the
+    /// write-back landed after the interrupt (other DMA traffic to internal RAM delays it).
+    pub late_writebacks: u32,
 }
 
 /// Register snapshot for "no interrupt / no data" debugging. Reading it clears nothing.
@@ -688,7 +695,7 @@ impl Encoder {
 
         match result {
             Ok((ev, txs, rxs)) => {
-                let (dw0, dw1) = read_desc(rx_desc_addr());
+                let (dw0, dw1) = self.wait_writeback();
                 let n = Descriptor::received_len(dw0, dw1) as usize;
                 self.stats.last_jpeg = ev;
                 self.stats.last_tx = txs;
@@ -714,6 +721,30 @@ impl Encoder {
                 Err(e)
             }
         }
+    }
+
+    /// The RX descriptor's first two words once the DMA has written it back (owner bit the
+    /// CPU's, `INLINK_AUTO_RET` 0), or as they read after [`WRITEBACK_SPIN`] reads. `SUC_EOF`
+    /// can be seen before the write-back is visible: on the board with the CSI writing strips
+    /// into internal RAM and a DW-GDMA channel copying them to PSRAM, 19 frames in the
+    /// `poc-viewer` board test's `jpeg` and `quality` sections (2026-11-21), each written back
+    /// within the spin; read at once, each had failed its encode with [`Error::Dma`].
+    fn wait_writeback(&mut self) -> (u32, u32) {
+        let addr = rx_desc_addr();
+        let mut d = read_desc(addr);
+        if d.0 & dma2d::DW0_OWNER_DMA == 0 {
+            return d;
+        }
+        self.stats.late_writebacks = self.stats.late_writebacks.wrapping_add(1);
+        for _ in 0..WRITEBACK_SPIN {
+            d = read_desc(addr);
+            if d.0 & dma2d::DW0_OWNER_DMA == 0 {
+                // The length's high bits are in the second word: read both again, in case
+                // the second's write-back landed after the first was seen.
+                return read_desc(addr);
+            }
+        }
+        d
     }
 
     /// Event counters.
