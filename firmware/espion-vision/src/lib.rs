@@ -25,6 +25,10 @@
 //! Rows can be pushed as a whole frame or in strips of whole rows as they arrive; both give
 //! the same blobs in the same order (the order in which their last row was seen).
 //!
+//! [`auto`] picks the threshold from the frame: a sparse histogram of the rows (whole frame
+//! or strips) gives the background median and spread, and the threshold for the next frame
+//! is the noise floor above them or half the brightest blob's peak, whichever is higher.
+//!
 //! [`synth`] generates deterministic synthetic frames for the tests and for the board
 //! benchmark. Without the feature `pie` the crate has no dependency; with or without it,
 //! it builds and tests on the host.
@@ -35,6 +39,7 @@
 #[cfg(test)]
 extern crate std;
 
+pub mod auto;
 pub mod skip;
 pub mod synth;
 

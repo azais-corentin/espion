@@ -39,6 +39,22 @@ vector skip can hold a per-core token that is not `Send` while the detector live
 static. `Scalar` is the portable skip and the reference; the calls without `_with` use it.
 Any skip that keeps the contract in `skip.rs` gives the same blobs.
 
+## Automatic threshold
+
+`auto` picks the threshold of the next frame from the current one, integer math only:
+
+- `sample_raw8` / `sample_raw10` add every 4th pixel (`x % 4 == 0`) of every 16th row
+  (`row % 16 == 0`) to a `Histogram` (256 bins, 8-bit units; RAW10 on the top 8 bits).
+  Strips of whole rows give the same histogram as the whole frame; pass each strip's first
+  frame row. A 1280 x 800 frame gives 16 000 samples.
+- `Background::from_histogram` gives the median and `sigma = p84 - p50`, a robust spread
+  taken on the bright side; the few marker samples barely move either.
+- `threshold_raw8(bg, brightest_peak)` is
+  `max(median + max(6 * sigma, 8), ceil(peak / 2))` in `1..=255`: the noise floor, or half
+  the brightest blob's peak (`Blob::peak`) so a bright marker's halo stays out of its blob.
+  With no blob, the floor. `threshold_raw10` is 4 times it (`4..=1020`), which selects the
+  same pixels on their top 8 bits.
+
 ## Cargo features
 
 | Feature | What |
@@ -83,8 +99,8 @@ cargo build --release --target riscv32imafc-unknown-none-elf
 cargo build --release --target riscv32imafc-unknown-none-elf --features pie
 ```
 
-`cargo test` runs the detector's unit tests, the `synth` tests, the skip's tests against
-a byte-wise statement of its contract, and a randomised equivalence test
+`cargo test` runs the detector's unit tests, the `synth` and `auto` tests, the skip's
+tests against a byte-wise statement of its contract, and a randomised equivalence test
 (`src/equivalence.rs`): fixed seeds, widths 4, 36, 64, 72, 320, 640, 1280 and 1288,
 heights 1 to 24, 0 to 64 blobs of radius 1 to 12 anywhere in the frame, thresholds over
 the whole range, RAW8 and RAW10, random buffer alignments and random strip splits, and
