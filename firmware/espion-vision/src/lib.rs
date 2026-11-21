@@ -8,7 +8,8 @@
 //!
 //! Per blob: the intensity-weighted centroid (weight = pixel value, pixel centres at integer
 //! coordinates) in 1/32 pixel (Q11.5), the area in pixels (saturating at `u16::MAX`) and the
-//! peak value.
+//! peak value. This centroid sees only the pixels above the threshold, so it is pulled
+//! towards the pixel centres; it finds the blob, and [`refine`] then measures it.
 //!
 //! The scan asks a [`Skip`] where the next bright pixel can be ([`Scalar`] here; with the
 //! cargo feature `pie`, `esp32p4_pie::Pie` on the ESP32-P4), reads exactly from there until
@@ -29,6 +30,10 @@
 //! or strips) gives the background median and spread, and the threshold for the next frame
 //! is the noise floor above them or half the brightest blob's peak, whichever is higher.
 //!
+//! [`refine`] measures each blob on the frame: an iterated Gaussian-weighted centroid
+//! around a local background, free of the threshold's bias, with the spot's width and flux,
+//! in 1/256 pixel.
+//!
 //! [`synth`] generates deterministic synthetic frames for the tests and for the board
 //! benchmark. Without the feature `pie` the crate has no dependency; with or without it,
 //! it builds and tests on the host.
@@ -40,6 +45,7 @@
 extern crate std;
 
 pub mod auto;
+pub mod refine;
 pub mod skip;
 pub mod synth;
 
@@ -53,7 +59,8 @@ mod equivalence;
 #[cfg(test)]
 mod reference;
 
-/// One detected blob, as in the `Blob` of the wire format (`docs/protocol.md`).
+/// One detected blob: the thresholded centroid, area and peak. The wire format's position,
+/// width and flux come from [`refine`] on it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Blob {
     /// Weighted centroid column in 1/32 pixel (Q11.5).
