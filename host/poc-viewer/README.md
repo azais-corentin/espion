@@ -42,17 +42,23 @@ trails and their statistics. Not part of the product.
 
 From the repository root, in the dev shell.
 
-Against the board (link-local, on the USB adapter `eth0`; the default address):
+Against the board (link-local, on any interface: plugged into this computer, or into the
+switch or router this computer is on):
 
 ```sh
 cargo run -p poc-viewer --release
-cargo run -p poc-viewer --release -- '[fe80::4553:9281%eth0]:5009'   # the same, spelt out
+cargo run -p poc-viewer --release -- '[fe80::4553:9281%enp6s0]:5009'   # pinned to one interface
 ```
 
-The board needs nothing from this computer's network set-up: the viewer binds its own
-link-local address on the camera's interface and talks first, so the board's answers and frames
-come back as replies. The viewer adopts the board's settings at its first answer, and again
-after the link was lost or the board restarted. Settings can also be sent at start, for example
+The board needs nothing from this computer's network set-up. Without an interface scope (the
+default, `[fe80::4553:9281]:5009`), the viewer sends its requests on every interface with a
+link-local address until the board answers, then only on the one it answered on, and looks
+again on every interface once the link is lost (1.5 s without an answer), so a cable moved
+between this computer and the router is found again within a couple of seconds. The status bar
+shows where the board answered (`[fe80::4553:9281%enp6s0]:5009`). The viewer talks first, so
+the board's answers and frames come back as replies. The viewer adopts the board's settings at
+its first answer, and again after the link was lost or the board restarted. Settings can also
+be sent at start, for example
 `--size 640x400 --binned --rate 250`, `--format raw10 --encoding raw10` or `--encoding jpeg
 --quality 75 --auto-quality false` (`--help` lists them; `--quality` applies with automatic
 quality off). Automatic exposure is on unless `--exposure` or `--gain` is given;
@@ -391,8 +397,8 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   the window and the interval, the axis); the blob frames' timing in order and on the board's
   clock. No board needed. The throughput tests (link limit, automatic
   quality, missing chunks, decoding only the frames taken) need a quiet machine.
-- `tests/board.rs`, against the real board, ignored by default. With the board on `eth0`
-  running `poc-p4-stream` (`POC_CAMERA` overrides the address):
+- `tests/board.rs`, against the real board, ignored by default. With the board running
+  `poc-p4-stream`, found on whichever interface it answers (`POC_CAMERA` overrides the address):
 
   ```sh
   cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 settings

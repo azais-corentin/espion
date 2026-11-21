@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test hooks of the poc-p4-stream camera stream service (src/stream/diag.rs, UDP 5010).
 Python standard library only. The socket is bound to the link-local address of one interface
-(default eth0), so nothing leaves elsewhere.
+(by default the one the board answers a ping on), so nothing leaves elsewhere.
 
   streamdiag.py mark            start a measurement window (CPU accounts, network counters)
   streamdiag.py report          the board's report since the mark, one key=value per line
@@ -40,9 +40,26 @@ def link_local(iface):
     sys.exit(f"no link-local address on {iface}")
 
 
+def find_iface(board):
+    """The first interface with a link-local address on which `board` answers an ICMPv6 echo
+    (an unprivileged ping socket: net.ipv4.ping_group_range must hold the user's group)."""
+    with open("/proc/net/if_inet6") as f:
+        names = dict.fromkeys(l.split()[5] for l in f if l.split()[3] == "20")
+    for name in names:
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_ICMPV6) as s:
+                s.settimeout(0.3)
+                s.sendto(b"\x80\0\0\0\0\0\0\x01", (board, 0, 0, socket.if_nametoindex(name)))
+                s.recv(64)
+                return name
+        except OSError:
+            continue
+    sys.exit(f"{board} answers a ping on no interface; name one with --iface")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("--iface", default="eth0")
+    p.add_argument("--iface", help="default: the interface the board answers a ping on")
     p.add_argument("--board", default="fe80::4553:9281")
     p.add_argument(
         "command",
@@ -68,6 +85,7 @@ def main():
     p.add_argument("arg", nargs="?", default="")
     args = p.parse_args()
 
+    args.iface = args.iface or find_iface(args.board)
     scope = socket.if_nametoindex(args.iface)
     s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
     s.bind((link_local(args.iface), 0, 0, scope))

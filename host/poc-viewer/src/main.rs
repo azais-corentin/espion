@@ -25,8 +25,9 @@ use poc_viewer::{
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Args {
-    /// Camera address, link-local with its interface scope.
-    #[arg(default_value = "[fe80::4553:9281%eth0]:5009")]
+    /// Camera address. A link-local one without an interface scope (the default) is looked for
+    /// on every interface; `%name` pins it to one.
+    #[arg(default_value = "[fe80::4553:9281]:5009")]
     camera: String,
 
     /// Run against the built-in fake camera on loopback instead of the board.

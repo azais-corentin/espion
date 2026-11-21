@@ -14,6 +14,7 @@ use espion_proto::cam::{
     JPEG_QUALITY_MIN, Op, Origin, Readout, TestPattern,
 };
 use poc_viewer::{
+    addr,
     blobs::{Markers, TrailPoint, px},
     camera,
     decode::{DecodeStats, Decoder, Picture},
@@ -168,6 +169,9 @@ enum ViewChoice {
 
 pub struct App {
     client: Arc<Client>,
+    /// The camera's address as the window shows it, and where it last answered from (the
+    /// interface's name is read at each change only).
+    camera: (Option<SocketAddr>, String),
     decoder: Decoder,
     _fake: Option<FakeCamera>,
     /// The mode and control settings being edited.
@@ -286,6 +290,7 @@ impl App {
         let edit = setup.init_camera.unwrap_or_else(fake::default_camera);
         let now = Instant::now();
         Ok(Self {
+            camera: (None, addr::show(client.camera())),
             client,
             decoder,
             _fake: setup.fake,
@@ -473,7 +478,7 @@ impl App {
     fn status_bar(&mut self, ui: &mut Ui, s: &Stats, now: Instant) {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 22.0;
-            link_pill(ui, s, now, &self.client);
+            link_pill(ui, s, now, &self.camera.1);
             let m = &self.meter;
             let stage = |st| hue(st);
             figure(
@@ -1348,11 +1353,7 @@ impl App {
             );
             self.drawing_overlay(drawn, now);
         } else {
-            picture::empty(
-                ui,
-                "Waiting for frames",
-                &format!("From {}", self.client.camera()),
-            );
+            picture::empty(ui, "Waiting for frames", &format!("From {}", self.camera.1));
         }
         if !s.connected(now) {
             let area = ui.max_rect();
@@ -1530,7 +1531,7 @@ impl App {
                 ui,
                 &format!(
                     "Camera {}, local {}, receive buffer {} KiB",
-                    self.client.camera(),
+                    self.camera.1,
                     self.client.local_addr(),
                     self.client.rcvbuf() / 1024
                 ),
@@ -1691,7 +1692,7 @@ fn faults(s: &Stats, d: &DecodeStats) -> u64 {
 }
 
 /// The link's state: a dot and a word, the camera's address under it.
-fn link_pill(ui: &mut Ui, s: &Stats, now: Instant, client: &Client) {
+fn link_pill(ui: &mut Ui, s: &Stats, now: Instant, camera: &str) {
     let up = s.connected(now);
     let (word, color) = if up {
         ("Connected", hue(Stage::Readout).line)
@@ -1700,7 +1701,7 @@ fn link_pill(ui: &mut Ui, s: &Stats, now: Instant, client: &Client) {
     };
     let painter = ui.painter().clone();
     let word_g = painter.layout_no_wrap(word.to_owned(), theme::strong(BODY), TEXT);
-    let addr = client.camera().to_string();
+    let addr = camera.to_owned();
     let addr_g = painter.layout_no_wrap(addr, theme::mono(theme::SMALL), MUTED);
     let w = 16.0 + word_g.size().x.max(addr_g.size().x);
     let (rect, response) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
@@ -1735,6 +1736,10 @@ impl eframe::App for App {
             self.show(p, now);
         }
         let stats = self.client.stats();
+        if self.camera.0 != stats.camera {
+            let at = stats.camera.unwrap_or_else(|| self.client.camera());
+            self.camera = (stats.camera, addr::show(at));
+        }
         let dstats = self.decoder.stats();
         if let Some(st) = stats.state
             && st.uptime_us != self.uptime_us

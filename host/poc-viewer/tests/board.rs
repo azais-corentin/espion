@@ -1,6 +1,7 @@
 //! The viewer's network layer ([`poc_viewer::net::Client`]) against the real board running
-//! `poc-p4-stream`'s `Stream` service. Ignored by default: run them with the board on `eth0`
-//! (`POC_CAMERA` overrides the address, default `[fe80::4553:9281%eth0]:5009`):
+//! `poc-p4-stream`'s `Stream` service. Ignored by default: run them with the board on this
+//! computer's own port or on its network, found on whichever interface it answers
+//! (`POC_CAMERA` overrides the address, default `[fe80::4553:9281]:5009`):
 //!
 //! ```sh
 //! cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 settings
@@ -73,9 +74,17 @@ const LINE_BYTES_PER_S: f64 = 100e6 / 8.0;
 /// Ethernet bytes per datagram besides its UDP payload (`poc_viewer::fake::WIRE_OVERHEAD`).
 const WIRE_OVERHEAD: f64 = 86.0;
 
+/// The board's address with its interface: where it answers a client of `POC_CAMERA`.
 fn camera_addr() -> SocketAddr {
-    let s = std::env::var("POC_CAMERA").unwrap_or_else(|_| "[fe80::4553:9281%eth0]:5009".into());
-    addr::parse(&s).expect("camera address")
+    let s = std::env::var("POC_CAMERA").unwrap_or_else(|_| "[fe80::4553:9281]:5009".into());
+    let given = addr::parse(&s).expect("camera address");
+    let c = Client::connect(given, || {}).expect("client connects");
+    let at = c
+        .wait_until(ANSWER_WAIT, |s| s.camera.is_some())
+        .and_then(|s| s.camera)
+        .expect("the board answers");
+    println!("board at {}", addr::show(at));
+    at
 }
 
 /// The board: a client of its camera stream, and a socket for its test hooks.
@@ -126,8 +135,7 @@ struct Window {
 impl Board {
     fn connect() -> Self {
         let camera = camera_addr();
-        let local = addr::local_for(camera).expect("local address");
-        let diag = UdpSocket::bind(local).expect("diag socket");
+        let diag = UdpSocket::bind(addr::local_for(camera)).expect("diag socket");
         let mut d = camera;
         d.set_port(DIAG_PORT);
         diag.connect(d).expect("connect diag");
@@ -611,7 +619,7 @@ fn field(report: &str, key: &str) -> Option<f64> {
 }
 
 #[test]
-#[ignore = "needs the board on eth0 running poc-p4-stream"]
+#[ignore = "needs the board running poc-p4-stream"]
 fn settings() {
     let mut b = Board::connect();
     let st = b.state();
@@ -2185,7 +2193,7 @@ fn fake_default() -> CameraSettings {
 
 /// `n` malformed datagrams to the camera port: wrong magic, wrong version, truncated, noise.
 fn send_garbage(camera: SocketAddr, n: usize) {
-    let s = UdpSocket::bind(addr::local_for(camera).unwrap()).unwrap();
+    let s = UdpSocket::bind(addr::local_for(camera)).unwrap();
     for i in 0..n {
         let d: &[u8] = match i % 4 {
             0 => b"XX\x02\x20\0\0\0\0\0\0",
@@ -2202,7 +2210,7 @@ fn send_garbage(camera: SocketAddr, n: usize) {
 /// One `GetState` from a fresh socket, then nothing: whether it was answered, the chunks that
 /// came, and when the last one came (ms after the request).
 fn one_request(camera: SocketAddr) -> (bool, u32, u32) {
-    let sock = UdpSocket::bind(addr::local_for(camera).unwrap()).unwrap();
+    let sock = UdpSocket::bind(addr::local_for(camera)).unwrap();
     sock.connect(camera).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
@@ -2244,7 +2252,7 @@ fn line(s: &Stats) -> String {
 }
 
 #[test]
-#[ignore = "needs the board on eth0 running poc-p4-stream; 10 minutes"]
+#[ignore = "needs the board running poc-p4-stream; 10 minutes"]
 fn soak() {
     let secs: u64 = std::env::var("POC_SOAK_SECS")
         .ok()

@@ -14,10 +14,13 @@
 //! copy costs (README, step 3).
 //!
 //! - **Peer.** smoltcp does not expose its neighbour cache, so the driver learns the MAC itself:
-//!   every IPv6 frame it receives records its source address and source MAC ([`learn`], a
-//!   table of [`PEERS`] entries, the oldest replaced). The board only ever sends to the source
-//!   of a request it received, so the MAC of its destination is always there; if it is not,
-//!   [`send`] says so and the caller sends through its socket instead.
+//!   every IPv6 frame it receives addressed to the board's own MAC records its source address
+//!   and source MAC ([`learn`], a table of [`PEERS`] entries, the oldest replaced). Multicast is
+//!   left out: on a shared network (a switch, a router) the neighbour discovery, mDNS and router
+//!   advertisements of every other host would push the board's peers out of the table. The
+//!   board only ever sends to the source of a request it received (unicast to it), so the MAC
+//!   of its destination is always there; if it is not, [`send`] says so and the caller sends
+//!   through its socket instead.
 //! - **Headers.** Ethernet (the peer's MAC, the board's MAC, IPv6), IPv6 (traffic class and
 //!   flow label 0, next header UDP, hop limit 64 as smoltcp sends) and UDP, written per
 //!   datagram (62 bytes).
@@ -136,8 +139,8 @@ static TABLE: Mutex<Cell<[Option<Peer>; PEERS]>> = Mutex::new(Cell::new([None; P
 /// Woken by the TX completion interrupt: a sender waiting for room.
 pub(super) static ROOM: AtomicWaker = AtomicWaker::new();
 
-/// Records the source of a received frame if it is IPv6 (called by the RX path for every
-/// frame, before smoltcp sees it).
+/// Records the source of a received frame if it is IPv6 and addressed to the board's own MAC
+/// (called by the RX path for every frame, before smoltcp sees it).
 pub(super) fn learn(frame: &[u8]) {
     if frame.len() < 14 + 40 || frame[12..14] != ETHERTYPE_IPV6 {
         return;
@@ -145,6 +148,13 @@ pub(super) fn learn(frame: &[u8]) {
     let mac: [u8; 6] = frame[6..12].try_into().unwrap_or_default();
     let addr = Ipv6Address::from(<[u8; 16]>::try_from(&frame[22..38]).unwrap_or_default());
     critical_section::with(|cs| {
+        if SELF
+            .borrow(cs)
+            .get()
+            .is_none_or(|(_, own)| frame[0..6] != own)
+        {
+            return;
+        }
         let cell = TABLE.borrow(cs);
         let mut t = cell.get();
         if t[0] == Some((addr, mac)) {

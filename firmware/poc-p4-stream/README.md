@@ -17,6 +17,11 @@ built on) stays selectable.
   by smoltcp; no IPv4, no DHCP, no SLAAC. The MAC is the chip's factory MAC from eFuse
   (`80:f1:b2:da:e4:67` on the bench board): Espressif's OUI, unique per chip, so several boards
   on one switch never collide; the P4 has no radio that uses it too.
+- Plugged into the host's own port or into a switch or router the host is on: link-local works
+  the same on both, and the host finds the interface the board answers on (`poc-viewer`, its
+  board test and the tools below). On a shared network the board also receives every other
+  host's multicast (the EMAC passes all multicast); the send path learns its peers' MACs only
+  from frames addressed to the board (`src/net/chunk.rs`), so that traffic cannot push them out.
 - The host always talks first (its firewall drops unsolicited UDP): the board sends only to the
   address and port a request came from.
 - Status: the camera streams in JPEG at the sensor's full rate in every window measured (1280x800
@@ -89,7 +94,7 @@ stream service is ready once the log shows `stream: ready` and
 `net: link up, 100 Mbit/s full duplex`. Then, from the repository root:
 
 ```sh
-cargo run -p poc-viewer --release                     # the window, [fe80::4553:9281%eth0]:5009
+cargo run -p poc-viewer --release                     # the window, [fe80::4553:9281]:5009
 cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 settings
 python3 firmware/poc-p4-stream/tools/streamdiag.py mark     # the board's CPU report: mark,
 python3 firmware/poc-p4-stream/tools/streamdiag.py report   # then report,
@@ -105,11 +110,11 @@ leaves them out; `--features idle-counter` adds the idle counter (see
 the STROBE output ([Marker pins](#marker-pins-feature-markers)).
 
 With `SERVICE = Service::Bench` the board runs the network test service instead (ready at
-`bench: ready`); on the host, with the board on the interface `eth0` (default; `--iface`
-otherwise):
+`bench: ready`); on the host (the tools take the interface the board answers a ping on;
+`--iface` names one):
 
 ```sh
-ping -6 -c 20 fe80::4553:9281%eth0
+ping -6 -c 20 fe80::4553:9281%enp6s0                          # the interface the board is on
 python3 tools/netbench.py tx --source internal --seconds 20   # also psram, camera, capture
 python3 tools/netbench.py tx --source camera --seconds 20 --pgm /tmp/frame.pgm
 python3 tools/netbench.py rx --rate 0 --seconds 60            # host to board, unpaced
@@ -129,10 +134,11 @@ python3 tools/netbench.py tx --source psram --seconds 60      # internal and psr
 ```
 
 `tools/netbench.py` (Python standard library only) binds every socket to the link-local address
-of the interface, sends the request first, and prints the host's figures (rate, lost, duplicate,
-reordered and bad datagrams, the host's UDP6 and interface counters) and the board's report.
-The board logs every report too, after the run. `bench: ready` in the log means the service
-listens.
+of the interface (the first whose ICMPv6 echo the board answers, through an unprivileged ping
+socket, unless `--iface` names one), sends the request first, and prints the host's figures
+(rate, lost, duplicate, reordered and bad datagrams, the host's UDP6 and interface counters)
+and the board's report. The board logs every report too, after the run. `bench: ready` in the
+log means the service listens.
 
 ### Choosing what runs
 

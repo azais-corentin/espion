@@ -7,6 +7,13 @@
 //! matter). With nothing to send it polls every [`POLL_INTERVAL`], which keeps the board's
 //! stream alive and fetches its counters.
 //!
+//! A link-local camera without an interface scope is looked for: while it has not answered
+//! within [`DISCONNECTED_AFTER`], every request goes out on each interface with a link-local
+//! address (read again at each), and the requests follow the interface it last answered on. So
+//! the board is found wherever it is plugged (this computer's own port, or the switch or router
+//! this computer is on) and again after its cable moved. Datagrams from anyone but the camera
+//! are dropped.
+//!
 //! Chunks are copied into the frame they belong to; a frame's length comes from its first
 //! chunk (fixed for the raw encodings, the file's length for JPEG). A frame is handed over
 //! only when every chunk arrived; a frame missing a chunk is dropped when a chunk of a newer frame arrives (or
@@ -229,6 +236,9 @@ pub struct Stats {
     pub last_answer_to: Option<(Op, Reply)>,
     /// When the last response arrived.
     pub last_answer: Option<Instant>,
+    /// Where the camera's datagrams last came from (for a link-local camera, with the
+    /// interface it was found on); `None` before the first.
+    pub camera: Option<SocketAddr>,
     /// The board's latest state.
     pub state: Option<State>,
     /// The newest frame the board's state timed that arrived whole here.
@@ -282,7 +292,7 @@ impl Client {
     /// the network thread. `wake` is called whenever a frame or an answer arrives (the UI's
     /// `request_repaint`).
     pub fn connect(camera: SocketAddr, wake: impl Fn() + Send + 'static) -> io::Result<Self> {
-        let local = addr::local_for(camera)?;
+        let local = addr::local_for(camera);
         let domain = if local.is_ipv6() {
             Domain::IPV6
         } else {
@@ -294,8 +304,6 @@ impl Client {
         socket.bind(&local.into())?;
         let rcvbuf = socket.recv_buffer_size()?;
         let sock: UdpSocket = socket.into();
-        // Only the camera's datagrams reach this socket.
-        sock.connect(camera)?;
         sock.set_read_timeout(Some(RECV_TIMEOUT))?;
         let local = sock.local_addr()?;
 
@@ -304,6 +312,8 @@ impl Client {
         let (tx, rx) = mpsc::channel();
         let worker = Worker {
             sock,
+            camera,
+            search: addr::unscoped(camera),
             rx,
             shared: shared.clone(),
             wake: Box::new(wake),
@@ -412,7 +422,8 @@ impl Client {
             .cloned()
     }
 
-    /// The camera's address.
+    /// The camera's address as given (a link-local one may lack its interface: see
+    /// [`Stats::camera`] for where it answered).
     pub fn camera(&self) -> SocketAddr {
         self.camera
     }
@@ -461,6 +472,10 @@ struct Assembly {
 
 struct Worker {
     sock: UdpSocket,
+    /// The camera's address as given.
+    camera: SocketAddr,
+    /// The camera is link-local without a scope: its interface is looked for.
+    search: bool,
     rx: Receiver<Command>,
     shared: Shared,
     wake: Box<dyn Fn() + Send>,
@@ -514,9 +529,13 @@ impl Worker {
             }
             let now = Instant::now();
             self.timers(now);
-            // Errors are timeouts, and ICMP errors reported on the connected socket (nobody
-            // listening): nothing to do but wait.
-            if let Ok(n) = self.sock.recv(&mut buf) {
+            // Errors are timeouts: nothing to do but wait.
+            if let Ok((n, from)) = self.sock.recv_from(&mut buf)
+                && self.is_camera(from)
+            {
+                if self.stats.camera != Some(from) {
+                    self.stats.camera = Some(from);
+                }
                 self.datagram(&buf[..n]);
             }
             if self.published.elapsed() >= PUBLISH_INTERVAL {
@@ -566,13 +585,36 @@ impl Worker {
         }
     }
 
+    /// `from` is the camera: its address and port, and its interface unless it is looked for.
+    fn is_camera(&self, from: SocketAddr) -> bool {
+        match (from, self.camera) {
+            (SocketAddr::V6(f), SocketAddr::V6(c)) => {
+                f.ip() == c.ip()
+                    && f.port() == c.port()
+                    && (c.scope_id() == 0 || f.scope_id() == c.scope_id())
+            }
+            (f, c) => f == c,
+        }
+    }
+
     fn transmit(&mut self, seq: u32, op: Op, now: Instant) {
         let mut buf = [0u8; MAX_DATAGRAM];
         let d = Request { seq, op }
             .encode(&mut buf)
             .expect("a request fits a datagram");
-        // Errors (no route yet, nobody listening) are retried like a lost datagram.
-        let _ = self.sock.send(d);
+        // Errors (no route yet, an interface down) are retried like a lost datagram.
+        if !self.search {
+            let _ = self.sock.send_to(d, self.camera);
+        } else if let Some(found) = self.stats.camera
+            && self.stats.connected(now)
+        {
+            let _ = self.sock.send_to(d, found);
+        } else if let SocketAddr::V6(mut to) = self.camera {
+            for scope in addr::link_local_interfaces() {
+                to.set_scope_id(scope);
+                let _ = self.sock.send_to(d, to);
+            }
+        }
         self.stats.requests_sent += 1;
         self.last_sent = Some(now);
     }

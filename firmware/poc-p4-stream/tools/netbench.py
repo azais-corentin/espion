@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Host side of the poc-p4-stream test service (src/bench.rs). Python standard library only.
 
-Every socket is bound to the link-local address of one interface (default eth0), and the host
+Every socket is bound to the link-local address of one interface (by default the one the board
+answers a ping on: this computer's own port, or the switch or router it is on), and the host
 always sends first, so a stateful firewall lets the board's replies in.
 
   netbench.py tx --source internal|psram|camera|capture [--seconds 20] [--pgm out.pgm]
@@ -53,6 +54,23 @@ def link_local(iface):
             if name == iface and scope == "20":
                 return socket.inet_ntop(socket.AF_INET6, bytes.fromhex(addr))
     sys.exit(f"no link-local address on {iface}")
+
+
+def find_iface(board):
+    """The first interface with a link-local address on which `board` answers an ICMPv6 echo
+    (an unprivileged ping socket: net.ipv4.ping_group_range must hold the user's group)."""
+    with open("/proc/net/if_inet6") as f:
+        names = dict.fromkeys(l.split()[5] for l in f if l.split()[3] == "20")
+    for name in names:
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_ICMPV6) as s:
+                s.settimeout(0.3)
+                s.sendto(b"\x80\0\0\0\0\0\0\x01", (board, 0, 0, socket.if_nametoindex(name)))
+                s.recv(64)
+                return name
+        except OSError:
+            continue
+    sys.exit(f"{board} answers a ping on no interface; name one with --iface")
 
 
 def udp6_counters():
@@ -246,7 +264,7 @@ def cmd_vision(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("--iface", default="eth0")
+    p.add_argument("--iface", help="default: the interface the board answers a ping on")
     p.add_argument("--board", default="fe80::4553:9281")
     sub = p.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("tx")
@@ -270,6 +288,7 @@ def main():
     v.add_argument("--job", choices=JOBS, required=True)
     v.add_argument("--autoload", type=int, choices=(0, 1), default=1)
     args = p.parse_args()
+    args.iface = args.iface or find_iface(args.board)
     {"tx": cmd_tx, "rx": cmd_rx, "done": cmd_done, "vision": cmd_vision}[args.cmd](args)
 
 

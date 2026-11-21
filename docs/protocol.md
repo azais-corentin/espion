@@ -100,8 +100,11 @@ the `poc-viewer` host app; not by the tracking path above.
 ### Transport
 
 - UDP over **IPv6 link-local**, no IPv4, no DHCP. The board has the fixed address
-  `fe80::4553:9281`; the host reaches it with the interface scope (`fe80::4553:9281%eth0`) and
-  binds its own link-local address on that interface, so nothing leaves elsewhere.
+  `fe80::4553:9281`, so it is reached the same way on the host's own port and through a
+  switch or router the host is on. The host names the interface in the scope
+  (`fe80::4553:9281%eth0`); without one, `poc-viewer` asks on every interface with a
+  link-local address and keeps to the one the board answers on, so nothing leaves elsewhere
+  once it is found.
 - Board port **5009** (`CAM_PORT`). The host uses any port.
 - **The host talks first.** The board sends nothing until a valid request arrives, then sends
   responses and frames only to the address and port the last valid request came from (a

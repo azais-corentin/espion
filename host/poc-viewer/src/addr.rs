@@ -1,5 +1,5 @@
-//! Camera addresses with an interface scope (`[fe80::4553:9281%eth0]:5009`), and the local
-//! address to bind so nothing leaves through another interface.
+//! Camera addresses with an optional interface scope (`[fe80::4553:9281%eth0]:5009`), the
+//! interfaces a link-local camera without one is looked for on, and the local address to bind.
 //!
 //! Interface names and link-local addresses come from `/proc/net/if_inet6` (Linux), which any
 //! user can read.
@@ -81,33 +81,57 @@ pub fn interface_index(name: &str) -> io::Result<u32> {
         })
 }
 
-/// The local address to bind for talking to `camera`, port 0: for a link-local camera this
-/// host's link-local address on the camera's interface (with its scope), for loopback the
-/// loopback address, otherwise the unspecified address.
-pub fn local_for(camera: SocketAddr) -> io::Result<SocketAddr> {
+/// The name of interface `index`, if it has an IPv6 address.
+pub fn interface_name(index: u32) -> Option<String> {
+    if_inet6()
+        .ok()?
+        .into_iter()
+        .find(|i| i.index == index)
+        .map(|i| i.name)
+}
+
+/// The interfaces with a link-local address, by index: where a link-local camera without a
+/// scope is looked for (the board on this computer's own port, or on a switch or router this
+/// computer is plugged into).
+pub fn link_local_interfaces() -> Vec<u32> {
+    let mut v: Vec<u32> = if_inet6()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| i.scope == SCOPE_LINK)
+        .map(|i| i.index)
+        .collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// `camera` is link-local without an interface scope: the interface is found by asking on
+/// each ([`link_local_interfaces`]).
+pub fn unscoped(camera: SocketAddr) -> bool {
+    matches!(camera, SocketAddr::V6(a) if a.ip().is_unicast_link_local() && a.scope_id() == 0)
+}
+
+/// `a` as `[ip%name]:port` for a scoped address whose interface is known, as usual otherwise.
+pub fn show(a: SocketAddr) -> String {
+    match a {
+        SocketAddr::V6(v6) if v6.scope_id() != 0 => match interface_name(v6.scope_id()) {
+            Some(name) => format!("[{}%{name}]:{}", v6.ip(), v6.port()),
+            None => a.to_string(),
+        },
+        _ => a.to_string(),
+    }
+}
+
+/// The local address to bind for talking to `camera`, port 0: loopback for a loopback camera,
+/// otherwise the unspecified address of its family. Datagrams to a link-local camera name
+/// their interface in the destination's scope, so they leave through that interface only, with
+/// its link-local address as the source.
+pub fn local_for(camera: SocketAddr) -> SocketAddr {
     match camera {
-        SocketAddr::V4(a) if a.ip().is_loopback() => Ok((Ipv4Addr::LOCALHOST, 0).into()),
-        SocketAddr::V4(_) => Ok((Ipv4Addr::UNSPECIFIED, 0).into()),
-        SocketAddr::V6(a) if a.ip().is_loopback() => Ok((Ipv6Addr::LOCALHOST, 0).into()),
-        SocketAddr::V6(a) if a.ip().is_unicast_link_local() => {
-            if a.scope_id() == 0 {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("link-local {camera} needs an interface scope (%eth0)"),
-                ));
-            }
-            let own = if_inet6()?
-                .into_iter()
-                .find(|i| i.index == a.scope_id() && i.scope == SCOPE_LINK)
-                .ok_or_else(|| {
-                    io::Error::new(
-                        ErrorKind::NotFound,
-                        format!("no link-local address on interface {}", a.scope_id()),
-                    )
-                })?;
-            Ok(SocketAddr::V6(SocketAddrV6::new(own.addr, 0, 0, own.index)))
-        }
-        SocketAddr::V6(_) => Ok((Ipv6Addr::UNSPECIFIED, 0).into()),
+        SocketAddr::V4(a) if a.ip().is_loopback() => (Ipv4Addr::LOCALHOST, 0).into(),
+        SocketAddr::V4(_) => (Ipv4Addr::UNSPECIFIED, 0).into(),
+        SocketAddr::V6(a) if a.ip().is_loopback() => (Ipv6Addr::LOCALHOST, 0).into(),
+        SocketAddr::V6(_) => (Ipv6Addr::UNSPECIFIED, 0).into(),
     }
 }
 
@@ -143,9 +167,16 @@ mod tests {
     #[test]
     fn loopback_binds_loopback() {
         assert_eq!(
-            local_for("[::1]:5009".parse().unwrap()).unwrap(),
+            local_for("[::1]:5009".parse().unwrap()),
             "[::1]:0".parse().unwrap()
         );
-        assert!(local_for("[fe80::1]:5009".parse().unwrap()).is_err());
+    }
+
+    #[test]
+    fn only_unscoped_link_local_is_searched() {
+        assert!(unscoped("[fe80::4553:9281]:5009".parse().unwrap()));
+        assert!(!unscoped("[fe80::4553:9281%7]:5009".parse().unwrap()));
+        assert!(!unscoped("[::1]:5009".parse().unwrap()));
+        assert!(!unscoped("[2001:db8::1]:5009".parse().unwrap()));
     }
 }
