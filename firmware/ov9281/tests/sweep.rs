@@ -136,10 +136,15 @@ fn check_mode(m: &Mode, req: u32, tol: u32) {
         assert!(regs[&a] <= 0x0F, "{ctx}: {a:#06x}");
     }
     let s = limits::scale(readout);
-    assert_eq!((r16(0x3800), r16(0x3802)), (x, y), "{ctx}");
+    // The window is read from an even row; an odd origin row is reached by skipping one more
+    // row in the ISP (an odd read-out start swaps every pair of adjacent pixels).
+    let y_read = y & !1;
+    let isp_y = if readout == Readout::Crop { 8 } else { 4 } + (y & 1) as u8;
+    assert_eq!((r16(0x3800), r16(0x3802)), (x, y_read), "{ctx}");
+    assert_eq!(regs[&0x3813], isp_y, "{ctx}");
     let (x_end, y_end) = (r16(0x3804), r16(0x3806));
     assert_eq!(x_end, x + m.width() * s + 15, "{ctx}");
-    assert_eq!(y_end, y + h * s + 15, "{ctx}");
+    assert_eq!(y_end, y_read + h * s + 15, "{ctx}");
     assert!(x_end <= 1295 && y_end <= 815, "{ctx}");
     assert_eq!((r16(0x3808), r16(0x380A)), (m.width(), h), "{ctx}");
     assert_eq!(regs[&0x4601] as u16, (m.width() / 16).max(1), "{ctx}");

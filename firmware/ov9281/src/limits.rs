@@ -32,7 +32,8 @@ pub const ACTIVE_HEIGHT: u16 = 800;
 /// the first 8 (8 output pixels unbinned, 4 binned). This is the full-frame window of the
 /// Linux `ov9282.c`, Raspberry Pi `ov9281.c` and Espressif `esp_cam_sensor` drivers; every
 /// window of the characterisation was built this way and its still found at the expected
-/// place in the full frame.
+/// place in the full frame. A crop window at an odd origin row is read from the row above,
+/// with an ISP y offset of 9 ([`origin_y_multiple`]).
 pub const WINDOW_MARGIN: u16 = 16;
 
 /// Sensor pixels per output pixel on each axis: 1 cropped, 2 binned (2x2).
@@ -100,7 +101,11 @@ pub const ORIGIN_X_MULTIPLE: u16 = 8;
 
 /// The window's y origin (sensor pixels) must be a multiple of this: 1 cropped (y is exact:
 /// asked 1, 5, 37, 161, 501 -> found the same row), 2 binned (an odd y is floored to the even
-/// row: asked 1 and 3 -> found 0 and 2 sensor rows).
+/// row: asked 1 and 3 -> found 0 and 2 sensor rows). Measured 2026-11-21: a window **read**
+/// from an odd row comes out with every pair of adjacent pixels swapped (crop y 101, 241, 275,
+/// in RAW8, RAW10 and JPEG; even rows clean), so a crop window at an odd y is read from the
+/// even row above and the ISP skips one more row (0x3813 = 9): crop y 273..=277 then give
+/// clean pictures, each one row below the one before.
 pub const fn origin_y_multiple(readout: Readout) -> u16 {
     match readout {
         Readout::Crop => 1,

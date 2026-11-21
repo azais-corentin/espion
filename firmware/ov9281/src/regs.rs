@@ -82,6 +82,8 @@ enum Var {
     Hi(Field),
     /// Low byte of a field.
     Lo(Field),
+    /// ISP y offset (0x3813), [`Mode::isp_y_offset`].
+    IspYOffset,
     /// One value for the crop readout, another for the binned one.
     ByReadout { crop: u8, binned: u8 },
 }
@@ -248,13 +250,7 @@ const SEQUENCE: [Step; 120] = [
         },
     ), // ISP x offset, output pixels
     Reg(0x3812, 0x00),
-    V(
-        0x3813,
-        ByReadout {
-            crop: 0x08,
-            binned: 0x04,
-        },
-    ), // ISP y offset
+    V(0x3813, Var::IspYOffset), // ISP y offset
     V(
         0x3814,
         ByReadout {
@@ -321,8 +317,28 @@ const SEQUENCE: [Step; 120] = [
 ];
 
 impl Mode {
+    /// First array row read: the origin's row, floored to even. A window read from an odd
+    /// row comes out with every pair of adjacent pixels swapped (measured: crop at y 101, 241
+    /// and 275, every encoding), so an odd origin row is reached by reading from the row above
+    /// and skipping one more row in the ISP ([`Self::isp_y_offset`]). Binned origins are even.
+    const fn read_start_row(&self) -> u16 {
+        self.origin().1 & !1
+    }
+
+    /// ISP y offset (0x3813): rows of the read-out window skipped before the output, 8 cropped
+    /// (4 binned, in output rows), plus the row [`Self::read_start_row`] added for an odd
+    /// origin row.
+    const fn isp_y_offset(&self) -> u8 {
+        let base = match self.readout() {
+            Readout::Crop => 0x08,
+            Readout::Binned => 0x04,
+        };
+        base + (self.origin().1 & 1) as u8
+    }
+
     const fn field(&self, f: Field) -> u16 {
-        let (x, y) = self.origin();
+        let x = self.origin().0;
+        let y = self.read_start_row();
         let s = limits::scale(self.readout());
         match f {
             Hts => self.hts(),
@@ -354,6 +370,7 @@ impl Mode {
             }
             Hi(f) => (self.field(f) >> 8) as u8,
             Lo(f) => self.field(f) as u8,
+            Var::IspYOffset => self.isp_y_offset(),
             ByReadout { crop, binned } => match self.readout() {
                 Readout::Crop => crop,
                 Readout::Binned => binned,

@@ -106,7 +106,7 @@ unbinned window, "binned" the 2x2 binned readout. HTS 728 and PSV off unless sta
 | Width | RAW8 multiple of 8, 120..1280 (binned ..640); RAW10 multiple of 64 (receiver) | RAW8 x8, RAW10 x64; 128..=1280 crop, 128..=640 binned |
 | Height | 1..800 (binned 1..400), RAW10 even (receiver); minimum VTS measured from 2 | 2..=800 crop, 2..=400 binned; RAW10 even |
 | Origin x | the sensor truncates it to a multiple of 8 | multiple of 8, else `Window` |
-| Origin y | crop exact; binned floored to even | crop any; binned even, else `Window` |
+| Origin y | crop exact; binned floored to even; a window read from an odd row swaps every pair of adjacent pixels | crop any (an odd y read from the row above, ISP y offset 9); binned even, else `Window` |
 | Window | must lie inside 1280x800 (binned 2w x 2h); outside it the sensor still streams | `Window` |
 | VFIFO 0x4601 | good `low..=w/8`, `low` = 1, or `ceil(w/40) - 4` in RAW8 at 80 MHz | `max(1, w/16)` |
 | Exposure | VTS - 13 still right; above VTS black frames | at most VTS - 25 lines |
