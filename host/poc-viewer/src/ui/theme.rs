@@ -85,15 +85,18 @@ pub const WAIT: Hue = Hue {
     text: MUTED,
 };
 
-/// The hue of a stage.
+/// The hue of a stage. The markers' send and draw are the image's (the same link, the same
+/// window); their detect is detection's lime ([`MARKER`]), the measure a paler lime.
 pub const fn hue(stage: Stage) -> Hue {
     let (fill, line, text) = match stage {
         Stage::Exposure => (0x5f4a12, 0xd9a826, 0xf5d98a),
         Stage::Readout => (0x0e5346, 0x35b597, 0x8fe6cf),
         Stage::Encode => (0x3b358f, 0x7f77ea, 0xc4c0ff),
-        Stage::Send => (0x73301a, 0xe0764a, 0xffb695),
+        Stage::Send | Stage::MarkerSend => (0x73301a, 0xe0764a, 0xffb695),
         Stage::Decode => (0x1c4a73, 0x4a9fe0, 0xaed6fb),
-        Stage::Draw => (0x6a274d, 0xd0609c, 0xf4aed3),
+        Stage::Draw | Stage::MarkerDraw => (0x6a274d, 0xd0609c, 0xf4aed3),
+        Stage::Detect => (0x3a4d10, 0xa8e23a, 0xd8f6a2),
+        Stage::Measure => (0x2c3a0c, 0xc6ec7a, 0xe8f9c8),
     };
     Hue {
         fill: rgb(fill),

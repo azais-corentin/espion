@@ -77,6 +77,9 @@ struct StripRun {
     progress: Instant,
     /// Bytes per frame.
     frame_bytes: usize,
+    /// Rows of a full strip, and the hold a strip is allowed on core 1 (µs).
+    strip_lines: u16,
+    hold_budget_us: u16,
 }
 
 struct Capture {
@@ -283,13 +286,16 @@ impl Capture {
                 .borrow(cs)
                 .set(strips.map_or((0, 0, 0), |(p, _)| (p.lines, p.count, strip_us(p.lines))));
         });
-        if let Some((_, id)) = strips {
+        if let Some((plan, id)) = strips {
+            let budget = camera::hold_budget_cycles(&self.mode, plan, self.mhz) / self.mhz;
             self.strips = Some(StripRun {
                 id,
                 base,
                 last_frame: None,
                 progress: Instant::now(),
                 frame_bytes: camera::csi_config(&self.mode).frame_bytes(),
+                strip_lines: plan.lines,
+                hold_budget_us: u16::try_from(budget).unwrap_or(u16::MAX),
             });
             self.pushed = None;
             self.push_detect();
@@ -444,6 +450,8 @@ impl Capture {
                     lost,
                     width,
                     height,
+                    strip_lines: run.strip_lines,
+                    hold_budget_us: run.hold_budget_us,
                 },
                 now,
             );

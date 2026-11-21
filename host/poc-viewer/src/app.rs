@@ -21,7 +21,7 @@ use poc_viewer::{
     fake::{self, FakeCamera},
     net::{BlobFrame, Client, Command, RETRY_INTERVAL, Stats},
     stream::{AUTO_QUALITY_CEILING, StreamEdit},
-    timing::{HostFrame, Sensor, Stage, Timing},
+    timing::{HostFrame, OverlayFrame, Sensor, Stage, Timing},
 };
 
 use crate::{
@@ -58,7 +58,7 @@ const RAIL_WIDTH: f32 = 340.0;
 /// Width of the counters drawer, points.
 const DRAWER_WIDTH: f32 = 330.0;
 /// Height of the staircase when the timing strip is expanded, points.
-const STAIRCASE_HEIGHT: f32 = 300.0;
+const STAIRCASE_HEIGHT: f32 = 400.0;
 
 /// Rates over the last second, and their last minute.
 struct Meter {
@@ -200,6 +200,11 @@ pub struct App {
     /// The frame shown last, until its upload is known: its serial and its times so far
     /// (`drawn` not yet).
     drawing: Option<(u64, HostFrame)>,
+    /// The blob frame drawn first in the last pass, until the renderer's hand-off is known:
+    /// its `seq` and its times so far (`drawn` not yet).
+    overlay_drawing: Option<(u64, OverlayFrame)>,
+    /// The newest blob frame whose first draw went to the pipeline timing (its `seq`).
+    overlay_timed: u64,
     /// The board's generation the pipeline's samples are of.
     generation: u32,
     diagram: Diagram,
@@ -236,6 +241,14 @@ const UNAVAILABLE: &str = "Not available in this mode: the board detects on stri
 /// The board detects in its mode (`DetectState::available`); true until it says.
 fn detection_available(s: &Stats) -> bool {
     s.state.is_none_or(|st| st.detect.available)
+}
+
+/// The board detects: detection on, available in the running mode, no fault.
+fn detecting(s: &Stats) -> bool {
+    s.state.is_some_and(|st| {
+        let d = st.detect;
+        d.settings.enabled && d.available && !d.fault
+    })
 }
 
 impl App {
@@ -305,6 +318,8 @@ impl App {
             selftest: setup.selftest.map(|cfg| SelfTest::new(cfg, now)),
             pipeline: Timing::new(now),
             drawing: None,
+            overlay_drawing: None,
+            overlay_timed: 0,
             generation: 0,
             diagram: Diagram::default(),
             latency_history: History::default(),
@@ -347,12 +362,16 @@ impl App {
         }
     }
 
-    /// Takes the blob frames that arrived since the last pass, drops those older than the
-    /// trail and the statistics window need, and makes the trail.
-    fn take_blobs(&mut self) {
+    /// Takes the blob frames that arrived since the last pass (those of the frame layout timed
+    /// go to the pipeline timing), drops those older than the trail and the statistics window
+    /// need, and makes the trail.
+    fn take_blobs(&mut self, now: Instant) {
         let mut buf = std::mem::take(&mut self.blob_buf);
         self.client.blob_frames_since(self.markers.seq(), &mut buf);
         for f in buf.drain(..) {
+            if f.generation == self.generation {
+                self.pipeline.blobs(now, &f);
+            }
             self.markers.push(f);
         }
         self.blob_buf = buf;
@@ -393,16 +412,46 @@ impl App {
         }
     }
 
-    /// Hands the frame shown in an earlier pass to the pipeline timing, now that its upload
-    /// ended. Before the next frame is taken, which starts a new record.
+    /// Hands the frame and the blob frame drawn first in an earlier pass to the pipeline
+    /// timing, now that their upload and hand-off ended. Before the next ones are taken, which
+    /// start new records.
     fn drawn(&mut self, now: Instant) {
-        let uploaded = self.timing.lock().unwrap_or_else(|e| e.into_inner()).last;
+        let (uploaded, overlay) = {
+            let t = self.timing.lock().unwrap_or_else(|e| e.into_inner());
+            (t.last, t.overlay)
+        };
         if let Some((serial, f)) = self.drawing
             && let Some((done, drawn)) = uploaded
             && done == serial
         {
             self.pipeline.host(now, HostFrame { drawn, ..f });
             self.drawing = None;
+        }
+        if let Some((seq, f)) = self.overlay_drawing
+            && let Some((done, drawn)) = overlay
+            && done == seq
+        {
+            self.pipeline.overlay(now, OverlayFrame { drawn, ..f });
+            self.overlay_timed = seq;
+            self.overlay_drawing = None;
+        }
+    }
+
+    /// Notes the blob frame this pass draws, started at `now`, when it is drawn for the first
+    /// time.
+    fn drawing_overlay(&mut self, blobs: Option<(u64, Instant)>, now: Instant) {
+        if let Some((seq, arrived)) = blobs
+            && seq > self.overlay_timed
+            && self.overlay_drawing.is_none_or(|(s, _)| s != seq)
+        {
+            self.overlay_drawing = Some((
+                seq,
+                OverlayFrame {
+                    arrived,
+                    taken: now,
+                    drawn: now,
+                },
+            ));
         }
     }
 
@@ -418,10 +467,13 @@ impl App {
         if let Some(b) = s.board_frame {
             self.pipeline.board(now, b);
         }
+        if let Some(st) = s.state {
+            self.pipeline.frames_cut(now, st.detect.frames_cut);
+        }
         if self.pipeline.update(now, s.state.as_ref().map(Sensor::of))
-            && let Some(snap) = self.pipeline.snapshot()
+            && let Some(ms) = self.pipeline.snapshot().and_then(|snap| snap.markers_us)
         {
-            self.latency_history.push(snap.total_us / 1e3);
+            self.latency_history.push(ms / 1e3);
         }
         if self.diagram.update(self.pipeline.snapshot(), now) {
             ctx.request_repaint();
@@ -472,18 +524,14 @@ impl App {
                 &m.detected_history,
                 MARKER,
             );
+            // The markers' latency: to the blobs arriving here.
             let latency = self
                 .diagram
                 .snapshot()
-                .map_or("-".to_owned(), |snap| format!("{:.1}", snap.total_us / 1e3));
-            figure(
-                ui,
-                "Latency",
-                &latency,
-                "ms",
-                &self.latency_history,
-                NEUTRAL,
-            );
+                .and_then(|snap| snap.markers_us)
+                .filter(|_| detecting(s))
+                .map_or("–".to_owned(), |us| format!("{:.1}", us / 1e3));
+            figure(ui, "Latency", &latency, "ms", &self.latency_history, MARKER);
             widgets::from_right(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = GAP;
                 if chip(ui, "Counters", self.drawer).clicked() {
@@ -1256,6 +1304,7 @@ impl App {
                 width: st.camera.width,
                 height: st.camera.height,
             };
+            let drawn = overlay.blobs.map(|b| (b.seq, b.arrived));
             picture::show(
                 ui,
                 &mut self.view,
@@ -1264,6 +1313,7 @@ impl App {
                 &overlay,
                 &self.timing,
             );
+            self.drawing_overlay(drawn, now);
         } else if let Some(shown) = self.shown.clone() {
             let f = &shown.frame;
             let blobs = self.markers.of_frame(f.generation, f.number);
@@ -1285,6 +1335,7 @@ impl App {
                 trail,
                 colour: MARKER.line,
             };
+            let drawn = overlay.blobs.map(|b| (b.seq, b.arrived));
             picture::show(
                 ui,
                 &mut self.view,
@@ -1293,6 +1344,7 @@ impl App {
                 &overlay,
                 &self.timing,
             );
+            self.drawing_overlay(drawn, now);
         } else {
             picture::empty(
                 ui,
@@ -1713,7 +1765,7 @@ impl eframe::App for App {
                 self.edit.gain_sixteenths = st.camera.gain_sixteenths;
             }
         }
-        self.take_blobs();
+        self.take_blobs(now);
         self.meter.update(now, &stats, &dstats, self.presented);
         self.time_pipeline(ui.ctx(), now, &stats);
 

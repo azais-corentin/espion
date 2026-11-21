@@ -6,7 +6,7 @@ protocol version and updates this page and its changelog in the same commit.
 > **Status.** The tracking messages (`0x01`..`0x11`) are a draft, not implemented. Settled:
 > header, versioning (exact match), boards identified by their Ethernet MAC, Q11.5 blob
 > coordinates; their other fields may still change. The [camera stream](#camera-stream)
-> (`0x20`..`0x23`) is implemented (version 5).
+> (`0x20`..`0x23`) is implemented (version 6).
 
 ## Transport (tracking)
 
@@ -220,7 +220,8 @@ the `poc-viewer` host app; not by the tracking path above.
 | background_median, background_sigma | `u8`, `u8` | The last detected frame's background sample: its median and its 84th percentile minus the median, 8-bit units |
 | detect_us_mean, detect_us_max | `u32`, `u32` | Detect time of the frames detected since the previous state was made, µs (0 when none) |
 | frames_detected | `u32` | Frames detected since boot. Wraps |
-| frames_skipped | `u32` | Captured frames the detector could not take because it was busy (detection on). Wraps |
+| frames_skipped | `u32` | Captured frames the detector could not take because it was busy (detection on), and the frames in `frames_cut`. Wraps |
+| frames_cut | `u32` | Frames whose detection stopped part-way because the detector fell behind the strips (a strip would have been held past `hold_budget_us`, or was written over): the rest was copied, not detected, no blobs sent. Wraps |
 | blobs_dropped | `u32` | Items the detector lost: runs and components beyond its capacity (a blob that lost some comes out split, shrunk or not at all), blobs beyond its capacity or `FRAME_BLOBS_MAX`. Wraps |
 | blobs_filtered | `u32` | Blobs found but dropped by the area filter. Wraps |
 | fault | `bool` | The detector stopped after a fault (the board: its core trapped or stopped beating); nothing is detected until the board restarts |
@@ -347,6 +348,7 @@ detected frame.
 | width, height | `u16`, `u16` | Frame size |
 | threshold | `u16` | Threshold the frame was detected with |
 | detect_us | `u32` | Time the detector took for the frame, µs |
+| timing | `DetectTiming` | Where the frame's detection spent its time on the board (below) |
 | flags | `u8` | Bit 0 (`OVERFLOW`): blobs were lost (the detector's capacity or `FRAME_BLOBS_MAX`). Bit 1 (`AUTO_THRESHOLD`): the threshold was chosen automatically |
 | blobs | `[u8]` | The blobs, 17 bytes each (`BLOB_BYTES`), in the detector's order (postcard: length, then the bytes) |
 
@@ -357,11 +359,35 @@ measured on the frame around it, so the threshold does not bias it (below, "Posi
 `x` and `y` the spot's centre in 1/256 pixel (`SUBPIXEL`), pixel centres at integer
 coordinates; `width` its standard deviation in 1/256 pixel; `flux` the sum of its pixels
 above the local background, in the format's units. This is not the tracking draft's `Blob`
-(Q11.5 in `u16`), which is too coarse for this precision. At most **82 blobs**
+(Q11.5 in `u16`), which is too coarse for this precision. At most **80 blobs**
 (`FRAME_BLOBS_MAX`): header 4 bytes plus the largest varints of frame (5), generation (5),
-timestamp (10), format (1), width (3), height (3), threshold (3), detect time (5), flags (1)
-and the blob bytes' length (2) is 42 bytes (`FRAME_BLOBS_OVERHEAD_MAX`), and 42 + 82 × 17 =
-1436 ≤ 1452. A receiver rejects blob bytes that are not whole blobs or more than that.
+timestamp (10), format (1), width (3), height (3), threshold (3), detect time (5), the timing
+(four `u32` of 5, nine `u16` of 3: 47), flags (1) and the blob bytes' length (2) is 89 bytes
+(`FRAME_BLOBS_OVERHEAD_MAX`), and 89 + 80 × 17 = 1449 ≤ 1452. A receiver rejects blob bytes
+that are not whole blobs or more than that.
+
+`DetectTiming`: µs relative to the frame's `timestamp_us` (on the board, the end of the last
+strip's DMA block, as near as the board bounds it). The board detects each strip of rows while
+the sensor reads out the next, so detection starts before that time. The `u16` fields
+saturate.
+
+| Field | Type | Meaning |
+|---|---|---|
+| strips_lead_us | `u32` | From the detector's start on the frame's first strip to the capture time |
+| strips_end_us | `u32` | The last strip released (detected and copied into the frame buffer), after the capture time |
+| published_us | `u32` | The frame's result handed to the board's network side, after the frame was closed and its blobs measured |
+| queued_us | `u32` | This datagram queued for sending; it goes after any answer and before the next frame chunk |
+| measure_us | `u16` | Processor time of the frame's end between `strips_end_us` and `published_us` (the frame buffer's cache invalidate, the measure of its blobs); the rest of that span is the next frame's strips, which go first |
+| strips, strip_lines | `u16`, `u16` | Strips of the frame, rows of a full strip (the last one is shorter) |
+| late_strips | `u16` | Strips held longer than one strip period |
+| start_max_us | `u16` | Longest wait from a strip's block end to the detector's start on it |
+| detect_max_us | `u16` | Longest detector time on one strip |
+| copy_wait_max_us | `u16` | Longest wait for a strip's copy after the detector |
+| hold_max_us | `u16` | Longest hold of a strip, from its block end to its release |
+| hold_budget_us | `u16` | The hold a strip is allowed; past it the detector stops for the rest of the frame (`frames_cut`) |
+
+The fake camera, which detects whole frames, sends one strip of the frame's height: lead 0,
+`strips_end_us` its detect time.
 
 #### Detection
 
@@ -416,3 +442,4 @@ and the blob bytes' length (2) is 42 bytes (`FRAME_BLOBS_OVERHEAD_MAX`), and 42 
 | 3 | Camera stream: encoding `Jpeg` (one baseline greyscale JPEG file per frame, variable `frame_len` up to `JPEG_FRAME_MAX`, RAW8 modes with both sides multiples of 8); `StreamSettings` gains `jpeg_quality` and `auto_quality`; `State` gains `encoder: EncoderState`; `CamError` gains `Jpeg` and `Quality`; start-up default `Jpeg` at quality 90 with automatic quality. Everything else of version 2 stays |
 | 4 | Camera stream: `State` gains `timing: Option<FrameTiming>` (the last frame sent whole: its number, the span of its JPEG encode and the span of its send, µs after its `timestamp_us`). The chunks and everything else of version 3 stay |
 | 5 | Camera stream: blob detection on the board. New kind `0x23` FrameBlobs (one frame's blobs, at most 82: centre in 1/256 pixel, width and flux measured on the frame without the threshold's bias, area and peak from the threshold); `Op::SetDetect(DetectSettings)`; `State` gains `detect: DetectState`; `CameraSettings` gains `auto_exposure`; `CamError` gains `Threshold` and `Area`; `Error::BlobsLayout`. Start-up defaults: automatic exposure, detection on with the automatic threshold and area filter. Everything else of version 4 stays |
+| 6 | Camera stream: `FrameBlobs` gains `timing: DetectTiming` (the frame's detection on the board: the strips' start and end, the result's publication, the datagram's queueing, the measure's processor time, and the longest per-strip start wait, detect, copy wait and hold against the hold allowed), so at most 80 blobs; `DetectState` gains `frames_cut`. Everything else of version 5 stays |

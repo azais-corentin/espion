@@ -9,7 +9,7 @@ driver and embassy-net. Not part of the product.
 The `Stream` service (the default) streams the camera as greyscale JPEG from the P4's hardware
 encoder (`esp32p4-jpeg`), or raw, while core 1, started bare (`espion-core1`), takes each frame
 strip by strip: it copies the strips into a frame buffer for the stream and finds the IR
-markers on them, and the board sends their blobs (`FrameBlobs`, protocol version 5;
+markers on them, and the board sends their blobs (`FrameBlobs`, protocol version 6;
 [Detection on core 1](#detection-on-core-1)); the `Bench` service (the network test it was
 built on) stays selectable.
 
@@ -255,7 +255,7 @@ and without `accounting` alike.
 ## The camera stream
 
 `src/stream/`: the protocol of `espion_proto::cam` (`docs/protocol.md`, "Camera stream",
-version 5) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
+version 6) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
 the reference) does, with the real sensor, and the blob detector on core 1
 ([Detection](#detection-on-core-1)).
 
@@ -357,7 +357,8 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
   strip's age passes the budget less its longest step (the larger of one worst-case row,
   width x 144 cycles, and one skip over the strip, 1 cycle a byte). Stopped short, detection
   stops for the rest of that frame. The frame is still copied and sent; its result is `cut`,
-  and core 0 counts it in `detect.frames_skipped` and in the log's `cut`.
+  and core 0 counts it in `detect.frames_cut`, in `detect.frames_skipped` and in the log's
+  `cut`.
 - **Laps.** A strip whose copy ended while it was still intact keeps its frame if the DMA
   laps it later: only the rest of that frame's detection is dropped (`cut`). A lap before the
   copy ended loses the frame. The log's `lapped N (after the copy M)` counts both kinds.
@@ -385,8 +386,17 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
   time mean and maximum since the last state); and, while a host polls, the `FrameBlobs`
   datagram with the refined centre, width and flux and the thresholded area and peak of each
   blob kept (blobs beyond 201, or lost by the detector, set the overflow flag and count in
-  `blobs_dropped`). The send task sends it after the answers and before the next chunk of a
-  frame.
+  `blobs_dropped`), and the frame's `DetectTiming` (below). The send task sends it after the
+  answers and before the next chunk of a frame.
+- **`FrameBlobs::timing`** (`DetectTiming`, µs from core 1's cycles at the CPU clock, relative
+  to the frame's `timestamp_us`: core 0's time when it took the result, less `age` of the last
+  strip's bound, so the last strip's block end as near as core 1 bounds it): from core 1's start
+  on the first strip to that bound (`FrameResult::lead`); the last strip's hold
+  (`last_hold`); the publication (`ready`); the datagram queued (core 0's clock just before it
+  is built); the frame end's processor time (`refine_cycles`: invalidate and every blob's
+  measure); the strips, late strips, rows of a full strip; the frame's longest start
+  latency, detector call, copy wait and hold; and the run's hold budget
+  (`StreamRun::budget_cycles`). The `u16` ones saturate.
 - **Mode changes and stops.** The serial is bumped, so results of earlier frames are not
   used. Stopping the strip receiver asks core 1 to drop what it holds (`abort_stream`: the
   frame being assembled and the one being measured, with their buffers, once the copy in

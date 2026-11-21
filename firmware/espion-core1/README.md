@@ -67,7 +67,7 @@ Everything reachable from core 1's entry (`runner::entry`, run by esp-hal's
 | `log_summary`, `log_check_second2`, `report_trap`, `report_dead` | core 0 | The strip path's counters at the end of a run (and the check's verdict); a trap or a stalled core 1 |
 | `health(&mut last_heartbeat) -> Health` | core 0, about once a second | Core 1's trap record, then whether its heartbeat moved since the last call; a trap or a stall is logged (`Alive`, `Trapped`, `Stalled`) |
 | `heartbeat`, `abandoned`, `copy_counts`, `trap`, `skip_used`, `CHECK`, `CHECK_MAX`, `HOLD_TIMES` | core 0 | Core 1's counters; `copy_counts`: stream frames not copied (no free buffer) and failed copies |
-| `FrameResult`, `Core1::pop_with`, `Core1::dropped` | core 0 | One frame's blobs (up to `MAX_BLOBS` = 256), detector counters, cycles and instructions, late strips and latencies, threshold and format; for the stream job also the run number, the frame buffer handed over (`NO_BUFFER` if not copied), `detected`, `cut`, the serial, the background (`Option<Background>`), each kept blob's refined measure (`spots`, `spot_blob`), the refine cycles, and per strip the hold, the detector's time and the wait for the copy; read in place |
+| `FrameResult`, `Core1::pop_with`, `Core1::dropped` | core 0 | One frame's blobs (up to `MAX_BLOBS` = 256), detector counters, cycles and instructions, late strips and latencies, threshold and format; for the stream job also the run number, the frame buffer handed over (`NO_BUFFER` if not copied), `detected`, `cut`, the serial, the background (`Option<Background>`), each kept blob's refined measure (`spots`, `spot_blob`), the refine cycles (the frame end's invalidate and every blob's measure, over all its loop turns), per strip the hold, the detector's time and the wait for the copy, the lead (core 1's start on the first strip to the last strip's bound, 0 if later) and the last strip's hold; read in place |
 | `row_sum` | both | The row checksum the check compares; core 0 computes the reference with it |
 | `spsc` | both | Single-producer single-consumer queue on two atomic indices, overwrite-never (a full queue counts a drop), items filled and read in place (`push_with`, `pop_with`); a slot can be reserved, filled over several steps and published later (`reserve`, `reserved`, `commit`) or given up (`cancel`) |
 | `markers::Marker::new(name, pin, core, channel)` | core 0, feature `markers` | Routes dedicated-IO channel `channel` of `core` (either core) to `pin` through the GPIO matrix (`OutputSignal::CPU_GPIO_n`, core 0's channels are signals 214 to 221, core 1's 222 to 229), with the pad's input path and its pull-down on. The driving core enables the channel itself (core 1: its entry, for `MARKER_STRIP` and `MARKER_FRAME`) |
@@ -172,3 +172,9 @@ script of 2026-11-11 is `/tmp/p4perf-logs/TwoCore/walk.py`, not in the repositor
   `MARKER_FRAME` in 1 s at 1280x800 RAW8 120 fps, none merged (`eth-core1-on2.log`); detect
   mean 754 us with and without the feature (max 763 and 756 us). Figures in the binaries'
   READMEs, "Marker pins".
+- `FrameResult::lead` and `last_hold` (2026-11-21, `/tmp/p4perf-logs/DetectTiming/`): the
+  walk of `poc-p4-stream`'s release build (`stream-new.walk`; `stream-markers-new.walk` with
+  feature `markers`) against the build before the change (`stream-base.walk`,
+  `stream-markers-base.walk`): 37 reachable functions each, no banned reference, no indirect
+  call, the same functions, data references, CSR accesses and ROM calls; 72 and 73 panic call
+  sites, one fewer than before in both. Not run on the board.

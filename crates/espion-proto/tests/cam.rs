@@ -5,11 +5,12 @@ use espion_proto::{
     cam::{
         AUTO_EXPOSURE_HIGH, AUTO_EXPOSURE_LOW, AUTO_MIN_AREA, AUTO_QUALITY_MIN,
         AUTO_QUALITY_ROOM_PCT, BLOB_BYTES, Blob, CHUNK_MAX, CamError, CameraSettings, Counters,
-        DetectSettings, DetectState, EncoderState, Encoding, Exposure, FRAME_BLOBS_MAX, Format,
-        FrameBlobs, FrameChunk, FrameTiming, GAIN_MAX, GAIN_MIN, JPEG_ALIGN, JPEG_FRAME_MAX,
-        JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM, Message, ModeInfo, Op,
-        Origin, Readout, Reply, Request, Response, Span, State, StreamSettings, TestPattern,
-        auto_exposure, auto_exposure_cap, auto_quality, chunk_count, ijg_scale, pack_blobs,
+        DetectSettings, DetectState, DetectTiming, EncoderState, Encoding, Exposure,
+        FRAME_BLOBS_MAX, Format, FrameBlobs, FrameChunk, FrameTiming, GAIN_MAX, GAIN_MIN,
+        JPEG_ALIGN, JPEG_FRAME_MAX, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM,
+        Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response, Span, State,
+        StreamSettings, TestPattern, auto_exposure, auto_exposure_cap, auto_quality, chunk_count,
+        ijg_scale, pack_blobs,
     },
     kind,
 };
@@ -115,6 +116,7 @@ fn state(max: bool) -> State {
             detect_us_max: m(u32::MAX),
             frames_detected: m(u32::MAX),
             frames_skipped: m(u32::MAX),
+            frames_cut: m(u32::MAX),
             blobs_dropped: m(u32::MAX),
             blobs_filtered: m(u32::MAX),
             fault: max,
@@ -861,6 +863,21 @@ fn frame_blobs(blobs: &[u8]) -> FrameBlobs<'_> {
         height: u16::MAX,
         threshold: u16::MAX,
         detect_us: u32::MAX,
+        timing: DetectTiming {
+            strips_lead_us: u32::MAX,
+            strips_end_us: u32::MAX,
+            published_us: u32::MAX,
+            queued_us: u32::MAX,
+            measure_us: u16::MAX,
+            strips: u16::MAX,
+            strip_lines: u16::MAX,
+            late_strips: u16::MAX,
+            start_max_us: u16::MAX,
+            detect_max_us: u16::MAX,
+            copy_wait_max_us: u16::MAX,
+            hold_max_us: u16::MAX,
+            hold_budget_us: u16::MAX,
+        },
         flags: u8::MAX,
         blobs,
     }
@@ -886,7 +903,7 @@ fn blobs_round_trip_and_the_most_fit_a_datagram() {
     let packed = vec![0xFFu8; FRAME_BLOBS_MAX * BLOB_BYTES];
     let len = frame_blobs(&packed).encode(&mut buf).unwrap().len();
     assert!(len + BLOB_BYTES > MAX_DATAGRAM, "{len}");
-    assert_eq!(FRAME_BLOBS_MAX, 82);
+    assert_eq!(FRAME_BLOBS_MAX, 80);
 }
 
 #[test]

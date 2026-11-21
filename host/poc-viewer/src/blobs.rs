@@ -199,6 +199,7 @@ mod tests {
             height: 400,
             threshold: 100,
             detect_us: 500,
+            timing: Default::default(),
             flags: 0,
             blobs: blobs
                 .iter()

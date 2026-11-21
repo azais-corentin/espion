@@ -32,9 +32,9 @@ use std::{
 };
 
 use espion_proto::cam::{
-    Blob, CamError, CameraSettings, DetectSettings, Encoding, Format, FrameBlobs, FrameChunk,
-    FrameTiming, MAX_DATAGRAM, Message, Op, Reply, Request, Response, State, StreamSettings,
-    chunk_count,
+    Blob, CamError, CameraSettings, DetectSettings, DetectTiming, Encoding, Format, FrameBlobs,
+    FrameChunk, FrameTiming, MAX_DATAGRAM, Message, Op, Reply, Request, Response, State,
+    StreamSettings, chunk_count,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -144,6 +144,8 @@ pub struct BlobFrame {
     pub threshold: u16,
     /// The board's detect time, µs.
     pub detect_us: u32,
+    /// Where the frame's detection spent its time on the board.
+    pub timing: DetectTiming,
     /// [`FrameBlobs::OVERFLOW`], [`FrameBlobs::AUTO_THRESHOLD`].
     pub flags: u8,
     /// The blobs, in the detector's order.
@@ -608,6 +610,7 @@ impl Worker {
             height: b.height,
             threshold: b.threshold,
             detect_us: b.detect_us,
+            timing: b.timing,
             flags: b.flags,
             blobs,
             arrived: Instant::now(),

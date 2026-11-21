@@ -250,6 +250,7 @@ static SHARED: Mutex<RefCell<Shared>> = Mutex::new(RefCell::new(Shared {
         detect_us_max: 0,
         frames_detected: 0,
         frames_skipped: 0,
+        frames_cut: 0,
         blobs_dropped: 0,
         blobs_filtered: 0,
         fault: false,

@@ -199,6 +199,14 @@ pub struct FrameResult {
     pub start_latency: u32,
     /// From the last strip's `queued_at_cycles` to the publication of this result.
     pub ready: u32,
+    /// [`Job::Stream`]: from core 1's start on the frame's first strip (its `mcycle` before
+    /// the strip's copy and detector call, detection on or off) to the last strip's
+    /// `queued_at_cycles` ([`strip_bound`]), in cycles; 0 if that start came after it, and for
+    /// the other jobs.
+    pub lead: u32,
+    /// [`Job::Stream`]: the last strip's hold, from its `queued_at_cycles` to its release, in
+    /// cycles (0 for the other jobs).
+    pub last_hold: u32,
     /// The last strip's `queued_at_cycles` (core 1's `mcycle`, see [`age`]).
     pub queued_at: u32,
     /// Core 1's `mcycle` at the publication (see [`Core1::clock_offset`]).
@@ -216,7 +224,10 @@ pub struct FrameResult {
     pub spot_count: u16,
     pub spots: [Spot; MAX_SPOTS],
     pub spot_blob: [u8; MAX_SPOTS],
-    /// [`Job::Stream`]: core-1 cycles of the refined measure (the frame's invalidate included).
+    /// [`Job::Stream`]: core-1 cycles of the frame's end work after its last strip's release
+    /// and before the publication: the frame buffer's invalidate and every loop turn's refined
+    /// measure ([`refine_step`]) of this frame (0 when not copied). The detector's `finish` and
+    /// the background are in `cycles`.
     pub refine_cycles: u32,
     /// [`Job::Stream`]: per strip, cycles from the reader's take to the release (total and
     /// longest), of the detector (longest), and spent waiting for the copy after the detector
@@ -250,6 +261,8 @@ impl FrameResult {
         worst_latency: 0,
         start_latency: 0,
         ready: 0,
+        lead: 0,
+        last_hold: 0,
         queued_at: 0,
         pushed_at: 0,
         threshold: 0,
@@ -1105,6 +1118,10 @@ struct Asm {
     instructions: u32,
     worst: u32,
     start: u32,
+    /// `mcycle` at the detector's start on the frame's first strip (row 0).
+    first_start: u32,
+    /// The hold of the frame's last strip, from its bound to its release.
+    last_hold: u32,
     hold_total: u32,
     detect_max: u32,
     copy_wait_total: u32,
@@ -1333,6 +1350,8 @@ fn on_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
         r.buffer = NO_BUFFER;
         r.detected = true;
         r.queued_at = queued_at;
+        r.lead = 0;
+        r.last_hold = 0;
         r.background = None;
         r.spot_count = 0;
     });
@@ -1444,6 +1463,8 @@ fn stream_begin(st: &mut Core1State<'_>, frame: u32) {
         instructions: 0,
         worst: 0,
         start: 0,
+        first_start: 0,
+        last_hold: 0,
         hold_total: 0,
         detect_max: 0,
         copy_wait_total: 0,
@@ -1476,6 +1497,9 @@ fn stream_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
     };
     let t0 = CpuSample::now();
     a.start = a.start.max(t0.cycles.wrapping_sub(queued_at));
+    if s.first_row() == 0 {
+        a.first_start = t0.cycles;
+    }
     // The copy first: the DMA reads the strip while the detector does.
     let mut copying = false;
     if a.buffer != NO_BUFFER
@@ -1594,6 +1618,7 @@ fn stream_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
         return;
     }
     if last {
+        a.last_hold = hold;
         stream_end(st, queued_at);
     }
 }
@@ -1696,6 +1721,9 @@ fn stream_end(st: &mut Core1State<'_>, queued_at: u32) {
     r.worst_latency = a.worst;
     r.start_latency = a.start;
     r.queued_at = queued_at;
+    let lead = queued_at.wrapping_sub(a.first_start);
+    r.lead = if (lead as i32) < 0 { 0 } else { lead };
+    r.last_hold = a.last_hold;
     r.threshold = a.threshold;
     r.raw10 = format >> 31 != 0;
     r.background = background;

@@ -223,7 +223,7 @@ fn pipeline_report(s: Option<&Snapshot>) -> String {
         .map(|p| {
             format!(
                 "{} {:.2} ms at {:.2}{}",
-                p.stage.name(),
+                p.stage.label(),
                 ms(p.len_us),
                 ms(p.start_us),
                 if p.measured {
@@ -235,18 +235,30 @@ fn pipeline_report(s: Option<&Snapshot>) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ");
+    let end = |us: Option<f32>, to: &str| {
+        us.map_or("-".to_owned(), |us| {
+            format!("{:.2} ms {to}", ms(us)).trim_end().to_owned()
+        })
+    };
     format!(
-        "pipeline: {:.2} ms from the start of the exposure{}, period {:.2} ms, {} board and {} \
-         presented frames in the window\npipeline steps: {steps}",
-        ms(s.total_us),
-        if s.complete {
-            " to the GPU"
-        } else {
-            " (partial)"
-        },
+        "pipeline: from the start of the exposure, image {}, markers {} (drawn {}), period \
+         {:.2} ms, {} board, {} presented, {} blob and {} drawn blob frames in the window\n\
+         pipeline steps: {steps}",
+        end(
+            s.image_us,
+            if s.image_complete {
+                "to the GPU"
+            } else {
+                "(partial)"
+            }
+        ),
+        end(s.markers_us, "to here"),
+        end(s.markers_drawn_us, ""),
         ms(s.period_us),
         s.board_frames,
         s.host_frames,
+        s.blob_frames,
+        s.overlay_frames,
     )
 }
 

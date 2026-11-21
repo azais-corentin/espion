@@ -7,9 +7,9 @@ use std::{
 };
 
 use espion_proto::cam::{
-    Blob, CHUNK_MAX, CamError, CameraSettings, Counters, DetectSettings, DetectState, EncoderState,
-    Encoding, Format, FrameBlobs, FrameChunk, FrameTiming, JpegRefusal, MAX_DATAGRAM, Message,
-    ModeInfo, Op, Origin, Readout, Reply, Request, Response, Span, State, StreamSettings,
+    Blob, CHUNK_MAX, CamError, CameraSettings, Counters, DetectSettings, DetectState, DetectTiming,
+    EncoderState, Encoding, Format, FrameBlobs, FrameChunk, FrameTiming, JpegRefusal, MAX_DATAGRAM,
+    Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response, Span, State, StreamSettings,
     TestPattern, pack_blobs,
 };
 
@@ -114,6 +114,7 @@ fn encode_and_decode_allocate_nothing() {
             detect_us_max: 4_600,
             frames_detected: 1_000,
             frames_skipped: 3,
+            frames_cut: 1,
             blobs_dropped: 0,
             blobs_filtered: 12,
             fault: false,
@@ -166,6 +167,21 @@ fn encode_and_decode_allocate_nothing() {
             height: 800,
             threshold: 300,
             detect_us: 4_100,
+            timing: DetectTiming {
+                strips_lead_us: 6_300,
+                strips_end_us: 180,
+                published_us: 420,
+                queued_us: 900,
+                measure_us: 160,
+                strips: 13,
+                strip_lines: 64,
+                late_strips: 0,
+                start_max_us: 15,
+                detect_max_us: 330,
+                copy_wait_max_us: 4,
+                hold_max_us: 360,
+                hold_budget_us: 900,
+            },
             flags: FrameBlobs::AUTO_THRESHOLD,
             blobs: &packed[..blob_bytes],
         }),

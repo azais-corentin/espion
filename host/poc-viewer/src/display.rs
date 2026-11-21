@@ -96,6 +96,48 @@ pub struct UploadTiming {
     pub max: Duration,
     /// The last frame uploaded ([`Shown::serial`]) and when its upload ended.
     pub last: Option<(u64, Instant)>,
+    /// The last blob frame drawn over the picture (its `seq`) and when the renderer prepared
+    /// the pass that drew it ([`OverlayStamp`]).
+    pub overlay: Option<(u64, Instant)>,
+}
+
+/// Stamps [`UploadTiming::overlay`] when the renderer prepares the pass that drew a blob
+/// frame's markers: the overlay's counterpart of the texture upload's end. Paints nothing.
+pub struct OverlayStamp {
+    /// The blob frame drawn.
+    pub seq: u64,
+    pub timing: Arc<Mutex<UploadTiming>>,
+}
+
+impl OverlayStamp {
+    /// The paint callback, over `rect` (points).
+    pub fn paint(self, rect: egui::Rect) -> egui::PaintCallback {
+        egui_wgpu::Callback::new_paint_callback(rect, self)
+    }
+}
+
+impl egui_wgpu::CallbackTrait for OverlayStamp {
+    fn prepare(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _screen: &egui_wgpu::ScreenDescriptor,
+        _encoder: &mut wgpu::CommandEncoder,
+        _resources: &mut egui_wgpu::CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        if let Ok(mut timing) = self.timing.lock() {
+            timing.overlay = Some((self.seq, Instant::now()));
+        }
+        Vec::new()
+    }
+
+    fn paint(
+        &self,
+        _info: egui::PaintCallbackInfo,
+        _pass: &mut wgpu::RenderPass<'static>,
+        _resources: &egui_wgpu::CallbackResources,
+    ) {
+    }
 }
 
 /// The GPU objects, kept in the renderer's callback resources.

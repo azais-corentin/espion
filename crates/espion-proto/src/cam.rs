@@ -655,8 +655,15 @@ pub struct DetectState {
     /// Frames detected since boot. Wraps at `u32::MAX`.
     pub frames_detected: u32,
     /// Captured frames the detector could not take since boot because it was still busy
-    /// (detection on). Wraps at `u32::MAX`.
+    /// (detection on), and the frames counted in [`DetectState::frames_cut`]. Wraps at
+    /// `u32::MAX`.
     pub frames_skipped: u32,
+    /// Frames whose detection was stopped part-way since boot because the detector fell
+    /// behind the strips (a strip would have been held past
+    /// [`DetectTiming::hold_budget_us`], or was written over): the rest of the frame was copied
+    /// but not detected, and no blobs were sent. Also counted in `frames_skipped`. Wraps at
+    /// `u32::MAX`.
+    pub frames_cut: u32,
     /// Items the detector lost since boot: runs and components beyond its capacity (a blob
     /// that lost some comes out split, shrunk or not at all), blobs beyond its capacity or
     /// beyond [`FRAME_BLOBS_MAX`]. Wraps at `u32::MAX`.
@@ -986,9 +993,10 @@ pub const BLOB_BYTES: usize = 17;
 
 /// Bytes of a [`FrameBlobs`] datagram besides its blobs, at the largest value of every field:
 /// header, then the postcard varints of frame (5), generation (5), timestamp (10), format
-/// (1), width (3), height (3), threshold (3), detect time (5), flags (1) and the blob bytes'
-/// length (2).
-pub const FRAME_BLOBS_OVERHEAD_MAX: usize = HEADER_LEN + 5 + 5 + 10 + 1 + 3 + 3 + 3 + 5 + 1 + 2;
+/// (1), width (3), height (3), threshold (3), detect time (5), the timing ([`DetectTiming`]:
+/// four `u32` of 5 and nine `u16` of 3), flags (1) and the blob bytes' length (2).
+pub const FRAME_BLOBS_OVERHEAD_MAX: usize =
+    HEADER_LEN + 5 + 5 + 10 + 1 + 3 + 3 + 3 + 5 + (4 * 5 + 9 * 3) + 1 + 2;
 
 /// Most blobs one [`FrameBlobs`] datagram carries; a frame with more sends these and sets
 /// [`FrameBlobs::OVERFLOW`].
@@ -1075,6 +1083,49 @@ pub fn pack_blobs(blobs: impl IntoIterator<Item = Blob>, out: &mut [u8]) -> (usi
     (n * BLOB_BYTES, true)
 }
 
+/// Where one frame's detection spent its time on the board ([`FrameBlobs::timing`]), relative
+/// to the frame's capture time ([`FrameBlobs::timestamp_us`]: on the board, the end of the
+/// last strip's DMA block, as near as the board bounds it). The board detects each strip of
+/// rows while the sensor reads out the next, so detection starts before the capture time; then
+/// it closes the frame and measures its blobs on the assembled frame.
+///
+/// The `u16` fields saturate at `u16::MAX`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct DetectTiming {
+    /// From the detector's start on the frame's first strip to the capture time, µs.
+    pub strips_lead_us: u32,
+    /// The last strip released (detected and copied into the frame buffer), µs after the
+    /// capture time.
+    pub strips_end_us: u32,
+    /// The frame's result handed to the board's network side, after the frame was closed and
+    /// its blobs measured, µs after the capture time.
+    pub published_us: u32,
+    /// This datagram queued for sending, µs after the capture time. The board sends it after
+    /// any answer and before the next frame chunk.
+    pub queued_us: u32,
+    /// Processor time of the frame's end between `strips_end_us` and `published_us` (the frame
+    /// buffer's cache invalidate and the measure of its blobs), µs. The rest of that span is
+    /// the next frame's strips, which go first.
+    pub measure_us: u16,
+    /// Strips of the frame, and rows of a full strip (the last strip is shorter).
+    pub strips: u16,
+    pub strip_lines: u16,
+    /// Strips held longer than one strip period.
+    pub late_strips: u16,
+    /// Over the frame's strips, the longest wait from a strip's block end to the detector's
+    /// start on it, µs.
+    pub start_max_us: u16,
+    /// The longest detector time on one strip, µs.
+    pub detect_max_us: u16,
+    /// The longest wait for a strip's copy after the detector ended, µs.
+    pub copy_wait_max_us: u16,
+    /// The longest hold of a strip, from its block end to its release, µs.
+    pub hold_max_us: u16,
+    /// The hold a strip is allowed before the detector stops for the rest of the frame
+    /// ([`DetectState::frames_cut`]), µs.
+    pub hold_budget_us: u16,
+}
+
 /// Board to host (`0x23`): the blobs the detector found in one frame, after the area filter.
 ///
 /// Sent for every frame detected while a host polls, whether frames are sent or not; it
@@ -1098,6 +1149,8 @@ pub struct FrameBlobs<'a> {
     pub threshold: u16,
     /// Time the detector took for the frame, µs.
     pub detect_us: u32,
+    /// Where the frame's detection spent its time on the board.
+    pub timing: DetectTiming,
     /// [`FrameBlobs::OVERFLOW`], [`FrameBlobs::AUTO_THRESHOLD`].
     pub flags: u8,
     /// The blobs, [`BLOB_BYTES`] each ([`pack_blobs`]; read with [`FrameBlobs::blobs`]), at

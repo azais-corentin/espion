@@ -1275,6 +1275,39 @@ fn blobs_flow_with_frames_off() {
     );
 }
 
+/// Each blob frame says where its detection went, in order and on the board's clock: the
+/// strips' end, the result's publication, the datagram queued, all before a later state.
+#[test]
+fn blob_frames_carry_their_detection_s_timing() {
+    let (_fake, client) = start(FakeConfig {
+        camera: lit(binned_640(Format::Raw8, 250)),
+        stream: StreamSettings {
+            enabled: false,
+            ..stream_in(Encoding::Raw8)
+        },
+        ..FakeConfig::default()
+    });
+    let a = apply(&client, Command::GetState, |_| true);
+    let frames = blob_frames_after(&client, &a, 20);
+    let z = apply(&client, Command::GetState, |s| {
+        s.uptime_us > frames.last().unwrap().timestamp_us + 100_000
+    });
+    for f in &frames {
+        let t = f.timing;
+        assert!(
+            t.strips_end_us <= t.published_us && t.published_us <= t.queued_us,
+            "{t:?}"
+        );
+        assert!(t.strips >= 1 && t.strip_lines >= 1, "{t:?}");
+        assert!(u32::from(t.strips) * u32::from(t.strip_lines) >= u32::from(f.height));
+        assert!(t.hold_budget_us > 0, "{t:?}");
+        assert!(
+            f.timestamp_us + u64::from(t.queued_us) < z.uptime_us,
+            "{t:?}"
+        );
+    }
+}
+
 #[test]
 fn detection_off_sends_no_blobs() {
     let (_fake, client) = start(FakeConfig {

@@ -1,7 +1,7 @@
 # poc-viewer
 
 Live view and control of the OV9281 camera of the ESP32-P4-ETH proof of concept, over the
-camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 5). The
+camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 6). The
 board runs `firmware/poc-p4-stream` with its `Stream` service; the viewer shows its frames as
 they arrive and sends every camera setting the `ov9281` driver knows (format, size, crop or 2x2
 binning, origin, frame rate and tolerance, exposure or automatic exposure, gain, test pattern),
@@ -146,8 +146,9 @@ the dev shell and is the decoder the header check already uses.
 ## The window
 
 Dark neutral greys around the picture; colour means a pipeline stage (exposure amber, readout
-teal, encode indigo, send rust, decode blue, draw rose, detection lime), the same in the timing
-diagrams, on the settings that act on that stage and on its counters. The markers drawn over
+teal, encode indigo, send rust, decode blue, draw rose, detection lime, the markers' measure a
+paler lime), the same in the timing diagrams, on the settings that act on that stage and on its
+counters. The markers drawn over
 the picture are detection's lime: a yellow-green no other stage uses and far from the grey
 picture, so a cross shows on any frame. Red is for faults and refusals only. Type is IBM Plex
 Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open Font License
@@ -155,8 +156,9 @@ Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open
 
 - **Status bar** (top): the link (Connected, or Disconnected after 1.5 s without an answer)
   and the camera's address; frames per second received whole and presented, Mbit/s of UDP
-  payload, frames per second **Detected** (blob frames received) and the latency from the
-  pipeline timing, each with its last minute as a line; the number of faults when there are any
+  payload, frames per second **Detected** (blob frames received) and the **Latency** of the
+  markers from the pipeline timing (the start of the exposure to the blobs here; "–" while the
+  board does not detect), each with its last minute as a line; the number of faults when there are any
   (frames dropped for a missing chunk and decode failures since the viewer started, the
   board's capture and encoder errors since it booted, a detector fault); "Waiting for an
   answer" while a request is unanswered;
@@ -221,33 +223,49 @@ Every control has its own accessible name (an option of a choice is `name: optio
 
 ## Pipeline timing
 
-Where a frame's time goes, from the start of its exposure to its hand-off to the GPU, as the
-typical frame of the last 2 s, redrawn once a second (a new figure glides into place in
-150 ms), so it can be read while frames come at hundreds per second.
+Where a frame's time goes, from the start of its exposure to its markers arriving here and its
+picture's hand-off to the GPU, as the typical frame of the last 2 s, redrawn once a second (a
+new figure glides into place in 150 ms), so it can be read while frames come at hundreds per
+second. After the sensor a frame goes two ways, the two lanes: the **image** and the
+**markers**.
 
-| Stage | Source |
-|---|---|
-| Exposure | Computed: exposure lines x line time, right before the readout |
-| Readout | Computed: output lines x line time, ending at the frame's capture time |
-| Encode (JPEG) | The board (`State::timing`, protocol version 4 and later) |
-| Send | From the board taking the frame to its last chunk arriving here |
-| Decode (JPEG) | Here, every frame presented |
-| Draw | Here: the pass that took the picture, to the end of its texture upload |
+| Lane | Stage | Source |
+|---|---|---|
+| Sensor | Exposure | Computed: exposure lines x line time, right before the readout |
+| Sensor | Readout | Computed: output lines x line time, ending at the frame's capture time |
+| Image | Encode (JPEG) | The board (`State::timing`, protocol version 4 and later) |
+| Image | Send | From the board taking the frame to its last chunk arriving here |
+| Image | Decode (JPEG) | Here, every frame presented |
+| Image | Draw | Here: the pass that took the picture, to the end of its texture upload |
+| Markers | Detect | The board (`FrameBlobs::timing`, protocol version 6): core 1's detector on the frame's strips, from its start on the first strip, during the readout, to the release of the last |
+| Markers | Measure | The board: closing the frame and measuring its blobs on the assembled frame, to the result's hand-off to core 0 (the next frame's strips go first) |
+| Markers | Send | From the board queuing the blobs to their arrival here |
+| Markers | Draw | Here: the first pass that drew the blobs (with frames on, over their picture), to the renderer's hand-off |
 
-The board's times come with the state, 4 times a second, so they are a sample of the frames.
-The network thread joins each with the frame's arrival here, and the smallest "arrival minus
-board time" of the window places the board's clock on this PC's; what stays unknown is the
-smallest transit of one datagram, by which this PC's stages sit too early. The gaps between
-stages are waits: for the encoder, for the link, for the decoding stage (it decodes the newest
-frame once the window took the picture before), for the window's next pass. What follows the
-upload (vsync, the compositor, scan-out) is not measured. Each stage shows its median and, as a
-whisker, its slowest sample of the window; computed stages are dashed.
+The image's board times come with the state, 4 times a second, so they are a sample of the
+frames; the network thread joins each with the frame's arrival here. The markers' come with
+every blob frame. The smallest "arrival minus board time" of the window, over the frame chunks
+and the blob frames alike, places the board's clock on this PC's (with frames off, the blob
+frames alone); what stays unknown is the smallest transit of one datagram, by which this PC's
+stages sit too early. The gaps between stages are waits: for the encoder, for the link, for the
+decoding stage (it decodes the newest frame once the window took the picture before), for core
+0 (it takes core 1's results every millisecond), for the window's next pass, and with frames on
+for the markers' picture. What follows the upload or the hand-off (vsync, the compositor,
+scan-out) is not measured. Each stage shows its median and, as a whisker, its slowest sample of
+the window; computed stages are dashed.
 
-- **Ribbon**: the typical frame as one bar with the latency on the right, and the frames that
-  start meanwhile (one per sensor period) under it.
-- **Staircase**: one row per stage, three consecutive frames a period apart, so the overlap of
-  the stages of successive frames shows; frame 1's latency under the axis. The axis grows at once
-  when the frames no longer fit and shrinks only with a tenth to spare.
+- **Ribbon**: one row per lane on one time axis, each with its latency on the right: the image
+  row (the sensor's stages, then the picture's) to the GPU, the markers row to the blobs here
+  and when they were drawn. With frames off the sensor's stages get a row of their own; a lane
+  without samples is left out. Under the rows, the frames that start meanwhile (one per sensor
+  period).
+- **Staircase**: one row per stage, grouped by lane, three consecutive frames a period apart,
+  so the overlap of the stages of successive frames shows; ticks on frame 1's readout where its
+  strips end. Under the axis, frame 1's latencies, and core 1's figures of the window: strips
+  and their length, the longest wait from a strip's block to the detector, the longest detect,
+  copy wait and hold of a strip against the hold allowed, the measure's processor time, late
+  strips and frames cut. The axis grows at once when the frames no longer fit and shrinks only
+  with a tenth to spare.
 
 Measured 2026-11-11 on this desktop (as below, 119.88 Hz, vsync on) against the board,
 `--selftest 8`, exposure 200 lines; ms, median of the last 2 s, stages in order with the
@@ -262,6 +280,21 @@ waits between them folded into the next start:
 In the JPEG runs about 8 ms of the latency is the decoded picture waiting for the window's next
 pass: the decoding stage decodes the newest frame as soon as the window took the previous
 picture, so a picture is shown one display refresh after it is ready.
+
+Measured 2026-11-21 on the headless compositor (software rendering, so the draw and the waits
+for it say nothing about the desktop) against the board, crop 1280x800 RAW8 at 120.049 Hz,
+automatic exposure (19 lines), one IR marker; ms after the start of the exposure, from the
+diagram's summary:
+
+| Stream | Detect | Measure | Markers here | Image to GPU | Core 1 per strip, longest |
+|---|---|---|---|---|---|
+| JPEG q90 | 0.65 to 7.53 | to 8.19 | 8.8 | 37.3 | 17 strips of 48 lines; detect 0.21, held 0.24 of 1.53 |
+| frames off | 0.63 to 7.52 | to 8.18 | 8.8 | | detect 0.19, held 0.21 of 1.53 |
+
+The markers are here about 1.3 ms after the end of the readout (7.45 ms). Of that, 0.7 ms is the
+measure on the assembled frame, and the rest is the wait for core 0's next millisecond and the
+send. With detection on, the image's encode starts about 0.5 ms later than with it off, because
+core 0 gets the frame at the same hand-off, after the measure.
 
 ## Measured on the real camera
 
@@ -337,8 +370,10 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   automatic threshold following its rule, automatic exposure bringing the brightest peak into
   its band, and the detection refusals), the checks, the JPEG header check, the address
   parsing, the markers scene, the marker statistics and the pipeline timing (unit tests: the
-  steps chained in order, the clock offset from the fastest datagram, raw streams, the window
-  and the interval, the axis). No board needed. The throughput tests (link limit, automatic
+  image's steps chained in order, the clock offset from the fastest datagram of either kind, raw
+  streams, the markers' lane with frames off and its first draw, the cut frames of the window,
+  the window and the interval, the axis); the blob frames' timing in order and on the board's
+  clock. No board needed. The throughput tests (link limit, automatic
   quality, missing chunks, decoding only the frames taken) need a quiet machine.
 - `tests/board.rs`, against the real board, ignored by default. With the board on `eth0`
   running `poc-p4-stream` (`POC_CAMERA` overrides the address):
@@ -362,7 +397,9 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   runs only those). It prints one line per step and fails at the end with every failed check.
   `markers` (`POC_ONLY=markers`) needs one IR source in the camera's view: everything
   automatic settles within 5 s, then every frame has exactly one blob and the brightest peak is
-  in the automatic exposure's band; a manual threshold and area filter are applied; detection
+  in the automatic exposure's band; every blob frame's timing is consistent (detected on strips
+  that cover the frame, starting before the capture; strips' end, publication and queueing in
+  that order) and its medians are printed; a manual threshold and area filter are applied; detection
   off sends nothing; with frames off the blobs come at the sensor rate less the skipped frames;
   per mode the coverage (frames detected / captured) and the detect time; and it prints the
   source's jitter (sigma x, y) over 10 s.

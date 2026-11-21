@@ -414,18 +414,23 @@ fn make_strips(
             ..p.frames
         },
         late_cycles: (strip_ns * u64::from(mhz) / 1000) as u32,
-        // A strip is safe for (strips - 1) periods after the DMA wrote it (`esp32p4-csi`
-        // README, "A reader that falls behind"); seven eighths of that for the detector, the
-        // rest for the copy's end and the release.
-        budget_cycles: (u64::from(plan.count.saturating_sub(1)) * strip_ns * 7 / 8 * u64::from(mhz)
-            / 1000)
-            .min(u64::from(u32::MAX)) as u32,
+        budget_cycles: hold_budget_cycles(mode, plan, mhz),
         autoload: p.autoload,
         run: p.run,
     });
     p.plan = Some(plan);
     control.start().map_err(|e| StartError::Strips(Some(e)))?;
     Ok(control)
+}
+
+/// The hold a strip of `plan` is allowed on core 1 ([`StreamRun::budget_cycles`]), in cycles
+/// at `mhz`: a strip is safe for (strips - 1) periods after the DMA wrote it (`esp32p4-csi`
+/// README, "A reader that falls behind"); seven eighths of that for the detector, the rest for
+/// the copy's end and the release.
+pub fn hold_budget_cycles(mode: &Mode, plan: StripPlan, mhz: u32) -> u32 {
+    let strip_ns = u64::from(plan.lines) * u64::from(mode.line_ns());
+    (u64::from(plan.count.saturating_sub(1)) * strip_ns * 7 / 8 * u64::from(mhz) / 1000)
+        .min(u64::from(u32::MAX)) as u32
 }
 
 #[inline(never)]

@@ -1,4 +1,4 @@
-//! Blob detection in the stream (protocol version 5, `docs/protocol.md`, "Detection"): the
+//! Blob detection in the stream (protocol version 6, `docs/protocol.md`, "Detection"): the
 //! blob detector of `espion-vision` on a bare core 1 (`espion-core1`'s stream job) over the
 //! strips of each frame, and core 0's side of it.
 //!
@@ -47,7 +47,8 @@ use espion_core1::{
     self as core1, Core1, FrameResult, Health, MAX_BLOBS, NO_BUFFER, SkipChoice, StreamDetect,
 };
 use espion_proto::cam::{
-    self, AUTO_EXPOSURE_PERIOD_MS, BLOB_BYTES, FRAME_BLOBS_MAX, Format, FrameBlobs, MAX_DATAGRAM,
+    self, AUTO_EXPOSURE_PERIOD_MS, BLOB_BYTES, DetectTiming, FRAME_BLOBS_MAX, Format, FrameBlobs,
+    MAX_DATAGRAM,
 };
 use espion_vision::{Blob, DefaultDetector, auto};
 use log::{error, info, warn};
@@ -188,6 +189,40 @@ pub(super) struct Meta {
     pub lost: u32,
     pub width: u16,
     pub height: u16,
+    /// The running strip plan's rows of a full strip, and the run's hold budget (µs,
+    /// `DetectTiming`).
+    pub strip_lines: u16,
+    pub hold_budget_us: u16,
+}
+
+/// `cycles` of core 1 in µs at `mhz`, saturating at `u16::MAX`.
+fn us16(cycles: u32, mhz: u32) -> u16 {
+    u16::try_from(cycles / mhz).unwrap_or(u16::MAX)
+}
+
+/// Where the detection of result `r` spent its time, relative to the frame's capture time
+/// (`m.timestamp_us`); `queued_us` is now, just before its datagram is built and queued.
+/// Out of line: inlined, it takes [`Work::result`]'s frame past the stack-size threshold.
+#[inline(never)]
+fn timing(r: &FrameResult, m: &Meta, mhz: u32) -> DetectTiming {
+    DetectTiming {
+        strips_lead_us: r.lead / mhz,
+        strips_end_us: r.last_hold / mhz,
+        published_us: r.ready / mhz,
+        queued_us: Instant::now()
+            .as_micros()
+            .saturating_sub(m.timestamp_us)
+            .min(u64::from(u32::MAX)) as u32,
+        measure_us: us16(r.refine_cycles, mhz),
+        strips: r.strips,
+        strip_lines: m.strip_lines,
+        late_strips: r.late_strips,
+        start_max_us: us16(r.start_latency, mhz),
+        detect_max_us: us16(r.detect_max, mhz),
+        copy_wait_max_us: us16(r.copy_wait_max, mhz),
+        hold_max_us: us16(r.hold_max, mhz),
+        hold_budget_us: m.hold_budget_us,
+    }
 }
 
 /// The result side of detection (the capture task owns it).
@@ -307,7 +342,11 @@ impl Work {
             if r.cut && on {
                 // Core 1 fell behind the strips on this frame and copied it without
                 // detecting the rest: not detected.
-                shared(|s| s.detect.frames_skipped = s.detect.frames_skipped.wrapping_add(1));
+                shared(|s| {
+                    let d = &mut s.detect;
+                    d.frames_skipped = d.frames_skipped.wrapping_add(1);
+                    d.frames_cut = d.frames_cut.wrapping_add(1);
+                });
                 second(|s| s.cut += 1);
             }
             return;
@@ -424,6 +463,7 @@ impl Work {
             height: m.height,
             threshold: r.threshold,
             detect_us,
+            timing: timing(r, m, self.mhz),
             flags,
             blobs: &self.pack[..bytes],
         };

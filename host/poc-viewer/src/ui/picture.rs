@@ -16,7 +16,7 @@ use poc_viewer::{
 };
 
 use super::theme::{self, BODY, LINE, MUTED, RADIUS_SMALL, SMALL, TEXT, WELL};
-use crate::display::{ImageCallback, Mask, Shown, UploadTiming};
+use crate::display::{ImageCallback, Mask, OverlayStamp, Shown, UploadTiming};
 
 /// Most screen points per image pixel.
 const SCALE_MAX: f32 = 64.0;
@@ -182,6 +182,15 @@ pub fn show(
     // pixel centres on integers.
     let at = |x: f64, y: f64| rect.min + vec2(x as f32 + 0.5, y as f32 + 0.5) * scale;
     paint_overlay(ui, &painter, area, overlay, at, scale);
+    if let Some(b) = overlay.blobs {
+        painter.add(
+            OverlayStamp {
+                seq: b.seq,
+                timing: timing.clone(),
+            }
+            .paint(area),
+        );
+    }
 
     // The pixel under the pointer.
     let Content::Frame(shown, _) = content else {

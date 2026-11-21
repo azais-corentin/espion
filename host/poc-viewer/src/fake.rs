@@ -45,10 +45,10 @@ use std::{
 
 use espion_proto::cam::{
     AUTO_EXPOSURE_PERIOD_MS, AUTO_QUALITY_PERIOD_MS, BLOB_BYTES, Blob, CHUNK_MAX, CamError,
-    CameraSettings, Counters, DetectSettings, DetectState, EncoderState, Encoding, Exposure,
-    Format, FrameBlobs, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM, Message, Op,
-    Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings, TestPattern,
-    auto_exposure, auto_exposure_cap, auto_quality, pack_blobs,
+    CameraSettings, Counters, DetectSettings, DetectState, DetectTiming, EncoderState, Encoding,
+    Exposure, Format, FrameBlobs, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM, Message,
+    Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings,
+    TestPattern, auto_exposure, auto_exposure_cap, auto_quality, pack_blobs,
 };
 use espion_vision::{
     DefaultDetector,
@@ -239,6 +239,11 @@ fn us_between(from: Instant, to: Instant) -> u32 {
         .min(u128::from(u32::MAX)) as u32
 }
 
+/// `us` as a `u16`, saturated.
+fn sat16(us: u32) -> u16 {
+    us.min(u32::from(u16::MAX)) as u16
+}
+
 /// A JPEG frame ready for the link.
 struct Encoded {
     frame: u32,
@@ -325,6 +330,10 @@ struct DetectJob {
     generation: u32,
     camera: CameraSettings,
     timestamp_us: u64,
+    /// When the frame was captured ([`DetectJob::timestamp_us`] on this clock).
+    captured: Instant,
+    /// The frame period, µs: the hold the detector has before the next frame is skipped.
+    period_us: u32,
     /// Threshold to detect with, in the sensor format's units.
     threshold: u16,
     /// The threshold was chosen automatically.
@@ -344,6 +353,10 @@ struct Detected {
     /// The frame's background sample.
     background: Option<Background>,
     detect_us: u32,
+    /// The detector's start and end on the frame, and the end of the measure.
+    started: Instant,
+    found: Instant,
+    measured: Instant,
 }
 
 /// The frame handed to the detector, whether it is busy (a frame handed and not yet done),
@@ -407,6 +420,7 @@ fn detector_thread(slot: &DetectSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
             detector.process_frame(&raw, c.width, t8, &mut found)
         };
         let lost = detector.stats().overflow;
+        let found_at = Instant::now();
         hist.clear();
         if raw10 {
             auto::sample_raw10(&raw, c.width, 0, &mut hist);
@@ -430,13 +444,17 @@ fn detector_thread(slot: &DetectSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
                 peak: b.peak,
             }
         }));
-        let detect_us = us_between(t, Instant::now());
+        let measured = Instant::now();
+        let detect_us = us_between(t, measured);
         let event = Event::Detected(Detected {
             job,
             blobs,
             lost,
             background,
             detect_us,
+            started: t,
+            found: found_at,
+            measured,
         });
         if tx.send(event).is_err() {
             return;
@@ -586,6 +604,7 @@ impl Engine {
                 detect_us_max: 0,
                 frames_detected: 0,
                 frames_skipped: 0,
+                frames_cut: 0,
                 blobs_dropped: 0,
                 blobs_filtered: 0,
                 fault: false,
@@ -684,6 +703,9 @@ impl Engine {
             lost,
             background,
             detect_us,
+            started,
+            found,
+            measured,
         } = d;
         if job.epoch != self.detect_epoch {
             self.detect_slot.lock().pool.push(blobs);
@@ -741,6 +763,22 @@ impl Engine {
             height: c.height,
             threshold: job.threshold,
             detect_us,
+            // The whole frame as one strip, detected after the capture.
+            timing: DetectTiming {
+                strips_lead_us: 0,
+                strips_end_us: us_between(job.captured, found),
+                published_us: us_between(job.captured, measured),
+                queued_us: us_between(job.captured, now),
+                measure_us: sat16(us_between(found, measured)),
+                strips: 1,
+                strip_lines: c.height,
+                late_strips: 0,
+                start_max_us: sat16(us_between(job.captured, started)),
+                detect_max_us: sat16(us_between(started, found)),
+                copy_wait_max_us: 0,
+                hold_max_us: sat16(us_between(job.captured, found)),
+                hold_budget_us: sat16(job.period_us),
+            },
             flags,
             blobs: sent,
         }
@@ -893,6 +931,8 @@ impl Engine {
                 generation: self.generation,
                 camera: self.camera,
                 timestamp_us,
+                captured: at,
+                period_us: self.period.as_micros().min(u128::from(u32::MAX)) as u32,
                 threshold: self.detect.threshold,
                 auto: self.detect.settings.auto_threshold,
                 epoch: self.detect_epoch,

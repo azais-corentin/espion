@@ -1346,6 +1346,46 @@ fn markers(b: &mut Board) {
     b.check(exposure_settled(&st, &peaks), || {
         format!("markers: brightest peaks {peaks:?} out of the band")
     });
+    // Every blob frame times its detection: on the strips during the readout, then the
+    // measure, the publication and the datagram queued, in that order.
+    let med = |f: fn(&BlobFrame) -> u32| {
+        let mut v: Vec<u32> = w.iter().map(f).collect();
+        v.sort_unstable();
+        v.get(v.len() / 2).copied().unwrap_or(0)
+    };
+    println!(
+        "  detection timing, medians: lead {} us, strips end {} us, published {} us, queued {} \
+         us, measure {} us; {} strips of {} lines, hold max {} of {} us",
+        med(|f| f.timing.strips_lead_us),
+        med(|f| f.timing.strips_end_us),
+        med(|f| f.timing.published_us),
+        med(|f| f.timing.queued_us),
+        med(|f| u32::from(f.timing.measure_us)),
+        med(|f| u32::from(f.timing.strips)),
+        med(|f| u32::from(f.timing.strip_lines)),
+        med(|f| u32::from(f.timing.hold_max_us)),
+        med(|f| u32::from(f.timing.hold_budget_us)),
+    );
+    let bad: Vec<_> = w
+        .iter()
+        .map(|f| (f.height, f.timing))
+        .filter(|(h, t)| {
+            !(t.strips > 1
+                && u32::from(t.strips) * u32::from(t.strip_lines) >= u32::from(*h)
+                && t.strips_lead_us > 0
+                && t.strips_end_us <= t.published_us
+                && t.published_us <= t.queued_us
+                && t.hold_budget_us > 0)
+        })
+        .collect();
+    b.check(bad.is_empty(), || {
+        format!(
+            "markers: {} of {} blob frames with an inconsistent timing, first {:?}",
+            bad.len(),
+            w.len(),
+            bad.first()
+        )
+    });
     let source = w.last().and_then(|f| f.blobs.first().copied());
 
     // A manual threshold and area filter, echoed and applied.
