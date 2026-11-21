@@ -264,6 +264,9 @@ struct Second {
     detect_strip_max: u32,
     copy_wait_total: u64,
     copy_wait_max: u32,
+    /// Frames the live JPEG encode got whole, and the longest feed after a strip (cycles).
+    fed: u32,
+    feed_max: u32,
 }
 
 impl Second {
@@ -291,6 +294,8 @@ impl Second {
         detect_strip_max: 0,
         copy_wait_total: 0,
         copy_wait_max: 0,
+        fed: 0,
+        feed_max: 0,
     };
 }
 
@@ -320,6 +325,8 @@ impl Work {
             s.detect_strip_max = s.detect_strip_max.max(r.detect_max);
             s.copy_wait_total += u64::from(r.copy_wait_total);
             s.copy_wait_max = s.copy_wait_max.max(r.copy_wait_max);
+            s.fed += u32::from(r.jpeg);
+            s.feed_max = s.feed_max.max(r.feed_max);
         });
     }
 
@@ -630,7 +637,7 @@ fn log_second(a: &Second, before: &Marks, now: &Marks, mhz: u32) {
 fn log_strips(a: &Second, before: &Marks, now: &Marks, plan: (u16, u8, u32), mhz: u32) {
     let strips = u64::from(a.strips.max(1));
     info!(
-        "strips: {} rows x {} in the ring (one every {} us), frames {} copied {} not copied {}, copy errors {}, lapped {} (after the copy {}), dropped results {}, per strip hold mean {} max {} us (budget {} us), detect max {} us, copy wait mean {} max {} us",
+        "strips: {} rows x {} in the ring (one every {} us), frames {} copied {} not copied {}, copy errors {}, lapped {} (after the copy {}), dropped results {}, per strip hold mean {} max {} us (budget {} us), detect max {} us, copy wait mean {} max {} us, jpeg fed {} feed max {} us",
         plan.0,
         plan.1,
         plan.2,
@@ -647,6 +654,8 @@ fn log_strips(a: &Second, before: &Marks, now: &Marks, plan: (u16, u8, u32), mhz
         a.detect_strip_max / mhz,
         a.copy_wait_total / strips / u64::from(mhz),
         a.copy_wait_max / mhz,
+        a.fed,
+        a.feed_max / mhz,
     );
 }
 

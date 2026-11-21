@@ -74,6 +74,23 @@ impl Pool {
             inner: Inner::Pool { index, data },
         })
     }
+
+    /// The bytes of frame buffer `index` (`len` of them), which the live JPEG encode holds
+    /// (`espion_core1::release_encoder` not called yet): read-only, for the encode task.
+    pub fn held(&self, index: u8, len: usize) -> Option<&'static [u8]> {
+        if usize::from(index) >= POOL_BUFFERS || len > camera::BUFFER_LEN {
+            return None;
+        }
+        // SAFETY: core 1 claims a buffer only from its free set, which a held buffer is out of
+        // until the hold ends; core 1's copies into it ended before the encode did, and
+        // nobody writes it while it is held.
+        Some(unsafe {
+            core::slice::from_raw_parts(
+                (self.base + usize::from(index) * camera::BUFFER_LEN) as *const u8,
+                len,
+            )
+        })
+    }
 }
 
 /// One captured frame; derefs to its bytes. Dropping it gives the buffer back.

@@ -157,6 +157,9 @@ pub struct Step {
     pub len_us: f32,
     /// The longest sample of the window, µs.
     pub slowest_us: f32,
+    /// The median part at its end that came after its input was all there, µs (the encode's
+    /// tail after the frame's last rows; 0 for the other stages).
+    pub tail_us: f32,
     /// Measured (the board's and this PC's stages) or computed from the sensor mode.
     pub measured: bool,
 }
@@ -450,6 +453,7 @@ impl Timing {
                 start_us: 0.0,
                 len_us: sensor.exposure_us,
                 slowest_us: sensor.exposure_us,
+                tail_us: 0.0,
                 measured: false,
             },
             Step {
@@ -457,6 +461,7 @@ impl Timing {
                 start_us: sensor.exposure_us,
                 len_us: sensor.readout_us,
                 slowest_us: sensor.readout_us,
+                tail_us: 0.0,
                 measured: false,
             },
         ];
@@ -540,16 +545,26 @@ impl Timing {
         let board_us = |f: &BoardFrame, after_us: u32| f.timestamp_us as f64 + f64::from(after_us);
         let mut end = capture;
         if encoded {
-            let (gap, len): (Vec<f32>, Vec<f32>) = frames()
-                .filter_map(|f| f.timing.encode)
+            // The encode may start before the capture (fed during the readout): a negative
+            // gap, as the markers' detect has.
+            let spans: Vec<_> = frames().filter_map(|f| f.timing.encode).collect();
+            let (gap, len): (Vec<f32>, Vec<f32>) = spans
+                .iter()
                 .map(|e| {
                     (
                         e.start_us as f32,
-                        e.end_us.saturating_sub(e.start_us) as f32,
+                        (i64::from(e.end_us) - i64::from(e.start_us)).max(0) as f32,
                     )
                 })
                 .unzip();
+            let mut tail: Vec<f32> = spans
+                .iter()
+                .map(|e| e.end_us.saturating_sub(e.input_end_us) as f32)
+                .collect();
             end = push(steps, Stage::Encode, end, gap, len);
+            if let Some(st) = steps.last_mut() {
+                st.tail_us = median(&mut tail).min(st.len_us);
+            }
         }
         let (gap, len): (Vec<f32>, Vec<f32>) = frames()
             .map(|f| {
@@ -707,6 +722,7 @@ fn push(
         start_us: end + median(&mut gap),
         len_us: median(&mut len),
         slowest_us: len.iter().copied().fold(0.0, f32::max),
+        tail_us: 0.0,
         measured: true,
     };
     steps.push(step);
@@ -724,7 +740,7 @@ fn median(v: &mut [f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use espion_proto::cam::{Format, FrameTiming, Span};
+    use espion_proto::cam::{EncodeSpan, Format, FrameTiming, Span};
 
     use super::*;
 
@@ -742,9 +758,8 @@ mod tests {
         epoch + Duration::from_micros(us)
     }
 
-    /// A JPEG frame captured at board time `ts`: encoded from 100 to 100 + `encode` µs after
-    /// it, sent from 50 µs later for `send` µs, its first chunk arriving `transit` µs after the
-    /// send's start and its last `transit` µs after the send's end.
+    /// A JPEG frame captured at board time `ts`: encoded whole from 100 to 100 + `encode` µs
+    /// after it, then as [`jpeg_span`].
     fn jpeg(
         epoch: Instant,
         frame: u32,
@@ -753,15 +768,31 @@ mod tests {
         send: u32,
         transit: u64,
     ) -> BoardFrame {
-        let start = 100 + encode + 50;
+        let whole = EncodeSpan {
+            start_us: 100,
+            input_end_us: 100,
+            end_us: 100 + encode,
+        };
+        jpeg_span(epoch, frame, ts, whole, send, transit)
+    }
+
+    /// A JPEG frame captured at board time `ts`, encoded over `encode`, sent from 50 µs after
+    /// the encode's end for `send` µs, its first chunk arriving `transit` µs after the send's
+    /// start and its last `transit` µs after the send's end.
+    fn jpeg_span(
+        epoch: Instant,
+        frame: u32,
+        ts: u64,
+        encode: EncodeSpan,
+        send: u32,
+        transit: u64,
+    ) -> BoardFrame {
+        let start = encode.end_us + 50;
         let host = |after: u32| at(epoch, CLOCK_US + ts + u64::from(after) + transit);
         BoardFrame {
             timing: FrameTiming {
                 frame,
-                encode: Some(Span {
-                    start_us: 100,
-                    end_us: 100 + encode,
-                }),
+                encode: Some(encode),
                 send: Span {
                     start_us: start,
                     end_us: start + send,
@@ -860,6 +891,8 @@ mod tests {
             near(encode.len_us, 6_200.0) && near(encode.slowest_us, 6_400.0),
             "{encode:?}"
         );
+        // Whole frames: the encode is all tail, no mark.
+        assert!(near(encode.tail_us, encode.len_us), "{encode:?}");
         let send = step(Stage::Send);
         assert!(near(send.start_us, encode.end_us() + 50.0), "{send:?}");
         assert!(near(send.len_us, 4_000.0), "{send:?}");
@@ -876,6 +909,33 @@ mod tests {
         assert!(near(s.total_us, draw.end_us()));
         assert_eq!((s.markers_us, s.core1), (None, None));
         assert_eq!((s.board_frames, s.host_frames), (3, 3));
+    }
+
+    #[test]
+    fn an_encode_fed_during_the_readout_starts_before_the_capture() {
+        let epoch = Instant::now();
+        let mut t = Timing::new(epoch);
+        for (i, end) in [450, 500, 700].into_iter().enumerate() {
+            let ts = 1_000_000 + i as u64 * 250_000;
+            let span = EncodeSpan {
+                start_us: -6_500,
+                input_end_us: 300,
+                end_us: end,
+            };
+            t.board(epoch, jpeg_span(epoch, i as u32, ts, span, 4_000, 0));
+        }
+        assert!(t.update(epoch, Some(SENSOR)));
+        let s = t.snapshot().unwrap();
+        let encode = *s.step(Stage::Encode).unwrap();
+        // The capture is at 9100 µs: the encode starts 6500 µs before it, in the readout.
+        assert!(near(encode.start_us, 2_600.0), "{encode:?}");
+        assert!(
+            near(encode.len_us, 7_000.0) && near(encode.slowest_us, 7_200.0),
+            "{encode:?}"
+        );
+        assert!(near(encode.tail_us, 200.0), "{encode:?}");
+        let send = *s.step(Stage::Send).unwrap();
+        assert!(near(send.start_us, encode.end_us() + 50.0), "{send:?}");
     }
 
     #[test]

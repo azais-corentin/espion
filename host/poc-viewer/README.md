@@ -1,7 +1,7 @@
 # poc-viewer
 
 Live view and control of the OV9281 camera of the ESP32-P4-ETH proof of concept, over the
-camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 6). The
+camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 7). The
 board runs `firmware/poc-p4-stream` with its `Stream` service; the viewer shows its frames as
 they arrive and sends every camera setting the `ov9281` driver knows (format, size, crop or 2x2
 binning, origin, frame rate and tolerance, exposure or automatic exposure, gain, test pattern),
@@ -233,7 +233,7 @@ second. After the sensor a frame goes two ways, the two lanes: the **image** and
 |---|---|---|
 | Sensor | Exposure | Computed: exposure lines x line time, right before the readout |
 | Sensor | Readout | Computed: output lines x line time, ending at the frame's capture time |
-| Image | Encode (JPEG) | The board (`State::timing`, protocol version 4 and later) |
+| Image | Encode (JPEG) | The board (`State::timing`, protocol version 7): from the encoder taking the frame's first rows to the file's end. In the board's strip modes it is fed during the readout and starts before the capture; a line in its bar marks the last rows handed to it, and what follows is the encode's tail |
 | Image | Send | From the board taking the frame to its last chunk arriving here |
 | Image | Decode (JPEG) | Here, every frame presented |
 | Image | Draw | Here: the pass that took the picture, to the end of its texture upload |

@@ -5,7 +5,7 @@ use espion_proto::{
     cam::{
         AUTO_EXPOSURE_HIGH, AUTO_EXPOSURE_LOW, AUTO_MIN_AREA, AUTO_QUALITY_MIN,
         AUTO_QUALITY_ROOM_PCT, BLOB_BYTES, Blob, CHUNK_MAX, CamError, CameraSettings, Counters,
-        DetectSettings, DetectState, DetectTiming, EncoderState, Encoding, Exposure,
+        DetectSettings, DetectState, DetectTiming, EncodeSpan, EncoderState, Encoding, Exposure,
         FRAME_BLOBS_MAX, Format, FrameBlobs, FrameChunk, FrameTiming, GAIN_MAX, GAIN_MIN,
         JPEG_ALIGN, JPEG_FRAME_MAX, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN, JpegRefusal, MAX_DATAGRAM,
         Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response, Span, State,
@@ -91,8 +91,10 @@ fn state(max: bool) -> State {
         uptime_us: if max { u64::MAX } else { 0 },
         timing: max.then_some(FrameTiming {
             frame: u32::MAX,
-            encode: Some(Span {
-                start_us: u32::MAX,
+            encode: Some(EncodeSpan {
+                // The longest i32 in zig-zag varint.
+                start_us: i32::MIN,
+                input_end_us: u32::MAX,
                 end_us: u32::MAX,
             }),
             send: Span {

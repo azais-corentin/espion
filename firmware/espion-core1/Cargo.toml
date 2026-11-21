@@ -20,6 +20,8 @@ markers = ["dep:esp32p4"]
 esp-hal = { version = "~1.2.2", features = ["esp32p4", "unstable"] }
 esp32p4-cache = { path = "../esp32p4-cache" }
 esp32p4-csi   = { path = "../esp32p4-csi" }
+# The live JPEG encode's input side (`live`): core 1 feeds the frames it copies.
+esp32p4-jpeg  = { path = "../esp32p4-jpeg" }
 esp32p4-perf  = { path = "../esp32p4-perf" }
 esp32p4-pie   = { path = "../esp32p4-pie" }
 # `pie`: the PIE dark skip; `ram`: the detector's hot functions and the PIE kernels in internal

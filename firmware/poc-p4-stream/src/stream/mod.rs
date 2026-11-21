@@ -56,9 +56,9 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 use esp_hal::peripherals::{CPU_CTRL, I2C0, VDMA_CH0, VDMA_CH1};
 use espion_proto::cam::{
-    CAM_PORT, CamError, CameraSettings, Counters, DetectSettings, DetectState, EncoderState,
-    Encoding, Exposure, Format, FrameTiming, MAX_DATAGRAM, Message, Op, Readout, Reply, Request,
-    Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings, TestPattern,
+    CAM_PORT, CamError, CameraSettings, Counters, DetectSettings, DetectState, EncodeSpan,
+    EncoderState, Encoding, Exposure, Format, FrameTiming, MAX_DATAGRAM, Message, Op, Readout,
+    Reply, Request, Response, STREAM_TIMEOUT_MS, State, StreamSettings, TestPattern,
 };
 use log::{error, info};
 use ov9281::Mode;
@@ -195,6 +195,9 @@ struct Shared {
     exposure: Exposure,
     /// The automatic exposure's cap in the running mode, lines (0: no mode running yet).
     ae_cap: u16,
+    /// The strip run going on, for the encode task's live encodes (`None`: whole frames, or
+    /// no mode running).
+    live: Option<jpeg::LiveRun>,
 }
 
 impl Shared {
@@ -215,6 +218,24 @@ impl Shared {
     fn host_active(&self, now: Instant) -> bool {
         self.peer.is_some()
             && now - self.last_request < Duration::from_millis(u64::from(STREAM_TIMEOUT_MS))
+    }
+
+    /// `max_fps`: whether a frame taken at `now` may go out (then the next one is due one
+    /// interval later), with half a frame period (`period_us`) of slack.
+    fn admit(&mut self, now: Instant, period_us: u64) -> bool {
+        if self.stream.max_fps == 0 {
+            return true;
+        }
+        let at = now.as_micros();
+        let slack = period_us / 2;
+        let next = self.next_send.as_micros();
+        if at + slack < next {
+            return false;
+        }
+        let interval = 1_000_000 / u64::from(self.stream.max_fps);
+        let next = (next + interval).max((at + interval).saturating_sub(slack));
+        self.next_send = Instant::from_micros(next);
+        true
     }
 }
 
@@ -265,6 +286,7 @@ static SHARED: Mutex<RefCell<Shared>> = Mutex::new(RefCell::new(Shared {
         gain_sixteenths: DEFAULT_CAMERA.gain_sixteenths,
     },
     ae_cap: 0,
+    live: None,
 }));
 
 /// Microseconds the send task spent on frames, from a frame's first chunk to its end (wraps):
@@ -348,7 +370,7 @@ struct Job {
     height: u16,
     timestamp_us: u64,
     /// The JPEG encode the frame went through ([`FrameTiming::encode`]).
-    encode: Option<Span>,
+    encode: Option<EncodeSpan>,
 }
 
 /// The next frame for the send task. Raw: at most one in flight ([`Shared::sending`]). JPEG:
@@ -409,11 +431,12 @@ pub fn start(spawner: Spawner, stack: Stack<'static>, res: Resources) {
         shared(|s| s.detect.fault = true);
     }
     spawner.spawn(detect::task(core1.is_some()).unwrap());
-    spawner.spawn(jpeg::task(out_mem).unwrap());
+    let pool = frames::Pool::new(pool_mem);
+    spawner.spawn(jpeg::task(out_mem, pool).unwrap());
     spawner.spawn(
         capture::task(CameraResources {
             psram: cam_mem,
-            pool: frames::Pool::new(pool_mem),
+            pool,
             i2c0: res.i2c0,
             vdma: res.vdma,
             mode,

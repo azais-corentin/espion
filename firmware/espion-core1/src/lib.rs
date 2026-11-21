@@ -39,9 +39,10 @@ pub use monitor::{
 };
 pub use runner::{
     CHECK, CHECK_MAX, CheckCounters, CheckMaxSnap, CheckMaxima, CheckSnap, Core1, FrameBuffers,
-    FrameResult, HOLD_TIMES, HoldTimes, HoldTimesSnap, Job, MAX_BLOBS, MAX_FRAME_BUFFERS,
-    MAX_SPOTS, NO_BUFFER, Run, SkipUsed, StreamDetect, StreamRun, Trap, abandoned, age,
-    copy_counts, give_frame, heartbeat, row_sum, skip_used, start, trap,
+    FrameResult, HOLD_TIMES, HoldTimes, HoldTimesSnap, Job, LiveFrame, MAX_BLOBS,
+    MAX_FRAME_BUFFERS, MAX_SPOTS, NO_BUFFER, Run, SkipUsed, StreamDetect, StreamRun, Trap,
+    abandoned, age, copy_counts, give_frame, heartbeat, live_frame, release_encoder, row_sum,
+    skip_used, start, trap,
 };
 
 /// The dark skip of the detector on core 1.

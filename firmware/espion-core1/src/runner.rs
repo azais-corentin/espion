@@ -237,6 +237,12 @@ pub struct FrameResult {
     pub detect_max: u32,
     pub copy_wait_total: u32,
     pub copy_wait_max: u32,
+    /// [`Job::Stream`]: every band of the frame went to the live JPEG encode
+    /// (`esp32p4_jpeg::live`): its file comes from that encode ([`live_frame`]).
+    pub jpeg: bool,
+    /// [`Job::Stream`]: the longest feed of the live JPEG encode after one of the frame's
+    /// strips, cycles (after the strip's release, so outside its hold).
+    pub feed_max: u32,
 }
 
 impl FrameResult {
@@ -288,6 +294,8 @@ impl FrameResult {
         detect_max: 0,
         copy_wait_total: 0,
         copy_wait_max: 0,
+        jpeg: false,
+        feed_max: 0,
     };
 }
 
@@ -345,6 +353,37 @@ static DETECT: DetectParams = DetectParams {
 /// strip (compare and swap) and gives back those it does not publish; core 0 gives back each
 /// frame it was handed once it is done with it ([`give_frame`]).
 static FREE: AtomicU32 = AtomicU32::new(0);
+
+/// Frame buffers the live JPEG encode reads (bits 0..8: set by core 1 when it binds a frame
+/// to the encode, cleared by core 0 when the encode ended, [`release_encoder`]) and buffers
+/// given back while it still did (bits 8..16, [`give_frame`]): the one of the two that comes
+/// second puts the buffer in [`FREE`].
+static HOLDS: AtomicU32 = AtomicU32::new(0);
+const DEFERRED_SHIFT: u32 = 8;
+
+/// The frame bound to the live JPEG encode (`esp32p4_jpeg::live`). Writer: core 1, while it
+/// holds the encode's input side (inside `live::begin`'s guard), so core 0 reads it once it
+/// took the input side back (the encode's end or its cancel).
+struct LiveRecord {
+    run: AtomicU32,
+    frame: AtomicU32,
+    buffer: AtomicU32,
+    /// Core 1's `mcycle` at the first band appended, at the last one, and the last strip's
+    /// bound ([`strip_bound`]: the frame's capture time) (the last two set with the band that
+    /// ends the picture).
+    first_feed: AtomicU32,
+    last_feed: AtomicU32,
+    capture: AtomicU32,
+}
+
+static LIVE: LiveRecord = LiveRecord {
+    run: AtomicU32::new(0),
+    frame: AtomicU32::new(0),
+    buffer: AtomicU32::new(NO_BUFFER as u32),
+    first_feed: AtomicU32::new(0),
+    last_feed: AtomicU32::new(0),
+    capture: AtomicU32::new(0),
+};
 
 /// Core 0's abort requests ([`Core1::abort_stream`]) and core 1's acknowledgement: the request
 /// number it handled, stored once it holds no frame buffer and its copy is idle.
@@ -939,10 +978,59 @@ pub fn age(then: u32) -> u32 {
 }
 
 /// Gives frame buffer `index` to the stream job (core 0: every buffer once at the start,
-/// then each one a [`FrameResult::buffer`] handed over, once done with it).
+/// then each one a [`FrameResult::buffer`] handed over, once done with it; core 1: the
+/// buffers it does not publish). A buffer the live JPEG encode still reads goes back once the
+/// encode ended ([`release_encoder`]).
 pub fn give_frame(index: u8) {
-    if usize::from(index) < MAX_FRAME_BUFFERS {
-        FREE.fetch_or(1 << index, Ordering::Release);
+    if usize::from(index) >= MAX_FRAME_BUFFERS {
+        return;
+    }
+    let (held, deferred) = (1 << index, 1 << (DEFERRED_SHIFT + u32::from(index)));
+    if HOLDS.fetch_or(deferred, Ordering::AcqRel) & held == 0 {
+        HOLDS.fetch_and(!deferred, Ordering::Relaxed);
+        FREE.fetch_or(held, Ordering::Release);
+    }
+}
+
+/// The live JPEG encode no longer reads frame buffer `index` (core 0, once the encode bound
+/// to it ended or was cancelled): it goes back now if it was given back meanwhile.
+pub fn release_encoder(index: u8) {
+    if usize::from(index) >= MAX_FRAME_BUFFERS {
+        return;
+    }
+    let (held, deferred) = (1 << index, 1 << (DEFERRED_SHIFT + u32::from(index)));
+    if HOLDS.fetch_and(!held, Ordering::AcqRel) & deferred != 0 {
+        HOLDS.fetch_and(!deferred, Ordering::Relaxed);
+        FREE.fetch_or(held, Ordering::Release);
+    }
+}
+
+/// The frame core 1 bound to the live JPEG encode (core 0, after the encode's input side was
+/// taken back).
+#[derive(Clone, Copy, Debug)]
+pub struct LiveFrame {
+    /// [`StreamRun::run`] and the frame's number in it ([`FrameResult::frame`]).
+    pub run: u32,
+    pub frame: u32,
+    /// Its frame buffer, which the encode holds until [`release_encoder`].
+    pub buffer: u8,
+    /// Core 1's `mcycle` at the first band fed, at the last, and the last strip's bound (the
+    /// frame's capture time, as [`FrameResult::queued_at`]); see [`age`].
+    pub first_feed: u32,
+    pub last_feed: u32,
+    pub capture: u32,
+}
+
+/// The frame bound to the live JPEG encode last.
+pub fn live_frame() -> LiveFrame {
+    let l = &LIVE;
+    LiveFrame {
+        run: l.run.load(Ordering::Acquire),
+        frame: l.frame.load(Ordering::Relaxed),
+        buffer: l.buffer.load(Ordering::Relaxed) as u8,
+        first_feed: l.first_feed.load(Ordering::Relaxed),
+        last_feed: l.last_feed.load(Ordering::Relaxed),
+        capture: l.capture.load(Ordering::Relaxed),
     }
 }
 
@@ -1128,6 +1216,23 @@ struct Asm {
     copy_wait_max: u32,
     /// Detection was on and was cut short for this frame ([`FrameResult::cut`]).
     cut: bool,
+    /// The frame and the live JPEG encode ([`feed_jpeg`]).
+    jpeg: Jpeg,
+    /// Longest [`feed_jpeg`] call of the frame, cycles.
+    feed_max: u32,
+}
+
+/// A frame's part in the live JPEG encode (`esp32p4_jpeg::live`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Jpeg {
+    /// Not bound: it binds an armed encode at its next strip.
+    Unbound,
+    /// Bound: its copied rows are fed as they come.
+    Bound,
+    /// Every band fed: the encode has the whole frame.
+    Fed,
+    /// Not to be encoded: core 0 took the encode back, or it could not be fed.
+    Lost,
 }
 
 /// A finished frame of the stream job whose result slot is reserved and filled but for the
@@ -1352,6 +1457,8 @@ fn on_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
         r.queued_at = queued_at;
         r.lead = 0;
         r.last_hold = 0;
+        r.jpeg = false;
+        r.feed_max = 0;
         r.background = None;
         r.spot_count = 0;
     });
@@ -1404,12 +1511,22 @@ fn stream_drop(st: &mut Core1State<'_>) {
         bump(&COPY_ERRORS, 1);
     }
     if let Some(a) = st.asm.take() {
-        return_buffer(a.buffer);
+        drop_frame(&a);
     }
     if let Some(p) = st.pending.take() {
         st.out.cancel();
         return_buffer(p.buffer);
     }
+}
+
+/// Lets go of frame `a`, which is not published: the live JPEG encode bound to it, if its
+/// bands did not all come, is abandoned (core 0 stops it and releases the buffer's hold), and
+/// the buffer goes back (once that encode no longer reads it).
+fn drop_frame(a: &Asm) {
+    if a.jpeg == Jpeg::Bound {
+        esp32p4_jpeg::live::abandon(a.frame);
+    }
+    return_buffer(a.buffer);
 }
 
 /// The first strip of stream frame `frame`: its detection settings, a free frame buffer (if
@@ -1418,7 +1535,7 @@ fn stream_drop(st: &mut Core1State<'_>) {
 fn stream_begin(st: &mut Core1State<'_>, frame: u32) {
     if let Some(a) = st.asm.take() {
         ABANDONED.fetch_add(1, Ordering::Relaxed);
-        return_buffer(a.buffer);
+        drop_frame(&a);
     }
     let d = &DETECT;
     let serial = d.serial.load(Ordering::Acquire);
@@ -1470,6 +1587,8 @@ fn stream_begin(st: &mut Core1State<'_>, frame: u32) {
         copy_wait_total: 0,
         copy_wait_max: 0,
         cut: false,
+        jpeg: Jpeg::Unbound,
+        feed_max: 0,
     });
 }
 
@@ -1579,6 +1698,9 @@ fn stream_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
     }
     let wait = cycles().wrapping_sub(w0);
     let last = s.is_last();
+    // Rows of the frame in its buffer once this strip's copy is in (the strip is gone after
+    // its release).
+    let copied = s.first_row() + s.rows();
     let kept = if copy_intact {
         match s.release_copied() {
             Released::Intact => true,
@@ -1613,13 +1735,88 @@ fn stream_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
     if !kept {
         // Lapped or stopped: neither the copy nor the detector read this frame's rows.
         ABANDONED.fetch_add(1, Ordering::Relaxed);
-        return_buffer(a.buffer);
+        drop_frame(a);
         *asm = None;
         return;
+    }
+    if matches!(a.jpeg, Jpeg::Unbound | Jpeg::Bound) {
+        let t = cycles();
+        feed_jpeg(a, copied, last, queued_at);
+        a.feed_max = a.feed_max.max(cycles().wrapping_sub(t));
     }
     if last {
         a.last_hold = hold;
         stream_end(st, queued_at);
+    }
+}
+
+/// Feeds the live JPEG encode (`esp32p4_jpeg::live`) frame `a`'s rows copied so far (up to
+/// row `copied`), in whole 8-row bands, and the rest of the frame with its last strip;
+/// binds an armed encode first if the frame has none yet. `capture`: the strip's bound, the
+/// frame's capture time when `last`. Called after the strip's release: never part of its
+/// hold. A frame without its buffer or with a failed copy is not encoded (an encode bound to
+/// it is abandoned).
+#[inline(never)]
+fn feed_jpeg(a: &mut Asm, copied: u16, last: bool, capture: u32) {
+    use esp32p4_jpeg::live;
+    if a.buffer == NO_BUFFER || !a.copy_ok {
+        if a.jpeg == Jpeg::Bound {
+            live::abandon(a.frame);
+        }
+        a.jpeg = Jpeg::Lost;
+        return;
+    }
+    let Some(mut f) = live::begin(a.frame) else {
+        if a.jpeg == Jpeg::Bound {
+            // Core 0 took the encode back (an error, a timeout, the stream moved on).
+            a.jpeg = Jpeg::Lost;
+        }
+        return;
+    };
+    let format = STREAM.format.load(Ordering::Relaxed);
+    let (width, height) = (format as u16, STREAM.height.load(Ordering::Relaxed) as u16);
+    let now = cycles();
+    if a.jpeg == Jpeg::Unbound {
+        let ok = f.geometry() == (width, height) && format >> 31 == 0;
+        let l = &LIVE;
+        l.run
+            .store(STREAM.run.load(Ordering::Relaxed), Ordering::Relaxed);
+        l.frame.store(a.frame, Ordering::Relaxed);
+        l.first_feed.store(now, Ordering::Relaxed);
+        if !ok {
+            // Armed for another picture, not this run's: abandoned (core 0 takes it back),
+            // with no buffer held.
+            l.buffer.store(u32::from(NO_BUFFER), Ordering::Relaxed);
+            drop(f);
+            live::abandon(a.frame);
+            a.jpeg = Jpeg::Lost;
+            return;
+        }
+        HOLDS.fetch_or(1 << a.buffer, Ordering::AcqRel);
+        l.buffer.store(u32::from(a.buffer), Ordering::Relaxed);
+        a.jpeg = Jpeg::Bound;
+    }
+    let fed = f.fed_rows();
+    let target = if last { height } else { copied & !7 };
+    if target <= fed || (!last && f.bands_left() <= 1) {
+        return;
+    }
+    if target == height {
+        LIVE.capture.store(capture, Ordering::Relaxed);
+    }
+    LIVE.last_feed.store(now, Ordering::Relaxed);
+    let line = STREAM.line_bytes.load(Ordering::Relaxed) as usize;
+    match f.append(
+        buffer_addr(a.buffer) + usize::from(fed) * line,
+        target - fed,
+    ) {
+        Ok(()) if target == height => a.jpeg = Jpeg::Fed,
+        Ok(()) => {}
+        Err(_) => {
+            drop(f);
+            live::abandon(a.frame);
+            a.jpeg = Jpeg::Lost;
+        }
     }
 }
 
@@ -1659,7 +1856,7 @@ fn stream_end(st: &mut Core1State<'_>, queued_at: u32) {
     if st.pending.is_some() {
         if ABORT_REQ.load(Ordering::Acquire) != ABORT_ACK.load(Ordering::Relaxed) {
             // The loop's abort drops the waiting frame.
-            return_buffer(a.buffer);
+            drop_frame(&a);
             return;
         }
         // The frame before still has blobs to measure (strips came back to back since):
@@ -1671,15 +1868,18 @@ fn stream_end(st: &mut Core1State<'_>, queued_at: u32) {
     let buffer = if a.copy_ok {
         a.buffer
     } else {
-        return_buffer(a.buffer);
+        drop_frame(&a);
         NO_BUFFER
     };
     if !st.out.reserve() {
-        // Counted as dropped by the queue; the detector still has to close the frame.
+        // Counted as dropped by the queue; the detector still has to close the frame. Its
+        // live encode, if every band was fed, still ends (the buffer goes back after it).
         if a.detect {
             st.det.finish(st.scratch);
         }
-        return_buffer(buffer);
+        if buffer != NO_BUFFER {
+            drop_frame(&a);
+        }
         mark(crate::MARKER_FRAME);
         return;
     }
@@ -1714,6 +1914,8 @@ fn stream_end(st: &mut Core1State<'_>, queued_at: u32) {
     r.late_strips = a.late;
     r.blob_count = n;
     r.stats = stats;
+    r.jpeg = a.jpeg == Jpeg::Fed;
+    r.feed_max = a.feed_max;
     r.cycles = a.cycles.wrapping_add(if a.detect { d.cycles } else { 0 });
     r.instructions = a
         .instructions

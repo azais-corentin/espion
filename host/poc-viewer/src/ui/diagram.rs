@@ -92,6 +92,7 @@ impl Diagram {
                 start_us: from.start_us + (to.start_us - from.start_us) * k,
                 len_us: from.len_us + (to.len_us - from.len_us) * k,
                 slowest_us: from.slowest_us + (to.slowest_us - from.slowest_us) * k,
+                tail_us: from.tail_us + (to.tail_us - from.tail_us) * k,
                 ..*to
             }));
         self.total_us = self.shown.iter().map(Step::end_us).fold(0.0, f32::max);
@@ -316,16 +317,26 @@ impl Diagram {
             prev_end = st.end_us();
         }
         let mut label_right = f32::NEG_INFINITY;
+        let mut ends = f32::NEG_INFINITY;
         for st in &row.steps {
             let h = hue(st.stage);
+            // A step that starts before the one before it ends (the encode fed during the
+            // readout) takes the bar's lower half, so the step under it stays in view.
+            let top = if st.start_us < ends - 1.0 {
+                bar_y + ROW_BAR / 2.0
+            } else {
+                bar_y
+            };
+            ends = ends.max(st.end_us());
             let r = Rect::from_min_max(
-                pos2(x(st.start_us) + 0.5, bar_y),
+                pos2(x(st.start_us) + 0.5, top),
                 pos2(
                     (x(st.end_us()) - 0.5).max(x(st.start_us) + 3.0),
                     bar_y + ROW_BAR,
                 ),
             );
             bar(painter, r, h, st.measured, 1.0);
+            tail_mark(painter, r, st, &x, h, 1.0);
             let len = format!("{:.1}", st.len_us / 1e3);
             let wide = r.width() >= 40.0;
             if wide {
@@ -492,6 +503,7 @@ impl Diagram {
                 let r = Rect::from_min_max(pos2(x0, y), pos2(x1, y + bar_h));
                 let h = hue(st.stage);
                 bar(&painter, r, h, st.measured, alpha);
+                tail_mark(&painter, r, st, x, h, alpha);
                 if r.width() >= 18.0 && bar_h >= 12.0 {
                     painter.text(
                         r.center(),
@@ -648,7 +660,11 @@ fn step_tip(ui: &mut Ui, st: &Step, steps: &[Step], core1: Option<&Core1>) {
     let what = match st.stage {
         Stage::Exposure => "Computed: exposure lines x line time",
         Stage::Readout => "Computed: lines read x line time; ends at the capture",
-        Stage::Encode => "Measured on the board: the hardware JPEG encode",
+        Stage::Encode => {
+            "Measured on the board: the hardware JPEG encode, from its first rows (during the \
+             readout when fed strip by strip) to the file's end; the line marks the frame's last \
+             rows handed to it"
+        }
         Stage::Send => {
             "Measured: the board taking the frame to its last chunk arriving here (clocks \
              matched by the fastest datagram of the window)"
@@ -690,6 +706,9 @@ fn step_tip(ui: &mut Ui, st: &Step, steps: &[Step], core1: Option<&Core1>) {
         line(ui, "Waited before", ms(st.start_us - before));
     } else if before - st.start_us > 1.0 {
         line(ui, "Starts before the capture by", ms(before - st.start_us));
+    }
+    if st.tail_us > 1.0 {
+        line(ui, "After its input ended", ms(st.tail_us));
     }
     line(ui, "Starts at", ms(st.start_us));
     match (st.stage, core1) {
@@ -795,6 +814,30 @@ fn bar(painter: &eframe::egui::Painter, r: Rect, h: Hue, measured: bool, alpha: 
         painter.rect_filled(r, RADIUS_SMALL, theme::fade(h.fill, 0.5 * alpha));
         dashed_rect(painter, r.shrink(0.5), theme::fade(h.line, alpha));
     }
+}
+
+/// The start of a stage's tail ([`Step::tail_us`]: the encode after the frame's last rows) in
+/// its bar `r`, a line across it; nothing when it has none or the tail is the whole bar.
+fn tail_mark(
+    painter: &eframe::egui::Painter,
+    r: Rect,
+    st: &Step,
+    x: impl Fn(f32) -> f32,
+    h: Hue,
+    alpha: f32,
+) {
+    if st.tail_us < 1.0 || st.tail_us >= st.len_us - 1.0 {
+        return;
+    }
+    let tx = x(st.end_us() - st.tail_us);
+    if tx <= r.left() + 2.0 || tx >= r.right() - 2.0 {
+        return;
+    }
+    painter.vline(
+        tx,
+        (r.top() + 2.0)..=(r.bottom() - 2.0),
+        Stroke::new(1.5, theme::fade(h.text, alpha)),
+    );
 }
 
 fn dashed_rect(painter: &eframe::egui::Painter, r: Rect, c: Color32) {

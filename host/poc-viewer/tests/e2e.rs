@@ -1053,8 +1053,12 @@ fn the_state_times_the_last_frame_sent() {
         .expect("a state with a JPEG frame's timing");
     let (state, t) = timed(&s).unwrap();
     let encode = t.encode.unwrap();
+    // The fake encodes whole frames: its encode starts after the capture, with the frame
+    // all there.
     assert!(
-        encode.start_us < encode.end_us
+        encode.start_us >= 0
+            && encode.input_end_us == encode.start_us as u32
+            && encode.input_end_us < encode.end_us
             && encode.end_us <= t.send.start_us
             && t.send.start_us <= t.send.end_us,
         "{t:?}"

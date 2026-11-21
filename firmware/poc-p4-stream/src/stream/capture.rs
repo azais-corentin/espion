@@ -124,6 +124,9 @@ struct Delivery {
     timestamp_us: u64,
     /// Frames lost before it (not handed on either).
     lost: u32,
+    /// Strip path: whether the live JPEG encode got the whole frame (its file comes from the
+    /// encode task, [`jpeg`]); `None` for a whole frame.
+    live: Option<bool>,
 }
 
 impl Capture {
@@ -165,6 +168,7 @@ impl Capture {
     async fn lost_frames(&mut self) {
         shared(|s| {
             s.counters.capture_errors = s.counters.capture_errors.wrapping_add(1);
+            s.live = None;
         });
         let _ = self.cam.stop().await;
         self.strips = None;
@@ -230,6 +234,7 @@ impl Capture {
         shared(|s| {
             s.abort();
             s.detect_serial = s.detect_serial.wrapping_add(1) & !(1 << 31);
+            s.live = None;
         });
         if self.cam.running().is_some() {
             self.count();
@@ -299,6 +304,15 @@ impl Capture {
             });
             self.pushed = None;
             self.push_detect();
+            let live = jpeg::LiveRun {
+                id,
+                base,
+                width: self.mode.width(),
+                height: self.mode.height(),
+                frame_bytes: camera::csi_config(&self.mode).frame_bytes(),
+                period_us: self.mode.frame_ns() / 1000,
+            };
+            shared(|s| s.live = Some(live));
         }
         if r.is_ok() {
             self.publish_exposure();
@@ -440,6 +454,7 @@ impl Capture {
                 generation: shared(|s| s.generation),
                 timestamp_us: now.as_micros().saturating_sub(age_us),
                 lost,
+                live: Some(r.jpeg),
             };
             work.result(
                 r,
@@ -483,13 +498,16 @@ impl Capture {
             timestamp_us: now.as_micros(),
             // Frames overwritten before this task took them.
             lost: frames.saturating_sub(1),
+            live: None,
         };
         self.deliver(FrameBuf::whole(f), &d, now);
     }
 
     /// Hands `f` on, or drops it: no host, held back by `max_fps`, or (raw) a frame in flight
-    /// (skipped). JPEG frames go to the encode task, which keeps the newest one waiting
-    /// ([`jpeg::offer`]); raw frames to the send task. The frames lost before it count as
+    /// (skipped). Whole JPEG frames go to the encode task, which keeps the newest one waiting
+    /// ([`jpeg::offer`]); a strip-path JPEG frame was encoded while it came in, and its file
+    /// goes out from the encode task ([`jpeg`]): here it only counts as skipped if the encode
+    /// did not get it. Raw frames go to the send task. The frames lost before it count as
     /// skipped.
     fn deliver(&mut self, f: FrameBuf, d: &Delivery, now: Instant) {
         let period_us = u64::from(self.mode.frame_ns()) / 1000;
@@ -506,20 +524,19 @@ impl Capture {
             // Frames lost before this one were not sent either: the link's (raw) or the
             // encoder's (JPEG: they never reached it).
             if jpeg {
-                s.encoder.frames_skipped = s.encoder.frames_skipped.wrapping_add(d.lost);
+                let missed = d.live.is_some_and(|encoded| !encoded);
+                s.encoder.frames_skipped = s
+                    .encoder
+                    .frames_skipped
+                    .wrapping_add(d.lost + u32::from(missed));
+                if d.live.is_some() {
+                    return None;
+                }
             } else {
                 c.frames_skipped = c.frames_skipped.wrapping_add(d.lost);
             }
-            if s.stream.max_fps > 0 {
-                let at = now.as_micros();
-                let slack = period_us / 2;
-                let next = s.next_send.as_micros();
-                if at + slack < next {
-                    return None;
-                }
-                let interval = 1_000_000 / u64::from(s.stream.max_fps);
-                let next = (next + interval).max((at + interval).saturating_sub(slack));
-                s.next_send = Instant::from_micros(next);
+            if !s.admit(now, period_us) {
+                return None;
             }
             if !jpeg {
                 s.sending = true;

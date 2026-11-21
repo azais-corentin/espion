@@ -6,7 +6,7 @@ protocol version and updates this page and its changelog in the same commit.
 > **Status.** The tracking messages (`0x01`..`0x11`) are a draft, not implemented. Settled:
 > header, versioning (exact match), boards identified by their Ethernet MAC, Q11.5 blob
 > coordinates; their other fields may still change. The [camera stream](#camera-stream)
-> (`0x20`..`0x23`) is implemented (version 6).
+> (`0x20`..`0x23`) is implemented (version 7).
 
 ## Transport (tracking)
 
@@ -207,9 +207,9 @@ the `poc-viewer` host app; not by the tracking path above.
 |---|---|---|
 | quality | `u8` | Quality the next JPEG frame is encoded at: `jpeg_quality`, or lower while the automatic quality holds it down |
 | frame_len | `u32` | Bytes of the last JPEG frame encoded (the whole file); 0 before the first |
-| encode_us | `u32` | Time the encoder took for that frame, µs |
+| encode_us | `u32` | Time the encoder took for that frame, from its first rows to the end of the file, µs; for a frame fed during the readout, the rest of the readout is included |
 | errors | `u32` | Encoder errors since boot (output too small, codec or DMA error, timeout); that frame is lost. Wraps |
-| frames_skipped | `u32` | Captured frames the encoder could not take since boot because it was still busy with the previous one; not in `counters.frames_skipped` (the link). Wraps |
+| frames_skipped | `u32` | Captured frames the encoder could not take since boot because it was still busy with the previous one (or, fed during the readout, the frames lost in capture); not in `counters.frames_skipped` (the link). Wraps |
 
 `DetectState`:
 
@@ -228,12 +228,15 @@ the `poc-viewer` host app; not by the tracking path above.
 | available | `bool` | The running mode can be detected; `false` for the modes the board streams as whole frames only (its detector works on strips of rows): nothing is detected, the settings are kept for the next mode. The fake camera detects every mode |
 
 `FrameTiming`, the board's part of one frame's latency. A `Span` is `start_us`, `end_us`
-(`u32`, `start_us` ≤ `end_us`): µs after that frame's `timestamp_us`.
+(`u32`, `start_us` ≤ `end_us`): µs after that frame's `timestamp_us`. An `EncodeSpan` is
+`start_us` (`i32`), `input_end_us`, `end_us` (`u32`), µs after the same timestamp, with
+`start_us` ≤ `input_end_us` ≤ `end_us`: a board that encodes the frame while the sensor still
+reads it out starts before the capture (`start_us` < 0).
 
 | Field | Type | Meaning |
 |---|---|---|
 | frame | `u32` | The frame's number, as in its chunks |
-| encode | `Option<Span>` | The JPEG encode, from the encoder taking the frame to the end of the file; `None` for a frame sent in a raw encoding. The time before it is the wait for the encoder |
+| encode | `Option<EncodeSpan>` | The JPEG encode, from the encoder taking the frame's first rows (`start_us`) through its last rows handed over (`input_end_us`; `start_us` for a frame encoded whole) to the end of the file (`end_us`); `None` for a frame sent in a raw encoding. A positive `start_us` is the wait for the encoder |
 | send | `Span` | From the send of the first chunk being taken up to the last chunk handed to the Ethernet MAC (not yet on the wire). The time before it, after the encode if any, is the wait for the link |
 
 The host reads it at its poll rate, so it sees a sample of the frames, not each one. A host
@@ -443,3 +446,4 @@ The fake camera, which detects whole frames, sends one strip of the frame's heig
 | 4 | Camera stream: `State` gains `timing: Option<FrameTiming>` (the last frame sent whole: its number, the span of its JPEG encode and the span of its send, µs after its `timestamp_us`). The chunks and everything else of version 3 stay |
 | 5 | Camera stream: blob detection on the board. New kind `0x23` FrameBlobs (one frame's blobs, at most 82: centre in 1/256 pixel, width and flux measured on the frame without the threshold's bias, area and peak from the threshold); `Op::SetDetect(DetectSettings)`; `State` gains `detect: DetectState`; `CameraSettings` gains `auto_exposure`; `CamError` gains `Threshold` and `Area`; `Error::BlobsLayout`. Start-up defaults: automatic exposure, detection on with the automatic threshold and area filter. Everything else of version 4 stays |
 | 6 | Camera stream: `FrameBlobs` gains `timing: DetectTiming` (the frame's detection on the board: the strips' start and end, the result's publication, the datagram's queueing, the measure's processor time, and the longest per-strip start wait, detect, copy wait and hold against the hold allowed), so at most 80 blobs; `DetectState` gains `frames_cut`. Everything else of version 5 stays |
+| 7 | Camera stream: `FrameTiming::encode` becomes `Option<EncodeSpan>` (`start_us: i32`, `input_end_us: u32`, `end_us: u32`), so an encode fed strip by strip during the readout can start before the capture and report when its last rows went in. Everything else of version 6 stays |

@@ -45,9 +45,9 @@ use std::{
 
 use espion_proto::cam::{
     AUTO_EXPOSURE_PERIOD_MS, AUTO_QUALITY_PERIOD_MS, BLOB_BYTES, Blob, CHUNK_MAX, CamError,
-    CameraSettings, Counters, DetectSettings, DetectState, DetectTiming, EncoderState, Encoding,
-    Exposure, Format, FrameBlobs, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM, Message,
-    Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings,
+    CameraSettings, Counters, DetectSettings, DetectState, DetectTiming, EncodeSpan, EncoderState,
+    Encoding, Exposure, Format, FrameBlobs, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM,
+    Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings,
     TestPattern, auto_exposure, auto_exposure_cap, auto_quality, pack_blobs,
 };
 use espion_vision::{
@@ -254,8 +254,8 @@ struct Encoded {
     captured: Instant,
     data: Vec<u8>,
     encode_us: u32,
-    /// The encode, after the capture.
-    encode: Span,
+    /// The encode, after the capture (the whole frame there at its start).
+    encode: EncodeSpan,
 }
 
 /// The encoder's waiting slot (the newest captured frame for it) and the output buffers.
@@ -310,9 +310,13 @@ fn encoder_thread(slot: &EncoderSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
                 captured: job.captured,
                 data: out,
                 encode_us,
-                encode: Span {
-                    start_us: us_between(job.captured, t),
-                    end_us: us_between(job.captured, end),
+                encode: {
+                    let start_us = us_between(job.captured, t);
+                    EncodeSpan {
+                        start_us: start_us.min(i32::MAX as u32) as i32,
+                        input_end_us: start_us,
+                        end_us: us_between(job.captured, end),
+                    }
                 },
             })
         } else {
@@ -473,7 +477,7 @@ struct Sending {
     timestamp_us: u64,
     captured: Instant,
     /// The JPEG encode it went through.
-    encode: Option<Span>,
+    encode: Option<EncodeSpan>,
     /// When its send started, µs after the capture.
     send_start_us: u32,
     len: u32,

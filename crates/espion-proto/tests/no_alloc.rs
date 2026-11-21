@@ -8,9 +8,9 @@ use std::{
 
 use espion_proto::cam::{
     Blob, CHUNK_MAX, CamError, CameraSettings, Counters, DetectSettings, DetectState, DetectTiming,
-    EncoderState, Encoding, Format, FrameBlobs, FrameChunk, FrameTiming, JpegRefusal, MAX_DATAGRAM,
-    Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response, Span, State, StreamSettings,
-    TestPattern, pack_blobs,
+    EncodeSpan, EncoderState, Encoding, Format, FrameBlobs, FrameChunk, FrameTiming, JpegRefusal,
+    MAX_DATAGRAM, Message, ModeInfo, Op, Origin, Readout, Reply, Request, Response, Span, State,
+    StreamSettings, TestPattern, pack_blobs,
 };
 
 struct Counting;
@@ -96,9 +96,10 @@ fn encode_and_decode_allocate_nothing() {
         uptime_us: 12_345_678,
         timing: Some(FrameTiming {
             frame: 41,
-            encode: Some(Span {
-                start_us: 40,
-                end_us: 6_026,
+            encode: Some(EncodeSpan {
+                start_us: -6_200,
+                input_end_us: 420,
+                end_us: 610,
             }),
             send: Span {
                 start_us: 6_050,

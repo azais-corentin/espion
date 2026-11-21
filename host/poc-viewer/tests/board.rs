@@ -16,18 +16,20 @@
 //! at the link rate, and the board's error paths through its test hooks (UDP 5010). It prints
 //! one line per step and fails at the end with every failed check.
 //!
-//! JPEG (sections `jpeg`, `quality`, `auto`, `jpeg_refusals`, `switching`, `agreement`): every
-//! frame taken is decoded and must be one baseline greyscale JPEG of the mode's size; sizes,
-//! the quality and encode time in use and the rate at the host against the sensor's are
-//! printed for 1280x800 at 120 Hz and at the sensor's maximum and the other windows at theirs;
-//! quality settings are applied and reported and a higher quality gives larger files;
-//! automatic quality lowers the quality when the link is full and raises it back to the set
-//! quality when there is room, and holds it when off; the refusals (JPEG with a RAW10 mode,
-//! with a size not a multiple of 8, a quality outside 1..=100) carry their values; switching
-//! between JPEG and the raw encodings and back; and a JPEG frame agrees with a raw frame of
-//! the same static scene taken right after (PSNR; the bar test pattern within the codec's own
-//! error: no worse than the same raw frame encoded here at the same quality).
-//! Run only these with `POC_ONLY=jpeg,quality,auto,jpeg_refusals,switching,agreement`.
+//! JPEG (sections `jpeg`, `quality`, `auto`, `jpeg_refusals`, `switching`, `agreement`,
+//! `jpeg_check`): every frame taken is decoded and must be one baseline greyscale JPEG of the
+//! mode's size; sizes, the quality and encode time in use and the rate at the host against the
+//! sensor's are printed for 1280x800 at 120 Hz and at the sensor's maximum and the other
+//! windows at theirs; quality settings are applied and reported and a higher quality gives
+//! larger files; automatic quality lowers the quality when the link is full and raises it back
+//! to the set quality when there is room, and holds it when off; the refusals (JPEG with a
+//! RAW10 mode, with a size not a multiple of 8, a quality outside 1..=100) carry their values;
+//! switching between JPEG and the raw encodings and back; a JPEG frame agrees with a raw frame
+//! of the same static scene taken right after (PSNR; the bar test pattern within the codec's
+//! own error: no worse than the same raw frame encoded here at the same quality); and in every
+//! JPEG mode, frames encoded a second time in the other form (whole, or in bands while the
+//! frame comes in) give the same bytes (the board's test hook `J`).
+//! Run only these with `POC_ONLY=jpeg,quality,auto,jpeg_refusals,switching,agreement,jpeg_check`.
 //!
 //! `markers` needs the board's one real IR source in view (it may move a little, but stays in
 //! the frame): everything automatic settles within 5 s, then every detected frame has exactly
@@ -622,7 +624,7 @@ fn settings() {
     b.set_stream(stream(Encoding::Raw8, 0))
         .expect("RAW8 stream");
 
-    let sections: [(&str, Section); 18] = [
+    let sections: [(&str, Section); 19] = [
         ("sizes", sizes),
         ("rates", rates),
         ("refusals", refusals),
@@ -636,6 +638,7 @@ fn settings() {
         ("jpeg_refusals", jpeg_refusals),
         ("switching", switching),
         ("agreement", agreement),
+        ("jpeg_check", jpeg_check),
         ("rtt", rtt),
         ("faults", faults),
         ("garbage", garbage),
@@ -1592,14 +1595,11 @@ fn markers(b: &mut Board) {
         .expect("RAW8 stream");
 }
 
-/// JPEG at quality 90, automatic quality off: windows at 120 Hz and at their fastest rate.
-fn jpeg_modes(b: &mut Board) {
-    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
-    b.set_camera(crop(Format::Raw8, 1280, 800, 120.0))
-        .expect("1280x800");
-    b.set_stream(jstream(90, false)).expect("JPEG stream");
+/// The JPEG modes of the `jpeg` and `jpeg_check` sections: strips and whole frames, every
+/// window size the board encodes, each at its fastest rate.
+fn jpeg_mode_list() -> Vec<(&'static str, CameraSettings)> {
     let fastest = |f, w, h, r| camera::fastest_rates(f, w, h, r).1 as f64 / 1000.0;
-    let modes = [
+    vec![
         ("crop 1280x800 120 Hz", crop(Format::Raw8, 1280, 800, 120.0)),
         (
             "crop 1280x800 at the sensor's maximum",
@@ -1654,8 +1654,16 @@ fn jpeg_modes(b: &mut Board) {
                 ..crop(Format::Raw8, 1216, 704, 100.0)
             },
         ),
-    ];
-    for (label, m) in modes {
+    ]
+}
+
+/// JPEG at quality 90, automatic quality off: windows at 120 Hz and at their fastest rate.
+fn jpeg_modes(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    b.set_camera(crop(Format::Raw8, 1280, 800, 120.0))
+        .expect("1280x800");
+    b.set_stream(jstream(90, false)).expect("JPEG stream");
+    for (label, m) in jpeg_mode_list() {
         let m = CameraSettings {
             tolerance_mhz: 0,
             ..m
@@ -1681,6 +1689,73 @@ fn jpeg_modes(b: &mut Board) {
             );
         }
     }
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+}
+
+/// Frames checked per mode in `jpeg_check`.
+const CHECK_FRAMES: u32 = 200;
+
+/// Every JPEG mode: [`CHECK_FRAMES`] frames are each encoded a second time in the other form
+/// (test hook `J`: a whole-frame encode again in bands of random heights with random gaps, a
+/// live encode again whole) and the two files must be the same bytes. Files are made and
+/// dropped meanwhile (`X1`), so the second encode always finds an output buffer.
+fn jpeg_check(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
+    b.set_camera(lit_scene()).expect("scene");
+    b.set_stream(jstream(90, false)).expect("JPEG stream");
+    b.diag(b"X1");
+    for (label, m) in jpeg_mode_list() {
+        let m = CameraSettings {
+            tolerance_mhz: 0,
+            gain_sixteenths: 64,
+            ..m
+        };
+        let m = match camera::build_mode(&m) {
+            Ok(mode) => CameraSettings {
+                exposure_lines: m.exposure_lines.min(mode.max_exposure_lines()),
+                ..m
+            },
+            Err(_) => m,
+        };
+        // A mode the driver refuses (the `jpeg` section checks the board refuses it too).
+        if let Err(e) = camera::validate(&m, Encoding::Jpeg) {
+            println!("  {label}: refused, nothing to check: {e}");
+            continue;
+        }
+        if let Err(e) = b.set_camera(m) {
+            b.check(false, || format!("JPEG check {label}: mode refused: {e:?}"));
+            continue;
+        }
+        let cmd = format!("J{CHECK_FRAMES}");
+        println!("  {label}: {}", b.diag(cmd.as_bytes()));
+        let end = Instant::now() + Duration::from_secs(30);
+        let report = loop {
+            thread::sleep(Duration::from_millis(200));
+            let _ = b.c().take_frame();
+            let r = b.diag(b"K");
+            if r.contains("left=0 ") || Instant::now() > end {
+                break r;
+            }
+        };
+        println!("    {report}");
+        let field = |k: &str| -> u32 {
+            report
+                .split_whitespace()
+                .find_map(|kv| kv.strip_prefix(k)?.strip_prefix('='))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(u32::MAX)
+        };
+        let (same, frames) = (field("same"), field("frames"));
+        b.check(
+            field("left") == 0
+                && frames >= CHECK_FRAMES
+                && same == frames
+                && field("differ") == 0
+                && field("errors") == 0,
+            || format!("JPEG check {label}: {report}"),
+        );
+    }
+    b.diag(b"X0");
     b.set_stream(stream(Encoding::Raw8, 0)).expect("RAW8");
 }
 

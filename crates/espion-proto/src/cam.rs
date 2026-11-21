@@ -624,7 +624,8 @@ pub struct EncoderState {
     pub quality: u8,
     /// Bytes of the last JPEG frame encoded (the file, header included); 0 before the first.
     pub frame_len: u32,
-    /// Time the encoder took for that frame, µs.
+    /// Time the encoder took for that frame, from its first rows to the end of the file, µs
+    /// (fed during the readout: the rest of the readout included).
     pub encode_us: u32,
     /// Encoder errors since boot (output too small, codec or DMA error, timeout): the frame
     /// is lost. Wraps at `u32::MAX`.
@@ -690,14 +691,29 @@ pub struct Span {
     pub end_us: u32,
 }
 
+/// The JPEG encode of one frame ([`FrameTiming::encode`]), µs relative to the frame's capture
+/// time ([`FrameChunk::timestamp_us`]). A board that encodes the frame while the sensor still
+/// reads it out starts before the capture: `start_us` is then negative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct EncodeSpan {
+    /// The encoder starting on the frame: its first rows handed to it.
+    pub start_us: i32,
+    /// The frame's last rows handed to the encoder (`start_us` for a frame handed over
+    /// whole), never before the capture.
+    pub input_end_us: u32,
+    /// The end of the file; never before `input_end_us`.
+    pub end_us: u32,
+}
+
 /// Where one frame spent its time on the board after its capture ([`State::timing`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FrameTiming {
     /// The frame's number ([`FrameChunk::frame`]).
     pub frame: u32,
-    /// The JPEG encode, from the encoder taking the frame to the end of the file; `None` for a
-    /// frame sent in a raw encoding. The time before its start is the wait for the encoder.
-    pub encode: Option<Span>,
+    /// The JPEG encode, from the encoder taking the frame's first rows to the end of the file;
+    /// `None` for a frame sent in a raw encoding. The time from the capture to its start, when
+    /// positive, is the wait for the encoder.
+    pub encode: Option<EncodeSpan>,
     /// The send, from the frame's first chunk being taken up to its last chunk handed to the
     /// Ethernet MAC. The time before its start (after the encode, if any) is the wait for the
     /// link.

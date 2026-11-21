@@ -244,7 +244,7 @@ and without `accounting` alike.
 | `src/stream/frames.rs` | The frames the image path holds, one holder each: a whole-frame receiver's `Frame`, or a strip frame in a buffer of the pool (five in PSRAM, core 1's free set); dropping it gives the buffer back |
 | `src/stream/send.rs` | The send task: answers through the socket; the `FrameBlobs` datagrams and the frame chunks beside smoltcp (`net/chunk.rs`: `espion_proto` writes the chunk header, PIE copies the bytes), through the socket until the host's MAC is known |
 | `src/net/chunk.rs` | UDP datagrams sent beside smoltcp, straight onto the TX ring: the peer's MAC learned from received frames, the headers, a PIE copy of the payload into the descriptor's buffer, the UDP checksum (PIE), the checksum self-test |
-| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only, prefetch mode, core 1's autoload |
+| `src/stream/diag.rs` | The stream's test hooks on UDP 5010: CPU, interrupt-handler, send-path, frame-path (encode set-up, wake-up, end) and encoder reports, fault injection, stall, log marker, too-small encoder outputs, encode-only, prefetch mode, core 1's autoload, the JPEG check (`J<n>`: the next n files encoded again in the other form and compared byte for byte; `K`: the counts) |
 | `tools/streamdiag.py` | Host side of the stream's test hooks |
 | `src/bench.rs` | The test service: TX runs from internal RAM, PSRAM or the camera, the RX check, the reports, the `vision` request (`Service::BenchVision`) |
 | `src/vision.rs` | `Service::BenchVision`'s camera side on core 0: the pixel check's reference (whole frames, once), core 1 and the strip receiver started at the first request, each run's set-up, the monitor every millisecond and its lines once a second, the run's totals |
@@ -438,27 +438,51 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
 ### JPEG
 
 The stream's default encoding, `Encoding::Jpeg`: one baseline greyscale JPEG file per frame,
-made by the P4's hardware encoder (`esp32p4-jpeg`) straight from the receiver's PSRAM buffer of
-a RAW8 frame; no CPU pass over the pixels. `src/stream/jpeg.rs`.
+made by the P4's hardware encoder (`esp32p4-jpeg`) straight from a PSRAM buffer of a RAW8
+frame; no CPU pass over the pixels. `src/stream/jpeg.rs`.
 
-**Pipeline**, all on core 0, one frame in work and one waiting at each stage, never a queue:
+**Pipeline on strips** (the modes core 1 takes strip by strip, [Detection on
+core 1](#detection-on-core-1)): the frame is encoded while the sensor still reads it out
+([Encoding during the readout](#measured-encoding-during-the-readout-2026-11-21)).
+
+1. Whenever the stream is on in JPEG and an output buffer is free, the encode task arms a
+   live encode (`Encoder::arm`, after `set_config` if the size or quality changed): the
+   header, the output and RX are ready, the input is open.
+2. Core 1 binds it to the frame it is copying, at whichever strip it is on, and feeds it the
+   copied rows in whole 8-row bands after each strip's release, the rest with the last strip
+   (`espion_core1`'s README, "The stream job"). The encoder works on each band as it comes
+   and waits between them.
+3. The encode task waits for the file (looking every 2 ms whether the stream moved on, the
+   quality changed before a bind, or the bound encode passed 100 ms) and takes the frame's
+   number and capture time from core 1's record of the bound frame (`live_frame`), so the
+   file goes to the send slot without waiting for core 1's result. `max_fps` and the stream's
+   checks apply there. A frame core 1 gives up (lapped, a copy error, the run stopped) ends
+   the encode (`Error::Abandoned`) and counts in `encoder.frames_skipped`; so does a frame
+   that came and went while no encode was armed (the encoder was busy, or no output buffer
+   was free). The frame buffer goes back once both its result and the encode are done with
+   it.
+
+**Pipeline on whole frames** (the modes the strip path refuses, and the whole path after a
+core 1 fault), all on core 0, one frame in work and one waiting at each stage, never a queue:
 
 1. The capture task offers every RAW8 frame it would send to the encode task: the frame waits
    in a one-frame slot. A newer frame arriving before the encoder took it replaces it, and the
    replaced one counts as a frame the encoder could not take (`encoder.frames_skipped`; frames
    lost before the capture task got them count there too: overwritten by the whole-frame
-   receiver, or not copied by core 1). At most two captured frames are held (the one being
-   encoded, the one waiting), which the whole-frame receiver's four buffers and the strip
-   path's five allow.
+   receiver). At most two captured frames are held (the one being encoded, the one waiting),
+   which the whole-frame receiver's four buffers allow.
 2. The encode task sets the encoder to the frame's size and the quality in use (only when they
    change: `Encoder::set_config`, header and tables), takes a free output buffer, encodes
    (`Encoder::encode` in a 100 ms timeout) and gives the frame's buffer back at once.
-3. The file waits for the send task in the next one-frame slot (`JOB`). A newer file finished
-   before the send task took it replaces it, and the replaced one counts as skipped because
-   the link was busy (`counters.frames_skipped`). So the link never waits for an encode, and
-   the send task always gets the newest file. The send task sends it like a raw frame: the
-   chunks on the 1409-byte grid, `frame_len` the file's length, each chunk copied once from
-   PSRAM into a TX descriptor's buffer.
+
+On both, the file waits for the send task in the next one-frame slot (`JOB`). A newer file
+finished before the send task took it replaces it, and the replaced one counts as skipped
+because the link was busy (`counters.frames_skipped`). So the link never waits for an encode,
+and the send task always gets the newest file. The send task sends it like a raw frame: the
+chunks on the 1409-byte grid, `frame_len` the file's length, each chunk copied once from PSRAM
+into a TX descriptor's buffer. `State::timing`'s `encode` (`EncodeSpan`) gives the encode's
+start, its input's end and its end against the capture: on strips the start is before the
+capture.
 
 **Buffers.** Three output buffers (one being sent, one waiting, one being encoded into) of
 `JPEG_FRAME_MAX` = 2 MiB each in PSRAM after the frame buffers, 128-byte aligned (the
@@ -907,6 +931,55 @@ its block's end; and a frame whose copy ended intact survives a later lap.
 - **Soak**, 600 s (`soak-f3.log`, `soak-board.log`): passes. 30 mode changes, 29 940 whole
   frames at the host, 0 capture errors, 0 laps, 145 685 of 145 755 frames detected, 0
   skipped.
+
+### Measured: encoding during the readout, 2026-11-21
+
+This board, 1280x800 RAW8 crop at 120 Hz on 48-row strips unless named, JPEG q90, detection
+on, the one IR source in view. Logs in `/tmp/jpeg-live/`. "Before" is HEAD 104de76 (the
+encode began once the frame was captured), flashed and measured the same evening.
+
+**Gate: the codec takes a picture in bands** (`gate-check.log`; test hook `J`, core 0 feeding
+bands of random multiples of 8 rows, at most an eighth of the picture, with random gaps up to
+2 ms, against the same frame encoded whole): 200 of 200 identical files in each of the seven
+JPEG modes of the board test, 0 errors, about 2 500 to 3 200 bands per mode of which 2 000 to
+2 500 were appended while the TX channel was parked. With `OUTLINK_STOP` before each restart
+(the TRM's sequence), 5 of 1 600 encodes never ended (1280x800 120 Hz, 1280x720, 640x400
+binned, 1216x704 twice); the restart alone is what the driver does.
+
+**Live encodes against whole ones** (`final-sections.log`, board test section `jpeg_check`):
+200 of 200 identical files in each of the six strip modes (1280x800 120 Hz and 153.98 Hz,
+1280x720 169.85 Hz, 640x480 245.85 Hz, 640x400 binned 302.19 Hz, 320x200 binned 557.87 Hz)
+and in the whole-frame mode 1216x704 (banded against whole there).
+
+**Where the encode sits** (the viewer's pipeline timing on the desktop, median of 2 s,
+exposure 19 lines; µs from the start of the exposure, the readout ending at the capture at
+7.45 ms):
+
+| | Before | Now |
+|---|---|---|
+| Encode | 9.01 → 15.09 ms | 0.76 → 7.58 ms (the last rows handed over at the capture) |
+| Send | 15.10 → 16.27 ms | 7.64 → 8.79 ms |
+| Image to the GPU (samples a few seconds apart) | 27.6, 30.4, 32.0 ms | 17.6 to 24.0 ms (the window's pass, 7 to 8 ms after the decode, sets the rest) |
+
+The board's part of the picture's latency, capture to the last chunk sent, goes from about 8.8
+ms to 1.3 ms; the file ends about 0.1 ms after the capture.
+
+**Core 1's cost**: the feed after a strip's release takes at most 26 to 44 µs a strip in a
+steady stream (`feed max` in the `strips` log line; up to 148 µs while `jpeg_check` encodes
+every frame twice), outside the strip's hold. Hold per strip 114 µs mean, 213 to 329 µs max
+while the host streams JPEG (183 µs in [Measured: detection on
+strips](#measured-detection-on-strips-2026-11-21)); copy wait 8 to 9 µs mean, 45 to 48 µs
+max; 0 laps, 0 capture errors.
+
+**Board test** (`board-all.log`; HEAD: `board-head.log`): the same 18 failed checks as HEAD's
+firmware in the same scene, every one a capture error or the frame rate that follows from
+them (`rates` at 80 and 96 MHz, `quality`, `auto` at gain 2x, one-off errors after `faults`
+and `garbage`); with that scene's 6 to 13 blobs in the `quality` section the receiver loses
+two frames of three on both builds (DMA halts and bridge discards). `jpeg`: every mode at the
+sensor's rate, encoder skips 0 to 3; `markers`: coverage 100 % in every mode, as before.
+
+**Soak**, 609 s (`soak.log`, `soak-board.log`; the board test's soak streams raw): passes, 30
+mode changes, 29 832 whole frames at the host, 0 capture errors, 0 laps, no warning.
 
 ### Measured: detection on core 1, 2026-11-21
 

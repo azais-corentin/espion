@@ -110,9 +110,13 @@ pub mod out_reg {
     /// `OUT_AUTO_WRBACK` (bit 0).
     pub const AUTO_WRBACK: u32 = 1 << 0;
 
-    // LINK_CONF fields.
+    // LINK_CONF fields (register 8.3).
     pub const LINK_STOP: u32 = 1 << 20;
     pub const LINK_START: u32 = 1 << 21;
+    /// `OUTLINK_RESTART`: follow the `next` link of the last descriptor loaded (TRM §8.4.8).
+    pub const LINK_RESTART: u32 = 1 << 22;
+    /// `OUTLINK_PARK` (read-only): the descriptor state machine is idle.
+    pub const LINK_PARK: u32 = 1 << 23;
 
     // STATE fields.
     /// `OUT_STATE` (bits 23:20): control state machine, 0 = idle.
@@ -269,6 +273,15 @@ pub const PBYTE_1: u32 = 1;
 pub const FIELD_MAX: u32 = 0x3FFF;
 
 impl Descriptor {
+    /// All zero (not the DMA's).
+    pub const EMPTY: Self = Self {
+        dw0: 0,
+        dw1: 0,
+        dw2: 0,
+        buffer: 0,
+        next: 0,
+    };
+
     /// A 2D-MOD1 transmit descriptor: the whole `ha` x `va` picture at `buffer`, 1 byte per
     /// pixel, read in blocks of `hb` x `vb` from (0, 0).
     pub const fn picture(buffer: u32, ha: u32, va: u32, hb: u32, vb: u32) -> Self {

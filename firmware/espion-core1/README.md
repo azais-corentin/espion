@@ -6,8 +6,10 @@ the two-core analysis). `no_std`, no heap. RISC-V only (`riscv32imafc-unknown-no
 
 Core 1 polls the strip reader of `esp32p4-csi` (`StripReader`) and runs one job on each
 strip: the detector of `espion-vision`, the pixel check, or the stream job, which also copies
-each strip into a frame buffer in PSRAM (`esp32p4_csi::DmaCopy`) and measures the frame's
-blobs once it is assembled. It publishes one result per frame through a lock-free queue.
+each strip into a frame buffer in PSRAM (`esp32p4_csi::DmaCopy`), feeds the copied rows to
+the hardware JPEG encoder while the frame comes in (`esp32p4_jpeg::live`), and measures the
+frame's blobs once it is assembled. It publishes one result per frame through a lock-free
+queue.
 Core 0 keeps the strip receiver's control half, the network and everything else, and watches
 core 1 through atomics.
 
@@ -37,9 +39,11 @@ Everything reachable from core 1's entry (`runner::entry`, run by esp-hal's
   `is_busy`: register accesses only), `esp32p4-cache` (the strip's invalidate, the frame
   buffer's invalidate, the write-back of a synthetic strip, the L1 data autoload registers),
   the detector, the background sample (`espion_vision::auto`) and the refined measure
-  (`espion_vision::refine`), PIE through core 1's own token, and with feature `markers` core
-  1's dedicated-IO CSRs (`esp32p4_perf::marker`: `cpu_gpio_oen` 0x803 once at the entry,
-  `cpu_gpio_out` 0x805 per marker).
+  (`espion_vision::refine`), the live JPEG encode's input side (`esp32p4_jpeg::live`:
+  `begin`, `Feeding::append`, `abandon`: atomics, descriptor writes through the non-cacheable
+  alias, 2D-DMA and JPEG register writes), PIE through core 1's own token, and with feature
+  `markers` core 1's dedicated-IO CSRs (`esp32p4_perf::marker`: `cpu_gpio_oen` 0x803 once at
+  the entry, `cpu_gpio_out` 0x805 per marker).
 - **Traps** go to the crate's own vector (`core1_trap`, in RAM, no stack): it stores
   `mcause`, `mepc` and `mtval` and waits for ever; core 0 reports them. esp-hal's default
   path would `panic!` and print from core 1.
@@ -58,7 +62,8 @@ Everything reachable from core 1's entry (`runner::entry`, run by esp-hal's
 | `Core1::set_run(&Run)` | core 0, strip path stopped | The next run: `Job::Detect` (width, RAW8/RAW10, threshold, late-strip limit, L1 data autoload over each strip, optional synthetic strip) or `Job::Check` (reference row checksums, row bytes, the L1 data autoload, the test holds) |
 | `Core1::set_stream(&StreamRun)` | core 0, strip path stopped | The next run is the stream job: width, height, format, row bytes, rows of a full strip, the frame buffers (`FrameBuffers`: base, stride, count up to `MAX_FRAME_BUFFERS` = 8, bytes per frame), late-strip limit (one strip period), `budget_cycles`, the L1 data autoload, a run number echoed in the results |
 | `Core1::set_detect(&StreamDetect)` | core 0, any time | The stream job's detection settings, taken at each frame's first strip: on or off, threshold (clamped to the format), area bounds, most blobs measured (up to `MAX_SPOTS` = 128), a serial echoed in the results |
-| `give_frame(index)` | core 0 | Puts a frame buffer in the stream job's free set: each buffer once at the start, then each one a result handed over, once core 0 is done with it |
+| `give_frame(index)` | core 0 | Puts a frame buffer in the stream job's free set: each buffer once at the start, then each one a result handed over, once core 0 is done with it. A buffer the live JPEG encode still reads goes back once that encode ended too |
+| `release_encoder(index)`, `live_frame() -> LiveFrame` | core 0 | The live JPEG encode's hold on the frame buffer core 1 bound to it, ended once the encode ended or was cancelled; the bound frame: run, frame number, buffer, and in core 1's cycles its first and last feed and its capture (the last strip's bound) |
 | `Core1::abort_stream() -> u32`, `Core1::stream_idle(req)` | core 0 | Asks core 1 to drop what the stream job holds (below); `stream_idle` says it has: no buffer held, no copy running |
 | `Core1::note_stop()` | core 0 | After every `StripControl::stop`: the check tells strips of a stopped run from bad ones |
 | `Core1::clock_offset(max_cycles)` | core 0 | Core 1's `mcycle` against core 0's, best of 16 requests; `age(then)`: cycles since a core-1 `mcycle` reading, as of core 1's last loop turn |
@@ -67,7 +72,7 @@ Everything reachable from core 1's entry (`runner::entry`, run by esp-hal's
 | `log_summary`, `log_check_second2`, `report_trap`, `report_dead` | core 0 | The strip path's counters at the end of a run (and the check's verdict); a trap or a stalled core 1 |
 | `health(&mut last_heartbeat) -> Health` | core 0, about once a second | Core 1's trap record, then whether its heartbeat moved since the last call; a trap or a stall is logged (`Alive`, `Trapped`, `Stalled`) |
 | `heartbeat`, `abandoned`, `copy_counts`, `trap`, `skip_used`, `CHECK`, `CHECK_MAX`, `HOLD_TIMES` | core 0 | Core 1's counters; `copy_counts`: stream frames not copied (no free buffer) and failed copies |
-| `FrameResult`, `Core1::pop_with`, `Core1::dropped` | core 0 | One frame's blobs (up to `MAX_BLOBS` = 256), detector counters, cycles and instructions, late strips and latencies, threshold and format; for the stream job also the run number, the frame buffer handed over (`NO_BUFFER` if not copied), `detected`, `cut`, the serial, the background (`Option<Background>`), each kept blob's refined measure (`spots`, `spot_blob`), the refine cycles (the frame end's invalidate and every blob's measure, over all its loop turns), per strip the hold, the detector's time and the wait for the copy, the lead (core 1's start on the first strip to the last strip's bound, 0 if later) and the last strip's hold; read in place |
+| `FrameResult`, `Core1::pop_with`, `Core1::dropped` | core 0 | One frame's blobs (up to `MAX_BLOBS` = 256), detector counters, cycles and instructions, late strips and latencies, threshold and format; for the stream job also the run number, the frame buffer handed over (`NO_BUFFER` if not copied), `detected`, `cut`, the serial, the background (`Option<Background>`), each kept blob's refined measure (`spots`, `spot_blob`), the refine cycles (the frame end's invalidate and every blob's measure, over all its loop turns), per strip the hold, the detector's time and the wait for the copy, the lead (core 1's start on the first strip to the last strip's bound, 0 if later), the last strip's hold, whether the live JPEG encode got every row (`jpeg`) and its longest feed after a strip (`feed_max`); read in place |
 | `row_sum` | both | The row checksum the check compares; core 0 computes the reference with it |
 | `spsc` | both | Single-producer single-consumer queue on two atomic indices, overwrite-never (a full queue counts a drop), items filled and read in place (`push_with`, `pop_with`); a slot can be reserved, filled over several steps and published later (`reserve`, `reserved`, `commit`) or given up (`cancel`) |
 | `markers::Marker::new(name, pin, core, channel)` | core 0, feature `markers` | Routes dedicated-IO channel `channel` of `core` (either core) to `pin` through the GPIO matrix (`OutputSignal::CPU_GPIO_n`, core 0's channels are signals 214 to 221, core 1's 222 to 229), with the pad's input path and its pull-down on. The driving core enables the channel itself (core 1: its entry, for `MARKER_STRIP` and `MARKER_FRAME`) |
@@ -99,10 +104,20 @@ turns.
   copied and its result says `cut`. Once the strip is past half its budget the detector's stop
   check also polls the copy. Then the wait for the copy (at most 4 ms; a failed copy counts in
   `copy_counts` and the frame goes out as not copied) and the release.
+- **JPEG feed**, after the release (never inside the hold): if core 0 armed a live encode
+  (`esp32p4_jpeg::Encoder::arm`) and the frame has its buffer and no failed copy, core 1
+  binds the encode to the frame at whichever strip it is on (`live::begin`; a frame of
+  another size or RAW10 is given up at once) and appends every whole 8-row band copied so
+  far, then each strip's; the last strip appends the rest of the frame. One band slot is kept
+  for the end: with one left, bands wait for the last strip. While the encode is bound its
+  buffer has two holders, core 0's result and the encode: the second to let go puts it back
+  in the free set (`give_frame`, `release_encoder`).
 - **Release:** a strip whose copy ended while it was still intact (`StripRef::intact`) is
   released with `release_copied`. If the DMA lapped it after that (`Released::Lapped`), the
   frame goes on, without detection for the rest of it (`cut`). Any other strip released
-  `false` (lapped, or the run stopped) abandons the frame and its buffer goes back.
+  `false` (lapped, or the run stopped) abandons the frame and its buffer goes back; a live
+  JPEG encode bound to it is abandoned too (`live::abandon`), and core 0 counts the frame as
+  skipped by the encoder.
 - **Last strip:** a result slot reserved in the queue (a full queue: counted as dropped, the
   buffer goes back), the detector's `finish`, the background, the frame buffer's cache lines
   invalidated. If the frame was detected and has blobs, the kept ones (area bounds, at most
@@ -114,7 +129,8 @@ turns.
   their budget. Core 0 counts the rest as dropped.
 - **Abort** (`abort_stream`, and a new reader): between two strips or two blobs core 1 waits
   for the copy in flight (at most 4 ms), drops the frame being assembled and the one being
-  measured (its reserved slot given up), gives their buffers back, then acknowledges.
+  measured (its reserved slot given up, a live encode bound to it abandoned), gives their
+  buffers back, then acknowledges.
 
 The L1 data autoload registers exist once for the chip (the L1 data cache is shared): while a
 run has the autoload on, core 1 owns them and the firmware on core 0 must not write them.
@@ -178,3 +194,12 @@ script of 2026-11-11 is `/tmp/p4perf-logs/TwoCore/walk.py`, not in the repositor
   `stream-markers-base.walk`): 37 reachable functions each, no banned reference, no indirect
   call, the same functions, data references, CSR accesses and ROM calls; 72 and 73 panic call
   sites, one fewer than before in both. Not run on the board.
+- The live JPEG feed (2026-11-21, `/tmp/p4perf-logs/LiveJpeg/`): the walk of
+  `poc-p4-stream`'s release build (`stream-new.walk`; `stream-markers-new.walk` with feature
+  `markers`): 38 reachable functions each, the one new being `runner::feed_jpeg` (data:
+  `esp32p4_jpeg::live`'s state and tag, the run's `LIVE` record and merged globals; one
+  `mcycle` read; the 2D-DMA and JPEG registers by address), no banned reference, no indirect
+  call, no new ROM call; 74 panic call sites in both, two and one more than before (a slice
+  index in the `run` instances). On the board: every live encode the same bytes as the frame
+  encoded whole afterwards, 200 frames in each of six strip modes (`poc-p4-stream` README,
+  "Encoding during the readout").

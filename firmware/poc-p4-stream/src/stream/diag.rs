@@ -171,6 +171,16 @@ pub(super) async fn task(stack: Stack<'static>) {
                         jpeg::SMALL_OUTPUTS.store(n, Ordering::Relaxed);
                         let _ = write!(w, "small outputs {n}");
                     }
+                    [b'J', ref digits @ ..] => {
+                        let n = digits
+                            .iter()
+                            .take_while(|d| d.is_ascii_digit())
+                            .fold(0u32, |a, d| a * 10 + u32::from(d - b'0'));
+                        jpeg::CHECK.reset();
+                        jpeg::CHECKS.store(n, Ordering::Relaxed);
+                        let _ = write!(w, "jpeg check of {n} frames");
+                    }
+                    [b'K', ..] => write_check(&mut w),
                     [b'X', d @ b'0'..=b'1', ..] => {
                         jpeg::ENCODE_ONLY.store(d == b'1', Ordering::Relaxed);
                         let _ = w.write_str(if d == b'1' { "encode only" } else { "send" });
@@ -508,6 +518,29 @@ fn write_path(w: &mut BufWriter<'_>) {
             d.max
         );
     }
+}
+
+/// The `J` check's counts ([`jpeg::CHECK`]) and the checks still to run.
+#[inline(never)]
+fn write_check(w: &mut BufWriter<'_>) {
+    let c = &jpeg::CHECK;
+    let g = |a: &core::sync::atomic::AtomicU32| a.load(Ordering::Relaxed);
+    let _ = write!(
+        w,
+        "check left={} frames={} same={} differ={} errors={} no_buffer={} bands={} parked={} first_diff={} len_a={} len_b={} encoder_errors={}",
+        g(&jpeg::CHECKS),
+        g(&c.frames),
+        g(&c.same),
+        g(&c.differ),
+        g(&c.errors),
+        g(&c.no_buffer),
+        g(&c.bands),
+        g(&c.parked),
+        g(&c.first_diff),
+        g(&c.len_a),
+        g(&c.len_b),
+        shared(|s| s.encoder.errors),
+    );
 }
 
 /// `part` of `whole` in percent, one decimal.

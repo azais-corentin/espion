@@ -84,6 +84,20 @@
 //! codec (step 4 of `new`). A frame with unchanged settings does no per-pixel and no per-table
 //! work on the CPU: about 20 register writes, a 384-byte copy and three ROM cache calls.
 //!
+//! # Live encode
+//!
+//! A picture can also be encoded while it is still arriving, band by band ([`live`]):
+//! [`Encoder::arm`] does steps 1 and 2 of `encode` for the RX side and starts RX, and leaves
+//! the input open; a feeder, on any core, binds it ([`live::begin`]) and appends bands of whole
+//! 8-row MCU rows ([`live::Feeding::append`]) as they come into memory, each band a 2D-MOD1
+//! descriptor of its own linked from the one before (TRM v1.0 §8.4.8, `OUTLINK_RESTART`).
+//! The first band starts TX and the codec. Between bands the TX channel may park at the end of
+//! the list; the codec waits for the next band. [`Armed::wait`] ends as `encode` does, or with
+//! [`Error::Abandoned`] when the feeder gives the picture up; the caller does every teardown
+//! ([`Armed::cancel`], or drop). At most [`live::MAX_BANDS`] bands: the feeder keeps the last
+//! one for the rest of the picture. [`Encoder::arm_local`] arms and binds at once for a feeder
+//! on the caller's own core; `encode` is that with one band.
+//!
 //! # Interrupts
 //!
 //! Three sources wake the waiting [`Encoder::encode`], all at [`INTERRUPT_PRIORITY`] on the
@@ -112,18 +126,21 @@
 //!   smaller for a known scene (too small gives [`Error::OutputTooSmall`]). On return the whole
 //!   file is in memory and in no stale cache line: the CPU may read it and another DMA (the
 //!   EMAC) may send it. The CPU must not write the output while an encode runs.
-//! - Two RX/TX descriptors (64 bytes) live in a driver static in internal RAM.
+//! - The RX descriptor and [`live::MAX_BANDS`] TX descriptors (24 bytes each) live in a driver
+//!   static in internal RAM.
 //!
 //! # Errors and recovery
 //!
 //! Every error is a value: [`Error::Geometry`], [`Error::Quality`] and the buffer checks are
-//! returned before the hardware is touched. [`Error::OutputTooSmall`], [`Error::Codec`] and
-//! [`Error::Dma`] come from the hardware; a timeout is the caller's (wrap [`Encoder::encode`]
-//! in `embassy_time::with_timeout`). After any of them, and whenever an `encode` future is
-//! dropped before it completes, the driver stops both DMA channels at once (so nothing more is
-//! written into the caller's buffer), and the next `encode` runs the reset sequence first:
-//! channel resets and the codec reset and programming of `new`, steps 3 and 4
-//! ([`Stats::resets`]). The frame after an error encodes normally.
+//! returned before the hardware is touched; [`Error::Band`] is a band the feeder could not
+//! append, [`Error::Abandoned`] a picture it gave up. [`Error::OutputTooSmall`],
+//! [`Error::Codec`] and [`Error::Dma`] come from the hardware; a timeout is the caller's (wrap
+//! [`Encoder::encode`] in `embassy_time::with_timeout`). After any of them, and whenever an
+//! `encode` future or an unfinished [`Armed`] is dropped, the driver revokes the input side and
+//! stops both DMA channels at once (so nothing more is written into the caller's buffer), and
+//! the next encode runs the reset sequence first: channel resets and the codec reset and
+//! programming of `new`, steps 3 and 4 ([`Stats::resets`]). The frame after an error encodes
+//! normally.
 //!
 //! # What was learned on hardware
 //!
@@ -142,6 +159,11 @@
 //! - The RX descriptor's written-back length is the file length, stuffing bytes and the EOI
 //!   the hardware adds included.
 //! - The PAC's `T0QNR`..`T3QNR` are read-only in the SVD but are written (raw pointer).
+//! - A picture fed in bands (multiples of 8 rows) with gaps of up to 2 ms, most bands appended
+//!   while the TX channel was parked, gives the same bytes as the whole-frame encode: 200 of
+//!   200 frames in each of seven modes, from 320x200 to 1280x800 (`poc-p4-stream`, test hook
+//!   `J`). With `OUTLINK_STOP` before each restart, as the TRM's sequence has it, 5 of 1600
+//!   encodes never ended; the restart alone is used.
 //!
 //! # Debugging "no interrupt / no data"
 //!
@@ -163,10 +185,12 @@
 
 pub mod dma2d;
 mod header;
+pub mod live;
 
 use core::{
     cell::UnsafeCell,
     future::poll_fn,
+    marker::PhantomData,
     sync::atomic::{AtomicBool, AtomicU32, Ordering, fence},
     task::Poll,
 };
@@ -198,8 +222,8 @@ pub const INPUT_ALIGN: usize = 16;
 pub const MAX_SIDE: u16 = 16376;
 /// Picture block the TX channel reads at a time: 128 x 8 pixels (TRM table 8.4-4 for 1 byte per
 /// pixel and 8 x 8 macroblocks; ESP-IDF `enc_hb_tbl[GRAY][GRAY]`).
-const BLOCK_W: u32 = 128;
-const BLOCK_H: u32 = 8;
+pub(crate) const BLOCK_W: u32 = 128;
+pub(crate) const BLOCK_H: u32 = 8;
 /// 2D-DMA burst length code: 4 = 128 bytes (ESP-IDF `data_burst_length = 128`).
 const BURST_128: u32 = 4;
 /// `IN_/OUT_MACRO_BLOCK_SIZE`: 8 x 8 and none.
@@ -295,6 +319,10 @@ pub enum Error {
     /// The 2D-DMA reported an error: raw interrupt bits of the TX and RX channels
     /// (`DSCR_ERR`, `ERR_EOF`).
     Dma { tx: u32, rx: u32 },
+    /// A band of the input was refused ([`live::Feeding::append`]).
+    Band(live::BandError),
+    /// The live encode's feeder gave up ([`live::abandon`]), or the encode was cancelled.
+    Abandoned,
 }
 
 /// Event counters since [`Encoder::new`].
@@ -367,44 +395,21 @@ static HEADER: HeaderBuf = HeaderBuf(UnsafeCell::new([0; HEADER_LEN]));
 /// The hardware needs the reset sequence before the next frame.
 static DIRTY: AtomicBool = AtomicBool::new(false);
 
-/// The TX and RX descriptor, one cache line, accessed by the CPU only through the non-cacheable
-/// alias (its cached line is written back and dropped once in `new`).
+/// The RX descriptor and the TX band descriptors ([`live`]), accessed by the CPU only through
+/// the non-cacheable alias (their cached lines are written back and dropped once in `new`).
 #[repr(C, align(64))]
-struct Descs {
-    tx: Descriptor,
-    _pad: [u32; 2],
+pub(crate) struct Descs {
     rx: Descriptor,
-    _pad2: [u32; 2],
+    pub(crate) bands: [Descriptor; live::MAX_BANDS],
 }
-
-const _: () = assert!(core::mem::size_of::<Descs>() == 64);
 
 static mut DESCS: Descs = Descs {
-    tx: Descriptor {
-        dw0: 0,
-        dw1: 0,
-        dw2: 0,
-        buffer: 0,
-        next: 0,
-    },
-    _pad: [0; 2],
-    rx: Descriptor {
-        dw0: 0,
-        dw1: 0,
-        dw2: 0,
-        buffer: 0,
-        next: 0,
-    },
-    _pad2: [0; 2],
+    rx: Descriptor::EMPTY,
+    bands: [Descriptor::EMPTY; live::MAX_BANDS],
 };
 
-fn descs_addr() -> usize {
+pub(crate) fn descs_addr() -> usize {
     (&raw const DESCS) as usize
-}
-
-/// Bus address of the TX descriptor (the DMA's view: the cached address).
-fn tx_desc_addr() -> u32 {
-    descs_addr() as u32
 }
 
 fn rx_desc_addr() -> u32 {
@@ -412,7 +417,7 @@ fn rx_desc_addr() -> u32 {
 }
 
 /// Writes a descriptor through the non-cacheable alias.
-fn write_desc(bus_addr: u32, d: &Descriptor) {
+pub(crate) fn write_desc(bus_addr: u32, d: &Descriptor) {
     let p = cache::non_cacheable(bus_addr as usize) as *mut u32;
     for (i, w) in [d.dw0, d.dw1, d.dw2, d.buffer, d.next]
         .into_iter()
@@ -434,7 +439,7 @@ fn read_desc(bus_addr: u32) -> (u32, u32) {
     }
 }
 
-fn jpeg() -> &'static pac::jpeg::RegisterBlock {
+pub(crate) fn jpeg() -> &'static pac::jpeg::RegisterBlock {
     unsafe { &*pac::JPEG::ptr() }
 }
 
@@ -534,15 +539,16 @@ impl Encoder {
     pub fn new(config: Config) -> Result<Self, Error> {
         config.validate()?;
         let d = descs_addr();
-        if !cache::in_l2mem(d, 64) {
+        let len = core::mem::size_of::<Descs>();
+        if !cache::in_l2mem(d, len) {
             return Err(Error::DescriptorMemory);
         }
         if TAKEN.swap(true, Ordering::Acquire) {
             return Err(Error::AlreadyInUse);
         }
         // Nothing but the non-cacheable alias touches the descriptors from here on.
-        cache::write_back(d, 64);
-        cache::invalidate(d, 64);
+        cache::write_back(d, len);
+        cache::invalidate(d, len);
 
         enable_clocks();
         init_dma();
@@ -593,10 +599,11 @@ impl Encoder {
     /// the length of the JPEG file there (`output[..len]`, from `FF D8` to `FF D9`). See "Cache
     /// and buffers" for what `input` and `output` need. Never blocks: waits on the codec's
     /// interrupt. Dropping the future before it completes stops the DMA (see "Errors and
-    /// recovery").
+    /// recovery"). The picture goes in as the one band of an encode bound to the caller
+    /// ([`Encoder::arm_local`]).
     pub async fn encode(&mut self, input: &[u8], output: &mut [u8]) -> Result<usize, Error> {
-        let cfg = self.config;
-        let needed = cfg.pixels();
+        let height = self.config.height;
+        let needed = self.config.pixels();
         if input.len() < needed {
             return Err(Error::InputSize {
                 needed,
@@ -607,6 +614,38 @@ impl Encoder {
         if !in_addr.is_multiple_of(INPUT_ALIGN) {
             return Err(Error::InputAlignment);
         }
+        let (mut armed, mut feed) = self.arm_local(output)?;
+        let r = feed.append(in_addr, height);
+        // The input side goes back before `armed` (which takes it back) could be dropped.
+        drop(feed);
+        r.map_err(Error::Band)?;
+        armed.wait().await
+    }
+
+    /// Arms an encode of the current settings into `output` whose input a feeder gives band
+    /// by band, from any core, once it has bound it ([`live::begin`]). See "Live encode".
+    pub fn arm<'a>(&'a mut self, output: &'a mut [u8]) -> Result<Armed<'a>, Error> {
+        let armed = self.prepare(output)?;
+        let _ = live::arm(armed.enc.config.width, armed.enc.config.height, false);
+        Ok(armed)
+    }
+
+    /// Arms an encode bound at once to the caller, which feeds it through the returned
+    /// [`live::Feeding`] (tag 0): no other feeder can bind it.
+    pub fn arm_local<'a>(
+        &'a mut self,
+        output: &'a mut [u8],
+    ) -> Result<(Armed<'a>, live::Feeding), Error> {
+        let armed = self.prepare(output)?;
+        let feed = live::arm(armed.enc.config.width, armed.enc.config.height, true)
+            .ok_or(Error::AlreadyInUse)?;
+        Ok((armed, feed))
+    }
+
+    /// An encode but for its input: the output checked, the reset sequence if due, the header
+    /// written back, the output invalidated, the RX descriptor written and RX started.
+    fn prepare<'a>(&'a mut self, output: &'a mut [u8]) -> Result<Armed<'a>, Error> {
+        let cfg = self.config;
         let out_addr = output.as_mut_ptr() as usize;
         let line = cache::line_size(out_addr);
         let out_len = output.len();
@@ -633,16 +672,6 @@ impl Encoder {
         cache::invalidate(payload, capacity);
 
         write_desc(
-            tx_desc_addr(),
-            &Descriptor::picture(
-                in_addr as u32,
-                u32::from(cfg.width),
-                u32::from(cfg.height),
-                BLOCK_W,
-                BLOCK_H,
-            ),
-        );
-        write_desc(
             rx_desc_addr(),
             &Descriptor::receive(payload as u32, capacity as u32),
         );
@@ -655,96 +684,19 @@ impl Encoder {
         let (tx, rx) = (TX_CHANNEL, RX_CHANNEL);
         dma2d::out(tx, out_reg::INT_CLR).write(out_reg::INT_ALL);
         dma2d::inp(rx, in_reg::INT_CLR).write(in_reg::INT_ALL);
-        dma2d::out(tx, out_reg::LINK_ADDR).write(tx_desc_addr());
         dma2d::inp(rx, in_reg::LINK_ADDR).write(rx_desc_addr());
         fence(Ordering::SeqCst);
-
-        // From here an unfinished frame must be stopped.
-        let mut guard = InFlight { armed: true };
-        dma2d::out(tx, out_reg::LINK_CONF).modify(0, out_reg::LINK_START);
+        // From here an unfinished encode must be stopped (`Armed`'s drop).
         dma2d::inp(rx, in_reg::LINK_CONF).modify(0, in_reg::LINK_START);
-        j.config().modify(|_, w| w.jpeg_start().set_bit());
-
-        let result = poll_fn(|cx| {
-            WAKER.register(cx.waker());
-            let ev = EVENTS.load(Ordering::Acquire);
-            let txs = TX_EVENTS.load(Ordering::Acquire);
-            let rxs = RX_EVENTS.load(Ordering::Acquire);
-            if ev & JPEG_ERRORS != 0 {
-                return Poll::Ready(Err((Error::Codec { status: ev }, ev, txs, rxs)));
-            }
-            if rxs & in_reg::INT_DSCR_EMPTY != 0 {
-                return Poll::Ready(Err((
-                    Error::OutputTooSmall { capacity: out_len },
-                    ev,
-                    txs,
-                    rxs,
-                )));
-            }
-            if txs & out_reg::INT_DSCR_ERR != 0
-                || rxs & (in_reg::INT_DSCR_ERR | in_reg::INT_ERR_EOF) != 0
-            {
-                return Poll::Ready(Err((Error::Dma { tx: txs, rx: rxs }, ev, txs, rxs)));
-            }
-            if rxs & in_reg::INT_SUC_EOF != 0 {
-                return Poll::Ready(Ok((ev, txs, rxs)));
-            }
-            Poll::Pending
+        Ok(Armed {
+            enc: self,
+            payload,
+            capacity,
+            out_len,
+            line,
+            result: None,
+            _out: PhantomData,
         })
-        .await;
-
-        match result {
-            Ok((ev, txs, rxs)) => {
-                let (dw0, dw1) = self.wait_writeback();
-                let n = Descriptor::received_len(dw0, dw1) as usize;
-                self.stats.last_jpeg = ev;
-                self.stats.last_tx = txs;
-                self.stats.last_rx = rxs;
-                if n == 0 || n > capacity {
-                    // Only a broken descriptor write-back could do this.
-                    drop(guard);
-                    self.stats.errors += 1;
-                    return Err(Error::Dma { tx: txs, rx: rxs });
-                }
-                guard.armed = false;
-                cache::invalidate(payload, n.div_ceil(line) * line);
-                self.stats.frames += 1;
-                Ok(HEADER_LEN + n)
-            }
-            Err((e, ev, txs, rxs)) => {
-                self.stats.last_jpeg = ev;
-                self.stats.last_tx = txs;
-                self.stats.last_rx = rxs;
-                self.stats.errors += 1;
-                // `guard` stops the DMA and marks the hardware for the reset sequence.
-                drop(guard);
-                Err(e)
-            }
-        }
-    }
-
-    /// The RX descriptor's first two words once the DMA has written it back (owner bit the
-    /// CPU's, `INLINK_AUTO_RET` 0), or as they read after [`WRITEBACK_SPIN`] reads. `SUC_EOF`
-    /// can be seen before the write-back is visible: on the board with the CSI writing strips
-    /// into internal RAM and a DW-GDMA channel copying them to PSRAM, 19 frames in the
-    /// `poc-viewer` board test's `jpeg` and `quality` sections (2026-11-21), each written back
-    /// within the spin; read at once, each had failed its encode with [`Error::Dma`].
-    fn wait_writeback(&mut self) -> (u32, u32) {
-        let addr = rx_desc_addr();
-        let mut d = read_desc(addr);
-        if d.0 & dma2d::DW0_OWNER_DMA == 0 {
-            return d;
-        }
-        self.stats.late_writebacks = self.stats.late_writebacks.wrapping_add(1);
-        for _ in 0..WRITEBACK_SPIN {
-            d = read_desc(addr);
-            if d.0 & dma2d::DW0_OWNER_DMA == 0 {
-                // The length's high bits are in the second word: read both again, in case
-                // the second's write-back landed after the first was seen.
-                return read_desc(addr);
-            }
-        }
-        d
     }
 
     /// Event counters.
@@ -804,22 +756,159 @@ impl Drop for Encoder {
         let off = read_map(self.cpu, Interrupt::JPEG as usize);
         write_map(self.cpu, SOURCE_RX, off);
         write_map(self.cpu, SOURCE_TX, off);
+        let _ = live::revoke();
         halt();
         TAKEN.store(false, Ordering::Release);
     }
 }
 
-/// Stops the hardware if an `encode` ends without its frame (error or dropped future).
-struct InFlight {
-    armed: bool,
+/// An encode armed into an output buffer ([`Encoder::arm`], [`Encoder::arm_local`]), waiting
+/// for its input and its end. Dropping it before [`Armed::wait`] returned takes the input side
+/// back from its feeder (waiting only while that is inside an append) and stops the hardware
+/// (see "Errors and recovery").
+pub struct Armed<'a> {
+    enc: &'a mut Encoder,
+    payload: usize,
+    capacity: usize,
+    out_len: usize,
+    line: usize,
+    /// What [`Armed::wait`] returned, once it did, and the input side as it was then.
+    result: Option<(Result<usize, Error>, live::Input)>,
+    _out: PhantomData<&'a mut [u8]>,
 }
 
-impl Drop for InFlight {
+impl Armed<'_> {
+    /// The input side: open, fed by a feeder (its tag), every band fed, or abandoned; after
+    /// [`Armed::wait`] returned, as it was at the end.
+    pub fn input(&self) -> live::Input {
+        match self.result {
+            Some((_, input)) => input,
+            None => live::input(),
+        }
+    }
+
+    /// Waits for the file and returns its length (`output[..len]`, as [`Encoder::encode`]).
+    /// Ends with [`Error::Abandoned`] when the feeder gave up. Cancel-safe: dropping the
+    /// future leaves the encode armed; called again after it returned, it returns the same.
+    pub async fn wait(&mut self) -> Result<usize, Error> {
+        if let Some((r, _)) = self.result {
+            return r;
+        }
+        let out_len = self.out_len;
+        let result = poll_fn(|cx| {
+            WAKER.register(cx.waker());
+            let ev = EVENTS.load(Ordering::Acquire);
+            let txs = TX_EVENTS.load(Ordering::Acquire);
+            let rxs = RX_EVENTS.load(Ordering::Acquire);
+            if ev & JPEG_ERRORS != 0 {
+                return Poll::Ready(Err((Error::Codec { status: ev }, ev, txs, rxs)));
+            }
+            if rxs & in_reg::INT_DSCR_EMPTY != 0 {
+                return Poll::Ready(Err((
+                    Error::OutputTooSmall { capacity: out_len },
+                    ev,
+                    txs,
+                    rxs,
+                )));
+            }
+            if txs & out_reg::INT_DSCR_ERR != 0
+                || rxs & (in_reg::INT_DSCR_ERR | in_reg::INT_ERR_EOF) != 0
+            {
+                return Poll::Ready(Err((Error::Dma { tx: txs, rx: rxs }, ev, txs, rxs)));
+            }
+            if rxs & in_reg::INT_SUC_EOF != 0 {
+                return Poll::Ready(Ok((ev, txs, rxs)));
+            }
+            if let live::Input::Abandoned(_) = live::input() {
+                return Poll::Ready(Err((Error::Abandoned, ev, txs, rxs)));
+            }
+            Poll::Pending
+        })
+        .await;
+
+        let stats = &mut self.enc.stats;
+        let r = match result {
+            Ok((ev, txs, rxs)) => {
+                stats.last_jpeg = ev;
+                stats.last_tx = txs;
+                stats.last_rx = rxs;
+                let (dw0, dw1) = wait_writeback(stats);
+                let n = Descriptor::received_len(dw0, dw1) as usize;
+                if n == 0 || n > self.capacity {
+                    // Only a broken descriptor write-back could do this.
+                    Err(Error::Dma { tx: txs, rx: rxs })
+                } else {
+                    cache::invalidate(self.payload, n.div_ceil(self.line) * self.line);
+                    Ok(HEADER_LEN + n)
+                }
+            }
+            Err((e, ev, txs, rxs)) => {
+                stats.last_jpeg = ev;
+                stats.last_tx = txs;
+                stats.last_rx = rxs;
+                Err(e)
+            }
+        };
+        // The input side is done with: every band was fed (the feeder may still be leaving
+        // its last append), or it gave up, or an error ends the encode.
+        let input = live::revoke();
+        match r {
+            Ok(_) => stats.frames += 1,
+            Err(_) => {
+                stats.errors += 1;
+                halt();
+            }
+        }
+        self.result = Some((r, input));
+        r
+    }
+
+    /// Ends the encode unfinished (as dropping it does) and returns the input side as it was,
+    /// so the caller knows which feeder had bound it. After [`Armed::wait`] returned: what it
+    /// was then, nothing stopped.
+    pub fn cancel(mut self) -> live::Input {
+        if let Some((_, input)) = self.result {
+            return input;
+        }
+        let input = live::revoke();
+        halt();
+        self.enc.stats.errors += 1;
+        self.result = Some((Err(Error::Abandoned), input));
+        input
+    }
+}
+
+impl Drop for Armed<'_> {
     fn drop(&mut self) {
-        if self.armed {
+        if self.result.is_none() {
+            let _ = live::revoke();
             halt();
         }
     }
+}
+
+/// The RX descriptor's first two words once the DMA has written it back (owner bit the CPU's,
+/// `INLINK_AUTO_RET` 0), or as they read after [`WRITEBACK_SPIN`] reads. `SUC_EOF` can be seen
+/// before the write-back is visible: on the board with the CSI writing strips into internal
+/// RAM and a DW-GDMA channel copying them to PSRAM, 19 frames in the `poc-viewer` board test's
+/// `jpeg` and `quality` sections (2026-11-21), each written back within the spin; read at
+/// once, each had failed its encode with [`Error::Dma`].
+fn wait_writeback(stats: &mut Stats) -> (u32, u32) {
+    let addr = rx_desc_addr();
+    let mut d = read_desc(addr);
+    if d.0 & dma2d::DW0_OWNER_DMA == 0 {
+        return d;
+    }
+    stats.late_writebacks = stats.late_writebacks.wrapping_add(1);
+    for _ in 0..WRITEBACK_SPIN {
+        d = read_desc(addr);
+        if d.0 & dma2d::DW0_OWNER_DMA == 0 {
+            // The length's high bits are in the second word: read both again, in case the
+            // second's write-back landed after the first was seen.
+            return read_desc(addr);
+        }
+    }
+    d
 }
 
 /// Writes the CPU's dirty lines of `buf` back to memory, so a DMA reads what the CPU wrote (for
