@@ -109,8 +109,13 @@ whether or not frames are sent. It works in two steps: the threshold **finds** t
 local background, the median of a ring around the
 spot, taken off), giving its centre, width (sigma) and flux. The area filter, the automatic
 threshold (from the frame's background and the highest peak kept) and the overflow count follow
-`docs/protocol.md`; the blob frames go to an active host only, after pending answers. Automatic
-exposure takes one step every 100 ms with the highest peak of the blobs sent in that period.
+`docs/protocol.md`; the blob frames go to an active host only, after pending answers. A frame
+the board's core 1 would not keep up with is cut as on the board (`detect.frames_cut`, no blobs,
+its background still moving the automatic threshold): the fake models core 1's time from the
+board's measures, 1.4 ns a pixel (RAW10 1.95) and 3.7 µs a run (`fake::board_detect_ns`), and
+cuts a frame whose time is longer than the frame period, so a threshold inside the background's
+noise cuts every frame as on the board. Automatic exposure takes one step every 100 ms with the
+highest peak of the blobs sent in that period.
 
 Measured against the true centres (`blobs_are_at_the_true_centres_of_their_frame`, 1280x800,
 120 blobs per stream):
@@ -497,8 +502,9 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   frame's arrival; the markers: blobs within 0.1 px of the true centres with a mean error under
   0.02 px per axis, detection and automatic exposure on at start, blobs with frames off and
   none with detection off, a manual threshold and area filter applied and echoed, the
-  automatic threshold following its rule, automatic exposure bringing the brightest peak into
-  its band, and the detection refusals), the checks, the JPEG header check, the address
+  automatic threshold following its rule, frames cut under a threshold inside the background's
+  noise lifting the automatic threshold out of it, automatic exposure bringing the brightest
+  peak into its band, and the detection refusals), the checks, the JPEG header check, the address
   parsing, the markers scene, the marker statistics and the pipeline timing (unit tests: the
   image's steps chained in order, the clock offset from the fastest datagram of either kind, raw
   streams, the markers' lane with frames off and its first draw, the cut frames of the window,
@@ -520,8 +526,9 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
 
   `settings` has the sections `sizes`, `rates`, `refusals`, `brightness`, `patterns`, `raw10`,
   `stream`, `jpeg`, `quality`, `auto`, `jpeg_refusals`, `switching`, `agreement`, `rtt`,
-  `faults`, `garbage`, `timeout` and `markers`: it applies each setting, checks the answer
-  against the `ov9281` driver run here (the state, or the refusal with its values), and for each
+  `faults`, `garbage`, `timeout`, `markers` and `threshold_cut`: it applies each setting, checks
+  the answer against the `ov9281` driver run here (the state, or the refusal with its values),
+  and for each
   accepted mode the frames: right size and layout, whole, numbers increasing, the rate at the
   host against the sensor rate and the link rate for that frame size, no capture error on the
   board; for JPEG every frame taken decodes as a baseline greyscale JPEG of the mode's size,
@@ -536,7 +543,10 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   that order) and its medians are printed; a manual threshold and area filter are applied; detection
   off sends nothing; with frames off the blobs come at the sensor rate less the skipped frames;
   per mode the coverage (frames detected / captured) and the detect time; and it prints the
-  source's jitter (sigma x, y) over 10 s.
+  source's jitter (sigma x, y) over 10 s. `threshold_cut` (`POC_ONLY=threshold_cut`, any
+  scene): at 1280x800 and the highest gain, a manual threshold inside the background's noise
+  cuts nearly every frame; turned automatic, the frames are detected again within half a
+  second (the cut frames' background lifts the threshold).
   `soak`
   streams for `POC_SOAK_SECS` with a mode change every 20 s, dropping and restarting the client
   and sending malformed datagrams in between. Both use the board's test hooks on UDP 5010

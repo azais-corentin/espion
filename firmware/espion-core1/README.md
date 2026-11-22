@@ -101,9 +101,11 @@ turns.
   at a row boundary once the strip's age passes `budget_cycles` less the detector's longest
   step, the larger of one worst-case row (width x 144 cycles) and one skip over the strip (1
   cycle a byte). Stopped short, detection stops for the rest of the frame; the frame is still
-  copied and its result says `cut`. Once the strip is past half its budget the detector's stop
-  check also polls the copy. Then the wait for the copy (at most 4 ms; a failed copy counts in
-  `copy_counts` and the frame goes out as not copied) and the release.
+  copied, the background sample still takes its other strips (so the result has the whole
+  frame's background, for core 0's automatic threshold) and its result says `cut`. Once the
+  strip is past half its budget the detector's stop check also polls the copy. Then the wait
+  for the copy (at most 4 ms; a failed copy counts in `copy_counts` and the frame goes out as
+  not copied) and the release.
 - **JPEG feed**, after the release (never inside the hold): if core 0 armed a live encode
   (`esp32p4_jpeg::Encoder::arm`) and the frame has its buffer and no failed copy, core 1
   binds the encode to the frame at whichever strip it is on (`live::begin`; a frame of

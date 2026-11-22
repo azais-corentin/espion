@@ -16,7 +16,8 @@
 //!   off, the threshold of the next frame, the area bounds, the detection serial.
 //! - **Results** ([`Work::result`], the capture task, as it drains core 1's results): the
 //!   area filter's counts, the threshold of the next frame (automatic: `espion_vision::auto`
-//!   from the frame's background and the brightest blob kept; manual: the set one),
+//!   from the frame's background and the brightest blob kept, a cut frame's background
+//!   alone; manual: the set one),
 //!   `DetectState`, and the `FrameBlobs` datagram queued for the send task while a host polls
 //!   ([`BLOBS_READY`]; the send task sends it after the answers and before the next frame
 //!   chunk). Results of settings changed since (another serial) are not used.
@@ -348,11 +349,17 @@ impl Work {
         if !r.detected {
             if r.cut && on {
                 // Core 1 fell behind the strips on this frame and copied it without
-                // detecting the rest: not detected.
+                // detecting the rest: not detected. Its background still moves the automatic
+                // threshold (to the floor: its blobs are not known), or a threshold that let
+                // the background in would cut every frame from then on.
+                let current = r.serial == serial;
                 shared(|s| {
                     let d = &mut s.detect;
                     d.frames_skipped = d.frames_skipped.wrapping_add(1);
                     d.frames_cut = d.frames_cut.wrapping_add(1);
+                    if current {
+                        follow(d, &settings, r, None);
+                    }
                 });
                 second(|s| s.cut += 1);
             }
@@ -396,17 +403,6 @@ impl Work {
         };
         let filtered = found.len() as u32 - kept;
         let detect_us = r.cycles / self.mhz;
-        let next = if settings.auto_threshold {
-            r.background.map(|bg| {
-                if r.raw10 {
-                    auto::threshold_raw10(bg, peak)
-                } else {
-                    u16::from(auto::threshold_raw8(bg, peak))
-                }
-            })
-        } else {
-            Some(settings.threshold)
-        };
         shared(|s| {
             let d = &mut s.detect;
             if measured {
@@ -416,13 +412,7 @@ impl Work {
             }
             d.blobs_dropped = d.blobs_dropped.wrapping_add(dropped);
             d.blobs_filtered = d.blobs_filtered.wrapping_add(filtered);
-            if let Some(th) = next {
-                d.threshold = th;
-            }
-            if let Some(bg) = r.background {
-                d.background_median = bg.median;
-                d.background_sigma = bg.sigma;
-            }
+            follow(d, &settings, r, peak);
             if measured {
                 let a = &mut s.detect_us;
                 a.0 += u64::from(detect_us);
@@ -488,6 +478,31 @@ impl Work {
         } else {
             shared(|s| s.detect.blobs_dropped = s.detect.blobs_dropped.wrapping_add(packed));
         }
+    }
+}
+
+/// After result `r` (detected with `settings`): the next frame's threshold and the background
+/// in `d`. Automatic: `espion_vision::auto` from the frame's background and `peak`, the
+/// brightest blob the area filter keeps (`None` for a cut frame, whose blobs are not known:
+/// the floor); a frame without a background keeps the threshold in use. Manual: the set one.
+fn follow(
+    d: &mut cam::DetectState,
+    settings: &cam::DetectSettings,
+    r: &FrameResult,
+    peak: Option<u8>,
+) {
+    if let Some(bg) = r.background {
+        d.background_median = bg.median;
+        d.background_sigma = bg.sigma;
+    }
+    if !settings.auto_threshold {
+        d.threshold = settings.threshold;
+    } else if let Some(bg) = r.background {
+        d.threshold = if r.raw10 {
+            auto::threshold_raw10(bg, peak)
+        } else {
+            u16::from(auto::threshold_raw8(bg, peak))
+        };
     }
 }
 

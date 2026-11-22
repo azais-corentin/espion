@@ -1488,6 +1488,52 @@ fn the_automatic_threshold_follows_the_rule() {
     }
 }
 
+/// A threshold inside the background's noise splits every row into runs: the board's core 1
+/// cannot keep up and cuts every frame. Turned automatic, the threshold in use stays until a
+/// frame chooses one; the cut frames must (their background), or nothing is detected again.
+#[test]
+fn cut_frames_move_the_automatic_threshold() {
+    // In the middle of the fake's background noise (10-bit 36..=44).
+    for (format, noisy) in [(Format::Raw8, 10), (Format::Raw10, 40)] {
+        let (_fake, client) = start(FakeConfig {
+            camera: lit(binned_640(format, 250)),
+            stream: frames_off(),
+            ..FakeConfig::default()
+        });
+        let manual = DetectSettings {
+            auto_threshold: false,
+            threshold: noisy,
+            ..DetectSettings::DEFAULT
+        };
+        let st = apply(&client, Command::SetDetect(manual), |s| {
+            s.detect.settings == manual
+        });
+        let cut = apply(&client, Command::GetState, |s| {
+            s.detect.frames_cut >= st.detect.frames_cut + 10
+        });
+        assert_eq!(
+            cut.detect.frames_detected, st.detect.frames_detected,
+            "{format:?}: frames detected at threshold {noisy}"
+        );
+        let auto = DetectSettings {
+            threshold: noisy,
+            ..DetectSettings::DEFAULT
+        };
+        let st = apply(&client, Command::SetDetect(auto), |s| {
+            s.detect.settings == auto
+        });
+        assert_eq!(
+            st.detect.threshold, noisy,
+            "{format:?}: the threshold in use"
+        );
+        for f in blob_frames_after(&client, &st, 10) {
+            assert!(f.flags & FrameBlobs::AUTO_THRESHOLD != 0);
+            assert!(f.threshold > noisy, "{format:?}: {f:?}");
+            assert_eq!(f.blobs.len(), fake::MARKERS, "{format:?}: {f:?}");
+        }
+    }
+}
+
 /// The brightest peak of each of the next `n` blob frames.
 fn brightest(client: &Client, state: &State, n: usize) -> Vec<u8> {
     blob_frames_after(client, state, n)

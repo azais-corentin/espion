@@ -19,7 +19,9 @@
 //! `espion-vision`'s on the frame in the sensor's format (RAW8, or RAW10 with the 10-bit
 //! threshold), with its background sample; the engine applies the area filter, takes the next
 //! automatic threshold, and sends one [`FrameBlobs`] per detected frame while a host polls,
-//! whatever "Send frames" and `max_fps` say, after any answer and before the next chunk. The
+//! whatever "Send frames" and `max_fps` say, after any answer and before the next chunk. A frame
+//! the board's core 1 would not keep up with (a model of its time, [`board_detect_ns`]) is cut
+//! as on the board: counted, no blobs, its background still moving the automatic threshold. The
 //! automatic exposure takes one step of [`auto_exposure`] every [`AUTO_EXPOSURE_PERIOD_MS`] with
 //! the highest peak of the blobs sent in the period.
 //!
@@ -367,15 +369,18 @@ struct DetectJob {
     epoch: u32,
 }
 
-/// A frame the detector went through: every blob it found (before the area filter), each
-/// measured on the frame (`espion_vision::refine`).
+/// A frame through the detector: every blob it found (before the area filter), each measured
+/// on the frame (`espion_vision::refine`); none when it was cut.
 struct Detected {
     job: DetectJob,
     blobs: Vec<Blob>,
     /// Items the detector lost (`Stats::overflow`: runs, components and blobs beyond its
     /// capacity); with the kept blobs beyond `FRAME_BLOBS_MAX` they make `blobs_dropped`.
     lost: u32,
-    /// The frame's background sample.
+    /// The board would not have kept up with the frame's detection ([`board_detect_ns`]): cut,
+    /// as on the board, its blobs not known.
+    cut: bool,
+    /// The frame's background sample (a cut frame's too, as on the board).
     background: Option<Background>,
     detect_us: u32,
     /// The detector's start and end on the frame, and the end of the measure.
@@ -407,6 +412,25 @@ impl DetectSlot {
 
 /// Most blobs the detector returns per frame (its capacity, `DefaultDetector`).
 const DETECT_BLOBS: usize = 256;
+
+/// Core 1's detector time on the board per pixel of a frame with few runs, RAW8 and RAW10, ns
+/// (1280x800 at 120 Hz: 1.43 and 2.0 ms a frame, `poc-p4-stream` README, "Measured: detection
+/// on strips").
+const BOARD_PIXEL_NS: [f64; 2] = [1.4, 1.95];
+/// Core 1's detector time on the board per run, ns (`poc-p4-stream` README, "Measured: the
+/// automatic threshold and cut frames": a noisy background near the threshold, 3.5 to 4.1 µs a
+/// run on top of the frame's time with few runs).
+const BOARD_RUN_NS: f64 = 3700.0;
+
+/// Core 1's time to detect a frame of `pixels` in `format` with detector `stats` on the board,
+/// ns: a model of its cost, per pixel and per run. The board cuts a frame whose detection falls
+/// behind the readout by more than its strips may be held; the fake cuts one whose modelled
+/// time is longer than the frame period (the same for a load spread over the frame, as a noisy
+/// background near the threshold is).
+fn board_detect_ns(format: Format, pixels: usize, stats: &espion_vision::Stats) -> f64 {
+    let px = BOARD_PIXEL_NS[usize::from(format == Format::Raw10)];
+    pixels as f64 * px + f64::from(stats.runs) * BOARD_RUN_NS
+}
 
 /// The fake's detector: takes the frame handed to it, renders it in the sensor's format, finds
 /// its blobs, measures each on the frame, samples its background, and hands them to the
@@ -449,7 +473,10 @@ fn detector_thread(
             let t8 = job.threshold.min(255) as u8;
             detector.process_frame(&raw, c.width, t8, &mut found)
         };
-        let lost = detector.stats().overflow;
+        let stats = detector.stats();
+        let lost = stats.overflow;
+        let pixels = usize::from(c.width) * usize::from(c.height);
+        let cut = board_detect_ns(c.format, pixels, &stats) > f64::from(job.period_us) * 1e3;
         let found_at = Instant::now();
         hist.clear();
         if raw10 {
@@ -458,6 +485,8 @@ fn detector_thread(
             auto::sample_raw8(&raw, c.width, 0, &mut hist);
         }
         let background = Background::from_histogram(&hist);
+        // A cut frame's blobs are not known.
+        let n = if cut { 0 } else { n };
         blobs.clear();
         blobs.extend(found[..n].iter().map(|b| {
             let s = if raw10 {
@@ -480,6 +509,7 @@ fn detector_thread(
             job,
             blobs,
             lost,
+            cut,
             background,
             detect_us,
             started: t,
@@ -562,8 +592,6 @@ struct Engine {
     /// Changes with the detection settings and the mode: results of frames handed to the
     /// detector before are dropped.
     detect_epoch: u32,
-    /// The last background sampled in this epoch.
-    background: Option<Background>,
     /// Detect time sum and frames since the last state.
     detect_us: (u64, u32),
     /// Automatic exposure: end of the current period, highest blob peak sent in it.
@@ -643,7 +671,6 @@ impl Engine {
                 available: true,
             },
             detect_epoch: 0,
-            background: None,
             detect_us: (0, 0),
             exposure_due: now + EXPOSURE_PERIOD,
             exposure_peak: None,
@@ -727,12 +754,14 @@ impl Engine {
     }
 
     /// A frame through the detector: the area filter, the next automatic threshold, the
-    /// counters, and its blobs to the host while one polls.
+    /// counters, and its blobs to the host while one polls. A cut frame, as on the board: only
+    /// counted, and its background moves the automatic threshold.
     fn detected(&mut self, d: Detected) {
         let Detected {
             job,
             blobs,
             lost,
+            cut,
             background,
             detect_us,
             started,
@@ -744,6 +773,14 @@ impl Engine {
             return;
         }
         let det = &mut self.detect;
+        let format = job.camera.format;
+        if cut {
+            det.frames_skipped = det.frames_skipped.wrapping_add(1);
+            det.frames_cut = det.frames_cut.wrapping_add(1);
+            follow(det, format, background, None);
+            self.detect_slot.lock().pool.push(blobs);
+            return;
+        }
         det.frames_detected = det.frames_detected.wrapping_add(1);
         det.detect_us_max = det.detect_us_max.max(detect_us);
         self.detect_us.0 += u64::from(detect_us);
@@ -757,15 +794,7 @@ impl Engine {
         let dropped = lost as usize + (blobs.len() - filtered) - n / BLOB_BYTES;
         det.blobs_filtered = det.blobs_filtered.wrapping_add(filtered as u32);
         det.blobs_dropped = det.blobs_dropped.wrapping_add(dropped as u32);
-        if let Some(bg) = background {
-            self.background = Some(bg);
-            (det.background_median, det.background_sigma) = (bg.median, bg.sigma);
-        }
-        det.threshold = match (settings.auto_threshold, self.background) {
-            (true, Some(bg)) => next_threshold(self.camera.format, bg, peak),
-            (true, None) => det.threshold,
-            (false, _) => settings.threshold,
-        };
+        follow(det, format, background, peak);
         let now = Instant::now();
         let Some(peer) = self.peer.filter(|_| self.host_active(now)) else {
             self.detect_slot.lock().pool.push(blobs);
@@ -1155,16 +1184,14 @@ impl Engine {
         Ok(())
     }
 
+    /// As on the board: with the automatic threshold the threshold in use stays until the next
+    /// frame chooses one.
     fn set_detect(&mut self, d: DetectSettings) -> Result<(), CamError> {
         d.check(self.camera.format)?;
-        let background = self.background;
+        let in_use = self.detect.threshold;
         self.restart_detection(d);
-        // With the automatic threshold, the floor of the background known so far.
-        if d.auto_threshold
-            && let Some(bg) = background
-        {
-            self.background = background;
-            self.detect.threshold = next_threshold(self.camera.format, bg, None);
+        if d.auto_threshold {
+            self.detect.threshold = in_use;
         }
         Ok(())
     }
@@ -1180,7 +1207,6 @@ impl Engine {
         drop(s);
         self.detect.settings = settings;
         self.detect.threshold = settings.threshold;
-        self.background = None;
     }
 
     fn set_stream(&mut self, s: StreamSettings, now: Instant) -> Result<(), CamError> {
@@ -1220,11 +1246,22 @@ impl Engine {
     }
 }
 
-/// The automatic threshold for the next frame in `format`'s units (`espion_vision::auto`).
-fn next_threshold(format: Format, bg: Background, peak: Option<u8>) -> u16 {
-    match format {
-        Format::Raw8 => u16::from(auto::threshold_raw8(bg, peak)),
-        Format::Raw10 => auto::threshold_raw10(bg, peak),
+/// After a frame detected with the settings of `d` in `format`, as on the board: the next
+/// frame's threshold and the background in `d`. Automatic: `espion_vision::auto` from the
+/// frame's background and `peak`, the brightest blob the area filter keeps (`None` for a cut
+/// frame, whose blobs are not known: the floor); a frame without a background keeps the
+/// threshold in use. Manual: the set one.
+fn follow(d: &mut DetectState, format: Format, background: Option<Background>, peak: Option<u8>) {
+    if let Some(bg) = background {
+        (d.background_median, d.background_sigma) = (bg.median, bg.sigma);
+    }
+    if !d.settings.auto_threshold {
+        d.threshold = d.settings.threshold;
+    } else if let Some(bg) = background {
+        d.threshold = match format {
+            Format::Raw8 => u16::from(auto::threshold_raw8(bg, peak)),
+            Format::Raw10 => auto::threshold_raw10(bg, peak),
+        };
     }
 }
 

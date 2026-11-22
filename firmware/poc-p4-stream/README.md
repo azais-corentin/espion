@@ -362,9 +362,12 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
   lay done before core 1 took it counts too. The detector stops at a row boundary once the
   strip's age passes the budget less its longest step (the larger of one worst-case row,
   width x 144 cycles, and one skip over the strip, 1 cycle a byte). Stopped short, detection
-  stops for the rest of that frame. The frame is still copied and sent; its result is `cut`,
-  and core 0 counts it in `detect.frames_cut`, in `detect.frames_skipped` and in the log's
-  `cut`.
+  stops for the rest of that frame. The frame is still copied and sent, and the background
+  sample still takes its other strips; its result is `cut`, and core 0 counts it in
+  `detect.frames_cut`, in `detect.frames_skipped` and in the log's `cut`. With the automatic
+  threshold, a cut frame's background sets the next threshold to its floor (its blobs are not
+  known): a threshold inside the background's noise splits every row into runs and cuts every
+  frame, and only the cut frames can lift it out.
 - **Laps.** A strip whose copy ended while it was still intact keeps its frame if the DMA
   laps it later: only the rest of that frame's detection is dropped (`cut`). A lap before the
   copy ended loses the frame. The log's `lapped N (after the copy M)` counts both kinds.
@@ -851,6 +854,45 @@ with prefetch off, its autoload on and off, and beside internal (`co2.log`, 30 s
 not checked.
 For the detector the interaction costs 6 % of core 0's TX cycles (7 360 against 6 940):
 keep `preload_ahead`, or use `l2` (8 159) if the autoload's share grows.
+
+### Measured: the automatic threshold and cut frames, 2026-11-22
+
+This board, 1280x800 RAW8 crop at 120 Hz, automatic exposure off at 54 lines and gain 15.5x
+(the gain the automatic exposure had reached), the iPad's black page in front of the camera,
+background median 3, σ 2; the automatic threshold sits at 15 (11 in frames with σ 1). Driven
+from a throwaway client.
+
+**The lock.** Core 1 cut a frame (`cut`) and core 0 dropped its result before the automatic
+threshold took its background: a threshold that let the background's noise in split every
+row into runs, cut every frame, and never moved again. Seen live on the screen target (the
+viewer's session that ran it): the threshold stuck at 15 while the automatic exposure's gain
+lit the iPad's black above it, every frame cut for minutes. Reproduced on the firmware before
+the fix: a manual threshold of 6 (every frame cut), then the automatic threshold: the threshold
+in use stays 6, and 3 s later still every frame cut (60 of 60 per 0.5 s), no blob frame; it
+stayed so after the test restored the settings. With the fix (core 1 samples the background
+over the rest of a cut frame, core 0 takes the floor from it), the same steps: 2 to 3 frames
+cut after the switch, then threshold 15 and 120 of 120 frames detected a second; the board
+test's `threshold_cut` section passes (manual 3: 100 % cut; automatic: 120 blob frames in 1 s,
+0 % cut).
+
+**Detection cost against the threshold** (manual threshold, the runs counted on the host on a
+frame of the same scene, detect mean from the state):
+
+| Threshold | Runs | Pixels at or above | Detected / cut, per 0.7 s |
+|---|---|---|---|
+| 1 to 8 | 3 878 to 204 460 | 4 069 to 998 071 | every frame cut |
+| 9 | 812 | 888 | all detected, 4.31 ms mean |
+| 10 | 186 | 220 | all detected, 2.20 ms |
+| 11 | 48 | 66 | all detected, 1.64 ms |
+| 12 to 15 | 3 to 6 | 10 to 20 | all detected, 1.44 to 1.49 ms |
+
+Above the 1.44 ms of a frame with few runs, a run in this noise costs 3.5 to 4.1 µs (the
+colour test patterns' rows above cost about 1 µs a run). The fake camera cuts with this model
+(`fake::board_detect_ns`).
+
+**Cost of the fix**: in a normal scene detect mean 1387 to 1436 µs and strip hold max 107 to
+134 µs (budget 1744 µs), as before; during the cut frames hold max 1197 µs, 0 laps, 0 capture
+errors.
 
 ### Measured: detection on strips, 2026-11-21
 
@@ -1801,8 +1843,8 @@ multicast, the EMAC's PTP clock and timestamps.
   Sending the bytes from PSRAM without the copy failed on TX underflows (step 3).
 - **Detection only on strips**: the modes the strip plan refuses, and every start after a
   core-1 fault, stream without detection (`DetectState::available` false, or `fault`).
-- **Colour test patterns**: their detection is cut on every frame (counted skipped), so the
-  automatic threshold keeps its last value while one runs
+- **Colour test patterns**: their detection is cut on every frame (counted skipped); the cut
+  frames' background still sets the automatic threshold (the floor)
   ([why](#measured-detection-on-strips-2026-11-21)).
 - Not verified: an encoder timeout (never seen; the path is the same as the driver's errors),
   the encoder's codec and DMA errors on this firmware (only `OutputTooSmall` was provoked),

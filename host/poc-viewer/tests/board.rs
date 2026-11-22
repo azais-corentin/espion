@@ -41,6 +41,13 @@
 //! and no capture error; and it prints the jitter (sigma x, y) of the source over 10 s.
 //! Run it alone with `POC_ONLY=markers`.
 //!
+//! `threshold_cut` checks that frames cut under the automatic threshold still move it: at
+//! 1280x800 with the highest gain, the first manual threshold from the background's median up
+//! that cuts nearly every frame (the noise splits every row into runs); turned automatic, the
+//! threshold in use stays, and within half a second the frames are detected again (blob frames
+//! at a threshold above it, under 10 % cut). Any scene; run it alone with
+//! `POC_ONLY=threshold_cut`.
+//!
 //! `soak` streams 640x400 binned at the link rate and changes the mode every 20 s, restarts the
 //! client and sends malformed datagrams in between, for `POC_SOAK_SECS` (default 600).
 
@@ -632,7 +639,7 @@ fn settings() {
     b.set_stream(stream(Encoding::Raw8, 0))
         .expect("RAW8 stream");
 
-    let sections: [(&str, Section); 19] = [
+    let sections: [(&str, Section); 20] = [
         ("sizes", sizes),
         ("rates", rates),
         ("refusals", refusals),
@@ -652,6 +659,7 @@ fn settings() {
         ("garbage", garbage),
         ("timeout", timeout),
         ("markers", markers),
+        ("threshold_cut", threshold_cut),
     ];
     for (name, run) in sections {
         if section(name) {
@@ -1601,6 +1609,100 @@ fn markers(b: &mut Board) {
     );
     b.set_stream(stream(Encoding::Raw8, 0))
         .expect("RAW8 stream");
+}
+
+/// Cut frames move the automatic threshold (module docs).
+fn threshold_cut(b: &mut Board) {
+    b.set_stream(stream(Encoding::Raw8, 10))
+        .expect("RAW8 stream");
+    // The highest gain at a fixed exposure: a noisy background.
+    let noisy = CameraSettings {
+        exposure_lines: 54,
+        gain_sixteenths: GAIN_MAX,
+        ..crop(Format::Raw8, 1280, 800, 120.0)
+    };
+    b.set_camera(noisy).expect("1280x800 at the highest gain");
+    b.set_detect(DetectSettings::DEFAULT).expect("detection on");
+    thread::sleep(Duration::from_secs(1));
+    let median = u16::from(b.state().detect.background_median);
+    // The share of the frames captured over `secs` that were cut, and the state at its end.
+    let cut_share = |b: &Board, secs: f64| {
+        let a = b.state();
+        thread::sleep(Duration::from_secs_f64(secs));
+        let z = b.state();
+        let captured = z
+            .counters
+            .frames_captured
+            .wrapping_sub(a.counters.frames_captured);
+        let cut = z.detect.frames_cut.wrapping_sub(a.detect.frames_cut);
+        (f64::from(cut) / f64::from(captured.max(1)), z)
+    };
+    // The first manual threshold from the median up that cuts nearly every frame.
+    let mut noisy_threshold = None;
+    for t in median.max(1)..=median + 8 {
+        let manual = DetectSettings {
+            auto_threshold: false,
+            threshold: t,
+            ..DetectSettings::DEFAULT
+        };
+        b.set_detect(manual).expect("manual threshold");
+        thread::sleep(Duration::from_millis(200));
+        let (share, _) = cut_share(b, 0.5);
+        println!(
+            "  manual threshold {t} (background median {median}): {:.0} % of the frames cut",
+            share * 100.0
+        );
+        if share >= 0.9 {
+            noisy_threshold = Some(t);
+            break;
+        }
+    }
+    let Some(t) = noisy_threshold else {
+        b.check(false, || {
+            format!("threshold_cut: no threshold from {median} up cuts the frames")
+        });
+        b.set_detect(DetectSettings::DEFAULT).expect("detection on");
+        return;
+    };
+    // Automatic: the threshold in use stays until a frame chooses one; the cut frames must.
+    let auto = DetectSettings {
+        threshold: t,
+        ..DetectSettings::DEFAULT
+    };
+    let st = b.set_detect(auto).expect("automatic threshold");
+    b.check(st.detect.threshold == t, || {
+        format!(
+            "threshold_cut: turned automatic, threshold {} instead of {t} in use",
+            st.detect.threshold
+        )
+    });
+    thread::sleep(Duration::from_millis(500));
+    let w = blob_window(b, 1.0);
+    let (share, z) = cut_share(b, 0.5);
+    println!(
+        "  automatic: threshold {}, background {} / {}, {} blob frames in 1 s, then {:.0} % cut",
+        z.detect.threshold,
+        z.detect.background_median,
+        z.detect.background_sigma,
+        w.len(),
+        share * 100.0
+    );
+    b.check(
+        w.len() >= 100
+            && w.iter()
+                .all(|f| f.threshold > t && f.flags & FrameBlobs::AUTO_THRESHOLD != 0)
+            && share < 0.1,
+        || {
+            format!(
+                "threshold_cut: automatic threshold stuck: {} blob frames in 1 s, {:.0} % cut, \
+                 threshold {}",
+                w.len(),
+                share * 100.0,
+                z.detect.threshold
+            )
+        },
+    );
+    b.set_detect(DetectSettings::DEFAULT).expect("detection on");
 }
 
 /// The JPEG modes of the `jpeg` and `jpeg_check` sections: strips and whole frames, every

@@ -220,11 +220,11 @@ the `poc-viewer` host app; not by the tracking path above.
 |---|---|---|
 | settings | `DetectSettings` | As applied |
 | threshold | `u16` | Threshold the next frame is detected with (the automatic one or `settings.threshold`), in the sensor format's units |
-| background_median, background_sigma | `u8`, `u8` | The last detected frame's background sample: its median and its 84th percentile minus the median, 8-bit units |
+| background_median, background_sigma | `u8`, `u8` | The last detected or cut frame's background sample: its median and its 84th percentile minus the median, 8-bit units |
 | detect_us_mean, detect_us_max | `u32`, `u32` | Detect time of the frames detected since the previous state was made, µs (0 when none) |
 | frames_detected | `u32` | Frames detected since boot. Wraps |
 | frames_skipped | `u32` | Captured frames the detector could not take because it was busy (detection on), and the frames in `frames_cut`. Wraps |
-| frames_cut | `u32` | Frames whose detection stopped part-way because the detector fell behind the strips (a strip would have been held past `hold_budget_us`, or was written over): the rest was copied, not detected, no blobs sent. Wraps |
+| frames_cut | `u32` | Frames whose detection stopped part-way because the detector fell behind the strips (a strip would have been held past `hold_budget_us`, or was written over): the rest was copied, not detected, no blobs sent; its background was still sampled (automatic threshold). Wraps |
 | blobs_dropped | `u32` | Items the detector lost: runs and components beyond its capacity (a blob that lost some comes out split, shrunk or not at all), blobs beyond its capacity or `FRAME_BLOBS_MAX`. Wraps |
 | blobs_filtered | `u32` | Blobs found but dropped by the area filter. Wraps |
 | fault | `bool` | The detector stopped after a fault (the board: its core trapped or stopped beating); nothing is detected until the board restarts |
@@ -423,7 +423,11 @@ The fake camera, which detects whole frames, sends one strip of the frame's heig
   `max(median + max(6σ, 8), ⌈peak / 2⌉)` in 8-bit units, between 1 and 255, with `peak` the
   highest peak of this frame's blobs that the area filter keeps (a lone hot pixel does not
   raise it). With no such blob it is the floor alone. RAW10 uses 4 times that value, so it
-  selects the same pixels.
+  selects the same pixels. A cut frame (`frames_cut`) is sampled whole all the same and gives
+  the floor of its background (its blobs are not known): a threshold that lets the
+  background's noise in splits every row into runs and cuts the frames, and the cut frames
+  are what lift it out. Turning `auto_threshold` on keeps the threshold in use until the
+  next detected or cut frame chooses one.
 - **Automatic exposure** (`CameraSettings::auto_exposure` on): at the end of every 100 ms
   (`AUTO_EXPOSURE_PERIOD_MS`) the board takes one step of
   `cam::auto_exposure(now, peak, cap)`, shared with the fake camera. `peak` is the highest

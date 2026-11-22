@@ -68,11 +68,12 @@
 //!   background sample (`espion_vision::auto`) on the strip while the copy runs (with the L1
 //!   data autoload over the strip if the run asks for it). The detector is one bounded call
 //!   (`push_rows_until`) that stops at a row boundary once its next step could end past
-//!   [`StreamRun::budget_cycles`]; stopped short, the rest of the frame is copied only
-//!   ([`FrameResult::cut`]). Then the copy waited for (at most [`COPY_MAX_CYCLES`]) and the
-//!   strip released. A strip whose copy ended while it was intact is released with
-//!   `release_copied`: lapped after that, the frame goes on without detection. Any other
-//!   strip released `false` abandons the frame and its buffer goes back. After the last
+//!   [`StreamRun::budget_cycles`]; stopped short, the rest of the frame is copied and
+//!   sampled only ([`FrameResult::cut`]; its background still covers the whole frame). Then
+//!   the copy waited for (at most [`COPY_MAX_CYCLES`]) and the strip released. A strip whose
+//!   copy ended while it was intact is released with `release_copied`: lapped after that, the
+//!   frame goes on without detection. Any other strip released `false` abandons the frame and
+//!   its buffer goes back. After the last
 //!   strip ([`stream_end`]): `finish`, the
 //!   background, the frame buffer's lines invalidated, a reserved result slot; the kept blobs
 //!   (area filter, at most [`StreamDetect::spots`]) are measured on the assembled frame
@@ -214,8 +215,9 @@ pub struct FrameResult {
     /// Threshold the frame was detected with, in its format's units, and its format.
     pub threshold: u16,
     pub raw10: bool,
-    /// [`Job::Stream`]: the background of the frame's sample (`None` for an empty sample and
-    /// for the other jobs).
+    /// [`Job::Stream`]: the background of the frame's sample, taken over every strip of a
+    /// frame whose detection was on at its first strip, a `cut` one's too (`None` for an
+    /// empty sample, a frame without detection and the other jobs).
     pub background: Option<Background>,
     pub blobs: [Blob; MAX_BLOBS],
     /// [`Job::Stream`], copied frames: the kept blobs (area filter) measured on the assembled
@@ -1196,6 +1198,9 @@ struct Asm {
     copy_ok: bool,
     /// Detection on, with these settings ([`DETECT`] at the first strip).
     detect: bool,
+    /// Detection was on at the first strip: the background sample takes every strip of the
+    /// frame, also those after a cut, so a cut frame still has its background.
+    sample: bool,
     serial: u32,
     threshold: u16,
     area: (u16, u16),
@@ -1570,6 +1575,7 @@ fn stream_begin(st: &mut Core1State<'_>, frame: u32) {
         buffer,
         copy_ok: true,
         detect,
+        sample: detect,
         serial,
         threshold,
         area: (area as u16, (area >> 16) as u16),
@@ -1652,15 +1658,10 @@ fn stream_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
         let budget = PARAMS.budget.load(Ordering::Relaxed);
         // The strip must be released within the budget: the detector stops at a row boundary
         // once its next step (one row's worst case, or one skip over the rest of the strip)
-        // could end past it; the rest of the frame is then copied only.
+        // could end past it; the rest of the frame is then copied and sampled only.
         let last_start = budget.saturating_sub(PARAMS.step.load(Ordering::Relaxed));
-        let format = STREAM.format.load(Ordering::Relaxed);
-        // The background sample first, over the whole strip (a frame cut short has none).
-        if format >> 31 != 0 {
-            auto::sample_raw10(&s, format as u16, s.first_row(), hist);
-        } else {
-            auto::sample_raw8(&s, format as u16, s.first_row(), hist);
-        }
+        // The background sample first, over the whole strip.
+        sample_strip(&s, hist);
         let rows = detect_rows(skip, det, &s, s.first_row(), || {
             let age = cycles().wrapping_sub(queued_at);
             // No lap before the budget: the copy's end is worth a look (a register read) only
@@ -1682,6 +1683,10 @@ fn stream_strip<S: Skip>(skip: &S, st: &mut Core1State<'_>, s: StripRef<'_>) {
         if autoload {
             prefetch::autoload_disable(Level::L1Data);
         }
+    } else if a.sample {
+        // Cut: the background sample goes on over the rest of the frame (cheap: a sparse
+        // sample), so the automatic threshold sees a cut frame's background too.
+        sample_strip(&s, hist);
     }
     let d = CpuSample::now().since(&t0);
     let w0 = cycles();
@@ -1887,9 +1892,9 @@ fn stream_end(st: &mut Core1State<'_>, queued_at: u32) {
         return;
     };
     let t0 = CpuSample::now();
-    let (n, stats, background) = if a.detect {
+    let (n, stats) = if a.detect {
         let n = st.det.finish(&mut r.blobs) as u16;
-        (n, st.det.stats(), Background::from_histogram(&st.hist))
+        (n, st.det.stats())
     } else {
         (
             0,
@@ -1899,8 +1904,13 @@ fn stream_end(st: &mut Core1State<'_>, queued_at: u32) {
                 blobs: 0,
                 overflow: 0,
             },
-            None,
         )
+    };
+    // A cut frame's too: its sample went on over every strip.
+    let background = if a.sample {
+        Background::from_histogram(&st.hist)
+    } else {
+        None
     };
     let d = CpuSample::now().since(&t0);
     let format = STREAM.format.load(Ordering::Relaxed);
@@ -2049,6 +2059,18 @@ fn autoload_on(strip: &[u8]) {
         },
     );
     prefetch::autoload_enable(Level::L1Data);
+}
+
+/// The background sample (`espion_vision::auto`) of one strip of the stream run's format into
+/// `hist`.
+#[inline(always)]
+fn sample_strip(s: &StripRef<'_>, hist: &mut Histogram) {
+    let format = STREAM.format.load(Ordering::Relaxed);
+    if format >> 31 != 0 {
+        auto::sample_raw10(s, format as u16, s.first_row(), hist);
+    } else {
+        auto::sample_raw8(s, format as u16, s.first_row(), hist);
+    }
 }
 
 /// The detector on one strip's rows with the dark skip `skip`, stopping at a row boundary once
