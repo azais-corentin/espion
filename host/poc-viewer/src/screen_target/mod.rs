@@ -15,6 +15,7 @@
 
 pub mod calib;
 pub mod check;
+pub mod ids;
 pub mod link;
 pub mod model;
 pub mod server;
@@ -615,6 +616,7 @@ impl Target {
                 .blobs
                 .iter()
                 .map(|x| Seen {
+                    id: x.id,
                     x: px(x.x),
                     y: px(x.y),
                     sigma: px(u32::from(x.width)),
@@ -624,6 +626,7 @@ impl Target {
             c.detected(
                 b.generation,
                 b.frame,
+                b.timestamp_us,
                 start + s.exposure / 2.0,
                 s.period,
                 seen,

@@ -845,6 +845,7 @@ fn too_small_a_buffer_is_reported() {
 fn blobs(n: usize) -> Vec<Blob> {
     (0..n)
         .map(|i| Blob {
+            id: (i as u32).wrapping_mul(0x0301_0005).wrapping_add(1),
             x: (i as u32).wrapping_mul(0x0101_0097),
             y: u32::MAX - i as u32,
             width: (i as u16).wrapping_mul(311),
@@ -905,7 +906,7 @@ fn blobs_round_trip_and_the_most_fit_a_datagram() {
     let packed = vec![0xFFu8; FRAME_BLOBS_MAX * BLOB_BYTES];
     let len = frame_blobs(&packed).encode(&mut buf).unwrap().len();
     assert!(len + BLOB_BYTES > MAX_DATAGRAM, "{len}");
-    assert_eq!(FRAME_BLOBS_MAX, 80);
+    assert_eq!(FRAME_BLOBS_MAX, 64);
 }
 
 #[test]
@@ -922,6 +923,7 @@ fn packing_stops_at_the_room_given_and_the_datagram_limit() {
         (FRAME_BLOBS_MAX * BLOB_BYTES, false)
     );
     let b = Blob {
+        id: 0x0A0B_0C0D,
         x: 0x1234_5678,
         y: 0x9ABC_DEF0,
         width: 0x0102,
@@ -932,8 +934,8 @@ fn packing_stops_at_the_room_given_and_the_datagram_limit() {
     assert_eq!(
         b.to_bytes(),
         [
-            0x78, 0x56, 0x34, 0x12, 0xF0, 0xDE, 0xBC, 0x9A, 0x02, 0x01, 0x06, 0x05, 0x04, 0x03,
-            0x08, 0x07, 0x09
+            0x0D, 0x0C, 0x0B, 0x0A, 0x78, 0x56, 0x34, 0x12, 0xF0, 0xDE, 0xBC, 0x9A, 0x02, 0x01,
+            0x06, 0x05, 0x04, 0x03, 0x08, 0x07, 0x09
         ]
     );
     let small = Blob {

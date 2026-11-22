@@ -14,6 +14,7 @@
 use std::collections::VecDeque;
 
 use super::{
+    ids::{IdCounts, Identities},
     link::{Drawn, FWHM_PER_SIGMA},
     model::Model,
 };
@@ -67,9 +68,17 @@ impl Marker {
     }
 }
 
-/// A blob of a detected frame: centre and width (sigma), sensor pixels.
+/// How far from marker `m` a blob may be and still be its own, sensor pixels: twice its FWHM
+/// (at least [`GATE_MIN`]) plus what it moves in a frame period.
+pub fn gate(m: &Marker, period_us: f64) -> f64 {
+    (2.0 * FWHM_PER_SIGMA * m.sigma).max(GATE_MIN) + m.speed * period_us / 1e6
+}
+
+/// A blob of a detected frame: its identity, centre and width (sigma), sensor pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Seen {
+    /// The identity the board gave it ([`espion_proto::cam::Blob::id`]).
+    pub id: u32,
     pub x: f64,
     pub y: f64,
     pub sigma: f64,
@@ -87,6 +96,7 @@ struct Draw {
 struct Observed {
     generation: u32,
     frame: u32,
+    timestamp_us: u64,
     mid_us: f64,
     period_us: f64,
     blobs: Vec<Seen>,
@@ -97,6 +107,9 @@ struct Observed {
 pub struct FrameMatch {
     pub generation: u32,
     pub frame: u32,
+    /// The board's capture time of the frame, µs since its boot.
+    pub timestamp_us: u64,
+    /// The middle of its exposure, µs on the viewer's clock.
     pub mid_us: f64,
     /// The page's frame: when it was drawn, and its markers.
     pub drawn_us: f64,
@@ -221,6 +234,8 @@ pub struct Report {
     pub delay_us: Option<f64>,
     /// Markers by speed, over the window.
     pub speeds: Vec<SpeedBin>,
+    /// How stable the blobs' identities are, since the scene started.
+    pub ids: IdCounts,
 }
 
 /// The check of one scene.
@@ -236,6 +251,7 @@ pub struct Check {
     delay_us: Option<f64>,
     next_fit_us: f64,
     total: Counts,
+    ids: Identities,
     report: Report,
 }
 
@@ -251,6 +267,7 @@ impl Check {
             delay_us: None,
             next_fit_us: 0.0,
             total: Counts::default(),
+            ids: Identities::default(),
             report: Report::default(),
         }
     }
@@ -283,11 +300,13 @@ impl Check {
         self.draws.push_back(Draw { at_us, markers });
     }
 
-    /// A detected frame whose exposure's middle is at `mid_us`, frame period `period_us`.
+    /// A detected frame captured at the board's `timestamp_us`, whose exposure's middle is at
+    /// `mid_us`, frame period `period_us`.
     pub fn detected(
         &mut self,
         generation: u32,
         frame: u32,
+        timestamp_us: u64,
         mid_us: f64,
         period_us: f64,
         blobs: Vec<Seen>,
@@ -295,6 +314,7 @@ impl Check {
         let o = Observed {
             generation,
             frame,
+            timestamp_us,
             mid_us,
             period_us,
             blobs,
@@ -326,7 +346,7 @@ impl Check {
             if *p == Place::Outside {
                 continue;
             }
-            let gate = (2.0 * FWHM_PER_SIGMA * m.sigma).max(GATE_MIN) + m.speed * o.period_us / 1e6;
+            let gate = gate(m, o.period_us);
             for (j, b) in o.blobs.iter().enumerate() {
                 let r = (b.x - m.u).hypot(b.y - m.v);
                 if r <= gate {
@@ -346,6 +366,7 @@ impl Check {
         FrameMatch {
             generation: o.generation,
             frame: o.frame,
+            timestamp_us: o.timestamp_us,
             mid_us: o.mid_us,
             drawn_us: d.at_us,
             markers: markers
@@ -450,6 +471,7 @@ impl Check {
                     Some((d, true)) => {
                         let m = self.matched(o, d);
                         self.total.add(&m);
+                        self.ids.add(&m, |j| m.blobs[j].id);
                         self.matches.push_back(m);
                         self.pending.pop_front();
                     }
@@ -548,6 +570,7 @@ impl Check {
             }),
             delay_us: self.delay_us,
             speeds: bins.into_iter().filter(|b| b.markers > 0).collect(),
+            ids: self.ids.counts(),
         }
     }
 
@@ -566,6 +589,15 @@ impl Check {
     /// The newest match.
     pub fn newest(&self) -> Option<&FrameMatch> {
         self.matches.back()
+    }
+
+    /// The matches made after the first `n` of the scene (`Report::total`'s `frames` counts
+    /// them), oldest first: those the window still holds.
+    pub fn matches_since(&self, n: u64) -> impl Iterator<Item = &FrameMatch> {
+        let new = self.total.frames.saturating_sub(n) as usize;
+        self.matches
+            .iter()
+            .skip(self.matches.len().saturating_sub(new))
     }
 
     pub fn model(&self) -> &Model {
@@ -616,9 +648,11 @@ mod tests {
                 c.detected(
                     1,
                     frame,
+                    t as u64,
                     t,
                     1e6 / 120.0,
                     vec![Seen {
+                        id: 1,
                         x: u + 0.05,
                         y: v,
                         sigma: 2.0,

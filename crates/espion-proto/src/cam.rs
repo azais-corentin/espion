@@ -1003,9 +1003,9 @@ impl FrameChunk<'_> {
     }
 }
 
-/// Bytes of one blob in a [`FrameBlobs`] datagram, all little-endian: `x` and `y` (`u32`),
-/// `width` (`u16`), `flux` (`u32`), `area` (`u16`), then `peak`.
-pub const BLOB_BYTES: usize = 17;
+/// Bytes of one blob in a [`FrameBlobs`] datagram, all little-endian: `id`, `x` and `y`
+/// (`u32`), `width` (`u16`), `flux` (`u32`), `area` (`u16`), then `peak`.
+pub const BLOB_BYTES: usize = 21;
 
 /// Bytes of a [`FrameBlobs`] datagram besides its blobs, at the largest value of every field:
 /// header, then the postcard varints of frame (5), generation (5), timestamp (10), format
@@ -1023,9 +1023,15 @@ pub const SUBPIXEL: u32 = 256;
 
 /// One blob. The threshold finds it (`area`, `peak`); its position, width and flux are
 /// measured on the frame around it (`espion_vision::refine`: iterated Gaussian-weighted
-/// centroid with the local background subtracted), so the threshold does not bias them.
+/// centroid with the local background subtracted), so the threshold does not bias them; its
+/// identity follows it from frame to frame (`espion_vision::track`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Blob {
+    /// Its identity: the same in every frame for as long as the board takes it for the same
+    /// marker, different for every blob of a frame, never 0. An ID is given once per boot of
+    /// the board (the count wraps after 2^32): a marker the board lost and found again
+    /// carries a new one, and the IDs start again at 1 when the board restarts.
+    pub id: u32,
     /// Centre column in 1/[`SUBPIXEL`] pixel, pixel centres at integer coordinates.
     pub x: u32,
     /// Centre row in 1/[`SUBPIXEL`] pixel, pixel centres at integer coordinates.
@@ -1046,25 +1052,28 @@ pub struct Blob {
 impl Blob {
     /// The blob's [`BLOB_BYTES`] on the wire.
     pub const fn to_bytes(self) -> [u8; BLOB_BYTES] {
+        let [i0, i1, i2, i3] = self.id.to_le_bytes();
         let [x0, x1, x2, x3] = self.x.to_le_bytes();
         let [y0, y1, y2, y3] = self.y.to_le_bytes();
         let [w0, w1] = self.width.to_le_bytes();
         let [f0, f1, f2, f3] = self.flux.to_le_bytes();
         let [a0, a1] = self.area.to_le_bytes();
         [
-            x0, x1, x2, x3, y0, y1, y2, y3, w0, w1, f0, f1, f2, f3, a0, a1, self.peak,
+            i0, i1, i2, i3, x0, x1, x2, x3, y0, y1, y2, y3, w0, w1, f0, f1, f2, f3, a0, a1,
+            self.peak,
         ]
     }
 
     /// The blob of [`BLOB_BYTES`] from the wire.
     pub const fn from_bytes(b: [u8; BLOB_BYTES]) -> Self {
         Self {
-            x: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-            y: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
-            width: u16::from_le_bytes([b[8], b[9]]),
-            flux: u32::from_le_bytes([b[10], b[11], b[12], b[13]]),
-            area: u16::from_le_bytes([b[14], b[15]]),
-            peak: b[16],
+            id: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            x: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            y: u32::from_le_bytes([b[8], b[9], b[10], b[11]]),
+            width: u16::from_le_bytes([b[12], b[13]]),
+            flux: u32::from_le_bytes([b[14], b[15], b[16], b[17]]),
+            area: u16::from_le_bytes([b[18], b[19]]),
+            peak: b[20],
         }
     }
 

@@ -62,6 +62,9 @@ impl MarkerStats {
 /// One centroid of the trail.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrailPoint {
+    /// The blob's identity ([`espion_proto::cam::Blob::id`]): the points of one ID are one
+    /// marker's path.
+    pub id: u32,
     /// Pixels.
     pub x: f64,
     pub y: f64,
@@ -172,6 +175,7 @@ impl Markers {
         self.window(span_us).flat_map(move |b| {
             let age = ((newest - b.timestamp_us) as f64 / span) as f32;
             b.blobs.iter().map(move |o| TrailPoint {
+                id: o.id,
                 x: px(o.x),
                 y: px(o.y),
                 age,
@@ -203,7 +207,9 @@ mod tests {
             flags: 0,
             blobs: blobs
                 .iter()
-                .map(|&(x, y)| Blob {
+                .zip(1..)
+                .map(|(&(x, y), id)| Blob {
+                    id,
                     x: (x * f64::from(SUBPIXEL)).round() as u32,
                     y: (y * f64::from(SUBPIXEL)).round() as u32,
                     width: 384,
@@ -268,7 +274,7 @@ mod tests {
         }
         let t: Vec<TrailPoint> = m.trail(500).collect();
         assert_eq!(t.len(), 6);
-        assert_eq!((t[0].x, t[0].age), (5.0, 1.0));
+        assert_eq!((t[0].id, t[0].x, t[0].age), (1, 5.0, 1.0));
         assert_eq!((t[5].x, t[5].age), (10.0, 0.0));
         m.prune(200);
         assert_eq!(m.trail(10_000).count(), 3);

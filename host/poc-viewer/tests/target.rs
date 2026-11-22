@@ -4,7 +4,7 @@
 //! answer.
 
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 
@@ -14,10 +14,15 @@ use poc_viewer::{
     net::{BlobFrame, Client},
     screen_target::{
         Target,
+        check::Report,
+        ids::{self, IdCounts, Identities},
         link::{Scene, SceneKind},
         sim::{self, SimScreen, TestPage},
     },
 };
+
+/// One rig at a time: the fake films in real time, and two would share the processor.
+static ALONE: Mutex<()> = Mutex::new(());
 
 struct Rig {
     _fake: FakeCamera,
@@ -27,10 +32,12 @@ struct Rig {
     sim: Arc<SimScreen>,
     seq: u64,
     blobs: Vec<BlobFrame>,
+    _alone: MutexGuard<'static, ()>,
 }
 
 impl Rig {
     fn start() -> Self {
+        let alone = ALONE.lock().unwrap_or_else(|e| e.into_inner());
         let sim = SimScreen::new(sim::model());
         let target = Target::new(|| {});
         target.hub().set_tap(sim.clone());
@@ -55,6 +62,7 @@ impl Rig {
             sim,
             seq: 0,
             blobs: Vec::new(),
+            _alone: alone,
         }
     }
 
@@ -76,17 +84,55 @@ impl Rig {
             }
         }
     }
+
+    /// Waits for the page and calibrates.
+    fn calibrate(&mut self) {
+        self.run(10.0, |t| {
+            t.page().is_some_and(|p| p.viewport.is_some()) && t.page().unwrap().rtt_us.is_some()
+        });
+        self.target.calibrate().expect("calibration starts");
+        self.run(60.0, |t| t.calibrating().is_none());
+        assert_eq!(self.target.calib_error, None);
+    }
+
+    /// Shows `scene` for `secs`: the check's report, and the identity counts the same
+    /// matched frames give when a blob's ID is its place in its frame. `POC_IDS_LOG=DIR`
+    /// writes the matched frames to `DIR/sim-<kind>.jsonl` (the `replay` test of
+    /// `tests/ids.rs` reads them).
+    fn scene(&mut self, scene: Scene, secs: f64) -> (Report, IdCounts) {
+        use std::io::Write as _;
+        let mut log = std::env::var("POC_IDS_LOG").ok().map(|d| {
+            std::fs::create_dir_all(&d).expect("log directory");
+            let name = format!("{d}/sim-{:?}.jsonl", scene.kind).to_lowercase();
+            std::io::BufWriter::new(std::fs::File::create(name).expect("log file"))
+        });
+        self.target
+            .start_scene(scene, true)
+            .expect("the scene starts");
+        let mut by_index = Identities::default();
+        let mut taken = 0u64;
+        let end = Instant::now() + Duration::from_secs_f64(secs);
+        while Instant::now() < end {
+            self.run(0.05, |_| false);
+            let c = self.target.check().expect("a check");
+            for m in c.matches_since(taken) {
+                by_index.add(m, |j| j as u32);
+                if let Some(w) = &mut log {
+                    writeln!(w, "{}", ids::to_line(m)).expect("log line");
+                }
+            }
+            taken = c.report().total.frames;
+        }
+        let r = self.target.check().expect("a check").report().clone();
+        self.target.stop_scene();
+        (r, by_index.counts())
+    }
 }
 
 #[test]
 fn calibration_finds_the_screen_and_the_check_its_markers() {
     let mut rig = Rig::start();
-    rig.run(10.0, |t| {
-        t.page().is_some_and(|p| p.viewport.is_some()) && t.page().unwrap().rtt_us.is_some()
-    });
-    rig.target.calibrate().expect("calibration starts");
-    rig.run(60.0, |t| t.calibrating().is_none());
-    assert_eq!(rig.target.calib_error, None);
+    rig.calibrate();
     let fit = rig.target.fit().expect("a fit").clone();
     println!("{fit:?}");
     // Automatic exposure is back on after the calibration.
@@ -174,4 +220,46 @@ fn calibration_finds_the_screen_and_the_check_its_markers() {
     // readout the viewer counts back from the capture, within one page frame (60 Hz).
     let d = r.delay_us.expect("a delay") / 1e3;
     assert!((10.0..=45.0).contains(&d), "delay {d} ms");
+}
+
+/// The blobs' IDs from the fake camera to the check's report, against the markers the page
+/// drew: still markers keep one ID each, and markers that move fast, cross, leave the view
+/// and enter it keep theirs far better than their place in the frame does (the same frames
+/// counted that way show what the figures catch). The fake detects the frames it has the time
+/// for and the page draws when it is scheduled, so the bounds are loose here: the `filmed`
+/// tests of `tests/ids.rs` count the same on frames that are the same every run.
+#[test]
+fn blobs_keep_their_ids_with_their_markers() {
+    let mut rig = Rig::start();
+    rig.calibrate();
+    let scene = |kind, count, speed| Scene {
+        kind,
+        count,
+        size: 6.0,
+        speed,
+        seed: 7,
+    };
+
+    let (r, _) = rig.scene(scene(SceneKind::Static, 5, 0.0), 3.0);
+    let i = r.ids;
+    println!("static: {i}");
+    assert!(i.observations > 150, "{i}");
+    assert_eq!((i.markers, i.ids, i.switches, i.transfers), (5, 5, 0, 0));
+
+    // Markers at 600 px/s each in its own column, then the random walk: markers of several
+    // sizes that cross and touch, leave at the edge and are replaced by new ones.
+    for (kind, count, speed, secs) in [
+        (SceneKind::Lissajous, 4, 600.0, 6.0),
+        (SceneKind::RandomWalk, 0, 0.0, 15.0),
+    ] {
+        let (r, index) = rig.scene(scene(kind, count, speed), secs);
+        let i = r.ids;
+        println!("{kind:?}, board IDs:      {i}");
+        println!("{kind:?}, by frame index: {index}");
+        assert!(i.markers >= 4 && i.observations > 500, "{i}");
+        assert!(
+            10 * (i.switches + i.transfers) <= index.switches + index.transfers,
+            "{kind:?}: {i}\nby frame index: {index}"
+        );
+    }
 }

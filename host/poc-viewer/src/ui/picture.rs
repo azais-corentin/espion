@@ -3,7 +3,10 @@
 //! follow the zoom and the pan). With frames off, a dark canvas of the sensor's size takes the
 //! picture's place under the blobs.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use eframe::egui::{
     Align2, Color32, CursorIcon, Pos2, Rect, Role, Sense, Stroke, StrokeKind, Ui, Vec2, WidgetInfo,
@@ -315,8 +318,9 @@ fn paint_target(
     }
 }
 
-/// The trail (dots fading with age), then each blob: a cross at its centre, a circle of twice
-/// its width, its number; each blob an accessible `Marker N: x .. y ..`.
+/// The trail (each marker's centres as dots joined in order, fading with age; the blobs' IDs
+/// tell the markers apart), then each blob: a cross at its centre, a circle of twice its
+/// width, its ID; each blob an accessible `Marker ID: x .. y ..`.
 fn paint_overlay(
     ui: &Ui,
     painter: &eframe::egui::Painter,
@@ -327,10 +331,18 @@ fn paint_overlay(
 ) {
     let colour = overlay.colour;
     let step = overlay.trail.len().div_ceil(TRAIL_MAX).max(1);
+    let mut last: HashMap<u32, Pos2> = HashMap::new();
     for t in overlay.trail.iter().step_by(step) {
         let p = at(t.x, t.y);
+        let faded = theme::fade(colour, 0.8 * (1.0 - t.age));
+        let from = last.insert(t.id, p);
+        if let Some(q) = from
+            && (area.contains(p) || area.contains(q))
+        {
+            painter.line_segment([q, p], Stroke::new(1.0, faded));
+        }
         if area.contains(p) {
-            painter.circle_filled(p, 1.6, theme::fade(colour, 0.8 * (1.0 - t.age)));
+            painter.circle_filled(p, 1.6, faded);
         }
     }
     let Some(frame) = overlay.blobs else {
@@ -338,7 +350,7 @@ fn paint_overlay(
     };
     let stroke = Stroke::new(1.5, colour);
     let shadow = Stroke::new(3.5, Color32::from_black_alpha(160));
-    for (i, b) in frame.blobs.iter().enumerate() {
+    for b in &frame.blobs {
         let (x, y) = (px(b.x), px(b.y));
         let p = at(x, y);
         if !area.expand(20.0).contains(p) {
@@ -351,15 +363,14 @@ fn paint_overlay(
             painter.line_segment([p - vec2(0.0, arm), p + vec2(0.0, arm)], s);
             painter.circle_stroke(p, radius, s);
         }
-        painter.text(
-            p + vec2(radius * 0.72 + 3.0, -radius * 0.72 - 3.0),
-            Align2::LEFT_BOTTOM,
-            (i + 1).to_string(),
-            theme::mono(SMALL),
-            colour,
-        );
-        let id = ui.make_persistent_id(("marker", i));
-        let name = format!("Marker {}: x {x:.3} y {y:.3}", i + 1);
+        // The ID on a dark backing: it is drawn in the trails' colour, over the trails.
+        let label = painter.layout_no_wrap(b.id.to_string(), theme::mono(SMALL), colour);
+        let corner = p + vec2(radius * 0.72 + 3.0, -radius * 0.72 - 3.0);
+        let place = Align2::LEFT_BOTTOM.anchor_size(corner, label.size());
+        painter.rect_filled(place.expand(1.5), 2.0, Color32::from_black_alpha(190));
+        painter.galley(place.min, label, colour);
+        let id = ui.make_persistent_id(("marker", b.id));
+        let name = format!("Marker {}: x {x:.3} y {y:.3}", b.id);
         ui.interact(
             Rect::from_center_size(p, Vec2::splat(14.0)),
             id,

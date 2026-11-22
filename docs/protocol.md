@@ -6,7 +6,7 @@ protocol version and updates this page and its changelog in the same commit.
 > **Status.** The tracking messages (`0x01`..`0x11`) are a draft, not implemented. Settled:
 > header, versioning (exact match), boards identified by their Ethernet MAC, Q11.5 blob
 > coordinates; their other fields may still change. The [camera stream](#camera-stream)
-> (`0x20`..`0x23`) is implemented (version 7).
+> (`0x20`..`0x23`) is implemented (version 8).
 
 ## Transport (tracking)
 
@@ -356,21 +356,25 @@ detected frame.
 | detect_us | `u32` | Time the detector took for the frame, µs |
 | timing | `DetectTiming` | Where the frame's detection spent its time on the board (below) |
 | flags | `u8` | Bit 0 (`OVERFLOW`): blobs were lost (the detector's capacity or `FRAME_BLOBS_MAX`). Bit 1 (`AUTO_THRESHOLD`): the threshold was chosen automatically |
-| blobs | `[u8]` | The blobs, 17 bytes each (`BLOB_BYTES`), in the detector's order (postcard: length, then the bytes) |
+| blobs | `[u8]` | The blobs, 21 bytes each (`BLOB_BYTES`), in the detector's order (postcard: length, then the bytes) |
 
-A blob is, all little-endian: `x`, `y` (`u32`), `width` (`u16`), `flux` (`u32`), `area`
-(`u16`), then `peak` (`u8`). The threshold only finds the blob: `area` is its pixels at or
+A blob is, all little-endian: `id`, `x`, `y` (`u32`), `width` (`u16`), `flux` (`u32`), `area`
+(`u16`), then `peak` (`u8`). `id` is the blob's identity (below, "Identities"): the same from
+frame to frame for as long as the board takes the blob for the same marker, different for
+every blob of a frame, never 0. A blob's place in the list means nothing: the detector's
+order changes from frame to frame, even in a still scene.
+The threshold only finds the blob: `area` is its pixels at or
 above the threshold that found it (the frame's, or a higher one for a blob split out of
 another: below, "Blobs"), `peak` its brightest pixel, 8-bit (RAW10: its top 8 bits). The
 rest is measured on the frame around it, so the threshold does not bias it (below, "Position"):
 `x` and `y` the spot's centre in 1/256 pixel (`SUBPIXEL`), pixel centres at integer
 coordinates; `width` its standard deviation in 1/256 pixel; `flux` the sum of its pixels
 above the local background, in the format's units. This is not the tracking draft's `Blob`
-(Q11.5 in `u16`), which is too coarse for this precision. At most **80 blobs**
+(Q11.5 in `u16`), which is too coarse for this precision. At most **64 blobs**
 (`FRAME_BLOBS_MAX`): header 4 bytes plus the largest varints of frame (5), generation (5),
 timestamp (10), format (1), width (3), height (3), threshold (3), detect time (5), the timing
 (four `u32` of 5, nine `u16` of 3: 47), flags (1) and the blob bytes' length (2) is 89 bytes
-(`FRAME_BLOBS_OVERHEAD_MAX`), and 89 + 80 × 17 = 1449 ≤ 1452. A receiver rejects blob bytes
+(`FRAME_BLOBS_OVERHEAD_MAX`), and 89 + 64 × 21 = 1433 ≤ 1452. A receiver rejects blob bytes
 that are not whole blobs or more than that.
 
 `DetectTiming`: µs relative to the frame's `timestamp_us` (on the board, the end of the last
@@ -429,6 +433,26 @@ The fake camera, which detects whole frames, sends one strip of the frame's heig
   sum over the final window above the background. A spot within 4
   widths of the frame's edge has its window clipped, so its centre may be biased towards the
   inside.
+- **Identities** (board and fake camera share `espion_vision::track`, integer arithmetic, so
+  both give the same IDs for the same blobs): the board follows the blobs of every measured
+  frame, whether a host polls or not, so no lost datagram and no host restart changes an
+  ID. Each marker in view has a track: its ID, position and velocity. A track is predicted
+  to the frame's capture time at constant velocity, and tracks and blobs that are each
+  other's nearest within the track's gate are paired, nearest first. The gate is 6 px at
+  rest and grows with the track's speed (it may stop or turn back within a frame), with the
+  time since it was last seen and with what the prediction last missed, up to 160 px. A
+  blob no track takes starts a track with the next ID. A track without a blob coasts on
+  its prediction for 250 ms (80 ms for one seen fewer than 4 times), so a marker missed
+  for a few frames comes back with its ID; one missing for longer comes back with a new
+  one, and a track whose prediction leaves the frame ends at once. Two markers whose light
+  merges into one blob keep their tracks: one has the blob, the other is hidden in it for
+  up to 5 s, and when they part each takes the blob that continues its own motion (the
+  velocities are held for 250 ms, after that the tracks keep the side of the blob they are
+  on). IDs count up from 1 and are not used again until the board restarts (the count wraps
+  after 2^32); a generation change (another sensor window) ends every track. The frame
+  times carry the tracks across skipped and cut frames. What positions cannot tell is not
+  told: markers that stay merged for longer than 250 ms and part having swapped sides swap
+  their IDs, as do two that touch and bounce back within it.
 - **Automatic threshold** (`auto_threshold` on; board and fake camera share
   `espion_vision::auto`): the detector samples every 4th pixel of every 16th row of each
   frame (RAW10: the top 8 bits) into a histogram. The background is its median and its
@@ -469,3 +493,4 @@ The fake camera, which detects whole frames, sends one strip of the frame's heig
 | 5 | Camera stream: blob detection on the board. New kind `0x23` FrameBlobs (one frame's blobs, at most 82: centre in 1/256 pixel, width and flux measured on the frame without the threshold's bias, area and peak from the threshold); `Op::SetDetect(DetectSettings)`; `State` gains `detect: DetectState`; `CameraSettings` gains `auto_exposure`; `CamError` gains `Threshold` and `Area`; `Error::BlobsLayout`. Start-up defaults: automatic exposure, detection on with the automatic threshold and area filter. Everything else of version 4 stays |
 | 6 | Camera stream: `FrameBlobs` gains `timing: DetectTiming` (the frame's detection on the board: the strips' start and end, the result's publication, the datagram's queueing, the measure's processor time, and the longest per-strip start wait, detect, copy wait and hold against the hold allowed), so at most 80 blobs; `DetectState` gains `frames_cut`. Everything else of version 5 stays |
 | 7 | Camera stream: `FrameTiming::encode` becomes `Option<EncodeSpan>` (`start_us: i32`, `input_end_us: u32`, `end_us: u32`), so an encode fed strip by strip during the readout can start before the capture and report when its last rows went in. Everything else of version 6 stays |
+| 8 | Camera stream: every blob of `FrameBlobs` gains `id: u32` first (its identity, the same from frame to frame while the board takes it for the same marker, from `espion_vision::track` on the board; never 0, not reused before a restart). A blob takes 21 bytes instead of 17, so a datagram carries at most 64 blobs instead of 80. Everything else of version 7 stays |

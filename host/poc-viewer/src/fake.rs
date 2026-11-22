@@ -53,14 +53,16 @@ use std::{
 use espion_proto::cam::{
     AUTO_EXPOSURE_PERIOD_MS, AUTO_QUALITY_PERIOD_MS, BLOB_BYTES, Blob, CHUNK_MAX, CamError,
     CameraSettings, Counters, DetectSettings, DetectState, DetectTiming, EncodeSpan, EncoderState,
-    Encoding, Exposure, Format, FrameBlobs, FrameChunk, FrameTiming, JPEG_FRAME_MAX, MAX_DATAGRAM,
-    Message, Op, Readout, Reply, Request, Response, STREAM_TIMEOUT_MS, Span, State, StreamSettings,
-    TestPattern, auto_exposure, auto_exposure_cap, auto_quality, pack_blobs,
+    Encoding, Exposure, FRAME_BLOBS_MAX, Format, FrameBlobs, FrameChunk, FrameTiming,
+    JPEG_FRAME_MAX, MAX_DATAGRAM, Message, Op, Readout, Reply, Request, Response,
+    STREAM_TIMEOUT_MS, Span, State, StreamSettings, TestPattern, auto_exposure, auto_exposure_cap,
+    auto_quality, pack_blobs,
 };
 use espion_vision::{
     DefaultDetector, Split,
     auto::{self, Background, Histogram},
-    refine,
+    refine::{self, Spot},
+    track::DefaultTracker,
 };
 use ov9281::Mode;
 
@@ -500,6 +502,8 @@ fn detector_thread(
                 refine::refine_raw8(&raw, c.width, c.height, b)
             };
             Blob {
+                // Given by the engine, to the blobs the area filter keeps.
+                id: 0,
                 x: s.x,
                 y: s.y,
                 width: s.width,
@@ -604,6 +608,12 @@ struct Engine {
     exposure_peak: Option<u8>,
     /// A FrameBlobs' blob bytes.
     blob_bytes: Vec<u8>,
+    /// The blobs' identities, as on the board: the tracker, the generation of its tracks,
+    /// and a frame's kept blobs and their IDs.
+    tracker: Box<DefaultTracker>,
+    tracked_generation: u32,
+    spots: Vec<Spot>,
+    ids: Vec<u32>,
 }
 
 /// Most chunks sent in a row before requests and captures are looked at again.
@@ -680,6 +690,10 @@ impl Engine {
             exposure_due: now + EXPOSURE_PERIOD,
             exposure_peak: None,
             blob_bytes: vec![0; MAX_DATAGRAM],
+            tracker: Box::default(),
+            tracked_generation: 0,
+            spots: Vec::new(),
+            ids: Vec::new(),
         }
     }
 
@@ -793,7 +807,28 @@ impl Engine {
         let settings = det.settings;
         let kept = blobs.iter().filter(|b| settings.keeps(b.area));
         let filtered = blobs.len() - kept.clone().count();
-        let (n, all) = pack_blobs(kept.clone().copied(), &mut self.blob_bytes);
+        // The identities of the blobs a frame can carry, whether a host polls or not. Another
+        // generation is another sensor window: its blobs are other blobs.
+        if self.tracked_generation != job.generation {
+            self.tracked_generation = job.generation;
+            self.tracker.reset();
+        }
+        self.spots.clear();
+        self.spots
+            .extend(kept.clone().take(FRAME_BLOBS_MAX).map(|b| Spot {
+                x: b.x,
+                y: b.y,
+                width: b.width,
+                flux: b.flux,
+            }));
+        self.ids.clear();
+        self.ids.resize(self.spots.len(), 0);
+        let (w, h) = (job.camera.width, job.camera.height);
+        self.tracker
+            .update(job.timestamp_us, w, h, &self.spots, &mut self.ids);
+        let ids = self.ids.iter().copied().chain(std::iter::repeat(0));
+        let tracked = kept.clone().zip(ids).map(|(b, id)| Blob { id, ..*b });
+        let (n, all) = pack_blobs(tracked, &mut self.blob_bytes);
         let sent = &self.blob_bytes[..n];
         let dropped = lost as usize + (blobs.len() - filtered) - n / BLOB_BYTES;
         det.blobs_filtered = det.blobs_filtered.wrapping_add(filtered as u32);

@@ -6,7 +6,17 @@
 //! ```sh
 //! cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 settings
 //! POC_SOAK_SECS=600 cargo test -p poc-viewer --release --test board -- --ignored --nocapture soak
+//! cargo test -p poc-viewer --release --test board -- --ignored --nocapture --test-threads=1 ids
 //! ```
+//!
+//! `ids` needs the screen target's page on a screen in front of the camera (the test serves it
+//! on `POC_TARGET_LISTEN`, default `127.0.0.1:8765`, and calibrates): it shows a static scene,
+//! Lissajous paths, the speed sweep and `POC_IDS_SECS` (90) of the random walk (`POC_IDS_SEED`)
+//! and counts the blobs' identities against the markers the page drew, by the board's IDs and
+//! by each blob's place in its frame. A still marker must keep its ID, the sweep's marker must
+//! keep it up to 2500 px/s, and elsewhere the board's IDs must be 10 times better than the
+//! place in the frame. `POC_ONLY=static,lissajous,sweep,walk` picks scenes; `POC_IDS_LOG=DIR`
+//! records the matched frames for the `replay` test of `tests/ids.rs`.
 //!
 //! `settings` applies a list of camera and stream settings and checks every answer (the state,
 //! or the refusal with its values, against the `ov9281` driver run here) and, for each accepted
@@ -54,6 +64,7 @@
 use std::{
     fmt::Write as _,
     net::{SocketAddr, UdpSocket},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -68,8 +79,15 @@ use espion_proto::cam::{
 use poc_viewer::{
     addr,
     blobs::Markers,
-    camera, jpeg,
+    camera,
+    decode::Decoder,
+    jpeg,
     net::{BlobFrame, Client, Command, Frame, Stats},
+    screen_target::{
+        Target,
+        ids::{self, Identities},
+        link::{Scene, SceneKind},
+    },
 };
 
 /// The board's test hooks (`firmware/poc-p4-stream/src/stream/diag.rs`).
@@ -2431,3 +2449,226 @@ fn soak() {
     });
     assert!(b.failures.is_empty(), "failed checks: {:#?}", b.failures);
 }
+
+/// The screen target without a window: the board's client, the decoding stage and the
+/// [`Target`], pumped as the viewer's window does.
+struct TargetRig {
+    client: Arc<Client>,
+    decoder: Decoder,
+    target: Target,
+    seq: u64,
+    blobs: Vec<BlobFrame>,
+}
+
+impl TargetRig {
+    /// Pumps for `secs` or until `done`, calling `each` after every pass; whether `done`.
+    fn run(
+        &mut self,
+        secs: f64,
+        mut each: impl FnMut(&Target),
+        done: impl Fn(&Target) -> bool,
+    ) -> bool {
+        let end = Instant::now() + Duration::from_secs_f64(secs);
+        loop {
+            let stats = self.client.stats();
+            for c in self.target.update(Instant::now(), stats.state.as_ref()) {
+                self.client.send(c);
+            }
+            if let Some(p) = self.decoder.take() {
+                self.target.frame(&p.frame);
+                self.decoder.recycle(p);
+            }
+            self.seq = self.client.blob_frames_since(self.seq, &mut self.blobs);
+            for b in self.blobs.drain(..) {
+                self.target.blobs(&b);
+            }
+            each(&self.target);
+            if done(&self.target) {
+                return true;
+            }
+            if Instant::now() >= end {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
+/// How stable the blobs' identities are, against the screen target's page on a screen in
+/// front of the camera (`host/poc-viewer/README.md`, "Screen target"): serves the page
+/// (`POC_TARGET_LISTEN`, default `127.0.0.1:8765`), waits for it, calibrates, then runs the
+/// scenes `static`, `lissajous`, `sweep` and `walk` (`POC_ONLY` picks some; the random walk
+/// runs `POC_IDS_SECS`, default 90, with seed `POC_IDS_SEED`, default 1) and prints for each
+/// the check's figures and the identity figures: of the board's IDs, and of the blobs' index
+/// in their frame (what a host has without them). `POC_IDS_LOG=DIR` writes each scene's
+/// matched frames to `DIR/<scene>.jsonl`. It fails when a marker changed its ID in the
+/// static scene, or when the IDs are not far steadier than the frame index in the others.
+#[test]
+#[ignore = "needs the board running poc-p4-stream and the screen target's page in its view"]
+fn ids() {
+    let camera = camera_addr();
+    let client = Arc::new(Client::connect(camera, || {}).expect("client connects"));
+    let decoder = Decoder::spawn(client.clone(), || {}).expect("decoder starts");
+    let mut rig = TargetRig {
+        client,
+        decoder,
+        target: Target::new(|| {}),
+        seq: 0,
+        blobs: Vec::new(),
+    };
+    let listen = std::env::var("POC_TARGET_LISTEN").unwrap_or_else(|_| "127.0.0.1:8765".into());
+    let at = rig
+        .target
+        .serve(listen.parse().expect("POC_TARGET_LISTEN"))
+        .expect("the page is served");
+    println!("serving the page on http://{at}/");
+    // The board's start-up mode and stream, everything automatic.
+    for c in [
+        Command::SetCamera(fake_default()),
+        Command::SetStream(jstream(90, true)),
+        Command::SetDetect(DetectSettings::DEFAULT),
+    ] {
+        let before = rig.client.stats().answers;
+        rig.client.send(c);
+        rig.client
+            .wait_until(ANSWER_WAIT, |s| s.answers > before)
+            .unwrap_or_else(|| panic!("no answer to {c:?}"));
+    }
+    assert!(
+        rig.run(
+            120.0,
+            |_| {},
+            |t| t
+                .page()
+                .is_some_and(|p| p.viewport.is_some() && p.rtt_us.is_some() && !p.stale)
+        ),
+        "no page connected within 120 s"
+    );
+    // A page that just reloaded says its size again.
+    rig.run(3.0, |_| {}, |_| false);
+    println!("page: {:?}", rig.target.page().expect("a page"));
+    rig.target.calibrate().expect("the calibration starts");
+    assert!(
+        rig.run(300.0, |_| {}, |t| t.calibrating().is_none()),
+        "the calibration did not end"
+    );
+    assert_eq!(rig.target.calib_error, None);
+    let fit = rig.target.fit().expect("a fit").clone();
+    println!(
+        "calibrated: {} of {} dots, RMS {:.3} px, visible {:.0} %",
+        fit.dots,
+        fit.dots_shown,
+        fit.rms,
+        fit.visible * 100.0
+    );
+    // The camera's settings are back.
+    rig.run(2.0, |_| {}, |_| false);
+
+    let env = |k: &str, d: f64| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
+    let seed = env("POC_IDS_SEED", 1.0) as u32;
+    let scene = |kind, count, speed| Scene {
+        kind,
+        count,
+        size: 6.0,
+        speed,
+        seed,
+    };
+    let scenes = [
+        ("static", scene(SceneKind::Static, 9, 0.0), 15.0),
+        ("lissajous", scene(SceneKind::Lissajous, 6, 600.0), 30.0),
+        ("sweep", scene(SceneKind::Sweep, 1, 0.0), 35.0),
+        (
+            "walk",
+            scene(SceneKind::RandomWalk, 0, 0.0),
+            env("POC_IDS_SECS", 90.0),
+        ),
+    ];
+    let log_dir = std::env::var("POC_IDS_LOG").ok();
+    let mut failures = Vec::new();
+    for (name, scene, secs) in scenes {
+        if !section(name) {
+            continue;
+        }
+        let mut log = log_dir.as_ref().map(|d| {
+            std::fs::create_dir_all(d).expect("log directory");
+            let f = std::fs::File::create(format!("{d}/{name}.jsonl")).expect("log file");
+            std::io::BufWriter::new(f)
+        });
+        rig.target
+            .start_scene(scene, true)
+            .expect("the scene starts");
+        let mut by_index = Identities::default();
+        // The board's IDs once more, with each switch and the marker's speed in its frame.
+        let mut by_board = Identities::logging();
+        let mut speeds = std::collections::HashMap::new();
+        let mut taken = 0u64;
+        rig.run(
+            secs,
+            |t| {
+                let c = t.check().expect("a check");
+                for m in c.matches_since(taken) {
+                    by_index.add(m, |j| j as u32);
+                    by_board.add(m, |j| m.blobs[j].id);
+                    let fastest = m.markers.iter().map(|(mk, ..)| mk.speed);
+                    speeds.insert(m.frame, fastest.fold(0.0, f64::max));
+                    if let Some(w) = &mut log {
+                        use std::io::Write as _;
+                        writeln!(w, "{}", ids::to_line(m)).expect("log line");
+                    }
+                }
+                taken = c.report().total.frames;
+            },
+            |_| false,
+        );
+        let r = rig.target.check().expect("a check").report().clone();
+        rig.target.stop_scene();
+        let t = r.total;
+        println!(
+            "   {} frames compared in {secs:.0} s, {} exact; markers found {} of {}, extra blobs \
+             {}, at the edge {} of {}; delay {:.1} ms",
+            t.frames,
+            t.exact,
+            t.found,
+            t.inside,
+            t.extra,
+            t.edge_found,
+            t.edge,
+            r.delay_us.unwrap_or(0.0) / 1e3
+        );
+        let index = by_index.counts();
+        println!("   by frame index: {index}");
+        println!("   board IDs:      {}", r.ids);
+        if t.frames < (secs * 50.0) as u64 {
+            failures.push(format!("{name}: only {} frames compared", t.frames));
+        }
+        let bad = match scene.kind {
+            SceneKind::Static => r.ids.switches > 0 || r.ids.transfers > 0,
+            // One marker: its place in the frame is an ID as long as nothing else is found.
+            // The display shows a fast marker a frame late as well, and too dim to find in
+            // some frames: the ID must hold up to the speed where that starts.
+            SceneKind::Sweep => {
+                let slow = by_board
+                    .switches()
+                    .iter()
+                    .filter(|s| speeds.get(&s.frame).is_some_and(|v| *v < SWEEP_ID_SPEED))
+                    .count();
+                println!("   switches below {SWEEP_ID_SPEED:.0} px/s: {slow}");
+                slow > 0
+            }
+            _ => 10 * (r.ids.switches + r.ids.transfers) > index.switches + index.transfers,
+        };
+        if bad {
+            failures.push(format!("{name}: {}", r.ids));
+        }
+        rig.run(1.0, |_| {}, |_| false);
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// The speed up to which the sweep's marker must keep its ID, sensor pixels per second.
+const SWEEP_ID_SPEED: f64 = 2500.0;

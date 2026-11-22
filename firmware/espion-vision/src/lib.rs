@@ -48,6 +48,7 @@ pub mod auto;
 pub mod refine;
 pub mod skip;
 pub mod synth;
+pub mod track;
 
 use core::num::NonZeroUsize;
 pub use skip::{Scalar, Skip};

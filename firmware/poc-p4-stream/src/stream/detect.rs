@@ -1,4 +1,4 @@
-//! Blob detection in the stream (protocol version 7, `docs/protocol.md`, "Detection"): the
+//! Blob detection in the stream (protocol version 8, `docs/protocol.md`, "Detection"): the
 //! blob detector of `espion-vision` on a bare core 1 (`espion-core1`'s stream job) over the
 //! strips of each frame, and core 0's side of it.
 //!
@@ -16,7 +16,9 @@
 //!   off, the threshold of the next frame, the background its blobs are split above, the
 //!   area bounds, the detection serial.
 //! - **Results** ([`Work::result`], the capture task, as it drains core 1's results): the
-//!   area filter's counts, the threshold of the next frame (automatic: `espion_vision::auto`
+//!   area filter's counts, the blobs' identities (`espion_vision::track`, on every measured
+//!   frame, whether a host polls or not, so a marker keeps its ID while nobody listens), the
+//!   threshold of the next frame (automatic: `espion_vision::auto`
 //!   from the frame's background; manual: the set one),
 //!   `DetectState`, and the `FrameBlobs` datagram queued for the send task while a host polls
 //!   ([`BLOBS_READY`]; the send task sends it after the answers and before the next frame
@@ -45,13 +47,17 @@ use esp_hal::peripherals::{CPU_CTRL, VDMA_CH1};
 use esp32p4_csi::DmaCopy;
 use espion_core1::spsc::{Consumer, Producer, Spsc};
 use espion_core1::{
-    self as core1, Core1, FrameResult, Health, MAX_BLOBS, NO_BUFFER, SkipChoice, StreamDetect,
+    self as core1, Core1, FrameResult, Health, MAX_BLOBS, MAX_SPOTS, NO_BUFFER, SkipChoice,
+    StreamDetect,
 };
 use espion_proto::cam::{
     self, AUTO_EXPOSURE_PERIOD_MS, BLOB_BYTES, DetectTiming, FRAME_BLOBS_MAX, Format, FrameBlobs,
     MAX_DATAGRAM,
 };
-use espion_vision::{Blob, DefaultDetector, auto};
+use espion_vision::{
+    Blob, DefaultDetector, auto,
+    track::{DefaultTracker, Params},
+};
 use log::{error, info, warn};
 use static_cell::ConstStaticCell;
 
@@ -75,6 +81,9 @@ static SCRATCH: ConstStaticCell<[Blob; MAX_BLOBS]> = ConstStaticCell::new(
     }; MAX_BLOBS],
 );
 static PACK: ConstStaticCell<[u8; PACK_BYTES]> = ConstStaticCell::new([0; PACK_BYTES]);
+static TRACKER: ConstStaticCell<DefaultTracker> =
+    ConstStaticCell::new(DefaultTracker::new(Params::DEFAULT));
+static IDS: ConstStaticCell<[u32; MAX_SPOTS]> = ConstStaticCell::new([0; MAX_SPOTS]);
 
 /// One encoded `FrameBlobs` datagram for the send task.
 pub(super) struct BlobsOut {
@@ -99,10 +108,13 @@ static BLOBS: Spsc<BlobsOut, BLOBS_QUEUE> = Spsc::new(
 pub(super) static BLOBS_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Bytes of internal RAM this side takes: core 1's detector and blob scratch, the packed
-/// blobs, the datagram queue (core 1's stack and result queue are in `espion-core1`).
+/// blobs, the tracker and a frame's IDs, the datagram queue (core 1's stack and result queue
+/// are in `espion-core1`).
 pub const RAM_BYTES: usize = core::mem::size_of::<DefaultDetector>()
     + core::mem::size_of::<[Blob; MAX_BLOBS]>()
     + PACK_BYTES
+    + core::mem::size_of::<DefaultTracker>()
+    + core::mem::size_of::<[u32; MAX_SPOTS]>()
     + core::mem::size_of::<Spsc<BlobsOut, BLOBS_QUEUE>>();
 
 /// The L1 data autoload over each strip core 1's detector reads: wanted (the test hooks'
@@ -233,6 +245,10 @@ fn timing(r: &FrameResult, m: &Meta, mhz: u32) -> DetectTiming {
 pub(super) struct Work {
     out: BlobsTx,
     pack: &'static mut [u8; PACK_BYTES],
+    /// The blobs' identities: the tracker, the generation of its tracks, a frame's IDs.
+    tracker: &'static mut DefaultTracker,
+    tracked_generation: u32,
+    ids: &'static mut [u32; MAX_SPOTS],
     mhz: u32,
 }
 
@@ -271,6 +287,11 @@ struct Second {
     /// Frames the live JPEG encode got whole, and the longest feed after a strip (cycles).
     fed: u32,
     feed_max: u32,
+    /// The tracker: its time on a frame (µs), the most tracks alive, the IDs given.
+    track_total: u64,
+    track_max: u32,
+    tracks_max: u16,
+    ids_new: u32,
 }
 
 impl Second {
@@ -300,6 +321,10 @@ impl Second {
         copy_wait_max: 0,
         fed: 0,
         feed_max: 0,
+        track_total: 0,
+        track_max: 0,
+        tracks_max: 0,
+        ids_new: 0,
     };
 }
 
@@ -314,6 +339,9 @@ impl Work {
         Self {
             out,
             pack: PACK.take(),
+            tracker: TRACKER.take(),
+            tracked_generation: 0,
+            ids: IDS.take(),
             mhz: esp_hal::clock::cpu_clock().as_mhz().max(1),
         }
     }
@@ -331,6 +359,31 @@ impl Work {
             s.copy_wait_max = s.copy_wait_max.max(r.copy_wait_max);
             s.fed += u32::from(r.jpeg);
             s.feed_max = s.feed_max.max(r.feed_max);
+        });
+    }
+
+    /// The identities of a measured frame's `spots` into `self.ids`. Another generation is
+    /// another sensor window: its blobs are other blobs.
+    #[inline(never)]
+    fn track(&mut self, m: &Meta, spots: &[espion_vision::refine::Spot]) {
+        if self.tracked_generation != m.generation {
+            self.tracked_generation = m.generation;
+            self.tracker.reset();
+        }
+        let t = Instant::now();
+        let u = self.tracker.update(
+            m.timestamp_us,
+            m.width,
+            m.height,
+            spots,
+            &mut self.ids[..spots.len()],
+        );
+        let us = t.elapsed().as_micros().min(u64::from(u32::MAX)) as u32;
+        second(|s| {
+            s.track_total += u64::from(us);
+            s.track_max = s.track_max.max(us);
+            s.tracks_max = s.tracks_max.max(u.tracks);
+            s.ids_new += u32::from(u.new);
         });
     }
 
@@ -377,14 +430,19 @@ impl Work {
         let measured = r.buffer != NO_BUFFER;
         let kept = found.iter().filter(|b| settings.keeps(b.area)).count() as u32;
         // The centre, width and flux from the refined measure; area and peak from the
-        // thresholded blob.
+        // thresholded blob; the identity from the tracker, which sees every measured frame.
         let spots = usize::from(r.spot_count).min(r.spots.len());
+        if measured {
+            self.track(m, &r.spots[..spots]);
+        }
         let (bytes, _) = cam::pack_blobs(
             r.spots[..spots]
                 .iter()
                 .zip(&r.spot_blob[..spots])
-                .filter_map(|(s, &i)| {
+                .zip(&self.ids[..spots])
+                .filter_map(|((s, &i), &id)| {
                     found.get(usize::from(i)).map(|b| cam::Blob {
+                        id,
                         x: s.x,
                         y: s.y,
                         width: s.width,
@@ -600,6 +658,8 @@ pub(super) async fn task(core1_up: bool) {
             embassy_futures::yield_now().await;
             log_second2(&sec, &marks, &m);
             embassy_futures::yield_now().await;
+            log_tracks(&sec);
+            embassy_futures::yield_now().await;
         }
         if tick.is_multiple_of(10 * per_second) {
             log_stacks();
@@ -699,6 +759,17 @@ fn log_second2(a: &Second, before: &Marks, now: &Marks) {
         now.errors.wrapping_sub(before.errors),
         now.heartbeat.wrapping_sub(before.heartbeat),
         if fault { ", FAULT" } else { "" },
+    );
+}
+
+#[inline(never)]
+fn log_tracks(a: &Second) {
+    info!(
+        "detect:   ids: tracks {} at most, {} new, tracker mean {} max {} us",
+        a.tracks_max,
+        a.ids_new,
+        a.track_total / u64::from(a.frames.max(1)),
+        a.track_max,
     );
 }
 

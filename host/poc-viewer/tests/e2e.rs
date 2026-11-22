@@ -1224,6 +1224,73 @@ fn blobs_are_at_the_true_centres_of_their_frame() {
     }
 }
 
+/// The ID of each of the fake's markers in `frames` (the blob nearest its true centre): the
+/// same in every frame, none 0, no two alike.
+fn marker_ids(frames: &[BlobFrame], c: &CameraSettings) -> [u32; fake::MARKERS] {
+    let mut ids = [0; fake::MARKERS];
+    for f in frames {
+        assert_eq!(f.blobs.len(), fake::MARKERS, "frame {}", f.frame);
+        for (id, (tx, ty)) in ids.iter_mut().zip(fake::marker_centres(c, f.frame)) {
+            let b = f
+                .blobs
+                .iter()
+                .min_by(|a, b| {
+                    let d = |o: &&espion_proto::cam::Blob| (px(o.x) - tx).hypot(px(o.y) - ty);
+                    d(a).total_cmp(&d(b))
+                })
+                .unwrap();
+            assert_ne!(b.id, 0, "frame {}", f.frame);
+            assert!(
+                *id == 0 || *id == b.id,
+                "frame {}: ID {} was {id}: {:?}",
+                f.frame,
+                b.id,
+                f.blobs
+            );
+            *id = b.id;
+        }
+    }
+    for (k, id) in ids.iter().enumerate() {
+        assert!(!ids[..k].contains(id), "{ids:?}");
+    }
+    ids
+}
+
+/// A blob carries its marker's ID from frame to frame, whatever the detector's order and the
+/// frames it skips; another generation (another sensor window) starts with new IDs, none
+/// used before.
+#[test]
+fn blobs_keep_their_ids_until_the_generation_changes() {
+    let (_fake, client) = start(FakeConfig {
+        camera: lit(fixed()),
+        stream: frames_off(),
+        ..FakeConfig::default()
+    });
+    let state = apply(&client, Command::GetState, |_| true);
+    let frames = blob_frames_after(&client, &state, 200);
+    let first = marker_ids(&frames, &state.camera);
+    // The order of a frame's blobs is not their identity: the markers move past one another.
+    let order = |f: &BlobFrame| f.blobs.iter().map(|b| b.id).collect::<Vec<_>>();
+    println!("IDs {first:?}, orders {:?}", {
+        let mut orders: Vec<_> = frames.iter().map(order).collect();
+        orders.sort();
+        orders.dedup();
+        orders
+    });
+
+    let binned = lit(binned_640(Format::Raw8, 120));
+    let next = apply(&client, Command::SetCamera(binned), |s| {
+        s.generation != state.generation && s.camera.width == 640
+    });
+    let frames = blob_frames_after(&client, &next, 100);
+    let second = marker_ids(&frames, &next.camera);
+    let newest = first.into_iter().max().unwrap();
+    assert!(
+        second.iter().all(|id| *id > newest),
+        "{second:?} after {first:?}"
+    );
+}
+
 #[test]
 fn the_fake_starts_with_detection_and_automatic_exposure() {
     let (_fake, client) = start(FakeConfig::default());

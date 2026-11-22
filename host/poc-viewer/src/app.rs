@@ -1546,13 +1546,16 @@ impl App {
             };
             caption(
                 ui,
-                "Newest frame: x, y (px), width (px), flux, area (px), peak",
+                "Newest frame, by ID: x, y (px), width (px), flux, area (px), peak",
             );
             const ROWS: usize = 6;
-            for (i, o) in b.blobs.iter().take(ROWS).enumerate() {
+            // By ID, so a marker keeps its row while the others come and go.
+            let mut rows: Vec<_> = b.blobs.iter().collect();
+            rows.sort_unstable_by_key(|o| o.id);
+            for o in rows.into_iter().take(ROWS) {
                 stat(
                     ui,
-                    &format!("Blob {}", i + 1),
+                    &format!("Marker {}", o.id),
                     &format!(
                         "{:9.3} {:8.3}  {:5.2}  {:7}  {:5}  {:3}",
                         px(o.x),
@@ -2132,6 +2135,30 @@ fn target_figures(ui: &mut Ui, r: &Report) {
         ui,
         "Missed / extra in all",
         &format!("{} / {}", t.missed, t.extra),
+    );
+    // How stable the blobs' IDs are: one ID per marker and no ID on two markers is perfect.
+    let i = &r.ids;
+    stat(
+        ui,
+        "IDs, markers seen",
+        &format!("{} for {}", i.ids, i.markers),
+    );
+    stat_toned(
+        ui,
+        "ID switches",
+        &format!("{} ({} after a gap)", i.switches, i.switches_after_gap),
+        i.switches > 0,
+    );
+    stat_toned(
+        ui,
+        "IDs moved to another marker",
+        &i.transfers.to_string(),
+        i.transfers > 0,
+    );
+    stat(
+        ui,
+        "Gaps bridged with the ID kept",
+        &format!("{} of {}", i.gaps_kept, i.gaps),
     );
 }
 

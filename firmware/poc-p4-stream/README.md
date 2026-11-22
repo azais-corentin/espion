@@ -9,7 +9,8 @@ driver and embassy-net. Not part of the product.
 The `Stream` service (the default) streams the camera as greyscale JPEG from the P4's hardware
 encoder (`esp32p4-jpeg`), or raw, while core 1, started bare (`espion-core1`), takes each frame
 strip by strip: it copies the strips into a frame buffer for the stream and finds the IR
-markers on them, and the board sends their blobs (`FrameBlobs`, protocol version 6;
+markers on them, and the board sends their blobs, each with an ID it keeps from frame to frame
+(`FrameBlobs`, protocol version 8;
 [Detection on core 1](#detection-on-core-1)); the `Bench` service (the network test it was
 built on) stays selectable.
 
@@ -246,7 +247,7 @@ and without `accounting` alike.
 | `src/stream/check.rs` | The `SetCamera` checks in the protocol's order, as the viewer's fake camera makes them |
 | `src/stream/capture.rs` | The capture task: on strips the receiver's service every millisecond, core 1's settings and results; whole frames otherwise; counters, the stream rules, mode changes and recovery |
 | `src/stream/jpeg.rs` | The encode task: the JPEG pipeline, its output buffers, encoder errors, the automatic quality |
-| `src/stream/detect.rs` | Detection: core 1 and its copy channel started at boot, the settings core 1 takes, its results (area filter, next threshold, `DetectState`, `FrameBlobs`), the detect task (automatic exposure, core 1's watch, the log lines) |
+| `src/stream/detect.rs` | Detection: core 1 and its copy channel started at boot, the settings core 1 takes, its results (area filter, the blobs' identities, next threshold, `DetectState`, `FrameBlobs`), the detect task (automatic exposure, core 1's watch, the log lines) |
 | `src/stream/frames.rs` | The frames the image path holds, one holder each: a whole-frame receiver's `Frame`, or a strip frame in a buffer of the pool (five in PSRAM, core 1's free set); dropping it gives the buffer back |
 | `src/stream/send.rs` | The send task: answers through the socket; the `FrameBlobs` datagrams and the frame chunks beside smoltcp (`net/chunk.rs`: `espion_proto` writes the chunk header, PIE copies the bytes), through the socket until the host's MAC is known |
 | `src/net/chunk.rs` | UDP datagrams sent beside smoltcp, straight onto the TX ring: the peer's MAC learned from received frames, the headers, a PIE copy of the payload into the descriptor's buffer, the UDP checksum (PIE), the checksum self-test |
@@ -261,7 +262,7 @@ and without `accounting` alike.
 ## The camera stream
 
 `src/stream/`: the protocol of `espion_proto::cam` (`docs/protocol.md`, "Camera stream",
-version 6) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
+version 8) on UDP 5009, behaving as the viewer's fake camera (`host/poc-viewer/src/fake.rs`,
 the reference) does, with the real sensor, and the blob detector on core 1
 ([Detection](#detection-on-core-1)).
 
@@ -379,7 +380,7 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
   receiver's `Frame` goes the same way in a `FrameBuf`. A frame core 1 found no free buffer
   for is detected but neither measured nor sent: skipped, for detection and for the image.
 - **Frame end, on core 1.** The frame buffer's cache lines are invalidated, the blobs the area
-  filter keeps (at most `FRAME_BLOBS_MAX`, 201) are measured on the assembled frame
+  filter keeps (at most `FRAME_BLOBS_MAX`, 64) are measured on the assembled frame
   (`espion_vision::refine`: the centre, width and flux), one per loop turn between strips, and
   the result goes to core 0 with the buffer. If the next frame ends first, the frame goes out
   with the blobs measured so far; core 0 counts the rest in `blobs_dropped`.
@@ -395,11 +396,16 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
   in `blobs_filtered`); the next frame's threshold, automatic (`threshold_raw8`/
   `threshold_raw10` of the frame's background: the noise floor) or
   the set one; `DetectState` (threshold, background median and σ, frames detected, detect
-  time mean and maximum since the last state); and, while a host polls, the `FrameBlobs`
-  datagram with the refined centre, width and flux and the thresholded area and peak of each
-  blob kept (blobs beyond 201, or lost by the detector, set the overflow flag and count in
-  `blobs_dropped`), and the frame's `DetectTiming` (below). The send task sends it after the
-  answers and before the next chunk of a frame.
+  time mean and maximum since the last state); the blobs' **identities**
+  (`espion_vision::track`, `docs/protocol.md` "Identities"): the tracker takes the measured
+  blobs of every measured frame with the frame's capture time, whether a host polls or not,
+  so a marker keeps its ID while nobody listens, and starts again (new IDs) when the
+  generation changes; and, while a host polls, the `FrameBlobs`
+  datagram with the ID, the refined centre, width and flux and the thresholded area and peak
+  of each blob kept (blobs beyond 64, or lost by the detector, set the overflow flag and count
+  in `blobs_dropped`), and the frame's `DetectTiming` (below). The send task sends it after the
+  answers and before the next chunk of a frame. The log's `detect:   ids:` line gives, each
+  second, the most tracks alive, the IDs given and the tracker's time per frame.
 - **`FrameBlobs::timing`** (`DetectTiming`, µs from core 1's cycles at the CPU clock, relative
   to the frame's `timestamp_us`: core 0's time when it took the result, less `age` of the last
   strip's bound, so the last strip's block end as near as core 1 bounds it): from core 1's start
@@ -857,6 +863,45 @@ with prefetch off, its autoload on and off, and beside internal (`co2.log`, 30 s
 not checked.
 For the detector the interaction costs 6 % of core 0's TX cycles (7 360 against 6 940):
 keep `preload_ahead`, or use `l2` (8 159) if the autoload's share grows.
+
+### Measured: the blobs' identities, 2026-11-22
+
+The tracker (`espion_vision::track`, `DefaultTracker`: 96 tracks) runs in the capture task on
+core 0, once per measured frame, on the blobs core 1 measured (at most 64). With it the
+detect side holds 42 152 B of internal RAM (`detect: core 1 started ... B of detector state`)
+and the main stack keeps 33 436 of 36 864 B never used.
+
+Its time per frame (`detect:   ids:` lines, 1280x800 RAW8 at 120 Hz, 407 s with the viewer:
+a calibration, the screen target's random walk and a static scene of 9 markers; a track is a
+marker in view, one coasting or hidden, or a short-lived extra blob):
+
+| Most tracks in the second | Seconds | Mean per frame | Longest frame |
+|---|---|---|---|
+| 0 or 1 | 258 | 36 µs | 286 µs |
+| 5 to 9 | 28 | 216 µs | 725 µs |
+| 10 to 19 | 119 | 306 µs | 868 µs |
+
+About 3.7 % of core 0 at 120 Hz with ten or more tracks. It is not optimised: every pass
+walks the 96 track slots, and the pairing compares every free track with every free blob in
+up to 8 rounds.
+
+The identities against the screen target (`host/poc-viewer/README.md`, "Screen target"; an
+iPad at 120 Hz, the viewer's board test `ids`): the page knows which marker is which, and the
+same matched frames are counted with each blob's place in its frame as its ID (what the
+viewer showed before).
+
+| Scene | Markers | ID switches by place in frame | ID switches by board ID | IDs moved to another marker, before → after |
+|---|---|---|---|---|
+| Static, 15 s | 9 | 10 647 | 0 | 10 367 → 0 |
+| Lissajous at 600 px/s, 30 s | 6 | 3 327 | 0 | 2 555 → 0 |
+| Speed sweep, 50 to 6000 px/s, 35 s | 1 | 51 | 17 (none below 2500 px/s) | 0 → 0 |
+| Random walk, 90 s | 116 | 17 069 | 79 (76 after frames without the marker) | 14 155 → 9 |
+
+In the random walk 744 of 820 gaps (the marker missed, or merged with another) were bridged
+with the ID kept. What is left: markers of 2 px that the detector misses for longer than the
+250 ms a track coasts, markers that stay merged for longer than that, and above about
+3000 px/s the display itself (a second spot one refresh behind, and the marker too dim to
+find in several frames in a row).
 
 ### Measured: the noise-floor threshold and the split by peaks, 2026-11-22
 

@@ -3,9 +3,14 @@
 Marker blob detector for the espion camera: it finds the bright blobs in RAW8 or packed
 MIPI CSI-2 RAW10 mono frames and returns, per blob, the thresholded intensity-weighted
 centroid in 1/32 pixel, the area and the peak value; `refine` then measures each blob on the
-frame (centre in 1/256 pixel without the threshold's bias, width and flux). It also holds
-`synth`, the deterministic synthetic frame generator that the tests and the board benchmark
-(`firmware/poc-p4-eth`) use.
+frame (centre in 1/256 pixel without the threshold's bias, width and flux), and `track` gives
+each measured blob an ID that it keeps from frame to frame for as long as it is the same
+marker (`Tracker::update` with the frame's capture time; constant-velocity prediction, gated
+nearest-first association, coasting through missed frames, markers merged into one blob
+kept apart; integer arithmetic, about 8 KB for `DefaultTracker`'s 96 tracks; the module's
+documentation has the rules, `docs/protocol.md` "Identities" what a host can rely on). It
+also holds `synth`, the deterministic synthetic frame generator that the tests and the board
+benchmark (`firmware/poc-p4-eth`) use.
 
 - `no_std`, no heap, no dependency by default: it builds and tests on the host.
 - Fixed capacities as const generics: `Detector<RUNS, COMPS, BLOBS>`. `DefaultDetector` is

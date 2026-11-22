@@ -1,7 +1,7 @@
 # poc-viewer
 
 Live view and control of the OV9281 camera of the ESP32-P4-ETH proof of concept, over the
-camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 7). The
+camera stream of `espion-proto` (`docs/protocol.md`, "Camera stream"; protocol version 8). The
 board runs `firmware/poc-p4-stream` with its `Stream` service; the viewer shows its frames as
 they arrive and sends every camera setting the `ov9281` driver knows (format, size, crop or 2x2
 binning, origin, frame rate and tolerance, exposure or automatic exposure, gain, test pattern),
@@ -212,14 +212,18 @@ Sans, with IBM Plex Mono for every number that changes (`assets/fonts`, SIL Open
     settings stay editable and are kept for the next mode.
   - **Display**: **Fit**, **1:1** or the zoom, and the display gain (brightness on screen
     only); **Show centroids** (a cross at each blob's centre, a circle of twice its width, its
-    number), **Show trail** (each marker's centres over **Trail length**, fading), **Threshold
+    ID: the identity the board gives a blob for as long as it is the same marker,
+    `docs/protocol.md`, "Identities"), **Show trail** (each marker's centres over **Trail
+    length**, joined by ID, fading), **Threshold
     mask** (the pixels at or above the threshold in use, tinted lime) and the **Statistics
     window** of the Markers panel.
 - **Picture**: fitted, or zoomed with the wheel about the pointer and moved by dragging; a
   double click fits it again. The pixel under the pointer is shown (x, y and its value at the
   frame's depth). With frames off, an empty canvas of the mode's size with the markers on it
   ("Frames off: the board's blobs only"). Each marker drawn is also an accessible label
-  (`Marker N: x .. y ..`).
+  (`Marker ID: x .. y ..`). The marker details list the blobs by ID, and the screen target's
+  figures count the identities against the markers the page drew (IDs per marker, ID
+  switches, IDs moved to another marker, gaps bridged with the ID kept).
 - **Markers** (under the picture): the newest blob frame in one line (number, blobs,
   threshold, detect time). **Show marker details** (collapsed at start) opens each of its
   blobs (x, y, width, flux, area, peak, overflow), and, when the window holds frames with
@@ -500,7 +504,9 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   their frame; a board that restarts its frame numbers; only the frames taken are decoded; a
   frame that does not decode; the state's timing of the last frame sent and its join with the
   frame's arrival; the markers: blobs within 0.1 px of the true centres with a mean error under
-  0.02 px per axis, detection and automatic exposure on at start, blobs with frames off and
+  0.02 px per axis, each blob with its marker's ID in every frame whatever the blobs' order
+  and new IDs after a generation change, detection and automatic exposure on at start, blobs
+  with frames off and
   none with detection off, a manual threshold and area filter applied and echoed, the
   automatic threshold following its rule, frames cut under a threshold inside the background's
   noise lifting the automatic threshold out of it, automatic exposure bringing the brightest
@@ -512,7 +518,15 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   clock. `tests/target.rs`: the screen target end to end (the fake filming the simulated
   screen, the tests' page in Rust): the calibration recovers the simulated model within
   0.25 px over the sensor and turns automatic exposure back on, and the check of a Lissajous
-  scene finds every marker within 0.3 px RMS and the screen's delay. No board needed. The
+  scene finds every marker within 0.3 px RMS and the screen's delay; still markers keep one
+  ID each, and through a Lissajous scene and a random walk the IDs hold at least 10 times
+  better than the blobs' place in their frame. `tests/ids.rs` (`filmed`): a camera in code
+  (rendered frames on its own clock through the board's detector, measure and tracker, the
+  same every run) films random walks, with frames missing and markers blinking too, and
+  bounds the ID switches, the IDs moved to another marker and the gaps bridged; its ignored
+  `replay` runs the tracker again over scenes recorded on the board
+  (`POC_IDS_LOG=DIR` with the board test `ids`, which measures the same four scenes on the
+  real board with the screen target as the known answer). No board needed. The
   throughput tests (link limit, automatic quality, missing chunks, decoding only the frames
   taken) need a quiet machine.
 - `tests/board.rs`, against the real board, ignored by default. With the board running
@@ -547,6 +561,16 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   scene): at 1280x800 and the highest gain, a manual threshold inside the background's noise
   cuts nearly every frame; turned automatic, the frames are detected again within half a
   second (the cut frames' background lifts the threshold).
+  `ids` (its own test: `... --test-threads=1 ids`) needs the screen target's page on a screen
+  in front of the camera (it serves the page on `POC_TARGET_LISTEN`, default
+  `127.0.0.1:8765`, and calibrates): it shows a static scene of 9 markers, 6 on Lissajous
+  paths at 600 px/s, the speed sweep and `POC_IDS_SECS` (90) of the random walk
+  (`POC_IDS_SEED`), and prints for each the identity figures by the board's IDs and by each
+  blob's place in its frame. It fails if a still marker changes ID, if the sweep's marker
+  does below 2500 px/s, or if the board's IDs are not 10 times better than the place in the
+  frame elsewhere. `POC_IDS_LOG=DIR` records the matched frames for `tests/ids.rs` `replay`.
+  Measured on 2026-11-22: `firmware/poc-p4-stream/README.md`, "Measured: the blobs'
+  identities".
   `soak`
   streams for `POC_SOAK_SECS` with a mode change every 20 s, dropping and restarting the client
   and sending malformed datagrams in between. Both use the board's test hooks on UDP 5010

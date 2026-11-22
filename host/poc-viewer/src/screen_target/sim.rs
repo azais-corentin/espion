@@ -10,8 +10,9 @@
 //! end to end without a board and are checked against a known answer.
 //!
 //! [`TestPage`] is a page in Rust for the tests: it speaks the page's protocol through the hub,
-//! shows the patterns and dots, and animates two scenes (static, and every other kind as
-//! Lissajous paths) at 60 Hz.
+//! shows the patterns and dots, and animates three scenes at 60 Hz: static, a random walk
+//! ([`Walk`]: markers that cross, leave the view and are replaced), and every other kind as
+//! Lissajous paths.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -340,6 +341,123 @@ impl PageTap for SimScreen {
     }
 }
 
+/// A random walk over a `w` x `h` sensor view, for the test page and the tests:
+/// [`Walk::MARKERS`] markers of `size` (each between 0.7 and 1.5 of it), each wandering at its
+/// own typical speed (100 to 600 px/s, a velocity lasts about a second), so they cross and
+/// touch. One that leaves the view is replaced by a new one, with the next ID, entering
+/// elsewhere on the edge. The same walk for the same seed and the same steps.
+pub struct Walk {
+    rng: u64,
+    next_id: u32,
+    live: Vec<Walker>,
+    size: (f64, f64),
+    /// Scene time of the last step, seconds.
+    at: f64,
+    size_px: f64,
+}
+
+struct Walker {
+    id: u32,
+    u: f64,
+    v: f64,
+    vu: f64,
+    vv: f64,
+    speed: f64,
+    size: f64,
+}
+
+impl Walk {
+    pub const MARKERS: usize = 6;
+    /// How long a velocity lasts, seconds.
+    const TAU: f64 = 1.0;
+
+    pub fn new(seed: u32, w: f64, h: f64, size_px: f64) -> Self {
+        let mut walk = Self {
+            rng: u64::from(seed),
+            next_id: 1,
+            live: Vec::new(),
+            size: (w - 1.0, h - 1.0),
+            at: 0.0,
+            size_px,
+        };
+        for _ in 0..Self::MARKERS {
+            let m = walk.spawn();
+            walk.live.push(m);
+        }
+        walk
+    }
+
+    /// Uniform in 0..1 (splitmix64).
+    fn uniform(&mut self) -> f64 {
+        self.rng = self.rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.rng;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    fn gauss(&mut self) -> f64 {
+        let a = self.uniform().max(f64::MIN_POSITIVE);
+        (-2.0 * a.ln()).sqrt() * (std::f64::consts::TAU * self.uniform()).cos()
+    }
+
+    /// A marker just outside the edge, heading for a point well inside.
+    fn spawn(&mut self) -> Walker {
+        let (x, y) = self.size;
+        let size = self.size_px * (0.7 + 0.8 * self.uniform());
+        let s = self.uniform() * 2.0 * (x + y);
+        let out = 1.5 * size;
+        let (u, v) = if s < x {
+            (s, -out)
+        } else if s < x + y {
+            (x + out, s - x)
+        } else if s < 2.0 * x + y {
+            (s - x - y, y + out)
+        } else {
+            (-out, s - 2.0 * x - y)
+        };
+        let speed = (100f64.ln() + self.uniform() * (600f64 / 100.0).ln()).exp();
+        let (tu, tv) = (
+            x * (0.15 + 0.7 * self.uniform()),
+            y * (0.15 + 0.7 * self.uniform()),
+        );
+        let d = (tu - u).hypot(tv - v).max(1.0);
+        let id = self.next_id;
+        self.next_id += 1;
+        Walker {
+            id,
+            u,
+            v,
+            vu: (tu - u) / d * speed,
+            vv: (tv - v) / d * speed,
+            speed,
+            size,
+        }
+    }
+
+    /// The markers at scene time `secs`: ID, sensor position, size.
+    pub fn step(&mut self, secs: f64) -> Vec<(u32, f64, f64, f64)> {
+        let dt = (secs - self.at).clamp(0.0, 0.1);
+        self.at = secs;
+        let (x, y) = self.size;
+        for i in 0..self.live.len() {
+            let (gu, gv) = (self.gauss(), self.gauss());
+            let m = &mut self.live[i];
+            // An Ornstein–Uhlenbeck velocity: each component's deviation is speed/√2.
+            let kick = m.speed * (dt / Self::TAU).sqrt();
+            m.vu += -m.vu * dt / Self::TAU + kick * gu;
+            m.vv += -m.vv * dt / Self::TAU + kick * gv;
+            m.u += m.vu * dt;
+            m.v += m.vv * dt;
+            let outside = (-m.u).max(m.u - x).max(-m.v).max(m.v - y);
+            if outside > 2.0 * m.size {
+                self.live[i] = self.spawn();
+            }
+        }
+        self.live.iter().map(|m| (m.id, m.u, m.v, m.size)).collect()
+    }
+}
+
 /// A page in Rust for the tests, on its own thread; stops when dropped.
 pub struct TestPage {
     stop: Arc<AtomicBool>,
@@ -367,6 +485,7 @@ impl TestPage {
             });
             let mut showing: Option<(u32, Content, bool)> = None;
             let mut scene_start = 0.0;
+            let mut walk: Option<Walk> = None;
             let tick = Duration::from_secs_f64(1.0 / 60.0);
             let mut next = Instant::now();
             while !s.load(Ordering::Relaxed) {
@@ -383,6 +502,7 @@ impl TestPage {
                     if !*shown {
                         *shown = true;
                         scene_start = t;
+                        walk = None;
                         end.send(FromPage::Shown { id: *id, now: t });
                     }
                     if let Content::Scene {
@@ -395,25 +515,36 @@ impl TestPage {
                         let secs = (t - scene_start) / 1e3;
                         let (w, h) = (f64::from(sensor[0]), f64::from(sensor[1]));
                         let n = usize::from(scene.count.max(1));
-                        let markers = (0..n)
-                            .map(|i| {
-                                let cx = w * (2 * i + 1) as f64 / (2 * n) as f64;
-                                let (u, v) = if scene.kind == SceneKind::Static {
-                                    (cx, h / 2.0)
-                                } else {
-                                    let (ax, ay) = (0.35 * w / n as f64, 0.35 * h);
-                                    let wt = scene.speed / ax.hypot(2.0 * ay) * secs;
-                                    (
-                                        cx + ax * (wt + i as f64 * 0.7).sin(),
-                                        h / 2.0 + ay * (2.0 * wt).sin(),
-                                    )
-                                };
+                        let at: Vec<(u32, f64, f64, f64)> = match scene.kind {
+                            SceneKind::RandomWalk => walk
+                                .get_or_insert_with(|| Walk::new(scene.seed, w, h, scene.size))
+                                .step(secs),
+                            kind => (0..n)
+                                .map(|i| {
+                                    let cx = w * (2 * i + 1) as f64 / (2 * n) as f64;
+                                    let (u, v) = if kind == SceneKind::Static {
+                                        (cx, h / 2.0)
+                                    } else {
+                                        let (ax, ay) = (0.35 * w / n as f64, 0.35 * h);
+                                        let wt = scene.speed / ax.hypot(2.0 * ay) * secs;
+                                        (
+                                            cx + ax * (wt + i as f64 * 0.7).sin(),
+                                            h / 2.0 + ay * (2.0 * wt).sin(),
+                                        )
+                                    };
+                                    (i as u32, u, v, scene.size)
+                                })
+                                .collect(),
+                        };
+                        let markers = at
+                            .into_iter()
+                            .map(|(id, u, v, size)| {
                                 let (x, y) = model.to_screen(u, v);
                                 Drawn {
-                                    id: i as u32,
+                                    id,
                                     x,
                                     y,
-                                    sigma: scene.size / FWHM_PER_SIGMA / model.scale_at(x, y),
+                                    sigma: size / FWHM_PER_SIGMA / model.scale_at(x, y),
                                     level: vignette.as_ref().map_or(1.0, |vg| vg.level(u, v)),
                                 }
                             })

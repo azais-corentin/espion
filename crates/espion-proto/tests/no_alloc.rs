@@ -128,6 +128,7 @@ fn encode_and_decode_allocate_nothing() {
     let mut packed = [0u8; 3 * espion_proto::cam::BLOB_BYTES];
     let (blob_bytes, all) = pack_blobs(
         (0..3u32).map(|i| Blob {
+            id: i + 1,
             x: 100 * 256 + i,
             y: 200 * 256 + i,
             width: 384,
