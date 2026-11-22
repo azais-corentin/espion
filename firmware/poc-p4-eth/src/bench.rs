@@ -155,6 +155,7 @@ static BLOBS: ConstStaticCell<[Blob; 256]> = ConstStaticCell::new(
         y: 0,
         area: 0,
         peak: 0,
+        sigma: 0,
     }; 256],
 );
 static INTERNAL: ConstStaticCell<[u8; INTERNAL_LEN]> = ConstStaticCell::new([0; INTERNAL_LEN]);
@@ -167,6 +168,7 @@ static EQ_BLOBS: ConstStaticCell<[Blob; 256]> = ConstStaticCell::new(
         y: 0,
         area: 0,
         peak: 0,
+        sigma: 0,
     }; 256],
 );
 

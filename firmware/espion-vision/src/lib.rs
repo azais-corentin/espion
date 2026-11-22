@@ -59,8 +59,8 @@ mod equivalence;
 #[cfg(test)]
 mod reference;
 
-/// One detected blob: the thresholded centroid, area and peak. The wire format's position,
-/// width and flux come from [`refine`] on it.
+/// One detected blob: the thresholded centroid, area and peak, and a first estimate of its
+/// size. The wire format's position, width and flux come from [`refine`] on it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Blob {
     /// Weighted centroid column in 1/32 pixel (Q11.5).
@@ -69,8 +69,57 @@ pub struct Blob {
     pub y: u16,
     /// Foreground pixels, saturating at `u16::MAX`.
     pub area: u16,
+    /// The spot's standard deviation as its light says, in 1/32 pixel ([`spot_sigma`]):
+    /// [`refine`] sizes its window with it.
+    pub sigma: u16,
     /// Brightest pixel value.
     pub peak: u8,
+}
+
+/// The standard deviation, in 1/32 pixel, of a Gaussian spot from its pixels at or above a
+/// threshold: `flux` their sum above the background, `height` its peak above the threshold
+/// (both in the same units, `height` at least 1).
+///
+/// A Gaussian spot of peak `P` above the background, cut at `c P`, holds
+/// `2 pi sigma^2 P (1 - c)` above the background in its pixels above the cut, and
+/// `P (1 - c)` is `height`: `sigma^2 = flux / (2 pi height)`, wherever the threshold cuts
+/// it. A flat disc of radius `r` gives `r / sqrt(2 (1 - c))`, the right order for a window.
+/// The blob's area alone would need the cut: the same spot covers three times the pixels at
+/// a tenth of its peak as at a half.
+///
+/// Exactly: with `k = min(flux.leading_zeros(), 10)`,
+/// `sqrt(((flux << k) / height * 163) >> k)` rounded, at most `u16::MAX`
+/// (`1024 / (2 pi) = 162.97`); 32-bit divisions only.
+#[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+pub fn spot_sigma(flux: u32, height: u32) -> u16 {
+    let k = flux.leading_zeros().min(10);
+    let q = (flux << k) / height.max(1);
+    let v = (q as u64 * 163) >> k;
+    refine::sqrt_round(v.min(u32::MAX as u64) as u32).min(u16::MAX as u32) as u16
+}
+
+/// Most thresholds of a frame begun with [`Detector::set_split`]: the frame's, then each
+/// twice as far above the background as the one before.
+pub const LEVELS: usize = 6;
+
+/// A blob inside another counts as a peak of its own when its peak is at least
+/// `SPLIT_NUM / SPLIT_DEN` times its threshold (both above the background) and it has at
+/// least [`SPLIT_MIN_AREA`] pixels.
+pub const SPLIT_NUM: u32 = 5;
+/// Denominator of [`SPLIT_NUM`].
+pub const SPLIT_DEN: u32 = 4;
+/// Fewest pixels of a blob that splits another ([`SPLIT_NUM`]).
+pub const SPLIT_MIN_AREA: u32 = 3;
+
+/// How [`Detector::set_split`] splits the blobs of a frame by their peaks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Split {
+    /// The level the frame's dark pixels sit at, in the units of the frame begun (8-bit for
+    /// [`Detector::begin_frame`], 10-bit for [`Detector::begin_frame_raw10`]).
+    pub background: u16,
+    /// Fewest pixels of a blob that splits another, if above [`SPLIT_MIN_AREA`] and the
+    /// detector's own area filter: the smallest blob the caller will keep.
+    pub min_area: u16,
 }
 
 /// Counters for the current frame, reset by [`Detector::begin_frame`] and
@@ -79,7 +128,8 @@ pub struct Blob {
 pub struct Stats {
     /// Pixels `>= threshold`, including those of dropped runs.
     pub pixels: u32,
-    /// Runs kept (dropped runs are counted in `overflow`).
+    /// Runs kept, those of the higher thresholds of a split frame included (dropped runs
+    /// are counted in `overflow`).
     pub runs: u32,
     /// Blobs returned by the last [`Detector::finish`].
     pub blobs: u32,
@@ -265,17 +315,27 @@ impl<const N: usize> Run<N> {
     };
 }
 
-/// Accumulators of a component of a table of `N`; also a union-find node.
+/// Accumulators of a component of a table of `N`; also a union-find node. In a split frame
+/// a component of one threshold lies inside one of the threshold below (`up`) and holds what
+/// the components inside it reported (`kids`, `pending`).
 #[derive(Clone, Copy)]
 struct Comp<const N: usize> {
     parent: Slot<N>,
-    /// Last row a run was added (also marks a finished root within `end_row`).
+    /// Last row a run was added (also marks a finished root within `end_level`).
     last_row: u16,
     peak: u16,
+    /// The component of the threshold below that holds this one's runs of its last row.
+    up: Label<N>,
+    /// Index of its threshold.
+    level: u8,
+    /// Blobs reported from inside it: 0, 1 (held in `pending`) or 2 for two or more (all
+    /// given out).
+    kids: u8,
     area: u32,
     sw: u32,
     swx: u64,
     swy: u64,
+    pending: Blob,
 }
 
 impl<const N: usize> Comp<N> {
@@ -283,10 +343,20 @@ impl<const N: usize> Comp<N> {
         parent: Slot::FIRST,
         last_row: 0,
         peak: 0,
+        up: Label::NONE,
+        level: 0,
+        kids: 0,
         area: 0,
         sw: 0,
         swx: 0,
         swy: 0,
+        pending: Blob {
+            x: 0,
+            y: 0,
+            area: 0,
+            peak: 0,
+            sigma: 0,
+        },
     };
 }
 
@@ -485,12 +555,106 @@ impl<const RUNS: usize, const COMPS: usize> Scan<'_, RUNS, COMPS> {
             self.close((groups.len() * 4) as u32);
         }
     }
+
+    /// The runs of the higher thresholds `levels[1..]` of the row just scanned, appended to
+    /// `cur` threshold by threshold: those of threshold `k` come from the pixels of the runs
+    /// of threshold `k - 1` whose peak reaches it, and end at `ends[k]` (`ends[0]`: where
+    /// the scan's runs end).
+    ///
+    /// Bounded like the scan: a run is read again only while the pixels read again in this
+    /// row stay within `room` (the row's pixels: one more pass over the row at most). A run
+    /// longer than what is left is taken whole as a run of threshold `k` instead: more
+    /// pixels than that threshold has, so peaks inside it may stay together, and none is
+    /// made up. A run that finds the buffer full is counted as dropped, and nothing more
+    /// comes of this row.
+    #[inline]
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn levels<F: Format>(
+        &mut self,
+        row: &[u8],
+        levels: &[u16],
+        ends: &mut [u16; LEVELS],
+        mut room: usize,
+    ) {
+        // `pixels` counts those of the frame's threshold only.
+        let (pixels, t) = (self.pixels, self.t);
+        let mut from = 0;
+        'levels: for (k, &level) in levels.iter().enumerate().skip(1) {
+            let to = self.n;
+            self.t = level as u32;
+            for i in from..to {
+                let Some(&r) = self.cur.get(i).filter(|r| r.peak >= level) else {
+                    continue;
+                };
+                let Some(free) = self.cur.get_mut(self.n) else {
+                    self.dropped += 1;
+                    for e in ends.iter_mut().skip(k) {
+                        *e = self.n as u16;
+                    }
+                    break 'levels;
+                };
+                let (a, b) = (r.start as usize, r.end as usize);
+                if b - a > room {
+                    *free = Run {
+                        label: Label::NONE,
+                        ..r
+                    };
+                    self.n += 1;
+                } else {
+                    room -= b - a;
+                    F::within(self, row, a, b);
+                }
+            }
+            from = to;
+            for e in ends.iter_mut().skip(k) {
+                *e = self.n as u16;
+            }
+        }
+        self.pixels = pixels;
+        self.t = t;
+    }
+
+    /// The runs of pixels `a..b` of a RAW8 row at the threshold `t`.
+    #[inline(always)]
+    fn within8(&mut self, row: &[u8], a: usize, b: usize) {
+        if let Some(px) = row.get(a..b) {
+            for (i, &v) in px.iter().enumerate() {
+                self.pixel((a + i) as u32, v as u32);
+            }
+        }
+        if self.open {
+            self.close(b as u32);
+        }
+    }
+
+    /// The runs of pixels `a..b` of a RAW10 row at the threshold `t`.
+    #[inline(always)]
+    fn within10(&mut self, row: &[u8], a: usize, b: usize) {
+        let (groups, _) = row.as_chunks::<{ raw10::GROUP_BYTES }>();
+        let mut x = a;
+        while x < b {
+            let g = x / 4;
+            let Some(group) = groups.get(g) else {
+                break;
+            };
+            let px = raw10::unpack(group);
+            for (i, &v) in px.iter().enumerate().take(b - g * 4).skip(x % 4) {
+                self.pixel((g * 4 + i) as u32, v);
+            }
+            x = g * 4 + 4;
+        }
+        if self.open {
+            self.close(b as u32);
+        }
+    }
 }
 
 /// A pixel format: its skip and its row scan. The strip loop is generic over it, so the
 /// format and the threshold class are decided once per [`Detector::push_rows_with`] call,
 /// not per row.
 trait Format {
+    /// Pixels of a row of `stride` bytes.
+    fn width(stride: usize) -> usize;
     /// The skip's threshold for the detector's threshold `t`.
     fn skip_threshold(t: u16) -> u8;
     /// The skip's answer for `bytes` (whole rows), at most `bytes.len()`.
@@ -502,12 +666,24 @@ trait Format {
         row: &[u8],
         x: usize,
     );
+    /// The runs of pixels `a..b` of `row` at the scan's threshold, for a higher threshold
+    /// of a split frame.
+    fn within<const RUNS: usize, const COMPS: usize>(
+        scan: &mut Scan<'_, RUNS, COMPS>,
+        row: &[u8],
+        a: usize,
+        b: usize,
+    );
 }
 
 /// RAW8, with the SWAR word test of thresholds above 128 (`HIGH`) or not.
 struct Raw8<const HIGH: bool>;
 
 impl<const HIGH: bool> Format for Raw8<HIGH> {
+    fn width(stride: usize) -> usize {
+        stride
+    }
+
     fn skip_threshold(t: u16) -> u8 {
         t as u8
     }
@@ -526,12 +702,26 @@ impl<const HIGH: bool> Format for Raw8<HIGH> {
     ) {
         scan.row8::<S, HIGH>(skip, row, x);
     }
+
+    #[inline(always)]
+    fn within<const RUNS: usize, const COMPS: usize>(
+        scan: &mut Scan<'_, RUNS, COMPS>,
+        row: &[u8],
+        a: usize,
+        b: usize,
+    ) {
+        scan.within8(row, a, b);
+    }
 }
 
 /// Packed RAW10.
 struct Raw10;
 
 impl Format for Raw10 {
+    fn width(stride: usize) -> usize {
+        stride / raw10::GROUP_BYTES * 4
+    }
+
     /// A pixel `>= t` has its top 8 bits `>= t >> 2`.
     fn skip_threshold(t: u16) -> u8 {
         (t >> 2) as u8
@@ -551,14 +741,27 @@ impl Format for Raw10 {
     ) {
         scan.row10(skip, row, x);
     }
+
+    #[inline(always)]
+    fn within<const RUNS: usize, const COMPS: usize>(
+        scan: &mut Scan<'_, RUNS, COMPS>,
+        row: &[u8],
+        a: usize,
+        b: usize,
+    ) {
+        scan.within10(row, a, b);
+    }
 }
 
 /// Component table, free list and finished blobs.
 ///
 /// The table is indexed by [`Slot`], whose values are below `COMPS` by construction: the
 /// free list starts with every slot (`reset`) and only ever holds slots, and labels, parents
-/// and merged entries are copies of them. So `find`, `union`, `alloc`, `link`, `end_row`
-/// and `emit` read and write the table without bounds checks.
+/// and merged entries are copies of them. So `find`, `union`, `alloc`, `link`, `end_level`
+/// and `finish` read and write the table without bounds checks.
+///
+/// The components of every threshold of a split frame share the table: those of one
+/// threshold never touch those of another, each knows its threshold (`Comp::level`).
 struct Labels<const COMPS: usize, const BLOBS: usize> {
     comps: Comps<COMPS>,
     /// Stack of free component slots.
@@ -571,6 +774,13 @@ struct Labels<const COMPS: usize, const BLOBS: usize> {
     nblobs: usize,
     /// `Blob::peak` is the component peak shifted right by this (2 for RAW10).
     peak_shift: u8,
+    /// The frame's thresholds, in the units of the pixel format: `levels[..nlevels]`.
+    nlevels: u8,
+    levels: [u16; LEVELS],
+    /// The background the thresholds are counted from (0 without a split).
+    background: u16,
+    /// Fewest pixels of a blob that splits another.
+    piece_min: u32,
     min_area: u32,
     max_area: u32,
     stats: Stats,
@@ -589,13 +799,14 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
     }
 
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-    fn alloc(&mut self, y: u16) -> Option<Slot<COMPS>> {
+    fn alloc(&mut self, y: u16, level: u8) -> Option<Slot<COMPS>> {
         let n = self.nfree.checked_sub(1)?;
         self.nfree = n;
         let i = self.free[n];
         self.comps[i] = Comp {
             parent: i,
             last_row: y,
+            level,
             ..Comp::ZERO
         };
         Some(i)
@@ -624,7 +835,9 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         }
     }
 
-    /// Merges the component of `b` into root `a` (or the other way); returns the root.
+    /// Merges the component of `b` into root `a` (or the other way); returns the root. Both
+    /// are of the same threshold. What was reported from inside them adds up: two blobs or
+    /// more are given out.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn union(&mut self, a: Slot<COMPS>, b: Slot<COMPS>) -> Slot<COMPS> {
         let b = self.find(b);
@@ -640,6 +853,21 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         r.swy += c.swy;
         r.peak = r.peak.max(c.peak);
         r.last_row = r.last_row.max(c.last_row);
+        if c.kids != 0 {
+            let (kids, held) = (r.kids, r.pending);
+            if kids == 0 {
+                r.kids = c.kids;
+                r.pending = c.pending;
+            } else {
+                r.kids = 2;
+                if kids == 1 {
+                    self.give(held);
+                }
+                if c.kids == 1 {
+                    self.give(c.pending);
+                }
+            }
+        }
         self.comps[child].parent = root;
         if let Some(m) = self.merged.get_mut(self.nmerged) {
             *m = child;
@@ -648,11 +876,11 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         root
     }
 
-    /// Labels the runs of row `y` from the touching runs of the row above (8-connected:
-    /// a run `s..e` touches the runs above that overlap `s-1..e+1`) and adds them to their
-    /// components.
+    /// Labels the runs of row `y` of the threshold `level` from the touching runs of that
+    /// threshold in the row above (8-connected: a run `s..e` touches the runs above that
+    /// overlap `s-1..e+1`) and adds them to their components.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-    fn link(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16) {
+    fn link(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16, level: u8) {
         let mut j = 0;
         for c in cur.iter_mut() {
             while j < prev.len() && prev[j].end < c.start {
@@ -670,7 +898,7 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
                 }
                 k += 1;
             }
-            let Some(label) = label.slot().or_else(|| self.alloc(y)) else {
+            let Some(label) = label.slot().or_else(|| self.alloc(y, level)) else {
                 self.stats.overflow += 1;
                 c.label = Label::NONE;
                 continue;
@@ -686,10 +914,76 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
         }
     }
 
-    /// After row `y`: points the new runs at their roots, finishes the components of the
-    /// row above that got no run in row `y`, and frees the slots merged away.
+    /// Tells the components of the runs `cur` (one threshold of the current row, labelled)
+    /// which component of the threshold below holds them: that of the run of `below` (the
+    /// runs of that threshold in the same row, labelled) each lies in.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-    fn end_row(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16) {
+    fn adopt(&mut self, below: &[Run<COMPS>], cur: &[Run<COMPS>]) {
+        let mut j = 0;
+        for c in cur {
+            while j < below.len() && below[j].end <= c.start {
+                j += 1;
+            }
+            let Some(l) = c.label.slot() else {
+                continue;
+            };
+            let up = match below.get(j).and_then(|b| b.label.slot()) {
+                Some(u) => self.find(u).into(),
+                None => Label::NONE,
+            };
+            let r = self.find(l);
+            self.comps[r].up = up;
+        }
+    }
+
+    /// Row `y` of the frame: `prev` and `cur` hold the runs of the row above and of the row,
+    /// threshold after threshold (those of threshold `k` end at `prev_ends[k]` and
+    /// `cur_ends[k]`). Links the runs of each threshold, tells each component which one of
+    /// the threshold below holds it, then finishes the components that got no run in the
+    /// row, the highest threshold first (a component reports to the one holding it, which
+    /// may finish in the same row), and frees the slots merged away.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn row(
+        &mut self,
+        prev: &[Run<COMPS>],
+        prev_ends: &[u16; LEVELS],
+        cur: &mut [Run<COMPS>],
+        cur_ends: &[u16; LEVELS],
+        y: u16,
+    ) {
+        let levels = usize::from(self.nlevels).min(LEVELS);
+        let (mut p0, mut c0, mut below) = (0, 0, 0);
+        for k in 0..levels {
+            let (p1, c1) = (usize::from(prev_ends[k]), usize::from(cur_ends[k]));
+            let (lower, rest) = cur.split_at_mut(c0.min(cur.len()));
+            let this = rest.get_mut(..c1.saturating_sub(c0)).unwrap_or(&mut []);
+            self.link(prev.get(p0..p1).unwrap_or(&[]), this, y, k as u8);
+            if k > 0 {
+                self.adopt(lower.get(below..).unwrap_or(&[]), this);
+            }
+            (p0, below, c0) = (p1, c0, c1);
+        }
+        for k in (0..levels).rev() {
+            let p0 = k.checked_sub(1).map_or(0, |b| usize::from(prev_ends[b]));
+            let c0 = k.checked_sub(1).map_or(0, |b| usize::from(cur_ends[b]));
+            let (p1, c1) = (usize::from(prev_ends[k]), usize::from(cur_ends[k]));
+            self.end_level(
+                prev.get(p0..p1).unwrap_or(&[]),
+                cur.get_mut(c0..c1).unwrap_or(&mut []),
+                y,
+            );
+        }
+        for i in 0..self.nmerged {
+            let m = self.merged[i];
+            self.release(m);
+        }
+        self.nmerged = 0;
+    }
+
+    /// After row `y`, for the runs of one threshold: points the new runs at their roots and
+    /// finishes the components of the row above that got no run in row `y`.
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn end_level(&mut self, prev: &[Run<COMPS>], cur: &mut [Run<COMPS>], y: u16) {
         for c in cur.iter_mut() {
             if let Some(l) = c.label.slot() {
                 c.label = self.find(l).into();
@@ -701,30 +995,90 @@ impl<const COMPS: usize, const BLOBS: usize> Labels<COMPS, BLOBS> {
                 if self.comps[r].last_row != y {
                     // Marks it finished for the other runs of the same component.
                     self.comps[r].last_row = y;
-                    self.emit(r);
+                    self.finish(r);
                     self.release(r);
                 }
             }
         }
-        for i in 0..self.nmerged {
-            let m = self.merged[i];
-            self.release(m);
-        }
-        self.nmerged = 0;
     }
 
+    /// The finished component `r` (a root). With two blobs or more from inside it, those
+    /// are the blobs (given out already). Otherwise it is one blob: given out if it is of
+    /// the frame's threshold (or the component holding it was lost to a full table), else
+    /// reported to the component holding it if it counts as a peak ([`SPLIT_NUM`]).
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-    fn emit(&mut self, r: Slot<COMPS>) {
+    fn finish(&mut self, r: Slot<COMPS>) {
         let c = self.comps[r];
-        if c.area < self.min_area || c.area > self.max_area {
+        let Some(up) = c.up.slot() else {
+            if c.kids < 2 && c.area >= self.min_area && c.area <= self.max_area {
+                let b = self.blob(&c);
+                self.push(b);
+            }
+            return;
+        };
+        let up = self.find(up);
+        let holder = self.comps[up];
+        if c.kids >= 2 {
+            // The blobs inside `r` are the holder's too.
+            self.comps[up].kids = 2;
+            if holder.kids == 1 {
+                self.give(holder.pending);
+            }
             return;
         }
-        let blob = Blob {
+        let level = self.levels[usize::from(c.level).min(LEVELS - 1)];
+        let above = |v: u16| u32::from(v.saturating_sub(self.background));
+        if SPLIT_DEN * above(c.peak) < SPLIT_NUM * above(level) || c.area < self.piece_min {
+            return;
+        }
+        let b = self.blob(&c);
+        match holder.kids {
+            0 => {
+                self.comps[up].kids = 1;
+                self.comps[up].pending = b;
+            }
+            1 => {
+                self.comps[up].kids = 2;
+                self.give(holder.pending);
+                self.give(b);
+            }
+            _ => self.give(b),
+        }
+    }
+
+    /// The blob of component `c`. Its size ([`spot_sigma`]): the light above the background
+    /// over the peak's height above the component's threshold, taken as a quarter of the
+    /// peak above the background at least (a component that barely passes its threshold
+    /// says little).
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn blob(&self, c: &Comp<COMPS>) -> Blob {
+        let level = self.levels[usize::from(c.level).min(LEVELS - 1)];
+        let bg = u32::from(self.background);
+        let peak = u32::from(c.peak);
+        let flux = c.sw.saturating_sub(bg.saturating_mul(c.area));
+        let height = peak
+            .saturating_sub(u32::from(level))
+            .max(peak.saturating_sub(bg) / 4);
+        Blob {
             x: q5(c.swx, c.sw),
             y: q5(c.swy, c.sw),
             area: c.area.min(u16::MAX as u32) as u16,
+            sigma: spot_sigma(flux, height),
             peak: (c.peak >> self.peak_shift) as u8,
-        };
+        }
+    }
+
+    /// Gives out a blob reported from inside another, if the area filter keeps it (on its
+    /// saturated area).
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn give(&mut self, b: Blob) {
+        if u32::from(b.area) >= self.min_area && u32::from(b.area) <= self.max_area {
+            self.push(b);
+        }
+    }
+
+    #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
+    fn push(&mut self, blob: Blob) {
         if let Some(b) = self.blobs.get_mut(self.nblobs) {
             *b = blob;
             self.nblobs += 1;
@@ -806,10 +1160,14 @@ pub struct Detector<const RUNS: usize, const COMPS: usize, const BLOBS: usize> {
     high: bool,
     raw10: bool,
     next_row: u16,
+    /// The runs of the row above and of the current row, threshold after threshold.
     runs: [[Run<COMPS>; RUNS]; 2],
-    nruns: [usize; 2],
+    /// Where the runs of each threshold end in `runs`.
+    ends: [[u16; LEVELS]; 2],
     /// Index into `runs` of the row above.
     prev: usize,
+    /// How the frames begun next are split, if they are.
+    split: Option<Split>,
     lab: Labels<COMPS, BLOBS>,
 }
 
@@ -822,7 +1180,8 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Default
 }
 
 impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, COMPS, BLOBS> {
-    const CAPACITY_OK: () = assert!(COMPS > 0 && COMPS < u16::MAX as usize);
+    const CAPACITY_OK: () =
+        assert!(COMPS > 0 && COMPS < u16::MAX as usize && RUNS <= u16::MAX as usize);
 
     /// A detector with no area filter (every blob of at least one pixel is kept).
     pub const fn new() -> Self {
@@ -835,8 +1194,9 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             raw10: false,
             next_row: 0,
             runs: [[Run::ZERO; RUNS]; 2],
-            nruns: [0; 2],
+            ends: [[0; LEVELS]; 2],
             prev: 0,
+            split: None,
             lab: Labels {
                 comps: Comps::new(),
                 free: [Slot::FIRST; COMPS],
@@ -848,9 +1208,14 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
                     y: 0,
                     area: 0,
                     peak: 0,
+                    sigma: 0,
                 }; BLOBS],
                 nblobs: 0,
                 peak_shift: 0,
+                nlevels: 1,
+                levels: [1; LEVELS],
+                background: 0,
+                piece_min: SPLIT_MIN_AREA,
                 min_area: 1,
                 max_area: u32::MAX,
                 stats: Stats {
@@ -863,11 +1228,37 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
         }
     }
 
-    /// Keeps only blobs with `min_area <= area <= max_area` pixels (before saturation).
-    /// Applies from the next blob finished.
+    /// Keeps only blobs with `min_area <= area <= max_area` pixels (before saturation; a
+    /// blob split out of another: on its saturated area). Applies from the next blob
+    /// finished; to what splits a blob ([`Self::set_split`]), from the next frame begun.
     pub fn set_area_filter(&mut self, min_area: u32, max_area: u32) {
         self.lab.min_area = min_area;
         self.lab.max_area = max_area;
+    }
+
+    /// Splits the blobs of the frames begun from now on by their peaks (`None`, the start:
+    /// plain connected components). A threshold at or below the background does not split,
+    /// and counts the background as 0.
+    ///
+    /// The frame is then also cut at up to [`LEVELS`]` - 1` higher thresholds, each twice as
+    /// far above the background as the one before, up to the format's largest value. The
+    /// components of a threshold lie inside those of the threshold below. A component that
+    /// holds two components or more of the next threshold that count as peaks (peak at
+    /// least [`SPLIT_NUM`]` / `[`SPLIT_DEN`] of that threshold above the background, at
+    /// least [`SPLIT_MIN_AREA`] pixels, [`Split::min_area`] and the area filter's fewest)
+    /// is not a blob: they are, each cut the same way in turn. So two markers whose light
+    /// touches come out as two blobs when the dip between them is below 2/5 of the lower
+    /// peak (and one of the thresholds lies between), and never when it is above 4/5; a
+    /// marker in the skirt of a brighter one likewise. Each blob's centroid, area, peak
+    /// and size are those of its own component.
+    ///
+    /// The higher thresholds read again, in each row, the runs that reach them: at most
+    /// the row's pixels once more, so a row costs at most one more pass. A run past that
+    /// counts whole for the next threshold: in rows with that much light, peaks may stay
+    /// together. Their runs share the `RUNS` of a row with the frame's own: past those,
+    /// runs are dropped and counted ([`Stats::overflow`]).
+    pub fn set_split(&mut self, split: Option<Split>) {
+        self.split = split;
     }
 
     /// Starts a RAW8 frame of rows of `width` pixels (at most 65535; the Q11.5 centroid
@@ -875,19 +1266,38 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     pub fn begin_frame(&mut self, width: u16, threshold: u8) {
         let t = threshold.max(1);
         let (add, high) = swar_params(t);
-        self.begin(width as usize, t as u16);
+        self.begin(width as usize, t as u16, u8::MAX as u16);
         self.add = add;
         self.high = high;
         self.raw10 = false;
         self.lab.peak_shift = 0;
     }
 
-    fn begin(&mut self, stride: usize, threshold: u16) {
+    /// A frame of rows of `stride` bytes at `threshold`, pixels up to `max`.
+    fn begin(&mut self, stride: usize, threshold: u16, max: u16) {
         self.stride = stride;
         self.threshold = threshold;
         self.next_row = 0;
-        self.nruns = [0; 2];
+        self.ends = [[0; LEVELS]; 2];
         self.lab.reset();
+        let lab = &mut self.lab;
+        lab.levels = [threshold; LEVELS];
+        lab.nlevels = 1;
+        lab.background = 0;
+        if let Some(s) = self.split.filter(|s| s.background < threshold) {
+            lab.background = s.background;
+            lab.piece_min = lab.min_area.max(u32::from(s.min_area)).max(SPLIT_MIN_AREA);
+            let mut above = u32::from(threshold - s.background);
+            for level in lab.levels.iter_mut().skip(1) {
+                above *= 2;
+                let t = u32::from(s.background) + above;
+                if t > u32::from(max) {
+                    break;
+                }
+                *level = t as u16;
+                lab.nlevels += 1;
+            }
+        }
     }
 
     /// Processes whole rows (`rows.len()` a multiple of the row length: `width` bytes for
@@ -965,14 +1375,17 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             add,
             next_row,
             runs,
-            nruns,
+            ends,
             prev: parity,
             lab,
             ..
         } = self;
         let [a, b] = runs;
         let (mut prev, cur) = if *parity == 0 { (a, b) } else { (b, a) };
-        let mut n_prev = nruns[*parity];
+        let levels = usize::from(lab.nlevels).clamp(1, LEVELS);
+        let thresholds = lab.levels;
+        let mut prev_ends = ends[*parity];
+        let mut n_prev = usize::from(prev_ends[levels - 1]);
         let mut scan = Scan {
             cur,
             n: 0,
@@ -1013,23 +1426,32 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
             if x < row.len() {
                 F::scan(&mut scan, skip, row, x);
             }
+            let mut cur_ends = [scan.n as u16; LEVELS];
+            if levels > 1 && scan.n != 0 {
+                let room = F::width(stride.get());
+                scan.levels::<F>(row, &thresholds[..levels], &mut cur_ends, room);
+            }
             let n = scan.n;
             // Both rows empty: nothing to link, nothing to finish.
             if n != 0 || n_prev != 0 {
-                let prev = &prev[..n_prev];
-                let cur = &mut scan.cur[..n];
-                lab.link(prev, cur, y);
-                lab.end_row(prev, cur, y);
+                lab.row(
+                    &prev[..n_prev],
+                    &prev_ends,
+                    &mut scan.cur[..n],
+                    &cur_ends,
+                    y,
+                );
             }
             nruns_sum += n as u32;
             core::mem::swap(&mut prev, &mut scan.cur);
             *parity ^= 1;
             n_prev = n;
+            prev_ends = cur_ends;
             scan.n = 0;
             rest = tail;
             y = y.wrapping_add(1);
         }
-        nruns[*parity] = n_prev;
+        ends[*parity] = prev_ends;
         *next_row = y;
         let stats = &mut lab.stats;
         stats.pixels += scan.pixels;
@@ -1085,7 +1507,7 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     /// `Blob::peak` holds the top 8 bits of the brightest pixel.
     pub fn begin_frame_raw10(&mut self, width: u16, threshold: u16) {
         let t = threshold.clamp(1, 1023);
-        self.begin(width as usize / 4 * raw10::GROUP_BYTES, t);
+        self.begin(width as usize / 4 * raw10::GROUP_BYTES, t, 1023);
         self.raw10 = true;
         self.lab.peak_shift = 2;
     }
@@ -1124,9 +1546,12 @@ impl<const RUNS: usize, const COMPS: usize, const BLOBS: usize> Detector<RUNS, C
     /// Finishes every component crossing the last row pushed.
     #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
     fn flush(&mut self) {
-        let prev = &self.runs[self.prev][..self.nruns[self.prev]];
-        self.lab.end_row(prev, &mut [], self.next_row);
-        self.nruns[self.prev] = 0;
+        let ends = self.ends[self.prev];
+        let n = usize::from(ends[usize::from(self.lab.nlevels).clamp(1, LEVELS) - 1]);
+        let prev = &self.runs[self.prev][..n.min(RUNS)];
+        self.lab
+            .row(prev, &ends, &mut [], &[0; LEVELS], self.next_row);
+        self.ends[self.prev] = [0; LEVELS];
     }
 }
 
@@ -1160,7 +1585,8 @@ mod tests {
                 x: 5 * 32,
                 y: 3 * 32,
                 area: 1,
-                peak: 200
+                sigma: spot_sigma(200, 100),
+                peak: 200,
             }
         );
     }
@@ -1185,7 +1611,8 @@ mod tests {
                 x: 161,
                 y: 72,
                 area: 4,
-                peak: 200
+                sigma: spot_sigma(575, 100),
+                peak: 200,
             }
         );
     }
@@ -1212,7 +1639,8 @@ mod tests {
                 x: 128,
                 y: 111,
                 area: 13,
-                peak: 200
+                sigma: spot_sigma(13 * 200, 72),
+                peak: 200,
             }
         );
         assert_eq!(det.stats().runs, 9);
@@ -1239,13 +1667,15 @@ mod tests {
             x: 112,
             y: 80,
             area: 2,
-            peak: 200
+            sigma: spot_sigma(400, 72),
+            peak: 200,
         }));
         assert!(out[..n].contains(&Blob {
             x: 304,
             y: 80,
             area: 2,
-            peak: 200
+            sigma: spot_sigma(400, 72),
+            peak: 200,
         }));
     }
 
@@ -1266,19 +1696,23 @@ mod tests {
             x: 11,
             y: 11,
             area: 3,
-            peak: 200
+            sigma: spot_sigma(600, 72),
+            peak: 200,
         }));
         assert!(out[..n].contains(&Blob {
             x: (W as u16 - 1) * 32 - 16,
             y: (H as u16 - 1) * 32,
             area: 2,
-            peak: 180
+            sigma: spot_sigma(360, 52),
+            peak: 180,
         }));
         assert!(out[..n].contains(&Blob {
             x: (W as u16 - 1) * 32,
             y: 0,
             area: 1,
-            peak: 150
+            // The peak barely passes the threshold: a quarter of it counts as its height.
+            sigma: spot_sigma(150, 37),
+            peak: 150,
         }));
     }
 
@@ -1494,7 +1928,8 @@ mod tests {
                 x: 496,
                 y: 240,
                 area: (W * H) as u16,
-                peak: 255
+                sigma: spot_sigma(255 * (W * H) as u32, 63),
+                peak: 255,
             }
         );
         let s = det.stats();
@@ -1568,7 +2003,8 @@ mod tests {
                 x: 37 * 32,
                 y: 5 * 32,
                 area: 1,
-                peak: 250
+                sigma: spot_sigma(1001, 489),
+                peak: 250,
             }
         );
     }
@@ -1587,7 +2023,8 @@ mod tests {
                 x: 152,
                 y: 75,
                 area: 3,
-                peak: 1
+                sigma: spot_sigma(17, 3),
+                peak: 1,
             }
         );
     }
@@ -1718,7 +2155,8 @@ mod tests {
                 x: 992,
                 y: 256,
                 area: 9,
-                peak: 177
+                sigma: spot_sigma(6336, 177),
+                peak: 177,
             }
         );
     }
@@ -1762,5 +2200,213 @@ mod tests {
             assert_eq!(det.stats().overflow, 0, "round {round}");
             assert_eq!(got[..ng], want[..], "round {round} t {t}");
         }
+    }
+
+    /// A frame at `bg` with squares (x, y, side, value) painted in order.
+    fn squares(bg: u8, list: &[(usize, usize, usize, u8)]) -> [u8; W * H] {
+        let mut f = [bg; W * H];
+        for &(x0, y0, side, v) in list {
+            for y in y0..y0 + side {
+                f[y * W + x0..y * W + x0 + side].fill(v);
+            }
+        }
+        f
+    }
+
+    /// The blobs at threshold 22 split above a background of 10 (thresholds 22, 34, 58,
+    /// 106, 202), in the detector's order.
+    fn split(f: &[u8], min_area: u32) -> std::vec::Vec<Blob> {
+        let mut det = DefaultDetector::new();
+        det.set_split(Some(Split {
+            background: 10,
+            min_area: 0,
+        }));
+        det.set_area_filter(min_area, u32::MAX);
+        let mut out = [Blob::default(); 8];
+        let n = det.process_frame(f, W as u16, 22, &mut out);
+        assert_eq!(det.stats().overflow, 0);
+        out[..n].to_vec()
+    }
+
+    #[test]
+    fn spot_sigma_is_the_gaussians_whatever_the_cut() {
+        // flux = 2 pi sigma^2 P (1 - c), height = P (1 - c).
+        for sigma in [0.6, 1.5, 3.0, 8.5, 40.0] {
+            for (peak, cut) in [(200.0, 0.06), (200.0, 0.5), (60.0, 0.75), (1000.0, 0.1)] {
+                let height: f64 = peak * (1.0 - cut);
+                let flux = 2.0 * core::f64::consts::PI * sigma * sigma * height;
+                let got = spot_sigma(flux.round() as u32, height.round() as u32) as f64 / 32.0;
+                assert!(
+                    (got / sigma - 1.0).abs() < 0.03,
+                    "sigma {sigma} peak {peak} cut {cut}: {got}"
+                );
+            }
+        }
+        assert_eq!(spot_sigma(0, 0), 0);
+        assert_eq!(spot_sigma(0, 100), 0);
+        assert_eq!(spot_sigma(u32::MAX, 1), u16::MAX);
+        // 2^32 / 1000 * 163 = 7.0e8: its root.
+        assert_eq!(spot_sigma(u32::MAX, 1000), 26459);
+
+        // A sampled spot of sigma 2 px, peak 200 above a background of 10, cut low, at a
+        // half and high: the same size within 6 %.
+        let mut f = [10u8; W * H];
+        for (i, v) in f.iter_mut().enumerate() {
+            let (dx, dy) = ((i % W) as f64 - 15.3, (i / W) as f64 - 7.6);
+            *v += (200.0 * (-(dx * dx + dy * dy) / 8.0).exp()).round() as u8;
+        }
+        for t in [22, 110, 160] {
+            let mut det = DefaultDetector::new();
+            det.set_split(Some(Split {
+                background: 10,
+                min_area: 0,
+            }));
+            det.begin_frame(W as u16, t);
+            // One threshold only: the spot as cut at `t`.
+            det.lab.nlevels = 1;
+            det.push_rows(&f, 0);
+            let mut out = [Blob::default(); 2];
+            assert_eq!(det.finish(&mut out), 1);
+            let got = out[0].sigma as f64 / 32.0;
+            assert!((got / 2.0 - 1.0).abs() < 0.06, "t {t}: {got}");
+        }
+    }
+
+    #[test]
+    fn peaks_joined_below_two_fifths_split() {
+        // Two 3 x 3 squares of 200 joined by a column of 60: one component at 22, 34 and
+        // 58, two at 106.
+        let f = squares(10, &[(4, 4, 7, 60), (4, 4, 3, 200), (8, 4, 3, 200)]);
+        let plain = {
+            let mut out = [Blob::default(); 4];
+            let n = detect(&f, 22, &mut out);
+            out[..n].to_vec()
+        };
+        assert_eq!(plain.len(), 1);
+        assert_eq!((plain[0].area, plain[0].peak), (49, 200));
+        let got = split(&f, 1);
+        let want = |x: u16| Blob {
+            x: x * 32,
+            y: 5 * 32,
+            area: 9,
+            // 9 pixels of 190 above the background, 94 above their threshold.
+            sigma: spot_sigma(9 * 190, 94),
+            peak: 200,
+        };
+        assert_eq!(got, [want(5), want(9)]);
+        // Pieces the area filter would not keep do not split.
+        let whole = split(&f, 10);
+        assert_eq!(whole.len(), 1);
+        assert_eq!((whole[0].area, whole[0].peak), (49, 200));
+    }
+
+    #[test]
+    fn peaks_joined_above_four_fifths_stay_one() {
+        // Joined at 170: 160 above the background, 0.84 of the squares' 190.
+        let f = squares(10, &[(4, 4, 7, 170), (4, 4, 3, 200), (8, 4, 3, 200)]);
+        let got = split(&f, 1);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].area, got[0].peak), (49, 200));
+        // Bright specks on a plateau are not peaks: fewer than SPLIT_MIN_AREA pixels each.
+        let mut f = squares(10, &[(4, 4, 7, 100)]);
+        f[5 * W + 5] = 255;
+        f[5 * W + 6] = 255;
+        f[8 * W + 9] = 255;
+        let got = split(&f, 1);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].area, got[0].peak), (49, 255));
+        // A peak that barely passes its threshold neither: 110 is above 106, but not by a
+        // quarter of 96.
+        let f = squares(10, &[(4, 4, 7, 60), (4, 4, 3, 200), (8, 4, 3, 110)]);
+        assert_eq!(split(&f, 1).len(), 1);
+    }
+
+    #[test]
+    fn peaks_split_at_several_thresholds() {
+        // A and B joined at 100 (apart at 106), B and C at 40 (apart at 58): A and B come
+        // out of the component that C left. 9 pixels a row: every threshold is read again.
+        let f = squares(
+            10,
+            &[
+                (2, 4, 5, 100),
+                (7, 4, 2, 40),
+                (2, 4, 2, 200),
+                (5, 4, 2, 200),
+                (9, 4, 2, 180),
+            ],
+        );
+        let mut got = split(&f, 1);
+        got.sort_unstable_by_key(|b| b.x);
+        let seen: std::vec::Vec<_> = got.iter().map(|b| (b.x, b.y, b.area, b.peak)).collect();
+        let want = [(80, 144, 4, 200), (176, 144, 4, 200), (304, 144, 4, 180)];
+        assert_eq!(seen, want);
+        // RAW10: the same picture at four times the values.
+        let mut f10 = [0u8; W * H / 4 * raw10::GROUP_BYTES];
+        for (g, p) in f10.as_chunks_mut().0.iter_mut().zip(f.as_chunks::<4>().0) {
+            *g = raw10::pack(p.map(|v| v as u16 * 4));
+        }
+        let mut det = DefaultDetector::new();
+        det.set_split(Some(Split {
+            background: 40,
+            min_area: 0,
+        }));
+        let mut out = [Blob::default(); 8];
+        let n = det.process_frame_raw10(&f10, W as u16, 88, &mut out);
+        let mut got10 = out[..n].to_vec();
+        got10.sort_unstable_by_key(|b| b.x);
+        let seen: std::vec::Vec<_> = got10.iter().map(|b| (b.x, b.y, b.area, b.peak)).collect();
+        assert_eq!(seen, want);
+        // Four times the light over four times the height: the same size.
+        for (a, b) in got.iter().zip(&got10) {
+            assert!(a.sigma.abs_diff(b.sigma) <= 1, "{a:?} {b:?}");
+        }
+    }
+
+    #[test]
+    fn rows_brighter_than_one_more_pass_keep_their_peaks_together() {
+        // Two squares of 200 on a slab of 100. A slab 8 pixels wide is read again at each
+        // of the four higher thresholds: 32 pixels, the row's.
+        let narrow = squares(10, &[(4, 4, 8, 100), (4, 4, 3, 200), (9, 4, 3, 200)]);
+        assert_eq!(split(&narrow, 1).len(), 2);
+        // 16 pixels wide: read again at 34 and 58, then taken whole at 106 and 202.
+        let mut wide = squares(10, &[(4, 4, 3, 200), (9, 4, 3, 200)]);
+        for y in 4..7 {
+            for v in &mut wide[y * W + 4..y * W + 20] {
+                *v = (*v).max(100);
+            }
+        }
+        let got = split(&wide, 1);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].area, got[0].peak), (48, 200));
+    }
+
+    #[test]
+    fn split_runs_count_against_the_rows_capacity() {
+        // 4 runs a row: the slab and the third square at 22 take two, at 34 two more, none
+        // is left for the thresholds that would part the squares on the slab. Nothing is
+        // lost of the frame's own threshold.
+        let f = squares(
+            10,
+            &[
+                (4, 4, 7, 60),
+                (4, 4, 3, 200),
+                (8, 4, 3, 200),
+                (20, 4, 3, 200),
+            ],
+        );
+        let mut det = Detector::<4, 16, 8>::new();
+        det.set_split(Some(Split {
+            background: 10,
+            min_area: 0,
+        }));
+        let mut out = [Blob::default(); 8];
+        let n = det.process_frame(&f, W as u16, 22, &mut out);
+        assert_eq!(n, 2);
+        let s = det.stats();
+        assert_eq!(s.pixels, 49 + 9);
+        // One run dropped in each of the squares' three rows; below them the slab alone,
+        // at 22, 34 and 58.
+        assert_eq!(s.overflow, 3);
+        assert_eq!(s.runs, 3 * 4 + 4 * 3);
     }
 }

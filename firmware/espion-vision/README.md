@@ -11,7 +11,7 @@ frame (centre in 1/256 pixel without the threshold's bias, width and flux). It a
 - Fixed capacities as const generics: `Detector<RUNS, COMPS, BLOBS>`. `DefaultDetector` is
   `Detector<256, 256, 256>` (256 runs per row, 256 live components, 256 blobs per frame).
 - `Detector::new` is a `const fn`, so the detector can live in a static (`DefaultDetector`
-  takes about 19.5 KB, too much for most task stacks).
+  takes about 24 KB, too much for most task stacks).
 
 ## Usage
 
@@ -34,6 +34,23 @@ fn detect(det: &mut DefaultDetector, frame: &[u8], width: u16) -> usize {
 
 RAW10 frames use `begin_frame_raw10` / `process_frame_raw10` with a 10-bit threshold;
 `raw10` holds the packing.
+
+`Detector::set_split(Some(Split { background, min_area }))` splits the blobs of the frames
+begun next by their peaks. The frame is also cut at up to 5 higher thresholds, each twice as
+far above `background` as the one before. A blob that holds two or more blobs of the next
+threshold that count as peaks (peak at least 5/4 of that threshold above the background, at
+least 3 pixels and `min_area`) is replaced by them, each cut the same way in turn. Two
+markers whose light touches come out as two blobs when the dip between them is below 2/5 of
+the lower peak, and never when it is above 4/5. Each blob's centroid, area, peak and
+`sigma` are those of its own component. The higher thresholds read a row's bright runs
+again, at most the row's pixels in all: a run past that counts whole for the next
+threshold, so in a row with that much light peaks may stay together. Their runs share the
+row's run capacity with the frame's own.
+
+`Blob::sigma` (1/32 pixel) is the blob's size as a Gaussian's: `sigma² = light / (2π ×
+height)`, with the light the sum of its pixels above the background and the height its
+peak above its threshold (`spot_sigma`). For a Gaussian spot it is the spot's sigma
+whatever the threshold cut off.
 
 The dark skip is a trait, `Skip`, passed to each call (`push_rows_with`,
 `process_frame_with`, `process_frame_raw10_with`) rather than stored in the detector, so a
@@ -62,11 +79,13 @@ answers `true` it is `push_rows_with`, which is built on it.
   frame row. A 1280 x 800 frame gives 16 000 samples.
 - `Background::from_histogram` gives the median and `sigma = p84 - p50`, a robust spread
   taken on the bright side; the few marker samples barely move either.
-- `threshold_raw8(bg, brightest_peak)` is
-  `max(median + max(6 * sigma, 8), ceil(peak / 2))` in `1..=255`: the noise floor, or half
-  the brightest blob's peak (`Blob::peak`) so a bright marker's halo stays out of its blob.
-  With no blob, the floor. `threshold_raw10` is 4 times it (`4..=1020`), which selects the
-  same pixels on their top 8 bits.
+- `threshold_raw8(bg)` is `median + max(6 * sigma, 12)` in `1..=255`: the noise floor.
+  `threshold_raw10` is 4 times it (`4..=1020`), which selects the same pixels on their top
+  8 bits. It does not follow the brightest blob: a marker's peak depends on its size, and
+  a threshold at half the brightest peak loses every marker less than half as bright
+  (`firmware/poc-p4-stream/README.md`, "Measured: the noise-floor threshold and the split
+  by peaks"). The split by peaks (`set_split` with `bg.median`) keeps a bright marker's
+  skirt from joining its neighbours instead.
 
 ## Refinement
 
@@ -77,9 +96,8 @@ frame and return a `Spot`: centre in 1/256 pixel (pixel centres at integer coord
 `width` (the spot's sigma, 1/256 pixel) and `flux` (sum of value − background over the
 window, frame units). Integer math only, so the board and the host agree bit for bit.
 
-1. Window sigma `s` from the blob's area: a Gaussian cut at half its peak covers
-   `2π ln 2 σ²` pixels, so `s = sqrt(area / (2π ln 2))`, at least 0.75 px. Past 4 px (an
-   area of 70 and up) the spot is measured on bins of `2^k × 2^k` pixels, the smallest `k`
+1. Window sigma `s` from the blob: `Blob::sigma`, at least 0.75 px. Past 4 px the spot is
+   measured on bins of `2^k × 2^k` pixels, the smallest `k`
    (at most 5) that brings `s / 2^k` to 4 or below: each bin the rounded mean of its pixels
    (RAW8 with 2 fraction bits), the rest in bins, the result scaled back to pixels. A
    window too narrow for the spot sees only its top: the width blows up (step 4) and the

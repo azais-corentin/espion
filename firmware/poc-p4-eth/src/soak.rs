@@ -52,6 +52,7 @@ static BLOBS: ConstStaticCell<[Blob; 256]> = ConstStaticCell::new(
         y: 0,
         area: 0,
         peak: 0,
+        sigma: 0,
     }; 256],
 );
 static SYNTH: ConstStaticCell<synth::Synth> = ConstStaticCell::new(synth::Synth::NEW);

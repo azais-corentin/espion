@@ -6,10 +6,10 @@
 //! the threshold jumps it. The threshold only finds the blobs; [`refine_raw8`] and
 //! [`refine_raw10`] then measure each one on the frame:
 //!
-//! 1. Start at the blob's centroid. The window sigma `s` comes from the blob's area: a
-//!    Gaussian spot cut at half its peak covers `2 pi ln 2 sigma^2` pixels, so
-//!    `s = sqrt(area / (2 pi ln 2))`, at least 0.75 px. A spot with `s` above 4 px (an
-//!    area of 70 and up) is measured on bins of `2^k` x `2^k` pixels, `k` the smallest
+//! 1. Start at the blob's centroid. The window sigma `s` is the blob's own estimate of the
+//!    spot's ([`Blob::sigma`], from its light and its peak: right for a Gaussian spot
+//!    wherever the threshold cut it), at least 0.75 px. A spot with `s` above 4 px
+//!    is measured on bins of `2^k` x `2^k` pixels, `k` the smallest
 //!    (at most 5, with at least one bin per row and column) that brings `s / 2^k` to 4 or
 //!    below: each bin is the rounded mean of its pixels (RAW8 with 2 fraction bits), bin
 //!    centres at `(2^k - 1) / 2` px from their first pixel's, the partial bins of the
@@ -106,8 +106,8 @@ const ONE: i32 = 1 << Q;
 /// Window sigma bounds, in pixels of the frame or, for wider spots, of its bins.
 const SIGMA_MIN: i32 = 3 * ONE / 4;
 const SIGMA_MAX: i32 = 4 * ONE;
-/// Most bin shift: bins of 32 x 32 pixels bring the widest window sigma (about 123 px, for
-/// an area of `u16::MAX`) below [`SIGMA_MAX`].
+/// Most bin shift: bins of 32 x 32 pixels bring a window sigma of 128 px to [`SIGMA_MAX`];
+/// a wider one counts as that.
 const MAX_SHIFT: u32 = 5;
 /// Largest window half-size: `ceil(4 * SIGMA_MAX)` px.
 const MAX_HALF: usize = 16;
@@ -176,7 +176,7 @@ fn quarter_d2(g: i32, d: i32) -> i32 {
 
 /// Rounded square root.
 #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-fn sqrt_round(v: u32) -> u32 {
+pub(crate) fn sqrt_round(v: u32) -> u32 {
     let (mut rem, mut root, mut bit) = (v, 0u32, 1u32 << 30);
     while bit > rem {
         bit >>= 2;
@@ -304,17 +304,11 @@ fn span(p: usize, half: usize, lo: usize, hi: usize) -> Option<(usize, usize)> {
     (a <= b).then_some((a, b))
 }
 
-/// The window sigma for a blob of `area` pixels cut at half its peak, in frame pixels
-/// (1/4096 px): `sqrt(area / (2 pi ln 2))`, `2^24 / (2 pi ln 2) = 3852251`, at least
-/// [`SIGMA_MIN`]. Past `u32` (areas above 1114) the root of a 256th, times 16.
+/// The window sigma for a blob, in frame pixels (1/4096 px): [`Blob::sigma`] (1/32 px), at
+/// least [`SIGMA_MIN`].
 #[cfg_attr(feature = "ram", unsafe(link_section = ".rwtext"))]
-fn window_sigma(area: u16) -> i32 {
-    let v = area as u64 * 3_852_251;
-    let s = match u32::try_from(v) {
-        Ok(v) => sqrt_round(v),
-        Err(_) => sqrt_round((v >> 8) as u32) << 4,
-    };
-    (s as i32).max(SIGMA_MIN)
+fn window_sigma(blob: &Blob) -> i32 {
+    ((blob.sigma as i32) << (Q - 5)).max(SIGMA_MIN)
 }
 
 /// The fewest bins, `2^shift` x `2^shift` pixels, that bring the window sigma `s` (frame
@@ -605,7 +599,7 @@ fn refine(view: &View, blob: &Blob) -> (Spot, u32) {
     }
     // A spot wider than the window is measured on bins of 2^shift x 2^shift pixels, in
     // which it is narrow enough; everything below is in bins.
-    let sf = window_sigma(blob.area);
+    let sf = window_sigma(blob);
     let shift = bin_shift(sf, view.width, view.rows);
     let view = &view.binned(shift);
     let s = (sf >> shift).clamp(SIGMA_MIN, SIGMA_MAX);
@@ -677,7 +671,7 @@ fn refine(view: &View, blob: &Blob) -> (Spot, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DefaultDetector, auto};
+    use crate::{DefaultDetector, Split, auto};
     use std::vec::Vec;
     use std::{println, vec};
 
@@ -819,14 +813,19 @@ mod tests {
         }
     }
 
-    /// The blobs at the automatic threshold (brightest pixel as the peak).
+    /// The blobs as the pipeline finds them: the automatic threshold, split by their peaks
+    /// above the background.
     fn detect8(f: &[u8], w: usize) -> Vec<Blob> {
         let mut h = auto::Histogram::new();
         auto::sample_raw8(f, w as u16, 0, &mut h);
         let bg = auto::Background::from_histogram(&h).unwrap();
-        let t = auto::threshold_raw8(bg, f.iter().copied().max());
         let mut out = [Blob::default(); 16];
-        let n = DefaultDetector::new().process_frame(f, w as u16, t, &mut out);
+        let mut det = DefaultDetector::new();
+        det.set_split(Some(Split {
+            background: bg.median as u16,
+            min_area: 0,
+        }));
+        let n = det.process_frame(f, w as u16, auto::threshold_raw8(bg), &mut out);
         out[..n].to_vec()
     }
 
@@ -834,16 +833,13 @@ mod tests {
         let mut h = auto::Histogram::new();
         auto::sample_raw10(f, w as u16, 0, &mut h);
         let bg = auto::Background::from_histogram(&h).unwrap();
-        let peak = f
-            .as_chunks::<{ raw10::GROUP_BYTES }>()
-            .0
-            .iter()
-            .flat_map(raw10::unpack)
-            .max()
-            .map(|v| (v >> 2) as u8);
-        let t = auto::threshold_raw10(bg, peak);
         let mut out = [Blob::default(); 16];
-        let n = DefaultDetector::new().process_frame_raw10(f, w as u16, t, &mut out);
+        let mut det = DefaultDetector::new();
+        det.set_split(Some(Split {
+            background: bg.median as u16 * 4,
+            min_area: 0,
+        }));
+        let n = det.process_frame_raw10(f, w as u16, auto::threshold_raw10(bg), &mut out);
         out[..n].to_vec()
     }
 
@@ -913,27 +909,31 @@ mod tests {
     }
 
     #[test]
-    fn window_sigma_from_area() {
-        // sigma 1.5 px: area 2 pi ln 2 * 2.25 = 9.80.
-        assert_eq!(window_sigma(10) * 1000 / ONE, 1515);
-        assert_eq!(window_sigma(0), SIGMA_MIN);
-        assert_eq!(window_sigma(69), 16304);
-        assert_eq!(window_sigma(70), 16421);
-        let k = (1u64 << 24) as f64 / (2.0 * core::f64::consts::PI * core::f64::consts::LN_2);
-        assert_eq!(k.round(), 3_852_251.0);
-        for area in [70u16, 393, 1114, 1115, 20_000, u16::MAX] {
-            let want = (area as f64 * k).sqrt();
-            let got = window_sigma(area) as f64;
-            assert!((got / want - 1.0).abs() < 1e-4, "area {area}: {got} {want}");
-        }
+    fn window_sigma_from_the_blob() {
+        let blob = |sigma| Blob {
+            sigma,
+            ..Blob::default()
+        };
+        // 1/32 px to 1/4096 px, at least SIGMA_MIN.
+        assert_eq!(window_sigma(&blob(48)), 3 * ONE / 2);
+        assert_eq!(window_sigma(&blob(0)), SIGMA_MIN);
+        assert_eq!(window_sigma(&blob(23)), SIGMA_MIN);
+        assert_eq!(window_sigma(&blob(25)), 25 * ONE / 32);
         // The fewest bins that bring the window to SIGMA_MAX, one bin per side at least.
         assert_eq!(bin_shift(SIGMA_MAX, 1280, 800), 0);
         assert_eq!(bin_shift(SIGMA_MAX + 1, 1280, 800), 1);
         // 9.5 px: 4 x 4 bins.
-        assert_eq!(bin_shift(window_sigma(393), 1280, 800), 2);
-        assert_eq!(bin_shift(window_sigma(u16::MAX), 1280, 800), MAX_SHIFT);
-        assert!(window_sigma(u16::MAX) >> MAX_SHIFT <= SIGMA_MAX);
-        assert_eq!(bin_shift(window_sigma(u16::MAX), 1280, 3), 1);
+        assert_eq!(bin_shift(window_sigma(&blob(304)), 1280, 800), 2);
+        assert_eq!(
+            bin_shift(window_sigma(&blob(128 * 32)), 1280, 800),
+            MAX_SHIFT
+        );
+        assert_eq!(window_sigma(&blob(128 * 32)) >> MAX_SHIFT, SIGMA_MAX);
+        assert_eq!(
+            bin_shift(window_sigma(&blob(u16::MAX)), 1280, 800),
+            MAX_SHIFT
+        );
+        assert_eq!(bin_shift(window_sigma(&blob(u16::MAX)), 1280, 3), 1);
     }
 
     #[test]
@@ -1017,7 +1017,7 @@ mod tests {
                         let flux = r.0.flux as f64 / (scene.total() * scale);
                         worst.flux = worst.flux.max((flux - 1.0).abs());
                         worst.add(r, &blobs[0], c);
-                        let sf = window_sigma(blobs[0].area);
+                        let sf = window_sigma(&blobs[0]);
                         let shift = bin_shift(sf, W, W);
                         let s = (sf >> shift).clamp(SIGMA_MIN, SIGMA_MAX);
                         let side = 2 * ((4 * s + ONE - 1) >> Q) + 1;
@@ -1239,11 +1239,12 @@ mod tests {
             (u16::MAX, u16::MAX),
             (0, u16::MAX),
         ] {
-            for area in [0, 1, 10, 500, u16::MAX] {
+            for (area, sigma) in [(0, 0), (1, 1), (10, 40), (500, 300), (u16::MAX, u16::MAX)] {
                 let b = Blob {
                     x,
                     y,
                     area,
+                    sigma,
                     peak: 255,
                 };
                 inside(refine_raw8(&f8, 32, 32, &b), 32, 32);
@@ -1279,6 +1280,7 @@ mod tests {
                 x: rng.next() as u16 % (w as u16 * 32 + 64),
                 y: rng.next() as u16 % (h as u16 * 32 + 64),
                 area: rng.next() as u16 >> (rng.next() % 16),
+                sigma: rng.next() as u16 >> (rng.next() % 16),
                 peak: rng.next() as u8,
             };
             let f = &buf[..len];

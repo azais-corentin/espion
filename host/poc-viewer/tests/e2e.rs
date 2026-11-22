@@ -1429,24 +1429,23 @@ fn a_manual_threshold_and_area_filter_are_applied_and_echoed() {
     assert!(frames.iter().any(|f| !f.blobs.is_empty()));
 }
 
-/// The automatic threshold of a frame of `c` as the rule makes it: the frame's background
-/// sample and the highest peak of its blobs (all of them kept: the automatic area filter).
+/// The automatic threshold of a frame of `c` as the rule makes it: from the frame's
+/// background sample.
 fn rule(c: &CameraSettings, f: &BlobFrame) -> u16 {
     let mut raw = Vec::new();
     let mut hist = auto::Histogram::new();
-    let peak = f.blobs.iter().map(|b| b.peak).max();
     match c.format {
         Format::Raw8 => {
             fake::render(c, Encoding::Raw8, f.frame, &mut raw);
             auto::sample_raw8(&raw, c.width, 0, &mut hist);
             let bg = auto::Background::from_histogram(&hist).unwrap();
-            u16::from(auto::threshold_raw8(bg, peak))
+            u16::from(auto::threshold_raw8(bg))
         }
         Format::Raw10 => {
             fake::render(c, Encoding::Raw10, f.frame, &mut raw);
             auto::sample_raw10(&raw, c.width, 0, &mut hist);
             let bg = auto::Background::from_histogram(&hist).unwrap();
-            auto::threshold_raw10(bg, peak)
+            auto::threshold_raw10(bg)
         }
     }
 }
@@ -1478,12 +1477,12 @@ fn the_automatic_threshold_follows_the_rule() {
             exact += usize::from(t == a);
             assert!(w[2].flags & FrameBlobs::AUTO_THRESHOLD != 0);
         }
-        // Half the peak of the brightest spot, well above the background.
+        // The background's noise floor, far below the spots' peaks.
         let t8 = match format {
             Format::Raw8 => frames[39].threshold,
             Format::Raw10 => frames[39].threshold / 4,
         };
-        assert!((100..=125).contains(&t8), "{format:?}: threshold {t8}");
+        assert!((16..=30).contains(&t8), "{format:?}: threshold {t8}");
         println!("{format:?}: {exact} of 38 from the frame just before");
     }
 }

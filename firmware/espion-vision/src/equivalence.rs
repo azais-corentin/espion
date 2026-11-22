@@ -1,12 +1,14 @@
 //! Randomised equivalence of the detector with the flood-fill reference ([`reference`]):
 //! frame widths and heights, blob counts, sizes and positions (borders included),
 //! backgrounds, thresholds, both pixel formats, buffer alignments, strip splits and the
-//! answers a [`Skip`] may give. The seeds are fixed, so a failure repeats.
+//! answers a [`Skip`] may give; and of the split by peaks with its statement on flood fills
+//! ([`reference::split`]), on the same scenes and on smooth overlapping bumps. The seeds
+//! are fixed, so a failure repeats.
 
 use std::vec::Vec;
 use std::{format, vec};
 
-use crate::{Blob, Detector, Scalar, Skip, raw10, reference};
+use crate::{Blob, Detector, Scalar, Skip, Split, raw10, reference};
 
 /// Below, at and above one 64-byte window, not multiples of 64 (72, 1288) and the sizes of
 /// the board's modes.
@@ -352,6 +354,202 @@ fn alternating_bounded(raw10: bool) {
         assert_eq!(got[..n], want[..], "raw10 {raw10} allowed {allowed}");
         assert_eq!(det.stats(), want_stats, "raw10 {raw10} allowed {allowed}");
     }
+}
+
+type SplitDet = Detector<4096, 4096, 4096>;
+/// Frames per width and format of the split's test.
+const SPLIT_CASES: u32 = 250;
+
+/// A frame of smooth bumps on a flat background below `t`, some overlapping: light as
+/// markers give it, with dips between touching ones at every height.
+fn bumps(rng: &mut Rng, w: usize, h: usize, t: u32, max: u32) -> Vec<u16> {
+    let floor = rng.below(t);
+    let mut px = vec![0f32; w * h];
+    let n = 1 + rng.below(12);
+    let mut last = (0, 0);
+    for i in 0..n {
+        let r = 2 + rng.below(MAX_RADIUS) as i32;
+        // Half of them next to the one before.
+        let (cx, cy) = if i > 0 && rng.below(2) == 0 {
+            (
+                last.0 + rng.below(2 * r as u32 + 1) as i32 - r,
+                last.1 + rng.below(2 * r as u32 + 1) as i32 - r,
+            )
+        } else {
+            (rng.position(w as u32) as i32, rng.position(h as u32) as i32)
+        };
+        last = (cx, cy);
+        let peak = (t + rng.below(max + 1 - t)) as f32;
+        for y in (cy - r).max(0)..=(cy + r).min(h as i32 - 1) {
+            for x in (cx - r).max(0)..=(cx + r).min(w as i32 - 1) {
+                let d = (((x - cx).pow(2) + (y - cy).pow(2)) as f32).sqrt() / r as f32;
+                if d < 1.0 {
+                    px[y as usize * w + x as usize] += peak * (1.0 - d) * (1.0 - d);
+                }
+            }
+        }
+    }
+    // Noise on the light only: the background stays flat, below the threshold.
+    let noise = rng.below(4);
+    px.iter()
+        .map(|&v| match v as u32 {
+            0 => floor as u16,
+            lit => (floor + lit + rng.below(noise + 1)).min(max) as u16,
+        })
+        .collect()
+}
+
+fn sorted(blobs: &[Blob]) -> Vec<Blob> {
+    let mut b = blobs.to_vec();
+    b.sort_unstable_by_key(|b| (b.y, b.x, b.area, b.peak, b.sigma));
+    b
+}
+
+/// The split by peaks against its statement on flood fills: random thresholds, backgrounds
+/// below them and area filters, the scenes of [`run`] (ragged discs of random values: nested
+/// speckle at every threshold) and [`bumps`], rows with more bright pixels than the
+/// detector reads again (narrow frames) and rows within that, whole frames and random
+/// strips with gaps and with every skip model, and `push_rows_until` stopped and resumed.
+fn run_split(raw10: bool, seed: u32) {
+    let max: u32 = if raw10 { 1023 } else { 255 };
+    let shift = if raw10 { 2 } else { 0 };
+    let mut rng = Rng(seed);
+    let mut det = std::boxed::Box::new(SplitDet::new());
+    let mut got = vec![Blob::default(); 4096];
+    let (mut splits, mut exact_splits) = (0, 0);
+    for w in WIDTHS {
+        let stride = if raw10 { w / 4 * raw10::GROUP_BYTES } else { w };
+        for case in 0..SPLIT_CASES {
+            let h = 1 + rng.below(MAX_HEIGHT) as usize;
+            // Low thresholds mostly: several thresholds above them.
+            let t = match rng.below(4) {
+                0 => 1 + rng.below(max),
+                _ => 1 + rng.below(max / 8),
+            };
+            let bg = rng.below(t);
+            let areas = (
+                [1, 1, 2, 5][rng.below(4) as usize],
+                [u32::MAX, u32::MAX, 40][rng.below(3) as usize],
+            );
+            let px = if rng.below(2) == 0 {
+                scene(&mut rng, w, h, t, max)
+            } else {
+                bumps(&mut rng, w, h, t, max)
+            };
+            let model = [Model::Scalar, Model::Block, Model::Early][rng.below(3) as usize];
+            let mut strips = Vec::new();
+            let mut y = 0;
+            while y < h {
+                let n = 1 + rng.below((h - y) as u32) as usize;
+                strips.push((y, n, rng.below(8) != 0));
+                y += n;
+            }
+            let mut seen = px.clone();
+            for &(y, n, pushed) in &strips {
+                if !pushed {
+                    seen[y * w..(y + n) * w].fill(0);
+                }
+            }
+            // `Split::min_area`: none, below and above what the area filter asks.
+            let piece_min = [0, 0, 4, 9][case as usize % 4];
+            let (want, _) = reference::split(&seen, w, (t, bg, max), shift, areas, piece_min);
+            let want = sorted(&want);
+            let plain = reference::flood(&seen, w, t, shift);
+            let (unfiltered, exact) =
+                reference::split(&seen, w, (t, bg, max), shift, (1, u32::MAX), piece_min);
+            splits += usize::from(unfiltered.len() > plain.len());
+            exact_splits += usize::from(exact && unfiltered.len() > plain.len());
+            let ctx = format!(
+                "raw10 {raw10} w {w} case {case} h {h} t {t} bg {bg} areas {areas:?} \
+                 piece {piece_min} {model:?} strips (first, rows, pushed) {strips:?}"
+            );
+
+            det.set_area_filter(areas.0, areas.1);
+            det.set_split(Some(Split {
+                background: bg as u16,
+                min_area: piece_min as u16,
+            }));
+            // The frame as seen, whole.
+            let mut whole = vec![0u8; stride * h];
+            fill(raw10, &mut whole, &seen);
+            begin_split(&mut det, raw10, w, t);
+            det.push_rows(&whole, 0);
+            let n = det.finish(&mut got);
+            let whole_blobs = got[..n].to_vec();
+            let want_stats = det.stats();
+            assert_eq!(want_stats.overflow, 0, "{ctx}");
+            assert_eq!(sorted(&whole_blobs), want, "whole: {ctx}");
+
+            // In strips: the same blobs in the same order.
+            let offset = rng.below(4) as usize;
+            let mut buf = vec![0u8; stride * h + 4];
+            let f = &mut buf[offset..offset + stride * h];
+            fill(raw10, f, &px);
+            begin_split(&mut det, raw10, w, t);
+            for &(y, n, pushed) in &strips {
+                if pushed {
+                    det.push_rows_with(&model, &f[y * stride..(y + n) * stride], y as u16);
+                }
+            }
+            let n = det.finish(&mut got);
+            assert_eq!(got[..n], whole_blobs[..], "strips: {ctx}");
+            assert_eq!(det.stats(), want_stats, "strips: {ctx}");
+
+            // Stopped and resumed.
+            begin_split(&mut det, raw10, w, t);
+            for &(y, n, pushed) in &strips {
+                let mut done = 0;
+                let mut calls = 0;
+                while pushed && done < n {
+                    let mut left = if calls >= 64 { u32::MAX } else { rng.below(5) };
+                    let rows = &f[(y + done) * stride..(y + n) * stride];
+                    done += det.push_rows_until(&model, rows, (y + done) as u16, || {
+                        left = left.saturating_sub(1);
+                        left == 0
+                    });
+                    calls += 1;
+                }
+            }
+            let n = det.finish(&mut got);
+            assert_eq!(got[..n], whole_blobs[..], "bounded: {ctx}");
+            assert_eq!(det.stats(), want_stats, "bounded: {ctx}");
+
+            // Without a split (and with a background at or above the threshold): the plain
+            // components.
+            det.set_area_filter(1, u32::MAX);
+            det.set_split((case % 2 != 0).then_some(Split {
+                background: t as u16,
+                min_area: 0,
+            }));
+            begin_split(&mut det, raw10, w, t);
+            det.push_rows(&whole, 0);
+            let n = det.finish(&mut got);
+            assert_eq!(got[..n], plain[..], "plain: {ctx}");
+        }
+    }
+    // The scenes do split, with and without rows past what the detector reads again.
+    assert!(
+        exact_splits > 250 && splits - exact_splits > 100,
+        "{splits} frames split, {exact_splits} of them read exactly"
+    );
+}
+
+fn begin_split(det: &mut SplitDet, raw10: bool, w: usize, t: u32) {
+    if raw10 {
+        det.begin_frame_raw10(w as u16, t as u16);
+    } else {
+        det.begin_frame(w as u16, t as u8);
+    }
+}
+
+#[test]
+fn raw8_split_matches_flood_fills() {
+    run_split(false, 0x5eed_5008);
+}
+
+#[test]
+fn raw10_split_matches_flood_fills() {
+    run_split(true, 0x5eed_5010);
 }
 
 #[test]

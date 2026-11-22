@@ -61,7 +61,7 @@ Everything reachable from core 1's entry (`runner::entry`, run by esp-hal's
 | `Core1::hand_over(CsiStrips) -> Option<StripControl>` | core 0 | Splits the strip receiver, copies the `StripReader` into core 1's two-slot mailbox (`Core1::post`; core 1 uses it in place) and returns the control half. `Core1::can_post`, `Core1::wait_mailbox(timeout)` (async) before a second one |
 | `Core1::set_run(&Run)` | core 0, strip path stopped | The next run: `Job::Detect` (width, RAW8/RAW10, threshold, late-strip limit, L1 data autoload over each strip, optional synthetic strip) or `Job::Check` (reference row checksums, row bytes, the L1 data autoload, the test holds) |
 | `Core1::set_stream(&StreamRun)` | core 0, strip path stopped | The next run is the stream job: width, height, format, row bytes, rows of a full strip, the frame buffers (`FrameBuffers`: base, stride, count up to `MAX_FRAME_BUFFERS` = 8, bytes per frame), late-strip limit (one strip period), `budget_cycles`, the L1 data autoload, a run number echoed in the results |
-| `Core1::set_detect(&StreamDetect)` | core 0, any time | The stream job's detection settings, taken at each frame's first strip: on or off, threshold (clamped to the format), area bounds, most blobs measured (up to `MAX_SPOTS` = 128), a serial echoed in the results |
+| `Core1::set_detect(&StreamDetect)` | core 0, any time | The stream job's detection settings, taken at each frame's first strip: on or off, threshold (clamped to the format), the background its blobs are split above by their peaks (or none: connected components), area bounds, most blobs measured (up to `MAX_SPOTS` = 128), a serial echoed in the results |
 | `give_frame(index)` | core 0 | Puts a frame buffer in the stream job's free set: each buffer once at the start, then each one a result handed over, once core 0 is done with it. A buffer the live JPEG encode still reads goes back once that encode ended too |
 | `release_encoder(index)`, `live_frame() -> LiveFrame` | core 0 | The live JPEG encode's hold on the frame buffer core 1 bound to it, ended once the encode ended or was cancelled; the bound frame: run, frame number, buffer, and in core 1's cycles its first and last feed and its capture (the last strip's bound) |
 | `Core1::abort_stream() -> u32`, `Core1::stream_idle(req)` | core 0 | Asks core 1 to drop what the stream job holds (below); `stream_idle` says it has: no buffer held, no copy running |
@@ -99,7 +99,7 @@ turns.
   block). With detection on, the background sample over the whole strip, then the detector in
   one bounded call (`push_rows_until`, `espion-vision` README) while the copy runs: it stops
   at a row boundary once the strip's age passes `budget_cycles` less the detector's longest
-  step, the larger of one worst-case row (width x 144 cycles) and one skip over the strip (1
+  step, the larger of one worst-case row (width x 160 cycles) and one skip over the strip (1
   cycle a byte). Stopped short, detection stops for the rest of the frame; the frame is still
   copied, the background sample still takes its other strips (so the result has the whole
   frame's background, for core 0's automatic threshold) and its result says `cut`. Once the

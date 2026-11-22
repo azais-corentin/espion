@@ -360,8 +360,9 @@ detected frame.
 
 A blob is, all little-endian: `x`, `y` (`u32`), `width` (`u16`), `flux` (`u32`), `area`
 (`u16`), then `peak` (`u8`). The threshold only finds the blob: `area` is its pixels at or
-above the threshold, `peak` its brightest pixel, 8-bit (RAW10: its top 8 bits). The rest is
-measured on the frame around it, so the threshold does not bias it (below, "Position"):
+above the threshold that found it (the frame's, or a higher one for a blob split out of
+another: below, "Blobs"), `peak` its brightest pixel, 8-bit (RAW10: its top 8 bits). The
+rest is measured on the frame around it, so the threshold does not bias it (below, "Position"):
 `x` and `y` the spot's centre in 1/256 pixel (`SUBPIXEL`), pixel centres at integer
 coordinates; `width` its standard deviation in 1/256 pixel; `flux` the sum of its pixels
 above the local background, in the format's units. This is not the tracking draft's `Blob`
@@ -403,10 +404,22 @@ The fake camera, which detects whole frames, sends one strip of the frame's heig
   a host polls, whether frames are sent or not and whatever `max_fps` says. The board sends
   them after any answer and before the next frame chunk. A frame that is both sent and
   detected carries the same number, generation and timestamp in its chunks and its blobs.
+- **Blobs** (board and fake camera share `espion_vision::Detector`): the 8-connected
+  components of the pixels at or above the threshold, split by their peaks. The frame is
+  also cut at up to 5 higher thresholds, each twice as far above the background (the
+  median of the last frame sampled) as the one before. A component that holds two or more
+  components of the next threshold that count as peaks is replaced by them, each cut the
+  same way in turn. One counts when its peak is at least 5/4 of that threshold above the
+  background and it has at least 3 pixels and the area filter's fewest. So two markers
+  whose light touches come out as two blobs when the dip between them is below 2/5 of the
+  lower peak, and never when it is above 4/5. In a row with more bright pixels to read
+  again than the row is wide, peaks may stay together. `threshold` in `FrameBlobs` is the
+  frame's own.
 - **Position** (board and fake camera share `espion_vision::refine`, integer arithmetic, so
   both give the same result for the same frame): for each blob, from its thresholded
   centroid, an iterated Gaussian-weighted centroid on the frame. The window width comes from
-  the blob's area, the window spans 4 widths each side, and the local background is the
+  the blob's light above the background over its peak's height (a Gaussian's sigma whatever
+  the threshold cut off), the window spans 4 widths each side, and the local background is the
   median of the pixels on a square just outside it. Each pixel weighs (value − background)
   × a Gaussian of its distance to the current estimate. Each step moves twice the weighted
   mean offset, up to 8 steps, until it moves less than 1/512 pixel. Its fixed point is the
@@ -419,15 +432,17 @@ The fake camera, which detects whole frames, sends one strip of the frame's heig
 - **Automatic threshold** (`auto_threshold` on; board and fake camera share
   `espion_vision::auto`): the detector samples every 4th pixel of every 16th row of each
   frame (RAW10: the top 8 bits) into a histogram. The background is its median and its
-  84th percentile minus the median (σ). The next frame's threshold is
-  `max(median + max(6σ, 8), ⌈peak / 2⌉)` in 8-bit units, between 1 and 255, with `peak` the
-  highest peak of this frame's blobs that the area filter keeps (a lone hot pixel does not
-  raise it). With no such blob it is the floor alone. RAW10 uses 4 times that value, so it
-  selects the same pixels. A cut frame (`frames_cut`) is sampled whole all the same and gives
-  the floor of its background (its blobs are not known): a threshold that lets the
-  background's noise in splits every row into runs and cuts the frames, and the cut frames
-  are what lift it out. Turning `auto_threshold` on keeps the threshold in use until the
-  next detected or cut frame chooses one.
+  84th percentile minus the median (σ). The next frame's threshold is the noise floor,
+  `median + max(6σ, 12)` in 8-bit units, between 1 and 255. RAW10 uses 4 times that value,
+  so it selects the same pixels. It does not follow the frame's blobs: a marker far dimmer
+  than the brightest one is still found, and the split by peaks ("Blobs") keeps a bright
+  marker's skirt from joining its neighbours. A cut frame (`frames_cut`) is sampled whole
+  all the same and sets the threshold as any other: a threshold that lets the background's
+  noise in splits every row into runs and cuts the frames, and the cut frames are what
+  lift it out. Turning `auto_threshold` on keeps the threshold in use until the next
+  detected or cut frame chooses one. Before 2026-11-22 the rule was
+  `max(floor, ⌈peak / 2⌉)` with a margin of 8, and blobs were not split; the wire format
+  did not change, so the version did not.
 - **Automatic exposure** (`CameraSettings::auto_exposure` on): at the end of every 100 ms
   (`AUTO_EXPOSURE_PERIOD_MS`) the board takes one step of
   `cam::auto_exposure(now, peak, cap)`, shared with the fake camera. `peak` is the highest

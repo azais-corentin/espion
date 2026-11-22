@@ -361,13 +361,13 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
   the release. It counts from a lower bound of the end of the strip's block, so time the strip
   lay done before core 1 took it counts too. The detector stops at a row boundary once the
   strip's age passes the budget less its longest step (the larger of one worst-case row,
-  width x 144 cycles, and one skip over the strip, 1 cycle a byte). Stopped short, detection
+  width x 160 cycles, and one skip over the strip, 1 cycle a byte). Stopped short, detection
   stops for the rest of that frame. The frame is still copied and sent, and the background
   sample still takes its other strips; its result is `cut`, and core 0 counts it in
   `detect.frames_cut`, in `detect.frames_skipped` and in the log's `cut`. With the automatic
-  threshold, a cut frame's background sets the next threshold to its floor (its blobs are not
-  known): a threshold inside the background's noise splits every row into runs and cuts every
-  frame, and only the cut frames can lift it out.
+  threshold, a cut frame's background still sets the next threshold (the noise floor does
+  not need its blobs): a threshold inside the background's noise splits every row into runs
+  and cuts every frame, and only the cut frames can lift it out.
 - **Laps.** A strip whose copy ended while it was still intact keeps its frame if the DMA
   laps it later: only the rest of that frame's detection is dropped (`cut`). A lap before the
   copy ended loses the frame. The log's `lapped N (after the copy M)` counts both kinds.
@@ -386,11 +386,14 @@ The rules are the protocol's ("Detection"); the fake camera is the reference.
 - **Settings** (the capture task, every millisecond): on or off, the threshold of the next
   frame, the area bounds and the detection serial go to core 1 when they change
   (`Core1::set_detect`); core 1 takes them at each frame's first strip.
+  The settings carry the background median of the last frame sampled: core 1 splits each
+  frame's blobs by their peaks above it (`Detector::set_split`, `espion-vision` README),
+  into pieces the area filter keeps.
 - **Results** (the capture task drains core 1's queue every millisecond): results of other
   settings (another serial) count as `stale` and are not used, results of an earlier run give
   their buffer back unused. Then the area filter's counts (`DetectSettings::keeps`, the others
   in `blobs_filtered`); the next frame's threshold, automatic (`threshold_raw8`/
-  `threshold_raw10` of the frame's background and the highest peak among the blobs kept) or
+  `threshold_raw10` of the frame's background: the noise floor) or
   the set one; `DetectState` (threshold, background median and σ, frames detected, detect
   time mean and maximum since the last state); and, while a host polls, the `FrameBlobs`
   datagram with the refined centre, width and flux and the thresholded area and peak of each
@@ -854,6 +857,48 @@ with prefetch off, its autoload on and off, and beside internal (`co2.log`, 30 s
 not checked.
 For the detector the interaction costs 6 % of core 0's TX cycles (7 360 against 6 940):
 keep `preload_ahead`, or use `l2` (8 159) if the autoload's share grows.
+
+### Measured: the noise-floor threshold and the split by peaks, 2026-11-22
+
+The viewer's screen target (`host/poc-viewer/README.md`, "Screen target") on an iPad in
+front of the camera, scene **Random walk** (2 to 10 markers of 2 to 20 px FWHM), 40 s a run
+after a calibration, counted by the viewer's check (`screen_target::check`: a marker inside
+the picture is found when a blob lies within max(2 FWHM, 6 px) of it). Exposure 54 lines,
+gain 15.5x (automatic), 120 Hz, automatic threshold and area filter. "Before" is the
+firmware with the threshold at `max(floor, half the brightest kept peak)`, margin 8, no
+split; "after" the noise floor (margin 12) with the split by peaks and the measure's window
+from `Blob::sigma`.
+
+| Mode | Seed | Before: markers found | After: markers found | After: worst 10 s | After: frames with exactly the markers | After: detect mean per 5 s, µs |
+|---|---|---|---|---|---|---|
+| RAW8 640x400 binned | 1 | 17 491 of 24 232 (72.2 %) | 24 020 of 24 235 (99.1 %) | 98.3 % | 87.0 % (before 24.6 %) | 930 to 2750 |
+| RAW8 640x400 binned | 2 | 19 066 of 26 400 (72.2 %) | 26 173 of 26 467 (98.9 %) | 98.6 % | 85.7 % (before 25.3 %) | 1470 to 2130 |
+| RAW8 640x400 binned | 3 | not run | 25 964 of 26 130 (99.4 %) | 98.8 % | 89.0 % | 1600 to 2040 |
+| RAW8 1280x800 | 1 | 15 229 of 27 014 (56.4 %) | 87 to 92 % per 5 s once the exposure had settled (two runs) | not comparable | 34.0 % over the whole run (before 12.9 %) | 1960 to 2780 |
+
+- **What limited it before.** The threshold followed the brightest marker: 40 to 120 here,
+  while the small markers peak at 22 to 70 (background 3, σ 1). By the threshold in use,
+  97 % of the markers were found at 30 and below, 60 % at 80 to 100, 27 % above 100; by
+  size, under 6 % of those up to 3 px FWHM and 96 to 99 % of those of 8 px and more. A
+  manual threshold of 16 on that firmware found 99.3 %.
+- **What is left at 640x400.** Markers that overlap with no dip between them (one blob for
+  two), a few of the smallest, and the screen's own ghosts: a fast marker leaves a second
+  spot one page frame behind, which the check counts as an extra blob (some 85 to 150
+  extra blobs per 5 s, 11 in 40 s before). No frame was cut during the scenes.
+- **1280x800 is not solved.** Core 1 cuts frames there (about 370 of 4400 in one run, 90 of
+  3000 in the other, all their markers lost): the log shows the detector at 2.0 to 3.1 ms
+  a frame and the measure at 1.5 to 3.1 ms (up to 4.6 ms) a frame, against a strip budget
+  of 1744 µs. On recorded frames the detector's time follows its runs, about 8 µs a run of
+  the frame's threshold on top of 1.55 ms (640x400: 0.55 ms) and about 1.5 µs a run of the
+  higher thresholds; the low threshold makes each marker cross more rows. Both runs began
+  right after a boot, at a gain of 2x, where the scene's markers stay under the threshold
+  and the automatic exposure, which holds without a blob, took 7 and 14 s to climb: over
+  the whole runs 18 538 of 23 225 (79.8 %) and 17 688 of 26 160 (67.6 %). The before run
+  had the gain at 15.5x from its first window.
+- **Not measured on the board:** the worst row with the split (the step is set to width x
+  160 cycles from the earlier 121 plus an estimate of the second pass, `espion-core1`),
+  RAW10, 250 Hz, the colour test patterns, and the figure in the viewer's window after the
+  change (before: 5598 of 8001, 70.0 %).
 
 ### Measured: the automatic threshold and cut frames, 2026-11-22
 

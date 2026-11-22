@@ -116,7 +116,7 @@ use esp32p4_csi::{DmaCopy, Released, StripReader, StripRef};
 use esp32p4_perf::{CpuSample, cycles};
 use espion_vision::auto::{self, Background, Histogram};
 use espion_vision::refine::{self, Spot};
-use espion_vision::{Blob, DefaultDetector, Scalar, Skip, Stats};
+use espion_vision::{Blob, DefaultDetector, Scalar, Skip, Split, Stats};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::SkipChoice;
@@ -147,8 +147,9 @@ const COPY_MAX_CYCLES: u32 = 1_600_000;
 /// bright (the sensor's colour test patterns on a mono sensor: 324 runs per 1280-pixel row).
 /// Measured on the board (2026-11-21, 1280 wide, RAW8 and RAW10, every test pattern): at most
 /// 351 us per row (110 cycles per pixel), 387 us (121) with the strip's copy and a lap in
-/// flight; this leaves 19 % above that.
-const STEP_CYCLES_PER_PIXEL: u32 = 144;
+/// flight. The split by peaks reads a row's bright runs again, at most the row's pixels in
+/// all (`Detector::set_split`): one more pass over a row that is all light.
+const STEP_CYCLES_PER_PIXEL: u32 = 160;
 /// The other kind of step, one skip over the dark rest of a strip, per byte of the strip:
 /// measured at most 0.6 cycles per byte (152 us for a 1280x64 RAW10 strip of a scene).
 const SKIP_CYCLES_PER_BYTE: u32 = 1;
@@ -281,6 +282,7 @@ impl FrameResult {
             y: 0,
             area: 0,
             peak: 0,
+            sigma: 0,
         }; MAX_BLOBS],
         spot_count: 0,
         spots: [Spot {
@@ -877,7 +879,12 @@ impl Core1 {
     pub fn set_detect(&mut self, d: &StreamDetect) {
         let raw10 = STREAM.format.load(Ordering::Relaxed) >> 31 != 0;
         let max = if raw10 { 0x3FF } else { 0xFF };
-        let word = u32::from(d.threshold.clamp(1, max)) | u32::from(d.enabled) << 31;
+        let word = u32::from(d.threshold.clamp(1, max))
+            | match d.split {
+                Some(bg) => (u32::from(bg) << if raw10 { 12 } else { 10 }) | 1 << 30,
+                None => 0,
+            }
+            | u32::from(d.enabled) << 31;
         let p = &DETECT;
         p.word.store(word, Ordering::Relaxed);
         p.area.store(
@@ -962,6 +969,9 @@ pub struct StreamDetect {
     pub enabled: bool,
     /// Foreground threshold, in the format's units.
     pub threshold: u16,
+    /// Blobs are split by their peaks (`espion_vision::Detector::set_split`) above this
+    /// background, in 8-bit units (`Background::median`); `None`: connected components.
+    pub split: Option<u8>,
     /// Blobs of an area in `min_area..=max_area` are kept: measured on the frame.
     pub min_area: u16,
     pub max_area: u16,
@@ -1563,6 +1573,11 @@ fn stream_begin(st: &mut Core1State<'_>, frame: u32) {
         bump(&NOT_COPIED, 1);
     }
     if detect {
+        // The background in the format's units, bits 10..20.
+        st.det.set_split((word >> 30 & 1 != 0).then_some(Split {
+            background: (word >> 10) as u16 & 0x3FF,
+            min_area: area as u16,
+        }));
         if raw10 {
             st.det.begin_frame_raw10(width, threshold);
         } else {

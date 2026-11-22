@@ -1,5 +1,5 @@
 //! Automatic threshold: the background level of a frame from a sparse histogram, and the
-//! threshold for the next frame from it and the brightest blob, integer math only.
+//! threshold for the next frame from it, integer math only.
 //!
 //! Sampling takes every [`COL_STEP`]-th pixel (`x % COL_STEP == 0`) of every
 //! [`ROW_STEP`]-th row (`row % ROW_STEP == 0`), so a 1280 x 800 frame gives 16 000 samples.
@@ -12,16 +12,19 @@
 //! the median for Gaussian noise). The markers cover a tiny share of the frame, so they
 //! barely move either figure.
 //!
-//! The threshold is
+//! The threshold is the noise floor:
 //!
 //! ```text
-//! floor     = median + max(K * sigma, MARGIN)                 (saturating at 255)
-//! threshold = max(floor, ceil(brightest_peak / 2)), in 1..=255
+//! threshold = median + max(K * sigma, MARGIN), in 1..=255
 //! ```
 //!
-//! The floor keeps the noise out; half the brightest blob's peak keeps a bright marker's
-//! halo (and its neighbours' glare) out of its blob while a dim marker is still found
-//! down to the floor. With no blob in the last frame the threshold is the floor.
+//! It does not follow the brightest blob: a marker's peak depends on its size and
+//! distance as much as on the exposure, so a threshold at half the brightest peak loses
+//! every marker less than half as bright (measured on a screen of markers of 2 to 20 px:
+//! 28 % of them, `firmware/poc-p4-stream/README.md`). What that rule was for, keeping a
+//! bright marker's skirt from joining its neighbour's, is the detector's split by peaks
+//! ([`crate::Detector::set_split`], given this background's median), which cuts each blob
+//! by its own peak.
 
 use crate::raw10;
 
@@ -31,8 +34,12 @@ pub const ROW_STEP: u16 = 16;
 pub const COL_STEP: usize = 4;
 /// Spreads above the median of the noise floor.
 pub const K: u16 = 6;
-/// Least distance of the floor above the median, for a flat background (`sigma` 0 or 1).
-pub const MARGIN: u16 = 8;
+/// Least distance of the floor above the median: `K` spreads of a `sigma` of 2. The
+/// spread is a difference of whole levels, so a `sigma` of 0 or 1 says only that the true
+/// one is below 2 (measured on recorded OV9281 frames at its highest gain, median 3 and
+/// `sigma` 1, 640 x 400: 8 levels above the median left 572 blobs of noise alone in 1549
+/// frames, 10 left 15, 11 left 4, 12 none in 3113 frames).
+pub const MARGIN: u16 = 12;
 
 // A RAW10 group holds four pixels; `sample_raw10` takes the first one of each.
 const _: () = assert!(COL_STEP == 4);
@@ -150,27 +157,23 @@ impl Background {
     }
 }
 
-/// The RAW8 threshold: `max(floor, ceil(brightest_peak / 2))` in `1..=255`, with
-/// `floor = median + max(K * sigma, MARGIN)` saturating at 255. With no blob
-/// (`brightest_peak` `None`), the floor.
-pub fn threshold_raw8(bg: Background, brightest_peak: Option<u8>) -> u8 {
+/// The RAW8 threshold: `median + max(K * sigma, MARGIN)` in `1..=255`.
+pub fn threshold_raw8(bg: Background) -> u8 {
     let spread = (K * bg.sigma as u16).max(MARGIN);
-    let floor = bg.median as u16 + spread;
-    let half_peak = brightest_peak.map_or(0, |p| (p as u16).div_ceil(2));
-    floor.max(half_peak).clamp(1, 255) as u8
+    (bg.median as u16 + spread).clamp(1, 255) as u8
 }
 
 /// The RAW10 threshold: 4 x [`threshold_raw8`], in `4..=1020`. A 10-bit pixel is `>=` it
 /// exactly when its top 8 bits are `>=` the RAW8 threshold, so both formats find the same
 /// foreground.
-pub fn threshold_raw10(bg: Background, brightest_peak: Option<u8>) -> u16 {
-    threshold_raw8(bg, brightest_peak) as u16 * 4
+pub fn threshold_raw10(bg: Background) -> u16 {
+    threshold_raw8(bg) as u16 * 4
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synth::{NOISE_MAX, PEAK, Synth};
+    use crate::synth::{NOISE_MAX, Synth};
 
     const W: usize = 640;
     const H: usize = 400;
@@ -252,59 +255,35 @@ mod tests {
         for seed in [1, 2, 0xdead_beef] {
             let frame = noise(seed);
             let bg = Background::from_histogram(&hist8(&frame[..])).unwrap();
-            let t = threshold_raw8(bg, None);
+            let t = threshold_raw8(bg);
             let max = *frame.iter().max().unwrap();
             assert!(max < NOISE_MAX);
             assert!(t > max, "{bg:?} t {t} max {max}");
-            assert!(threshold_raw10(bg, None) as u32 > max as u32 * 4 + 3);
+            assert!(threshold_raw10(bg) as u32 > max as u32 * 4 + 3);
         }
     }
 
     #[test]
-    fn no_blob_gives_the_floor() {
+    fn threshold_is_the_floor() {
         let bg = Background {
             median: 10,
             sigma: 5,
         };
-        assert_eq!(threshold_raw8(bg, None), 40);
-        // A dim blob below twice the floor leaves the floor.
-        assert_eq!(threshold_raw8(bg, Some(60)), 40);
-        assert_eq!(threshold_raw10(bg, None), 160);
+        assert_eq!(threshold_raw8(bg), 40);
+        assert_eq!(threshold_raw10(bg), 160);
         // MARGIN when the background is flat.
-        let flat = Background {
-            median: 10,
-            sigma: 0,
-        };
-        assert_eq!(threshold_raw8(flat, None), 18);
-        assert_eq!(threshold_raw8(Background::default(), None), MARGIN as u8);
+        for sigma in 0..=2 {
+            let flat = Background { median: 10, sigma };
+            assert_eq!(threshold_raw8(flat), 22);
+        }
+        assert_eq!(threshold_raw8(Background::default()), MARGIN as u8);
         // Saturating floor.
         let bright = Background {
             median: 200,
             sigma: 40,
         };
-        assert_eq!(threshold_raw8(bright, None), 255);
-        assert_eq!(threshold_raw10(bright, Some(255)), 1020);
-    }
-
-    #[test]
-    fn bright_spot_gives_half_its_peak() {
-        let frame = noise(3);
-        let bg = Background::from_histogram(&hist8(&frame[..])).unwrap();
-        let floor = threshold_raw8(bg, None);
-        for p in [PEAK, 201, 200, 2 * floor + 1] {
-            assert_eq!(threshold_raw8(bg, Some(p)), p.div_ceil(2), "peak {p}");
-            assert_eq!(threshold_raw10(bg, Some(p)), p.div_ceil(2) as u16 * 4);
-        }
-    }
-
-    #[test]
-    fn saturated_spot() {
-        let bg = Background {
-            median: 12,
-            sigma: 3,
-        };
-        assert_eq!(threshold_raw8(bg, Some(255)), 128);
-        assert_eq!(threshold_raw10(bg, Some(255)), 512);
+        assert_eq!(threshold_raw8(bright), 255);
+        assert_eq!(threshold_raw10(bright), 1020);
     }
 
     /// The background here is binomial (6 + the bits set in 16 random bits: mean 14,

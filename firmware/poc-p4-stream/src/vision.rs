@@ -75,6 +75,7 @@ static BLOBS: ConstStaticCell<[Blob; MAX_BLOBS]> = ConstStaticCell::new(
         y: 0,
         area: 0,
         peak: 0,
+        sigma: 0,
     }; MAX_BLOBS],
 );
 static REFERENCE: ConstStaticCell<[u32; HEIGHT]> = ConstStaticCell::new([0; HEIGHT]);
