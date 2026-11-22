@@ -39,11 +39,13 @@ serde        = { version = "1.0.229", default-features = false, features = ["der
 
 # Host only
 anyhow             = "1.0.104"
+axum               = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "ws"] }
 clap               = { version = "4.6.7", features = ["derive"] }
 eframe             = "0.37.0"
 jpeg-encoder       = "0.7.1"
 nalgebra           = "0.35.0"
 png                = "0.18.1"
+serde_json         = "1.0.154"
 socket2            = "0.6.5"
 tokio              = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "time"] }
 tracing            = "0.1.44"

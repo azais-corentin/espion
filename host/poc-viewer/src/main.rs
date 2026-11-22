@@ -18,6 +18,7 @@ use espion_proto::cam::{CameraSettings, Encoding, Format, Origin, Readout, TestP
 use poc_viewer::{
     addr,
     fake::{self, FakeCamera, FakeConfig},
+    screen_target::sim::{self, SimScreen},
     stream::StreamEdit,
 };
 
@@ -44,6 +45,18 @@ struct Args {
         default_value_t = 0.0
     )]
     fake_loss: f64,
+    /// Fake camera: film a simulated screen showing the screen target's page (whatever page
+    /// connects) instead of its markers scene.
+    #[arg(long, requires = "fake")]
+    fake_screen: bool,
+
+    /// Serve the screen target's page from the start.
+    #[arg(long)]
+    target: bool,
+    /// Where the screen target's page is served (HTTP; put a reverse proxy such as
+    /// `tailscale serve` in front of it to reach it from another device).
+    #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:8765")]
+    target_listen: SocketAddr,
 
     /// Present without vsync (as fast as frames come).
     #[arg(long)]
@@ -240,10 +253,12 @@ impl InitArgs {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let screen = args.fake_screen.then(|| SimScreen::new(sim::model()));
     let (camera, fake): (SocketAddr, Option<FakeCamera>) = if args.fake {
         let mut cfg = FakeConfig {
             mbps: args.fake_mbps,
             loss: args.fake_loss,
+            screen: screen.clone(),
             ..FakeConfig::default()
         };
         // Start the fake in the requested settings when they go together (the viewer sends
@@ -302,6 +317,9 @@ fn main() -> Result<()> {
     let setup = app::Setup {
         camera,
         fake,
+        screen,
+        target: args.target,
+        target_listen: args.target_listen,
         init_camera: args.init.camera(),
         init_stream: args.init.stream(),
         one_to_one: args.one_to_one,

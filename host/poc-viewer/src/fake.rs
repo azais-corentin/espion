@@ -30,6 +30,10 @@
 //! (repeats and drops show as the number, with some display gain). The test patterns replace
 //! the scene, with a white bar that moves 8 pixels per frame (tearing shows as a broken bar) and
 //! the frame number in white digits on black.
+//!
+//! With a simulated screen ([`FakeConfig::screen`]) and the test pattern off, the scene is what
+//! the screen target's page shows instead, as the camera sees it through the screen's model
+//! (`screen_target::sim`).
 
 use std::{
     io,
@@ -57,7 +61,7 @@ use espion_vision::{
 };
 use ov9281::Mode;
 
-use crate::camera;
+use crate::{camera, screen_target::sim::SimScreen};
 
 /// Ethernet bytes per datagram besides its UDP payload: UDP (8) and IPv6 (40) headers,
 /// Ethernet header (14) and FCS (4), preamble and start delimiter (8), inter-frame gap (12).
@@ -100,7 +104,7 @@ pub const fn default_stream() -> StreamSettings {
 }
 
 /// How the fake camera runs.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FakeConfig {
     /// Address to listen on (port 0: any free port).
     pub bind: SocketAddr,
@@ -116,6 +120,8 @@ pub struct FakeConfig {
     pub stream: StreamSettings,
     /// Detection settings at start (checked against the camera's format).
     pub detect: DetectSettings,
+    /// A simulated screen in front of the camera: with the test pattern off, the scene.
+    pub screen: Option<Arc<SimScreen>>,
 }
 
 impl Default for FakeConfig {
@@ -128,6 +134,7 @@ impl Default for FakeConfig {
             camera: default_camera(),
             stream: default_stream(),
             detect: DetectSettings::DEFAULT,
+            screen: None,
         }
     }
 }
@@ -173,15 +180,17 @@ impl FakeCamera {
 
         let slot: Arc<EncoderSlot> = Arc::default();
         let (estop, eslot, etx) = (stop.clone(), slot.clone(), tx.clone());
+        let escreen = cfg.screen.clone();
         let encoder = thread::Builder::new()
             .name("fake-cam-jpeg".into())
-            .spawn(move || encoder_thread(&eslot, &etx, &estop))?;
+            .spawn(move || encoder_thread(&eslot, &etx, &estop, escreen.as_deref()))?;
 
         let detect: Arc<DetectSlot> = Arc::default();
         let (dstop, dslot) = (stop.clone(), detect.clone());
+        let dscreen = cfg.screen.clone();
         let detector = thread::Builder::new()
             .name("fake-cam-detect".into())
-            .spawn(move || detector_thread(&dslot, &tx, &dstop))?;
+            .spawn(move || detector_thread(&dslot, &tx, &dstop, dscreen.as_deref()))?;
 
         let estop = stop.clone();
         let engine = thread::Builder::new()
@@ -279,7 +288,12 @@ impl EncoderSlot {
 
 /// The fake's JPEG encoder: takes the waiting frame, renders it in RAW8, encodes it at its
 /// quality and hands the file to the engine.
-fn encoder_thread(slot: &EncoderSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBool) {
+fn encoder_thread(
+    slot: &EncoderSlot,
+    tx: &mpsc::Sender<Event>,
+    stop: &AtomicBool,
+    screen: Option<&SimScreen>,
+) {
     let mut raw = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         let (job, mut out) = {
@@ -294,7 +308,14 @@ fn encoder_thread(slot: &EncoderSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
             let job = s.job.take().expect("checked above");
             (job, s.pool.pop().unwrap_or_default())
         };
-        render(&job.camera, Encoding::Raw8, job.frame, &mut raw);
+        render_at(
+            screen,
+            &job.camera,
+            Encoding::Raw8,
+            job.frame,
+            job.captured,
+            &mut raw,
+        );
         let t = Instant::now();
         let ok = encode_jpeg(&job.camera, &raw, job.quality, &mut out).is_ok()
             && out.len() <= JPEG_FRAME_MAX as usize;
@@ -390,7 +411,12 @@ const DETECT_BLOBS: usize = 256;
 /// The fake's detector: takes the frame handed to it, renders it in the sensor's format, finds
 /// its blobs, measures each on the frame, samples its background, and hands them to the
 /// engine; then it is free for the next captured frame.
-fn detector_thread(slot: &DetectSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBool) {
+fn detector_thread(
+    slot: &DetectSlot,
+    tx: &mpsc::Sender<Event>,
+    stop: &AtomicBool,
+    screen: Option<&SimScreen>,
+) {
     let mut detector: Box<DefaultDetector> = Box::default();
     let mut found = vec![espion_vision::Blob::default(); DETECT_BLOBS];
     let mut raw = Vec::new();
@@ -415,7 +441,7 @@ fn detector_thread(slot: &DetectSlot, tx: &mpsc::Sender<Event>, stop: &AtomicBoo
         } else {
             Encoding::Raw8
         };
-        render(c, encoding, job.frame, &mut raw);
+        render_at(screen, c, encoding, job.frame, job.captured, &mut raw);
         let t = Instant::now();
         let n = if raw10 {
             detector.process_frame_raw10(&raw, c.width, job.threshold, &mut found)
@@ -529,6 +555,7 @@ struct Engine {
     out: [u8; MAX_DATAGRAM],
 
     detect_slot: Arc<DetectSlot>,
+    screen: Option<Arc<SimScreen>>,
     /// The detector as a state reports it: `threshold` is the next frame's, the detect times
     /// are those since the last state (`detect_us_mean` unused here: [`Engine::detect_us`]).
     detect: DetectState,
@@ -599,6 +626,7 @@ impl Engine {
             pixels: Vec::new(),
             out: [0; MAX_DATAGRAM],
             detect_slot,
+            screen: cfg.screen.clone(),
             detect: DetectState {
                 settings: cfg.detect,
                 threshold: cfg.detect.threshold,
@@ -983,7 +1011,14 @@ impl Engine {
             return;
         }
         let encoding = self.stream.encoding;
-        render(&self.camera, encoding, number, &mut self.pixels);
+        render_at(
+            self.screen.as_deref(),
+            &self.camera,
+            encoding,
+            number,
+            at,
+            &mut self.pixels,
+        );
         self.sending = Some(Sending {
             frame: number,
             generation: self.generation,
@@ -1208,6 +1243,22 @@ pub fn encode_jpeg(
         c.height,
         jpeg_encoder::ColorType::Luma,
     )
+}
+
+/// The frame `number` captured at `at`: the simulated screen's with the test pattern off, else
+/// [`render`]'s.
+fn render_at(
+    screen: Option<&SimScreen>,
+    c: &CameraSettings,
+    encoding: Encoding,
+    number: u32,
+    at: Instant,
+    out: &mut Vec<u8>,
+) {
+    match screen {
+        Some(s) if c.test_pattern == TestPattern::Off => s.render(c, encoding, number, at, out),
+        _ => render(c, encoding, number, out),
+    }
 }
 
 /// Frame `number` of the fake for these settings, in the raw `encoding`, into `out` (resized
@@ -1451,7 +1502,7 @@ const FONT: [u16; 10] = [
 
 /// Encodes 10-bit pixels: RAW8 the 8 high bits, RAW10 CSI-2 packed (`line.len()` a multiple
 /// of 4).
-fn encode_line(encoding: Encoding, line: &[u16], out: &mut [u8]) {
+pub(crate) fn encode_line(encoding: Encoding, line: &[u16], out: &mut [u8]) {
     match encoding {
         Encoding::Raw8 => {
             for (o, v) in out.iter_mut().zip(line) {

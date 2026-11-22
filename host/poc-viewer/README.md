@@ -8,7 +8,9 @@ binning, origin, frame rate and tolerance, exposure or automatic exposure, gain,
 the stream settings (on or off, JPEG, RAW8 or RAW10 on the wire, the JPEG quality and automatic
 quality, a frame-rate limit) and the marker detection settings (on or off, the threshold, the
 area filter). It draws the markers the board finds (IR spots) over the picture, with their
-trails and their statistics. Not part of the product.
+trails and their statistics, and serves a **screen target** page (simulated markers on a screen
+held in front of the camera) to check the detection against a known answer (below). Not part of
+the product.
 
 - `src/net.rs`: the network thread: one request in flight, repeated every 200 ms until answered,
   a poll every 250 ms (which keeps the board's stream alive), chunk reassembly into the newest
@@ -37,6 +39,10 @@ trails and their statistics. Not part of the product.
   window picker, the timing diagram). Frames go to the GPU as they came off the wire, a JPEG
   frame as the decoding stage made it (RAW8 or packed RAW10, expanded in the shader).
   `src/selftest.rs`: the self-test switch.
+- `src/screen_target/`: the screen target (below): the page link (`link.rs`), the screen-to-sensor
+  model (`model.rs`), the hub and the HTTP server (`server.rs`, axum), the calibration
+  (`calib.rs`), the check (`check.rs`), the simulated screen and the tests' page (`sim.rs`);
+  the page itself is `assets/screen-target/index.html`, embedded in the binary.
 
 ## Run
 
@@ -318,6 +324,93 @@ measure on the assembled frame, and the rest is the wait for core 0's next milli
 send. With detection on, the image's encode starts about 0.5 ms later than with it off, because
 core 0 gets the frame at the same hand-off, after the measure.
 
+## Screen target
+
+A screen (an iPad) held in front of the camera shows a page that draws simulated markers:
+Gaussian spots, white on black. The viewer calibrates where the screen lands on the sensor,
+then compares the board's blobs with what the page drew, frame by frame, live.
+
+```sh
+cargo run -p poc-viewer --release -- --target      # or the "Serve screen target" switch
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8765   # reach it from the tailnet
+```
+
+The viewer serves the page on `127.0.0.1:8765` only (`--target-listen ADDR`). Another device
+reaches it through a reverse proxy: `tailscale serve` gives
+`https://<host>.<tailnet>.ts.net/` on the tailnet only (not Funnel). HTTPS also gives the page a
+secure context for its screen wake lock. `tailscale serve --https=443 off` stops it. The page
+connects back on its WebSocket (`/ws`, JSON messages, `src/screen_target/link.rs`) and reconnects
+by itself. One page at a time: a new one replaces the old.
+
+**The page.** A black full-window canvas at the device's pixel ratio. **Double tap toggles
+full screen** (double click on a desktop). It holds a screen wake lock where the browser has
+one. It shows a small status line (connection, viewport, frame rate) only until the viewer
+first shows something, and while it is disconnected. Spots are drawn in linear light (the
+Gaussian's profile, gamma-encoded), so the light the screen emits is Gaussian. It reports
+every frame it draws: its markers in screen (CSS) pixels and the animation frame's time. Its
+clock is mapped to the viewer's by the fastest ping of the last 20 s. On iPadOS, Safari draws
+at 60 Hz even on a 120 Hz screen unless Settings > Apps > Safari > Advanced > Feature Flags >
+"Prefer Page Rendering Updates near 60fps" is off (and not in Low Power Mode); the rail shows
+the rate the page measures.
+
+**Calibration** (`Calibrate`; frames and detection on). First the Gray code: the camera is set
+to the mode's longest exposure at gain 1, automatic exposure off, so each frame integrates whole
+refreshes of a backlight driven by PWM (a short exposure shows the PWM as bands through the
+rolling shutter). The page shows white, black, then each bit of the Gray code of the screen's
+columns and rows with its inverse, coarsest first, each the mean of 4 frames whose exposure
+starts 150 ms after the page drew it. Every sensor pixel that sees the screen (white above black
+by 24 levels) decodes the bits it resolves, from the top down to the first unclear one: stripes
+of one or two CSS pixels blur to grey through a lens. Each axis keeps the bits 60 % of those
+pixels resolve, and a pixel then sees the middle of a band of screen pixels. A homography
+fitted to them (outliers dropped) is the coarse model: the bands' quantisation averages out
+over thousands of pixels. Then the dots: the camera's settings back as they were, detection on
+a manual threshold of 32 (8-bit) and an area of at least 4 pixels, which the dimmest dot at the
+lens's edge still clears. The page shows a grid of Gaussian dots (FWHM 8 sensor pixels, at most
+96) over the visible area in groups of 8, each spread over the view. The board measures every
+blob of a frame on core 1 after the frame, and with many it falls behind the next frame's
+strips. The detector measures each group over 20 frames (after 1.5 s for the first, 0.25 s for
+the next); a dot found in 15 of them counts. The model, a homography then radial distortion
+(k1, k2) about the sensor's centre, is fitted to the dots by Levenberg–Marquardt. The
+distortion is fitted only when the dots reach 0.55 of the half-diagonal from the centre. A
+second fit drops the dots off by more than max(0.5 px, 4 x the median). Then the detection
+settings go back as they were and the page goes dark, as they do when the calibration fails.
+The rail shows the dots fitted and shown, where the model holds (the farthest dot), the
+residual, the share of the sensor that sees the screen and that decoded the Gray code (and the
+bands' size), the scale, the rotation and the distortion. A change of the page's viewport
+(entering full screen does) or of the sensor window makes it stale: calibrate in full screen.
+
+**Scenes** (sizes are the FWHM on the sensor, speeds in sensor pixels per second; the page
+places them through the model): **Static** (N markers on a grid), **Lissajous** (N markers,
+each in its own column, up to the speed set), **Speed sweep** (one marker back and forth, 50
+to 6000 px/s over 30 s on a log scale, again and again) and **Random walk** (2 to 10 markers,
+the count drifting; smoothed random-walk velocities and sizes from 2 to 20 px; a marker that
+leaves the view is replaced by one entering at another place of its edge).
+
+**The check.** A detected frame's exposure (its middle, on the viewer's clock through the
+board's clock offset) saw the page's latest frame drawn at least the **delay** before. The delay
+is the display's latency plus what the clocks do not see. It is fitted once a second over the
+last 4 s while markers move (0 to 300 ms); a still scene needs none. Markers are matched to
+blobs nearest first within a gate (twice the FWHM, at least 6 px, plus a frame period's
+motion). A marker within 3 sigma of the sensor's edge is counted apart. The rail shows, over
+the last 10 s: frames compared and exact (every marker found, no extra blob), markers found
+and missed, extra blobs, markers at the edge found, the position error (RMS, p95, max, mean
+offset), the blob's width over the drawn sigma, the delay and, for the sweep, the figures per
+speed (pixels per frame period). Totals since the scene started follow. With **Show screen
+target** the picture shows the outline of the page's viewport on the sensor and each drawn
+marker as a ring of twice its sigma joined to its blob; a missed one is red, one at the edge
+dashed. Each is an accessible label (`Drawn marker N: ...`).
+
+**Without a screen.** `--fake --fake-screen`: the fake camera films a simulated screen
+(`target::sim`) instead of its markers scene. It shows whatever the connected page reports,
+each frame lit 40 ms after the page drew it, seen upside down at about 4.5 sensor pixels per
+CSS pixel through a barrel-distorting lens (its CSS pixels from about (300, 270) to (595, 460)
+on a 1280x800 window). Open the page in any browser at a viewport of at least 600x470 CSS
+pixels. Measured that way on 2026-11-22 (headless, the page in headless Chromium): the
+calibration recovers the model to 0.001 px RMS over 60 dots (k1 -0.0400, k2 0.0100 against
+-0.04, 0.01); a random walk finds 99.7 % of the markers, no extra blob, error RMS 0.2 px
+(markers crossing one another merge into one blob), and the blob widths match the drawn sigma
+(0.99).
+
 ## Measured on the real camera
 
 2026-11-10, this desktop (NVIDIA RTX 3080, 3840x2160 at 119.88 Hz, native Wayland, vsync on),
@@ -395,8 +488,12 @@ cargo run -p poc-viewer --release -- --selftest 8 --screenshot /tmp/shot.png \
   image's steps chained in order, the clock offset from the fastest datagram of either kind, raw
   streams, the markers' lane with frames off and its first draw, the cut frames of the window,
   the window and the interval, the axis); the blob frames' timing in order and on the board's
-  clock. No board needed. The throughput tests (link limit, automatic
-  quality, missing chunks, decoding only the frames taken) need a quiet machine.
+  clock. `tests/target.rs`: the screen target end to end (the fake filming the simulated
+  screen, the tests' page in Rust): the calibration recovers the simulated model within
+  0.25 px over the sensor and turns automatic exposure back on, and the check of a Lissajous
+  scene finds every marker within 0.3 px RMS and the screen's delay. No board needed. The
+  throughput tests (link limit, automatic quality, missing chunks, decoding only the frames
+  taken) need a quiet machine.
 - `tests/board.rs`, against the real board, ignored by default. With the board running
   `poc-p4-stream`, found on whichever interface it answers (`POC_CAMERA` overrides the address):
 

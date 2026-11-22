@@ -16,14 +16,19 @@ inspection = ["eframe/inspection"]
 
 [dependencies]
 anyhow.workspace  = true
+axum.workspace    = true
 clap.workspace    = true
 eframe.workspace  = true
 espion-proto      = { workspace = true, features = ["std"] }
 espion-vision.workspace = true
 jpeg-encoder.workspace = true
+nalgebra.workspace = true
 ov9281.workspace  = true
 png.workspace     = true
+serde             = { workspace = true, features = ["std"] }
+serde_json.workspace = true
 socket2.workspace = true
+tokio             = { workspace = true, features = ["rt", "sync"] }
 zune-jpeg.workspace = true
 
 [lints]

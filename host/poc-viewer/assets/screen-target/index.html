@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#000000">
+<title>poc-viewer screen target</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas {
+    position: fixed;
+    left: 0;
+    top: 0;
+    display: block;
+    background: #000;
+    touch-action: none;
+  }
+  /* Separate rules: one unknown selector in a list would drop the whole rule. */
+  :root:fullscreen, :root:fullscreen * { cursor: none; }
+  :root:-webkit-full-screen, :root:-webkit-full-screen * { cursor: none; }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<script>
+'use strict';
+
+// The viewer's screen target: draws what the viewer asks for (`show`) and reports what it drew.
+// The messages are those of host/poc-viewer/src/target/link.rs; the model mirrors
+// host/poc-viewer/src/target/model.rs. Positions and sizes on the page are CSS pixels, times
+// are performance.now() milliseconds.
+
+// --- Constants of link.rs ----------------------------------------------------------------------
+
+const FWHM_PER_SIGMA = 2.354820045030949;
+const SWEEP_SPEEDS = [50, 6000];
+const SWEEP_S = 30;
+const WALK_COUNT = [2, 10];
+const WALK_SIZE = [2, 20];
+
+// --- Screen to sensor model (model.rs) ---------------------------------------------------------
+
+function normalised(h) {
+  return h.map((v) => v / h[8]);
+}
+
+function apply(h, x, y) {
+  const w = h[6] * x + h[7] * y + h[8];
+  return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w];
+}
+
+function invert(h) {
+  const [a, b, c, d, e, f, g, i, j] = h;
+  return normalised([
+    e * j - f * i,
+    c * i - b * j,
+    b * f - c * e,
+    f * g - d * j,
+    a * j - c * g,
+    c * d - a * f,
+    d * i - e * g,
+    b * g - a * i,
+    a * e - b * d,
+  ]);
+}
+
+class Model {
+  constructor(m) {
+    if (!m || !Array.isArray(m.h) || m.h.length !== 9) throw new Error('model: bad h');
+    this.h = m.h.map(Number);
+    this.k1 = Number(m.k1);
+    this.k2 = Number(m.k2);
+    this.cx = Number(m.cx);
+    this.cy = Number(m.cy);
+    this.norm = Number(m.norm);
+    for (const v of [...this.h, this.k1, this.k2, this.cx, this.cy, this.norm]) {
+      if (!Number.isFinite(v)) throw new Error('model: not finite');
+    }
+    this.inverse = invert(this.h);
+  }
+
+  factor(du, dv) {
+    const q2 = (du * du + dv * dv) / (this.norm * this.norm);
+    return 1 + this.k1 * q2 + this.k2 * q2 * q2;
+  }
+
+  distort(u, v) {
+    const du = u - this.cx, dv = v - this.cy;
+    const f = this.factor(du, dv);
+    return [this.cx + du * f, this.cy + dv * f];
+  }
+
+  undistort(u, v) {
+    const du = u - this.cx, dv = v - this.cy;
+    let x = du, y = dv;
+    for (let n = 0; n < 20; n++) {
+      const f = this.factor(x, y);
+      x = du / f;
+      y = dv / f;
+    }
+    return [this.cx + x, this.cy + y];
+  }
+
+  toSensor(x, y) {
+    const [u, v] = apply(this.h, x, y);
+    return this.distort(u, v);
+  }
+
+  toScreen(u, v) {
+    const [x, y] = this.undistort(u, v);
+    return apply(this.inverse, x, y);
+  }
+
+  scaleAt(x, y) {
+    const d = 0.5;
+    const [ax, ay] = this.toSensor(x - d, y);
+    const [bx, by] = this.toSensor(x + d, y);
+    const [cx, cy] = this.toSensor(x, y - d);
+    const [ex, ey] = this.toSensor(x, y + d);
+    const det = (bx - ax) * (ey - cy) - (by - ay) * (ex - cx);
+    return Math.sqrt(Math.abs(det) / (4 * d * d));
+  }
+}
+
+// --- Scenes, in sensor pixels --------------------------------------------------------------------
+// Each scene's step(t, dt) gives its live markers [{id, u, v, size}] (size: FWHM, sensor px).
+
+function mulberry32(a) {
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function staticScene(W, H, count, size) {
+  const markers = [];
+  if (count > 0) {
+    const cols = Math.ceil(Math.sqrt((count * W) / H));
+    const rows = Math.ceil(count / cols);
+    const x0 = 0.1 * (W - 1), x1 = 0.9 * (W - 1);
+    const y0 = 0.1 * (H - 1), y1 = 0.9 * (H - 1);
+    const at = (a, b, i, n) => (n === 1 ? (a + b) / 2 : a + ((b - a) * i) / (n - 1));
+    for (let i = 0; i < count; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      markers.push({ id: i + 1, u: at(x0, x1, col, cols), v: at(y0, y1, row, rows), size });
+    }
+  }
+  return { step: () => markers };
+}
+
+function lissajousScene(W, H, count, size, speed) {
+  const paths = [];
+  for (let i = 0; i < count; i++) {
+    paths.push({
+      id: i + 1,
+      cu: (W * (2 * i + 1)) / (2 * count),
+      cv: H / 2,
+      au: (0.35 * W) / count,
+      av: 0.35 * H,
+      fu: 1 + (i % 3),
+      fv: 2 + (i % 2),
+      phase: i * 0.7,
+    });
+  }
+  // The angular rate that makes the fastest marker's peak speed `speed`: the peak speed per
+  // unit of rate, sampled over one period (the frequencies are integers).
+  let peak = 0;
+  for (const p of paths) {
+    for (let k = 0; k < 7200; k++) {
+      const th = (2 * Math.PI * k) / 7200;
+      const su = p.au * p.fu * Math.cos(p.fu * th + p.phase);
+      const sv = p.av * p.fv * Math.cos(p.fv * th + p.phase);
+      peak = Math.max(peak, Math.hypot(su, sv));
+    }
+  }
+  const rate = peak > 0 ? speed / peak : 0;
+  return {
+    step(t) {
+      const th = rate * t;
+      return paths.map((p) => ({
+        id: p.id,
+        u: p.cu + p.au * Math.sin(p.fu * th + p.phase),
+        v: p.cv + p.av * Math.sin(p.fv * th + p.phase),
+        size,
+      }));
+    },
+  };
+}
+
+function sweepScene(W, H, size) {
+  const lo = 0.1 * W, hi = 0.9 * W;
+  let u = lo, dir = 1;
+  return {
+    step(t, dt) {
+      const ramp = (t % SWEEP_S) / SWEEP_S;
+      const speed = SWEEP_SPEEDS[0] * Math.pow(SWEEP_SPEEDS[1] / SWEEP_SPEEDS[0], ramp);
+      let d = speed * dt;
+      while (d > 0) {
+        const room = dir > 0 ? hi - u : u - lo;
+        if (d <= room) {
+          u += dir * d;
+          d = 0;
+        } else {
+          u += dir * room;
+          d -= room;
+          dir = -dir;
+        }
+      }
+      return [{ id: 1, u, v: H / 2, size }];
+    },
+  };
+}
+
+function randomWalkScene(W, H, seed) {
+  const rnd = mulberry32(seed >>> 0);
+  const gauss = () => {
+    let a = 0;
+    while (a === 0) a = rnd();
+    return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * rnd());
+  };
+  const X = W - 1, Y = H - 1, P = 2 * (X + Y);
+  const TAU_V = 1.0; // s: how long a velocity lasts
+  const TAU_A = 0.4; // s: how long a push lasts
+  const MAX_SPEED = 1000;
+  const SPAWN_S = 0.2;
+
+  // The target count drifts smoothly over [2, 10].
+  const cp1 = 20 + 20 * rnd(), cp2 = 7 + 8 * rnd();
+  const cf1 = 2 * Math.PI * rnd(), cf2 = 2 * Math.PI * rnd();
+  const midCount = (WALK_COUNT[0] + WALK_COUNT[1]) / 2, halfCount = (WALK_COUNT[1] - WALK_COUNT[0]) / 2;
+  const target = (t) => {
+    const s = 0.6 * Math.sin((2 * Math.PI * t) / cp1 + cf1) + 0.4 * Math.sin((2 * Math.PI * t) / cp2 + cf2);
+    return Math.min(WALK_COUNT[1], Math.max(WALK_COUNT[0], Math.round(midCount + halfCount * s)));
+  };
+
+  // Sizes vary smoothly over [2, 20] (log scale), each marker with its own periods.
+  const lmid = (Math.log(WALK_SIZE[0]) + Math.log(WALK_SIZE[1])) / 2;
+  const lhalf = (Math.log(WALK_SIZE[1]) - Math.log(WALK_SIZE[0])) / 2;
+  const sizeAt = (m, t) => {
+    const a = t - m.born;
+    return Math.exp(lmid + lhalf * (0.6 * Math.sin((2 * Math.PI * a) / m.st1 + m.sf1) + 0.4 * Math.sin((2 * Math.PI * a) / m.st2 + m.sf2)));
+  };
+
+  // The rectangle's edge, by the distance s along it from the top left corner, clockwise.
+  const edgeAt = (s) => {
+    s = ((s % P) + P) % P;
+    if (s < X) return { u: s, v: 0, nu: 0, nv: -1 };
+    if (s < X + Y) return { u: X, v: s - X, nu: 1, nv: 0 };
+    if (s < 2 * X + Y) return { u: X - (s - X - Y), v: Y, nu: 0, nv: 1 };
+    return { u: 0, v: Y - (s - 2 * X - Y), nu: -1, nv: 0 };
+  };
+  const edgeOf = (u, v) => {
+    u = Math.min(X, Math.max(0, u));
+    v = Math.min(Y, Math.max(0, v));
+    const top = v, right = X - u, bottom = Y - v, left = u;
+    const near = Math.min(top, right, bottom, left);
+    if (near === top) return u;
+    if (near === right) return X + v;
+    if (near === bottom) return X + Y + (X - u);
+    return 2 * X + Y + (Y - v);
+  };
+  const outside = (u, v) => Math.hypot(Math.max(-u, 0, u - X), Math.max(-v, 0, v - Y));
+
+  const live = [];
+  let nextId = 1;
+  let lastSpawn = -Infinity;
+  let lastLeave = null; // where the last marker left, distance along the edge
+
+  function spawn(t) {
+    // Anywhere on the edge at least a quarter of it away from where the last one left.
+    const s = lastLeave === null ? rnd() * P : lastLeave + P * (0.25 + 0.5 * rnd());
+    const e = edgeAt(s);
+    const m = {
+      id: nextId++,
+      born: t,
+      entered: false,
+      st1: 3 + 5 * rnd(),
+      st2: 1.5 + 2 * rnd(),
+      sf1: 2 * Math.PI * rnd(),
+      sf2: 2 * Math.PI * rnd(),
+      au: 0,
+      av: 0,
+    };
+    m.size = sizeAt(m, t);
+    m.u = e.u + e.nu * 1.5 * m.size;
+    m.v = e.v + e.nv * 1.5 * m.size;
+    // Typical speed of this marker, log-uniform; it enters towards a random interior point.
+    m.speed = Math.exp(Math.log(100) + rnd() * (Math.log(600) - Math.log(100)));
+    const tu = X * (0.15 + 0.7 * rnd()), tv = Y * (0.15 + 0.7 * rnd());
+    const du = tu - m.u, dv = tv - m.v, dn = Math.hypot(du, dv) || 1;
+    m.vu = (du / dn) * m.speed;
+    m.vv = (dv / dn) * m.speed;
+    // Ornstein–Uhlenbeck velocity driven by an Ornstein–Uhlenbeck push: the push's deviation
+    // that gives each velocity component a deviation of speed/√2.
+    m.push = (m.speed / Math.SQRT2) * Math.sqrt((TAU_A + TAU_V) / (TAU_A * TAU_V * TAU_V));
+    live.push(m);
+    lastSpawn = t;
+  }
+
+  return {
+    step(t, dt) {
+      const kick = Math.sqrt((2 * dt) / TAU_A);
+      for (let i = live.length - 1; i >= 0; i--) {
+        const m = live[i];
+        // An entering marker keeps its inward velocity until it is in.
+        if (m.entered) {
+          m.au += (-m.au / TAU_A) * dt + m.push * kick * gauss();
+          m.av += (-m.av / TAU_A) * dt + m.push * kick * gauss();
+          m.vu += (-m.vu / TAU_V + m.au) * dt;
+          m.vv += (-m.vv / TAU_V + m.av) * dt;
+          const sp = Math.hypot(m.vu, m.vv);
+          if (sp > MAX_SPEED) {
+            m.vu *= MAX_SPEED / sp;
+            m.vv *= MAX_SPEED / sp;
+          }
+        }
+        m.u += m.vu * dt;
+        m.v += m.vv * dt;
+        m.size = sizeAt(m, t);
+        const out = outside(m.u, m.v);
+        if (out === 0) m.entered = true;
+        if (m.entered && out > 1.5 * m.size) {
+          lastLeave = edgeOf(m.u, m.v);
+          live.splice(i, 1);
+        }
+      }
+      if (live.length < target(t) && t - lastSpawn >= SPAWN_S) spawn(t);
+      return live.map((m) => ({ id: m.id, u: m.u, v: m.v, size: m.size }));
+    },
+  };
+}
+
+// --- Content ---------------------------------------------------------------------------------
+
+function num(v, what) {
+  const n = Number(v);
+  if (typeof v !== 'number' || !Number.isFinite(n)) throw new Error(what + ': not a number');
+  return n;
+}
+
+// A `show`'s content, checked and ready to draw.
+function prepare(c) {
+  if (!c || typeof c !== 'object') throw new Error('content: not an object');
+  switch (c.kind) {
+    case 'black':
+    case 'white':
+      return { kind: c.kind };
+    case 'gray':
+      if (c.axis !== 'X' && c.axis !== 'Y') throw new Error('gray: bad axis');
+      return { kind: 'gray', axis: c.axis, bit: num(c.bit, 'gray.bit'), inverse: !!c.inverse };
+    case 'dots':
+      if (!Array.isArray(c.dots)) throw new Error('dots: not a list');
+      return {
+        kind: 'dots',
+        dots: c.dots.map((d) => ({ x: num(d.x, 'dot.x'), y: num(d.y, 'dot.y'), sigma: num(d.sigma, 'dot.sigma') })),
+      };
+    case 'scene': {
+      const s = c.scene || {};
+      if (!Array.isArray(c.sensor) || c.sensor.length !== 2) throw new Error('scene: bad sensor');
+      const W = num(c.sensor[0], 'sensor'), H = num(c.sensor[1], 'sensor');
+      if (W < 1 || H < 1) throw new Error('scene: empty sensor');
+      const model = new Model(c.model);
+      let scene;
+      switch (s.kind) {
+        case 'static':
+          scene = staticScene(W, H, num(s.count, 'count'), num(s.size, 'size'));
+          break;
+        case 'lissajous':
+          scene = lissajousScene(W, H, num(s.count, 'count'), num(s.size, 'size'), num(s.speed, 'speed'));
+          break;
+        case 'sweep':
+          scene = sweepScene(W, H, num(s.size, 'size'));
+          break;
+        case 'random_walk':
+          scene = randomWalkScene(W, H, num(s.seed, 'seed'));
+          break;
+        default:
+          throw new Error('scene: unknown kind ' + s.kind);
+      }
+      return { kind: 'scene', W, H, model, scene, start: null, last: null };
+    }
+    default:
+      throw new Error('content: unknown kind ' + c.kind);
+  }
+}
+
+// --- Drawing -----------------------------------------------------------------------------------
+
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d', { alpha: false });
+let vw = 0, vh = 0, dpr = 1; // the viewport the canvas is sized for
+
+function applyViewport() {
+  const w = window.innerWidth, h = window.innerHeight, r = window.devicePixelRatio || 1;
+  if (w === vw && h === vh && r === dpr) return false;
+  vw = w;
+  vh = h;
+  dpr = r;
+  canvas.width = Math.max(1, Math.round(w * r));
+  canvas.height = Math.max(1, Math.round(h * r));
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  return true;
+}
+
+function clear(colour) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = colour;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawGray(c) {
+  const across = c.axis === 'X';
+  const n = Math.ceil(across ? vw : vh);
+  const p = Math.pow(2, c.bit);
+  const lit = (i) => {
+    const g = i ^ (i >> 1);
+    const on = c.bit >= 0 && c.bit < 31 && Math.floor(g / p) % 2 === 1;
+    return on !== c.inverse;
+  };
+  ctx.fillStyle = '#fff';
+  let i = 0;
+  while (i < n) {
+    const on = lit(i);
+    let j = i + 1;
+    while (j < n && lit(j) === on) j++;
+    if (on) {
+      const a = Math.round(i * dpr), b = Math.round(j * dpr);
+      if (across) ctx.fillRect(a, 0, b - a, canvas.height);
+      else ctx.fillRect(0, a, canvas.width, b - a);
+    }
+    i = j;
+  }
+}
+
+const SPOT_STOPS = 24;
+
+// A Gaussian spot, CSS pixels: alpha exp(-r²/2σ²)^(1/2.2), so that the light is Gaussian.
+function drawSpot(x, y, sigma) {
+  if (!(sigma > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const r = Math.max(3.5 * sigma, 1 / dpr);
+  const cx = x * dpr, cy = y * dpr, rd = r * dpr;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rd);
+  for (let i = 0; i < SPOT_STOPS; i++) {
+    const f = i / (SPOT_STOPS - 1), d = f * r;
+    const a = Math.pow(Math.exp((-d * d) / (2 * sigma * sigma)), 1 / 2.2);
+    g.addColorStop(f, 'rgba(255,255,255,' + a.toFixed(5) + ')');
+  }
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, rd, 0, 2 * Math.PI);
+  ctx.fill();
+}
+
+// Draws a scene's frame; gives the markers drawn, CSS pixels.
+function drawScene(s, ts) {
+  if (s.start === null) {
+    s.start = ts;
+    s.last = ts;
+  }
+  const t = (ts - s.start) / 1000;
+  const dt = Math.min(Math.max(ts - s.last, 0), 50) / 1000;
+  s.last = ts;
+  const drawn = [];
+  ctx.globalCompositeOperation = 'lighter';
+  for (const m of s.scene.step(t, dt)) {
+    // Drawn as long as part of it can reach the sensor: a marker enters and leaves the view
+    // gradually.
+    const reach = 2 * m.size;
+    if (!(m.u >= -reach && m.u <= s.W - 1 + reach && m.v >= -reach && m.v <= s.H - 1 + reach)) continue;
+    const [x, y] = s.model.toScreen(m.u, m.v);
+    if (!(x >= 0 && x <= vw && y >= 0 && y <= vh)) continue;
+    const sigma = m.size / FWHM_PER_SIGMA / s.model.scaleAt(x, y);
+    if (!(sigma > 0) || !Number.isFinite(sigma)) continue;
+    drawSpot(x, y, sigma);
+    drawn.push({ id: m.id, x, y, sigma });
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  return drawn;
+}
+
+function drawStatus() {
+  const lines = [
+    link.state,
+    'Viewport ' + vw + ' \u00d7 ' + vh + ' CSS px, dpr ' + dpr,
+    hz + ' Hz',
+    'Double tap for full screen',
+  ];
+  const size = 13;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#888';
+  ctx.font = size * dpr + 'px -apple-system, system-ui, "Helvetica Neue", sans-serif';
+  ctx.textBaseline = 'top';
+  lines.forEach((line, i) => ctx.fillText(line, 10 * dpr, (10 + i * (size + 5)) * dpr));
+}
+
+// --- Connection --------------------------------------------------------------------------------
+
+const link = { ws: null, state: 'Connecting\u2026' };
+
+function send(msg) {
+  const ws = link.ws;
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function sendHello() {
+  send({ type: 'hello', width: vw, height: vh, dpr, agent: navigator.userAgent });
+}
+
+function connect() {
+  let ws;
+  try {
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws');
+  } catch (e) {
+    link.state = 'Disconnected, retrying';
+    setTimeout(connect, 1000);
+    return;
+  }
+  link.ws = ws;
+  link.state = 'Connecting\u2026';
+  let retried = false;
+  const retry = () => {
+    if (retried) return;
+    retried = true;
+    if (link.ws === ws) link.ws = null;
+    link.state = 'Disconnected, retrying';
+    setTimeout(connect, 1000);
+  };
+  ws.onopen = () => {
+    link.state = 'Connected';
+    applyViewport();
+    sendHello();
+  };
+  ws.onclose = retry;
+  ws.onerror = () => {
+    try {
+      ws.close();
+    } catch (e) {}
+    retry();
+  };
+  ws.onmessage = (e) => {
+    try {
+      receive(JSON.parse(e.data));
+    } catch (err) {
+      console.warn('target: bad message', err, e.data);
+    }
+  };
+}
+
+let current = null; // {id, content, shown}
+let everShown = false;
+
+function receive(m) {
+  if (!m || typeof m !== 'object') return;
+  switch (m.type) {
+    case 'ping':
+      send({ type: 'pong', t: m.t, now: performance.now() });
+      break;
+    case 'show': {
+      const id = num(m.id, 'show.id');
+      current = { id, content: prepare(m.content), shown: false };
+      everShown = true;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// --- Frames ------------------------------------------------------------------------------------
+
+let viewportDirty = false;
+const frames = []; // animation frame times of the last second
+let hz = 0;
+let firstFrame = null;
+let lastRefresh = null;
+
+function frame(ts) {
+  requestAnimationFrame(frame);
+  try {
+    if (viewportDirty) {
+      viewportDirty = false;
+      if (applyViewport()) sendHello();
+    }
+
+    frames.push(ts);
+    while (frames.length && frames[0] <= ts - 1000) frames.shift();
+    hz = frames.length;
+    if (firstFrame === null) firstFrame = ts;
+    if (ts - firstFrame >= 1000 && (lastRefresh === null || ts - lastRefresh >= 1000)) {
+      lastRefresh = ts;
+      send({ type: 'refresh', hz });
+    }
+
+    const show = current;
+    const c = show ? show.content : null;
+    clear(c && c.kind === 'white' ? '#fff' : '#000');
+    let drawn = null;
+    if (c) {
+      if (c.kind === 'gray') drawGray(c);
+      else if (c.kind === 'dots') {
+        ctx.globalCompositeOperation = 'lighter';
+        for (const d of c.dots) drawSpot(d.x, d.y, d.sigma);
+        ctx.globalCompositeOperation = 'source-over';
+      } else if (c.kind === 'scene') drawn = drawScene(c, ts);
+    }
+    if (!everShown || link.state !== 'Connected') drawStatus();
+
+    if (show && !show.shown) {
+      show.shown = true;
+      send({ type: 'shown', id: show.id, now: ts });
+    }
+    if (drawn) send({ type: 'drawn', now: ts, markers: drawn });
+  } catch (err) {
+    console.error('target: frame', err);
+  }
+}
+
+// --- Viewport, full screen, wake lock --------------------------------------------------------
+
+function markViewport() {
+  viewportDirty = true;
+}
+window.addEventListener('resize', markViewport);
+window.addEventListener('orientationchange', markViewport);
+document.addEventListener('fullscreenchange', markViewport);
+document.addEventListener('webkitfullscreenchange', markViewport);
+if (screen.orientation && screen.orientation.addEventListener) {
+  screen.orientation.addEventListener('change', markViewport);
+}
+
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+// Called synchronously from the gesture's handler: browsers only allow it from a gesture.
+function toggleFullscreen() {
+  const d = document, el = d.documentElement;
+  try {
+    let p;
+    if (isFullscreen()) {
+      if (d.exitFullscreen) p = d.exitFullscreen();
+      else if (d.webkitExitFullscreen) p = d.webkitExitFullscreen();
+    } else if (el.requestFullscreen) p = el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) p = el.webkitRequestFullscreen();
+    if (p && typeof p.catch === 'function') p.catch((e) => console.warn('target: full screen', e));
+  } catch (e) {
+    console.warn('target: full screen', e);
+  }
+  markViewport();
+}
+
+let wakeLock = null;
+
+function keepAwake() {
+  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+  if (wakeLock && !wakeLock.released) return;
+  navigator.wakeLock
+    .request('screen')
+    .then((lock) => {
+      wakeLock = lock;
+    })
+    .catch((e) => console.warn('target: wake lock', e));
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    keepAwake();
+    markViewport();
+  }
+});
+
+// Double tap, detected here: Safari on iPad gives no dblclick for touches it doesn't zoom on.
+// Every one-finger touchend is cancelled so Safari neither zooms nor sends the mouse events
+// of the tap (which would toggle a second time through dblclick).
+const TAP_S = 350, TAP_PX = 40;
+let touchStart = null; // {t, x, y} of the current one-finger touch
+let lastTap = null; // {t, x, y} of the previous tap
+let lastTouchToggle = -Infinity;
+
+window.addEventListener(
+  'touchstart',
+  (e) => {
+    if (e.touches.length === 1) {
+      const p = e.touches[0];
+      touchStart = { t: e.timeStamp, x: p.clientX, y: p.clientY };
+    } else {
+      touchStart = null;
+      lastTap = null;
+    }
+  },
+  { passive: false }
+);
+
+window.addEventListener(
+  'touchend',
+  (e) => {
+    keepAwake();
+    if (e.touches.length !== 0 || e.changedTouches.length !== 1) {
+      lastTap = null;
+      return;
+    }
+    e.preventDefault();
+    const p = e.changedTouches[0];
+    const tap = { t: e.timeStamp, x: p.clientX, y: p.clientY };
+    const start = touchStart;
+    touchStart = null;
+    if (!start || tap.t - start.t > TAP_S || Math.hypot(tap.x - start.x, tap.y - start.y) > TAP_PX) {
+      lastTap = null; // a hold or a drag, not a tap
+      return;
+    }
+    if (lastTap && tap.t - lastTap.t <= TAP_S && Math.hypot(tap.x - lastTap.x, tap.y - lastTap.y) <= TAP_PX) {
+      lastTap = null;
+      lastTouchToggle = performance.now();
+      toggleFullscreen();
+    } else {
+      lastTap = tap;
+    }
+  },
+  { passive: false }
+);
+
+window.addEventListener('touchcancel', () => {
+  touchStart = null;
+  lastTap = null;
+});
+
+window.addEventListener('dblclick', (e) => {
+  e.preventDefault();
+  keepAwake();
+  if (performance.now() - lastTouchToggle < 1000) return;
+  toggleFullscreen();
+});
+
+window.addEventListener('click', keepAwake);
+// Safari's pinch zoom.
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+applyViewport();
+keepAwake();
+connect();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

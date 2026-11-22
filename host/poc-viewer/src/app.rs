@@ -21,6 +21,12 @@ use poc_viewer::{
     echo::Echoes,
     fake::{self, FakeCamera},
     net::{BlobFrame, Client, Command, RETRY_INTERVAL, Stats},
+    screen_target::{
+        Target,
+        check::Report,
+        link::{SWEEP_SPEEDS, Scene, SceneKind, WALK_COUNT, WALK_SIZE},
+        sim::SimScreen,
+    },
     stream::{AUTO_QUALITY_CEILING, StreamEdit},
     timing::{HostFrame, Lanes, OverlayFrame, Sensor, Stage, Timing},
 };
@@ -31,7 +37,7 @@ use crate::{
     ui::{
         diagram::{self, Diagram},
         hz, on_off,
-        picture::{self, Content, Overlay, View},
+        picture::{self, Content, Overlay, TargetOverlay, View},
         theme::{self, BODY, FAULT, GAP, MARKER, MUTED, NEUTRAL, PAD, TEXT, hue},
         widgets::{
             self, Choice, History, Scale, Tone, button, caption, chip, disclosure, figure, notice,
@@ -45,6 +51,11 @@ use crate::{
 pub struct Setup {
     pub camera: SocketAddr,
     pub fake: Option<FakeCamera>,
+    /// The fake camera's simulated screen, which watches the screen target's page.
+    pub screen: Option<Arc<SimScreen>>,
+    /// Serve the screen target's page from the start, and where.
+    pub target: bool,
+    pub target_listen: SocketAddr,
     pub init_camera: Option<CameraSettings>,
     pub init_stream: Option<StreamEdit>,
     pub selftest: Option<SelfTestConfig>,
@@ -229,6 +240,13 @@ pub struct App {
     /// Trail length and statistics window, seconds.
     trail_s: f64,
     stats_s: f64,
+    /// The screen target, the scene being edited, its overlay on the picture, and why the last
+    /// action on it could not be done.
+    target: Target,
+    target_listen: SocketAddr,
+    scene: Scene,
+    show_target: bool,
+    target_refusal: Option<String>,
 }
 
 /// Display choices at start.
@@ -289,6 +307,17 @@ impl App {
         client.send(Command::GetState);
         let edit = setup.init_camera.unwrap_or_else(fake::default_camera);
         let now = Instant::now();
+        let ctx = cc.egui_ctx.clone();
+        let mut target = Target::new(move || ctx.request_repaint());
+        if let Some(s) = setup.screen {
+            target.hub().set_tap(s);
+        }
+        if setup.target {
+            match target.serve(setup.target_listen) {
+                Ok(a) => println!("screen target served on http://{a}/"),
+                Err(e) => eprintln!("screen target: {e}"),
+            }
+        }
         Ok(Self {
             camera: (None, addr::show(client.camera())),
             client,
@@ -335,6 +364,17 @@ impl App {
             show_mask: false,
             trail_s: TRAIL_S,
             stats_s: STATS_S,
+            target,
+            target_listen: setup.target_listen,
+            scene: Scene {
+                kind: SceneKind::Lissajous,
+                count: 3,
+                size: 5.0,
+                speed: 300.0,
+                seed: 1,
+            },
+            show_target: true,
+            target_refusal: None,
         })
     }
 
@@ -370,6 +410,7 @@ impl App {
         self.client.blob_frames_since(self.markers.seq(), &mut buf);
         for f in buf.drain(..) {
             self.pipeline.blobs(now, &f);
+            self.target.blobs(&f);
             self.markers.push(f);
         }
         self.blob_buf = buf;
@@ -384,6 +425,7 @@ impl App {
 
     fn show(&mut self, p: Picture, now: Instant) {
         self.serial += 1;
+        self.target.frame(&p.frame);
         self.presented += 1;
         self.drawing = Some((
             self.serial,
@@ -579,6 +621,7 @@ impl App {
         self.controls_section(ui, s);
         self.stream_section(ui, s);
         self.markers_section(ui, s);
+        self.target_section(ui, s);
         self.display_section(ui);
     }
 
@@ -671,6 +714,257 @@ impl App {
                 self.client.send(Command::SetDetect(*d));
             }
         });
+    }
+
+    /// The screen target: serving the page, the page's link, the calibration, the scene and
+    /// the check's figures.
+    fn target_section(&mut self, ui: &mut Ui, s: &Stats) {
+        let h = NEUTRAL;
+        section(ui, "Screen target", h, |ui| {
+            caption(
+                ui,
+                "A page drawing simulated markers on a screen held in front of the camera: \
+                 calibrated on the sensor, then the board's blobs are checked against what it \
+                 drew. Double tap the page for full screen.",
+            );
+            let mut on = self.target.serving().is_some();
+            if switch(ui, "Serve screen target", h, &mut on).changed() {
+                if on {
+                    // A failure is shown below.
+                    let _ = self.target.serve(self.target_listen);
+                } else {
+                    self.target.stop_serving();
+                }
+            }
+            if let Some(a) = self.target.serving() {
+                stat(ui, "Served on", &format!("http://{a}/"));
+            }
+            if let Some(e) = &self.target.server_error {
+                notice(ui, Tone::Fault, &format!("Cannot serve the page: {e}"));
+            }
+            match self.target.page() {
+                None => caption(ui, "No page connected."),
+                Some(p) => {
+                    let vp = p.viewport.map_or("–".into(), |(w, h, d)| {
+                        format!("{w:.0}x{h:.0} CSS px @{d}x")
+                    });
+                    stat(ui, "Page viewport", &vp);
+                    stat(
+                        ui,
+                        "Page frame rate",
+                        &p.hz.map_or("–".into(), |hz| format!("{hz:.0} Hz")),
+                    );
+                    stat(
+                        ui,
+                        "Page clock round trip",
+                        &p.rtt_us
+                            .map_or("–".into(), |r| format!("{:.1} ms", r / 1e3)),
+                    );
+                }
+            }
+            ui.add_space(GAP);
+            if let Some((done, total, what)) = self.target.calibrating() {
+                stat(ui, "Calibrating", &format!("step {done} of {total}"));
+                caption(ui, &what);
+                if button(ui, "Cancel calibration", None).clicked() {
+                    self.target.cancel_calibration();
+                }
+            } else {
+                let ready =
+                    self.target.page().is_some_and(|p| p.viewport.is_some()) && s.state.is_some();
+                let r = ui
+                    .add_enabled_ui(ready, |ui| button(ui, "Calibrate", Some(h)))
+                    .inner;
+                if r.clicked() {
+                    self.target_refusal = self.target.calibrate().err();
+                }
+                caption(
+                    ui,
+                    "Pauses the automatic exposure while the page shows Gray code stripes, then \
+                     measures a grid of dots with the board's detector. Needs frames and \
+                     detection on; redo it after the page or the sensor window changes.",
+                );
+            }
+            if let Some(e) = &self.target.calib_error {
+                notice(ui, Tone::Fault, &format!("Calibration failed: {e}"));
+            }
+            if let Some(f) = self.target.fit() {
+                stat(
+                    ui,
+                    "Dots fitted",
+                    &format!(
+                        "{} of {} ({} dropped)",
+                        f.dots, f.dots_shown, f.dots_dropped
+                    ),
+                );
+                stat(
+                    ui,
+                    "Model holds within",
+                    &format!(
+                        "{:.0} px of the centre{}",
+                        f.reach,
+                        if f.model.k1 == 0.0 && f.model.k2 == 0.0 {
+                            ", no distortion fitted"
+                        } else {
+                            ""
+                        }
+                    ),
+                );
+                stat(
+                    ui,
+                    "Fit residual RMS / max",
+                    &format!("{:.3} / {:.3} px", f.rms, f.max),
+                );
+                stat(
+                    ui,
+                    "Sensor seeing the screen",
+                    &format!("{:.1} %", f.visible * 100.0),
+                );
+                stat(
+                    ui,
+                    "Gray code decoded",
+                    &format!(
+                        "{:.1} %, bands of {} x {} CSS px",
+                        f.decoded * 100.0,
+                        1u32 << f.bits[0],
+                        1u32 << f.bits[1]
+                    ),
+                );
+                stat(
+                    ui,
+                    "Screen part seen",
+                    &format!(
+                        "{:.0},{:.0} to {:.0},{:.0}",
+                        f.seen[0], f.seen[1], f.seen[2], f.seen[3]
+                    ),
+                );
+                stat(ui, "Scale", &format!("{:.3} px per CSS px", f.scale));
+                stat(ui, "Rotation", &format!("{:.2}°", f.rotation));
+                stat(
+                    ui,
+                    "Distortion k1, k2",
+                    &format!("{:.4}, {:.4}", f.model.k1, f.model.k2),
+                );
+                if let Some(why) = self.target.fit_stale() {
+                    notice(ui, Tone::Caution, &format!("Calibrate again: {why}."));
+                }
+            }
+            ui.add_space(GAP);
+            let sc = &mut self.scene;
+            let kinds: Vec<Choice<'_, SceneKind>> = SceneKind::ALL
+                .iter()
+                .map(|k| Choice::new(*k, k.label()))
+                .collect();
+            segmented(ui, "Scene", h, &mut sc.kind, &kinds, 2);
+            match sc.kind {
+                SceneKind::Static | SceneKind::Lissajous => row(ui, "Markers", |ui| {
+                    let w = ui.available_width();
+                    number(ui, "Markers", &mut sc.count, 1..=16, 0.1, 0, w);
+                }),
+                SceneKind::Sweep => caption(
+                    ui,
+                    &format!(
+                        "One marker back and forth, {:.0} to {:.0} px/s over 30 s (log scale), \
+                         again and again.",
+                        SWEEP_SPEEDS.0, SWEEP_SPEEDS.1
+                    ),
+                ),
+                SceneKind::RandomWalk => caption(
+                    ui,
+                    &format!(
+                        "{} to {} markers on random walks, {:.0} to {:.0} px FWHM, leaving the \
+                         view and new ones entering it.",
+                        WALK_COUNT.0, WALK_COUNT.1, WALK_SIZE.0, WALK_SIZE.1
+                    ),
+                ),
+            }
+            if sc.kind != SceneKind::RandomWalk {
+                let scale = Scale {
+                    range: 2.0..=20.0,
+                    step: 0.5,
+                    logarithmic: false,
+                };
+                let shown = format!("{:.1} px FWHM", sc.size);
+                slider(ui, "Marker size", h, &mut sc.size, &scale, &shown);
+            }
+            if sc.kind == SceneKind::Lissajous {
+                let scale = Scale {
+                    range: 20.0..=3000.0,
+                    step: 1.0,
+                    logarithmic: true,
+                };
+                let shown = format!("{:.0} px/s at most", sc.speed);
+                slider(ui, "Marker speed", h, &mut sc.speed, &scale, &shown);
+            }
+            let running = self.target.running();
+            let can = self.target.fit().is_some()
+                && self.target.calibrating().is_none()
+                && self.target.page().is_some();
+            let text = if running.is_some() {
+                "Restart scene"
+            } else {
+                "Start scene"
+            };
+            if ui
+                .add_enabled_ui(can, |ui| button(ui, text, Some(h)))
+                .inner
+                .clicked()
+            {
+                self.scene.seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(1, |d| d.subsec_nanos());
+                self.target_refusal = self.target.start_scene(self.scene).err();
+            }
+            if let Some(r) = running {
+                caption(ui, &format!("Running: {}.", r.kind.label()));
+                if button(ui, "Stop scene", None).clicked() {
+                    self.target.stop_scene();
+                }
+            }
+            switch(ui, "Show screen target", h, &mut self.show_target);
+            if let Some(e) = &self.target_refusal {
+                notice(ui, Tone::Fault, e);
+            }
+            if let Some(c) = self.target.check() {
+                ui.add_space(GAP);
+                target_figures(ui, c.report());
+            }
+        });
+    }
+
+    /// The page's viewport on the sensor (polylines, sensor pixels), where the fit holds.
+    fn target_outline(&self) -> Vec<Vec<(f64, f64)>> {
+        let Some(f) = self.target.fit().filter(|_| self.show_target) else {
+            return Vec::new();
+        };
+        let reach = f.reach * 1.05;
+        let (pw, ph) = f.page;
+        let corners = [(0.0, 0.0), (pw, 0.0), (pw, ph), (0.0, ph), (0.0, 0.0)];
+        let mut lines = Vec::new();
+        let mut line = Vec::new();
+        for k in 0..4 {
+            let (a, b) = (corners[k], corners[k + 1]);
+            let steps = ((b.0 - a.0).abs() + (b.1 - a.1).abs()).ceil() as usize / 2;
+            for i in 0..=steps.max(1) {
+                let t = i as f64 / steps.max(1) as f64;
+                let (x, y) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                // Only where the dots constrained the model (the distortion is extrapolated
+                // beyond).
+                let (pu, pv) = f.model.project(x, y);
+                let near = (pu - f.model.cx).hypot(pv - f.model.cy) <= reach;
+                if near {
+                    line.push(f.model.to_sensor(x, y));
+                } else if line.len() > 1 {
+                    lines.push(std::mem::take(&mut line));
+                } else {
+                    line.clear();
+                }
+            }
+        }
+        if line.len() > 1 {
+            lines.push(line);
+        }
+        lines
     }
 
     fn mode_section(&mut self, ui: &mut Ui, s: &Stats) {
@@ -1297,6 +1591,7 @@ impl App {
     fn picture(&mut self, ui: &mut Ui, s: &Stats, now: Instant) {
         let frames_off = s.state.filter(|st| !st.stream.enabled);
         let trail: &[TrailPoint] = if self.show_trail { &self.trail } else { &[] };
+        let outline = self.target_outline();
         // Without detection in this mode nothing new is drawn; the trail fades out.
         let available = detection_available(s);
         let centroids = self.show_centroids && available;
@@ -1306,6 +1601,7 @@ impl App {
                 blobs: self.markers.newest().filter(|_| centroids),
                 trail,
                 colour: MARKER.line,
+                target: target_overlay(&self.target, self.show_target, &outline, None),
             };
             let content = Content::Canvas {
                 width: st.camera.width,
@@ -1341,6 +1637,12 @@ impl App {
                 blobs: blobs.filter(|_| centroids),
                 trail,
                 colour: MARKER.line,
+                target: target_overlay(
+                    &self.target,
+                    self.show_target,
+                    &outline,
+                    Some((f.generation, f.number)),
+                ),
             };
             let drawn = overlay.blobs.map(|b| (b.seq, b.arrived));
             picture::show(
@@ -1650,6 +1952,21 @@ impl App {
                 &format!("{:.1} fps, {} in all", m.detected_fps, s.blob_frames),
             );
         });
+        if let Some(p) = self.target.page() {
+            section(ui, "Screen target", NEUTRAL, |ui| {
+                stat(ui, "Page messages", &p.messages.to_string());
+                stat_toned(
+                    ui,
+                    "Page messages not understood",
+                    &p.garbled.to_string(),
+                    p.garbled > 0,
+                );
+                if let Some(g) = &p.last_garbled {
+                    caption(ui, g);
+                }
+                caption(ui, &p.agent);
+            });
+        }
         section(ui, "Board", NEUTRAL, |ui| {
             stat(
                 ui,
@@ -1678,6 +1995,110 @@ impl App {
             );
         });
     }
+}
+
+/// The screen target over the picture: the outline, and the check's match of the frame shown
+/// (`frame`: generation and number; `None`, frames off: the newest) while a scene runs.
+fn target_overlay<'a>(
+    target: &'a Target,
+    show: bool,
+    outline: &'a [Vec<(f64, f64)>],
+    frame: Option<(u32, u32)>,
+) -> Option<TargetOverlay<'a>> {
+    if !show || target.fit().is_none() {
+        return None;
+    }
+    let matched = target
+        .check()
+        .filter(|_| target.running().is_some())
+        .and_then(|c| match frame {
+            Some((g, n)) => c.match_of(g, n),
+            None => c.newest(),
+        });
+    Some(TargetOverlay { outline, matched })
+}
+
+/// The check's figures in the rail.
+fn target_figures(ui: &mut Ui, r: &Report) {
+    let pct = |a: u64, b: u64| {
+        if b == 0 {
+            "–".to_owned()
+        } else {
+            format!("{:.1} %", a as f64 * 100.0 / b as f64)
+        }
+    };
+    let w = &r.window;
+    caption(ui, "Over the last 10 s:");
+    stat(ui, "Frames compared", &w.frames.to_string());
+    stat_toned(
+        ui,
+        "Frames exact",
+        &format!("{} ({})", w.exact, pct(w.exact, w.frames)),
+        w.exact < w.frames,
+    );
+    stat(
+        ui,
+        "Markers found",
+        &format!("{} of {} ({})", w.found, w.inside, pct(w.found, w.inside)),
+    );
+    stat_toned(ui, "Markers missed", &w.missed.to_string(), w.missed > 0);
+    stat_toned(ui, "Extra blobs", &w.extra.to_string(), w.extra > 0);
+    stat(
+        ui,
+        "At the edge, found",
+        &format!("{} of {}", w.edge_found, w.edge),
+    );
+    if let Some(e) = r.errors {
+        stat(ui, "Position error RMS", &format!("{:.3} px", e.rms));
+        stat(
+            ui,
+            "Position error p95 / max",
+            &format!("{:.3} / {:.3} px", e.p95, e.max),
+        );
+        stat(
+            ui,
+            "Mean offset x, y",
+            &format!("{:+.3}, {:+.3} px", e.dx, e.dy),
+        );
+    }
+    if let Some(k) = r.width_ratio {
+        stat(ui, "Blob width over drawn", &format!("{k:.2}"));
+    }
+    stat(
+        ui,
+        "Delay, page to exposure",
+        &r.delay_us.map_or("– (markers still)".to_owned(), |d| {
+            format!("{:.1} ms", d / 1e3)
+        }),
+    );
+    if r.speeds.len() > 1 {
+        let mut lo = 0.0;
+        for b in &r.speeds {
+            let name = if b.upto.is_finite() {
+                format!("Speed {lo}–{} px/frame", b.upto)
+            } else {
+                format!("Speed over {lo} px/frame")
+            };
+            stat(
+                ui,
+                &name,
+                &format!("{} of {} found, {:.3} px", b.found, b.markers, b.rms),
+            );
+            lo = b.upto;
+        }
+    }
+    let t = &r.total;
+    caption(ui, "Since the scene started:");
+    stat(
+        ui,
+        "Frames exact in all",
+        &format!("{} of {} ({})", t.exact, t.frames, pct(t.exact, t.frames)),
+    );
+    stat(
+        ui,
+        "Missed / extra in all",
+        &format!("{} / {}", t.missed, t.extra),
+    );
 }
 
 /// Faults since start: frames dropped for a missing chunk, capture and encoder errors, decode
@@ -1774,6 +2195,23 @@ impl eframe::App for App {
             }
         }
         self.take_blobs(now);
+        for c in self.target.update(now, stats.state.as_ref()) {
+            // The calibration sets the exposure and the detection, and puts them back: the
+            // editors follow.
+            match c {
+                Command::SetCamera(cam) => {
+                    self.edit.auto_exposure = cam.auto_exposure;
+                    self.edit.exposure_lines = cam.exposure_lines;
+                    self.edit.gain_sixteenths = cam.gain_sixteenths;
+                }
+                Command::SetDetect(d) => {
+                    self.detect = d;
+                    self.detect_echoes.sent(d);
+                }
+                Command::GetState | Command::SetStream(_) => {}
+            }
+            self.client.send(c);
+        }
         self.meter.update(now, &stats, &dstats, self.presented);
         self.time_pipeline(ui.ctx(), now, &stats);
 

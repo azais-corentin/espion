@@ -13,6 +13,7 @@ use espion_proto::cam::Encoding;
 use poc_viewer::{
     blobs::{TrailPoint, px},
     net::{BlobFrame, Frame},
+    screen_target::check::{FrameMatch, Place},
 };
 
 use super::theme::{self, BODY, LINE, MUTED, RADIUS_SMALL, SMALL, TEXT, WELL};
@@ -54,6 +55,14 @@ pub struct Overlay<'a> {
     /// The trail, faded by age.
     pub trail: &'a [TrailPoint],
     pub colour: Color32,
+    /// The screen target: the part of the page's viewport on the sensor (polylines, sensor
+    /// pixels) and what the page drew for the frame shown, against its blobs.
+    pub target: Option<TargetOverlay<'a>>,
+}
+
+pub struct TargetOverlay<'a> {
+    pub outline: &'a [Vec<(f64, f64)>],
+    pub matched: Option<&'a FrameMatch>,
 }
 
 /// The pixel `(x, y)` of a RAW8 or packed RAW10 frame, at the frame's depth.
@@ -181,6 +190,9 @@ pub fn show(
     // Image pixel (x, y), its centre at (x + 0.5, y + 0.5) of the texture: the detector puts
     // pixel centres on integers.
     let at = |x: f64, y: f64| rect.min + vec2(x as f32 + 0.5, y as f32 + 0.5) * scale;
+    if let Some(t) = &overlay.target {
+        paint_target(ui, &painter, area, t, &at, scale);
+    }
     paint_overlay(ui, &painter, area, overlay, at, scale);
     if let Some(b) = overlay.blobs {
         painter.add(
@@ -231,6 +243,75 @@ pub fn show(
             Stroke::new(1.0, MUTED),
             StrokeKind::Inside,
         );
+    }
+}
+
+/// The screen target under the blobs: the outline of the page's viewport, then each marker the
+/// page drew (a ring of twice its sigma, joined to its blob by a line; a missed one in the
+/// fault colour, one at the edge dashed), each an accessible `Drawn marker N: ..`.
+fn paint_target(
+    ui: &Ui,
+    painter: &eframe::egui::Painter,
+    area: Rect,
+    t: &TargetOverlay<'_>,
+    at: &impl Fn(f64, f64) -> Pos2,
+    scale: f32,
+) {
+    let edge = Stroke::new(1.0, theme::fade(MUTED, 0.7));
+    for line in t.outline {
+        let points: Vec<Pos2> = line.iter().map(|&(u, v)| at(u, v)).collect();
+        painter.add(eframe::egui::Shape::line(points, edge));
+    }
+    let Some(m) = t.matched else {
+        return;
+    };
+    let shadow = Stroke::new(3.0, Color32::from_black_alpha(140));
+    for (i, (mk, place, blob)) in m.markers.iter().enumerate() {
+        if *place == Place::Outside {
+            continue;
+        }
+        let p = at(mk.u, mk.v);
+        if !area.expand(30.0).contains(p) {
+            continue;
+        }
+        let missed = blob.is_none() && *place == Place::Inside;
+        let colour = if missed { theme::FAULT } else { TEXT };
+        let ring = Stroke::new(1.0, colour);
+        let radius = (2.0 * mk.sigma as f32 * scale).max(8.0);
+        if *place == Place::Edge {
+            let dash: Vec<Pos2> = (0..=48)
+                .map(|k| {
+                    let a = k as f32 / 48.0 * std::f32::consts::TAU;
+                    p + vec2(a.cos(), a.sin()) * radius
+                })
+                .collect();
+            painter.add(eframe::egui::Shape::dashed_line(&dash, ring, 3.0, 3.0));
+        } else {
+            painter.circle_stroke(p, radius, shadow);
+            painter.circle_stroke(p, radius, ring);
+        }
+        let state = match (place, blob) {
+            (_, Some(j)) => {
+                let b = &m.blobs[*j];
+                let q = at(b.x, b.y);
+                painter.line_segment([p, q], Stroke::new(1.0, TEXT));
+                format!("found, off by {:.3} px", (b.x - mk.u).hypot(b.y - mk.v))
+            }
+            (Place::Edge, None) => "at the edge, not found".to_owned(),
+            _ => "missed".to_owned(),
+        };
+        let name = format!(
+            "Drawn marker {}: x {:.2} y {:.2}, {state}",
+            i + 1,
+            mk.u,
+            mk.v
+        );
+        ui.interact(
+            Rect::from_center_size(p, Vec2::splat(10.0)),
+            ui.make_persistent_id(("drawn marker", i)),
+            Sense::hover(),
+        )
+        .widget_info(|| WidgetInfo::labeled(Role::Label, true, &name));
     }
 }
 

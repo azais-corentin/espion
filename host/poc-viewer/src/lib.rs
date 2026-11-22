@@ -21,6 +21,8 @@
 //!   picture, the single-marker statistics, the trail.
 //! - [`echo`]: settings sent and not yet shown by the board, told apart from changes the
 //!   board makes itself.
+//! - [`screen_target`]: the screen target: a page that draws simulated markers on a screen in front
+//!   of the camera, the calibration of that screen on the sensor and the check of the blobs.
 
 pub mod addr;
 pub mod blobs;
@@ -30,5 +32,6 @@ pub mod echo;
 pub mod fake;
 pub mod jpeg;
 pub mod net;
+pub mod screen_target;
 pub mod stream;
 pub mod timing;
