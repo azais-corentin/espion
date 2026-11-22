@@ -17,6 +17,8 @@ pub enum ToPage {
     /// Show `content` from the page's next frame on; the page answers [`FromPage::Shown`]
     /// with the time of the first frame that shows it.
     Show { id: u32, content: Content },
+    /// Reload: the page's build is not the viewer's.
+    Reload,
 }
 
 /// What the page shows. Everything is white on black.
@@ -38,11 +40,13 @@ pub enum Content {
         dots: Vec<Dot>,
     },
     /// An animated scene, placed through `model` on a sensor window of `sensor` pixels; the
-    /// page reports every frame it draws ([`FromPage::Drawn`]).
+    /// page reports every frame it draws ([`FromPage::Drawn`]). With `vignette`, each marker is
+    /// dimmed by [`Vignette::level`] at its place on the sensor.
     Scene {
         scene: Scene,
         model: Model,
         sensor: [u16; 2],
+        vignette: Option<Box<Vignette>>,
     },
 }
 
@@ -127,6 +131,9 @@ pub enum FromPage {
         dpr: f64,
         /// The browser's user agent.
         agent: String,
+        /// The page's build ([`super::server::PAGE_BUILD`]); empty from a page older than it.
+        #[serde(default)]
+        build: String,
     },
     /// The answer to [`ToPage::Ping`]: its `t`, and the page's clock when it answered.
     Pong { t: f64, now: f64 },
@@ -147,6 +154,46 @@ pub struct Drawn {
     pub y: f64,
     /// Standard deviation, screen pixels.
     pub sigma: f64,
+    /// Brightness of its centre, linear light, 0..=1 (1: white).
+    pub level: f64,
+}
+
+/// How bright the same spot of the screen comes out on the sensor, as a function of where it
+/// lands: the lens's vignetting and the screen's falloff with the viewing angle, measured by
+/// the calibration's dots. `ln(flux) = c · [1, x, y, x², xy, y², r⁴]` with
+/// `x = (u - cx) / norm`, `y = (v - cy) / norm`, `r² = x² + y²` (sensor pixels `u, v`).
+/// A screen can only dim: a marker is dimmed to the brightness the sensor sees at `floor`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Vignette {
+    pub c: [f64; 7],
+    pub cx: f64,
+    pub cy: f64,
+    pub norm: f64,
+    /// The `ln(flux)` markers are dimmed to; where the sensor sees less, a marker stays white.
+    pub floor: f64,
+}
+
+impl Vignette {
+    /// The terms at sensor point `(u, v)`.
+    pub fn terms(cx: f64, cy: f64, norm: f64, u: f64, v: f64) -> [f64; 7] {
+        let (x, y) = ((u - cx) / norm, (v - cy) / norm);
+        let r2 = x * x + y * y;
+        [1.0, x, y, x * x, x * y, y * y, r2 * r2]
+    }
+
+    /// `ln(flux)` of a white spot landing at `(u, v)`.
+    pub fn log_flux(&self, u: f64, v: f64) -> f64 {
+        Self::terms(self.cx, self.cy, self.norm, u, v)
+            .iter()
+            .zip(self.c)
+            .map(|(t, c)| t * c)
+            .sum()
+    }
+
+    /// The level (linear light, 0..=1) a marker landing at `(u, v)` is drawn at.
+    pub fn level(&self, u: f64, v: f64) -> f64 {
+        (self.floor - self.log_flux(u, v)).exp().min(1.0)
+    }
 }
 
 /// FWHM of a Gaussian over its standard deviation.
@@ -171,7 +218,7 @@ mod tests {
             r#"{"type":"show","id":3,"content":{"kind":"gray","axis":"X","bit":4,"inverse":true}}"#
         );
         let p: FromPage = serde_json::from_str(
-            r#"{"type":"drawn","now":12.5,"markers":[{"id":1,"x":2,"y":3,"sigma":0.5}]}"#,
+            r#"{"type":"drawn","now":12.5,"markers":[{"id":1,"x":2,"y":3,"sigma":0.5,"level":0.25}]}"#,
         )
         .unwrap();
         assert_eq!(
@@ -182,7 +229,8 @@ mod tests {
                     id: 1,
                     x: 2.0,
                     y: 3.0,
-                    sigma: 0.5
+                    sigma: 0.5,
+                    level: 0.25
                 }]
             }
         );

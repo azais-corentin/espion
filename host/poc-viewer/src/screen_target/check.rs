@@ -73,6 +73,8 @@ pub struct Seen {
     pub x: f64,
     pub y: f64,
     pub sigma: f64,
+    /// Sum above the local background, the sensor format's units.
+    pub flux: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +211,12 @@ pub struct Report {
     pub errors: Option<Errors>,
     /// Blob width over the marker's drawn sigma, mean over the window.
     pub width_ratio: Option<f64>,
+    /// Spread of the found blobs' brightness across the picture, over the window: the
+    /// coefficient of variation of each blob's flux over its marker's drawn sigma squared
+    /// (alike for any marker size), relative to its frame's mean (the exposure changes), in
+    /// frames with two blobs or more. The vignetting widens it; the page's compensation
+    /// narrows it.
+    pub flux_cv: Option<f64>,
     /// The fitted delay, µs, and whether the markers moved to fit it.
     pub delay_us: Option<f64>,
     /// Markers by speed, over the window.
@@ -480,6 +488,7 @@ impl Check {
         let mut window = Counts::default();
         let mut errors = Vec::new();
         let mut ratio = (0.0, 0usize);
+        let mut flux = Vec::new();
         let mut bins: Vec<SpeedBin> = SPEED_BINS
             .iter()
             .map(|&upto| SpeedBin {
@@ -490,6 +499,7 @@ impl Check {
         let mut bin_err = vec![0.0; bins.len()];
         for m in &self.matches {
             window.add(m);
+            let frame_flux = flux.len();
             for (mk, p, b) in &m.markers {
                 if *p != Place::Inside {
                     continue;
@@ -508,8 +518,17 @@ impl Check {
                     bin_err[k] += e * e;
                     if mk.sigma > 0.0 {
                         ratio = (ratio.0 + s.sigma / mk.sigma, ratio.1 + 1);
+                        flux.push(s.flux / (mk.sigma * mk.sigma));
                     }
                 }
+            }
+            // Relative to the frame's mean: the exposure changes between frames.
+            let this = &mut flux[frame_flux..];
+            if this.len() < 2 {
+                flux.truncate(frame_flux);
+            } else {
+                let mean = this.iter().sum::<f64>() / this.len() as f64;
+                this.iter_mut().for_each(|f| *f /= mean);
             }
         }
         for (b, e) in bins.iter_mut().zip(bin_err) {
@@ -522,6 +541,11 @@ impl Check {
             total: self.total,
             errors: Errors::of(&mut errors),
             width_ratio: (ratio.1 > 0).then(|| ratio.0 / ratio.1 as f64),
+            flux_cv: (flux.len() > 1).then(|| {
+                // The frames' means are 1.
+                let n = flux.len() as f64;
+                (flux.iter().map(|f| (f - 1.0).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+            }),
             delay_us: self.delay_us,
             speeds: bins.into_iter().filter(|b| b.markers > 0).collect(),
         }
@@ -580,6 +604,7 @@ mod tests {
                         x,
                         y,
                         sigma: 0.5,
+                        level: 1.0,
                     }],
                 );
                 drawn_at += 1e6 / 60.0;
@@ -597,6 +622,7 @@ mod tests {
                         x: u + 0.05,
                         y: v,
                         sigma: 2.0,
+                        flux: 100.0,
                     }],
                 );
             }

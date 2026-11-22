@@ -36,6 +36,9 @@ use crate::fake::{MARKER_BRIGHTNESS, encode_line};
 pub const DELAY: Duration = Duration::from_millis(40);
 /// The screen's black, 10-bit.
 const BLACK: f64 = 30.0;
+/// The simulated lens's vignetting: light falls off as `exp(-VIGNETTING q²)`, `q` the distance
+/// from the sensor's centre over half its diagonal (0.37 in the corners).
+pub const VIGNETTING: f64 = 1.0;
 
 /// The simulated screen's model: seen upside down at about 4.5 sensor pixels per screen pixel,
 /// slightly tilted and in perspective, through a barrel-distorting lens. On a 1280x800 window
@@ -69,12 +72,17 @@ struct State {
     page_zero: Option<Instant>,
     /// What the screen shows from when.
     timeline: VecDeque<(Instant, Screen)>,
-    /// Sensor window → each pixel's screen point.
+    /// Sensor window → each pixel's screen point and vignetting.
     map: Option<PixelMap>,
 }
 
-/// A sensor window's size and each of its pixels' screen point.
-type PixelMap = ((u16, u16), Arc<Vec<(f32, f32)>>);
+/// A sensor window's size, and each of its pixels' screen point and vignetting.
+type PixelMap = ((u16, u16), Arc<Pixels>);
+
+struct Pixels {
+    screen: Vec<(f32, f32)>,
+    falloff: Vec<f32>,
+}
 
 /// The simulated screen.
 pub struct SimScreen {
@@ -121,23 +129,29 @@ impl SimScreen {
         }
     }
 
-    /// Each pixel's screen point for a window of `w` x `h`.
-    fn map(&self, w: u16, h: u16) -> Arc<Vec<(f32, f32)>> {
+    /// Each pixel's screen point and vignetting for a window of `w` x `h`.
+    fn map(&self, w: u16, h: u16) -> Arc<Pixels> {
         if let Some((size, m)) = &self.lock().map
             && *size == (w, h)
         {
             return m.clone();
         }
-        let mut m = Vec::with_capacity(usize::from(w) * usize::from(h));
+        let n = usize::from(w) * usize::from(h);
+        let mut p = Pixels {
+            screen: Vec::with_capacity(n),
+            falloff: Vec::with_capacity(n),
+        };
         for v in 0..h {
             for u in 0..w {
-                let (x, y) = self.model.to_screen(f64::from(u), f64::from(v));
-                m.push((x as f32, y as f32));
+                let (u, v) = (f64::from(u), f64::from(v));
+                let (x, y) = self.model.to_screen(u, v);
+                p.screen.push((x as f32, y as f32));
+                p.falloff.push(falloff(&self.model, u, v) as f32);
             }
         }
-        let m = Arc::new(m);
-        self.lock().map = Some(((w, h), m.clone()));
-        m
+        let p = Arc::new(p);
+        self.lock().map = Some(((w, h), p.clone()));
+        p
     }
 
     /// The camera's frame `number` of the screen at `at`, in `encoding` (RAW8 or RAW10), with
@@ -179,7 +193,7 @@ impl SimScreen {
                 let Some(Screen::Content(content)) = &screen else {
                     unreachable!()
                 };
-                for (v, &(x, y)) in img.iter_mut().zip(map.iter()) {
+                for (v, &(x, y)) in img.iter_mut().zip(map.screen.iter()) {
                     let on = lit(x, y)
                         && match content {
                             Content::Gray { axis, bit, inverse } => {
@@ -202,16 +216,18 @@ impl SimScreen {
             Some(Screen::Markers(markers)) => {
                 for d in markers {
                     if lit(d.x as f32, d.y as f32) {
-                        self.spot(&mut img, w, h, d.x, d.y, d.sigma, amp);
+                        self.spot(&mut img, w, h, d.x, d.y, d.sigma, amp * d.level);
                     }
                 }
             }
             _ => {}
         }
+        let map = self.map(c.width, c.height);
         let mut line = vec![0u16; w];
         for (y, row) in out.chunks_exact_mut(lb).enumerate() {
             for (x, l) in line.iter_mut().enumerate() {
-                let v = BLACK as f32 + noise(x, y) + img[y * w + x];
+                let i = y * w + x;
+                let v = BLACK as f32 + noise(x, y) + img[i] * map.falloff[i];
                 *l = v.round().clamp(0.0, 1023.0) as u16;
             }
             encode_line(encoding, &line, row);
@@ -281,6 +297,12 @@ impl SimScreen {
     }
 }
 
+/// The simulated lens's vignetting at sensor point `(u, v)` ([`VIGNETTING`]).
+pub fn falloff(m: &Model, u: f64, v: f64) -> f64 {
+    let q = (u - m.cx).hypot(v - m.cy) / m.norm;
+    (-VIGNETTING * q * q).exp()
+}
+
 impl PageTap for SimScreen {
     fn sent(&self, m: &ToPage, _at: Instant) {
         if let ToPage::Show { id, content } = m {
@@ -341,6 +363,7 @@ impl TestPage {
                 height: TEST_VIEWPORT.1,
                 dpr: 2.0,
                 agent: "test page".into(),
+                build: super::server::page_build(),
             });
             let mut showing: Option<(u32, Content, bool)> = None;
             let mut scene_start = 0.0;
@@ -351,6 +374,8 @@ impl TestPage {
                     match m {
                         ToPage::Ping { t } => end.send(FromPage::Pong { t, now: now() }),
                         ToPage::Show { id, content } => showing = Some((id, content, false)),
+                        // It is always the viewer's build.
+                        ToPage::Reload => {}
                     }
                 }
                 let t = now();
@@ -364,6 +389,7 @@ impl TestPage {
                         scene,
                         model,
                         sensor,
+                        vignette,
                     } = content
                     {
                         let secs = (t - scene_start) / 1e3;
@@ -388,6 +414,7 @@ impl TestPage {
                                     x,
                                     y,
                                     sigma: scene.size / FWHM_PER_SIGMA / model.scale_at(x, y),
+                                    level: vignette.as_ref().map_or(1.0, |vg| vg.level(u, v)),
                                 }
                             })
                             .collect();

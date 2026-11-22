@@ -10,7 +10,7 @@ use std::{
     io,
     net::SocketAddr,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, LazyLock, Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
@@ -32,8 +32,28 @@ use tokio::sync::{mpsc as amc, oneshot};
 
 use super::link::{FromPage, ToPage};
 
-/// The page, embedded.
-const PAGE: &str = include_str!("../../assets/screen-target/index.html");
+/// The page as written, with `__PAGE_BUILD__` where its build goes.
+const PAGE_SOURCE: &str = include_str!("../../assets/screen-target/index.html");
+
+/// The page's build, a hash of its source (FNV-1a). A page reports it in its hello: one that
+/// reports another was loaded from an older viewer and is told to reload.
+pub const PAGE_BUILD: u64 = {
+    let (b, mut h, mut i) = (PAGE_SOURCE.as_bytes(), 0xcbf2_9ce4_8422_2325u64, 0);
+    while i < b.len() {
+        h = (h ^ b[i] as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        i += 1;
+    }
+    h
+};
+
+/// [`PAGE_BUILD`] as the page reports it.
+pub fn page_build() -> String {
+    format!("{PAGE_BUILD:016x}")
+}
+
+/// The page served, with its build.
+static PAGE: LazyLock<String> =
+    LazyLock::new(|| PAGE_SOURCE.replace("__PAGE_BUILD__", &page_build()));
 
 /// What happened on a page's connection, with when it reached the viewer.
 #[derive(Debug, Clone)]
@@ -248,7 +268,7 @@ async fn page() -> impl IntoResponse {
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        PAGE,
+        PAGE.as_str(),
     )
 }
 

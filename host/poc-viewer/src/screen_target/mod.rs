@@ -63,6 +63,8 @@ pub struct Page {
     pub messages: u64,
     pub garbled: u64,
     pub last_garbled: Option<String>,
+    /// Its build is not the viewer's ([`server::PAGE_BUILD`]): it was told to reload.
+    pub stale: bool,
 }
 
 /// Offset samples between a clock and this PC's: the fastest wins.
@@ -100,6 +102,8 @@ impl Clock {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Running {
     pub scene: Scene,
+    /// The markers are dimmed against the vignetting.
+    pub compensate: bool,
     /// The show that started it, and whether the page drew it yet.
     id: u32,
     shown: bool,
@@ -157,6 +161,16 @@ pub struct Target {
 /// The settings that place the sensor window: a change makes a calibration invalid.
 fn window(c: &CameraSettings) -> impl PartialEq {
     (c.width, c.height, c.readout, c.origin)
+}
+
+/// The page's content for `scene` with `fit`; the vignette with `compensate`.
+fn scene_content(fit: &Fit, scene: Scene, compensate: bool) -> Content {
+    Content::Scene {
+        scene,
+        model: fit.model,
+        sensor: [fit.sensor.0, fit.sensor.1],
+        vignette: fit.vignette.clone().filter(|_| compensate),
+    }
 }
 
 impl Target {
@@ -292,19 +306,17 @@ impl Target {
         }
     }
 
-    /// Starts `scene` on the page with the fit; the check starts over.
-    pub fn start_scene(&mut self, scene: Scene) -> Result<(), String> {
+    /// Starts `scene` on the page with the fit, the markers dimmed against the vignetting with
+    /// `compensate` (when the calibration measured it); the check starts over.
+    pub fn start_scene(&mut self, scene: Scene, compensate: bool) -> Result<(), String> {
         let fit = self.fit.clone().ok_or("calibrate first")?;
         if self.calib.is_some() {
             return Err("a calibration is running".into());
         }
-        let id = self.show(Content::Scene {
-            scene,
-            model: fit.model,
-            sensor: [fit.sensor.0, fit.sensor.1],
-        });
+        let id = self.show(scene_content(&fit, scene, compensate));
         self.running = Some(Running {
             scene,
+            compensate,
             id,
             shown: false,
         });
@@ -371,6 +383,14 @@ impl Target {
                     }));
                 }
             }
+            Action::FreezeExposure => {
+                if let Some(cam) = self.camera {
+                    self.commands.push(Command::SetCamera(CameraSettings {
+                        auto_exposure: false,
+                        ..cam
+                    }));
+                }
+            }
             Action::RestoreDetection => {
                 if let Some(d) = self.saved_detect {
                     self.commands.push(Command::SetDetect(d));
@@ -392,6 +412,7 @@ impl Target {
                     messages: 0,
                     garbled: 0,
                     last_garbled: None,
+                    stale: false,
                 });
                 self.page_clock.clear();
                 self.next_ping = Instant::now();
@@ -400,11 +421,7 @@ impl Target {
                 if let Some(r) = self.running
                     && let Some(fit) = &self.fit
                 {
-                    let id = self.show(Content::Scene {
-                        scene: r.scene,
-                        model: fit.model,
-                        sensor: [fit.sensor.0, fit.sensor.1],
-                    });
+                    let id = self.show(scene_content(fit, r.scene, r.compensate));
                     self.running = Some(Running {
                         id,
                         shown: false,
@@ -450,10 +467,16 @@ impl Target {
                 height,
                 dpr,
                 agent,
+                build,
             } => {
+                let stale = build != server::page_build();
+                if stale {
+                    self.hub.send(ToPage::Reload);
+                }
                 if let Some(p) = &mut self.page {
                     p.viewport = Some((width, height, dpr));
                     p.agent = agent;
+                    p.stale = stale;
                 }
                 if self.calib.is_some() {
                     self.cancel_calibration();
@@ -578,8 +601,12 @@ impl Target {
         };
         let start = end - s.readout - s.exposure;
         if let Some(c) = &mut self.calib {
-            let centres: Vec<(f64, f64)> = b.blobs.iter().map(|x| (px(x.x), px(x.y))).collect();
-            c.blobs(start, &centres);
+            let dots: Vec<(f64, f64, f64)> = b
+                .blobs
+                .iter()
+                .map(|x| (px(x.x), px(x.y), f64::from(x.flux)))
+                .collect();
+            c.blobs(start, &dots);
         }
         if self.running.is_some_and(|r| r.shown)
             && let Some(c) = &mut self.check
@@ -591,6 +618,7 @@ impl Target {
                     x: px(x.x),
                     y: px(x.y),
                     sigma: px(u32::from(x.width)),
+                    flux: f64::from(x.flux),
                 })
                 .collect();
             c.detected(

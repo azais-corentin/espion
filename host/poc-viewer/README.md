@@ -369,15 +369,26 @@ lens's edge still clears. The page shows a grid of Gaussian dots (FWHM 8 sensor 
 96) over the visible area in groups of 8, each spread over the view. The board measures every
 blob of a frame on core 1 after the frame, and with many it falls behind the next frame's
 strips. The detector measures each group over 20 frames (after 1.5 s for the first, 0.25 s for
-the next); a dot found in 15 of them counts. The model, a homography then radial distortion
+the next); a dot found in 15 of them counts. Once the first group has settled, the exposure and
+gain are held (automatic exposure off) so that the dots' flux compares from group to group. The
+model, a homography then radial distortion
 (k1, k2) about the sensor's centre, is fitted to the dots by Levenberg–Marquardt. The
 distortion is fitted only when the dots reach 0.55 of the half-diagonal from the centre. A
-second fit drops the dots off by more than max(0.5 px, 4 x the median). Then the detection
-settings go back as they were and the page goes dark, as they do when the calibration fails.
-The rail shows the dots fitted and shown, where the model holds (the farthest dot), the
+second fit drops the dots off by more than max(0.5 px, 4 x the median). The **vignetting** is
+fitted from the same dots, all drawn alike: `ln(flux)` as a smooth function of the place on the
+sensor (1, x, y, x², xy, y², r⁴ about the centre; at least 20 dots). It is the lens's
+vignetting and the screen's falloff with the viewing angle together. Then the camera and
+detection settings go back as they were and the page goes dark, as they do when the calibration
+fails. The rail shows the dots fitted and shown, where the model holds (the farthest dot), the
 residual, the share of the sensor that sees the screen and that decoded the Gray code (and the
-bands' size), the scale, the rotation and the distortion. A change of the page's viewport
-(entering full screen does) or of the sensor window makes it stale: calibrate in full screen.
+bands' size), the scale, the rotation, the distortion and the brightest over the dimmest dot. A
+change of the page's viewport (entering full screen does) or of the sensor window makes it
+stale: calibrate in full screen.
+
+**Compensate vignetting** (on by default, applies at the next start): a screen can only dim,
+so the page draws each marker at the level (linear light) that brings it down to what the
+sensor sees where the light falls off most, the 5th percentile of the fit over the calibrated
+area; a marker where it falls off more stays white. The page reports each marker's level.
 
 **Scenes** (sizes are the FWHM on the sensor, speeds in sensor pixels per second; the page
 places them through the model): **Static** (N markers on a grid), **Lissajous** (N markers,
@@ -394,7 +405,9 @@ blobs nearest first within a gate (twice the FWHM, at least 6 px, plus a frame p
 motion). A marker within 3 sigma of the sensor's edge is counted apart. The rail shows, over
 the last 10 s: frames compared and exact (every marker found, no extra blob), markers found
 and missed, extra blobs, markers at the edge found, the position error (RMS, p95, max, mean
-offset), the blob's width over the drawn sigma, the delay and, for the sweep, the figures per
+offset), the blob's width over the drawn sigma, the **blob brightness spread** (the coefficient
+of variation of each blob's flux over its marker's drawn sigma squared, relative to its frame's
+mean, so the exposure's changes drop out), the delay and, for the sweep, the figures per
 speed (pixels per frame period). Totals since the scene started follow. With **Show screen
 target** the picture shows the outline of the page's viewport on the sensor and each drawn
 marker as a ring of twice its sigma joined to its blob; a missed one is red, one at the edge
@@ -403,13 +416,15 @@ dashed. Each is an accessible label (`Drawn marker N: ...`).
 **Without a screen.** `--fake --fake-screen`: the fake camera films a simulated screen
 (`target::sim`) instead of its markers scene. It shows whatever the connected page reports,
 each frame lit 40 ms after the page drew it, seen upside down at about 4.5 sensor pixels per
-CSS pixel through a barrel-distorting lens (its CSS pixels from about (300, 270) to (595, 460)
-on a 1280x800 window). Open the page in any browser at a viewport of at least 600x470 CSS
-pixels. Measured that way on 2026-11-22 (headless, the page in headless Chromium): the
-calibration recovers the model to 0.001 px RMS over 60 dots (k1 -0.0400, k2 0.0100 against
+CSS pixel through a barrel-distorting lens that vignettes (`exp(-q²)`, `q` the distance from
+the centre over the half-diagonal: 0.37 in the corners). Its CSS pixels from about (300, 270)
+to (595, 460) on a 1280x800 window. Open the page in any browser at a viewport of at least
+600x470 CSS pixels. Measured that way on 2026-11-22 (headless, the page in headless Chromium):
+the calibration recovers the model to 0.001 px RMS over 60 dots (k1 -0.0400, k2 0.0100 against
 -0.04, 0.01); a random walk finds 99.7 % of the markers, no extra blob, error RMS 0.2 px
 (markers crossing one another merge into one blob), and the blob widths match the drawn sigma
-(0.99).
+(0.99). With the vignette, a static row of 3 markers spreads 24.0 % in brightness
+uncompensated and 2.7 % compensated.
 
 ## Measured on the real camera
 

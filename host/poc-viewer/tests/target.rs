@@ -110,14 +110,57 @@ fn calibration_finds_the_screen_and_the_check_its_markers() {
     }
     assert!(worst < 0.25, "the fit is off by up to {worst} px");
 
-    rig.target
-        .start_scene(Scene {
-            kind: SceneKind::Lissajous,
-            count: 3,
+    // The vignette follows the simulated lens's falloff (up to a constant: the exposure).
+    let vg = fit.vignette.expect("a vignette");
+    let at_centre = vg.log_flux(truth.cx, truth.cy);
+    let mut worst = 0f64;
+    for v in (100..700).step_by(50) {
+        for u in (100..1180).step_by(50) {
+            let (u, v) = (f64::from(u), f64::from(v));
+            let fitted = vg.log_flux(u, v) - at_centre;
+            worst = worst.max((fitted - sim::falloff(truth, u, v).ln()).abs());
+        }
+    }
+    assert!(
+        worst < 0.1,
+        "the vignette is off by up to {worst} (ln flux)"
+    );
+
+    // A static row of markers: the vignetting spreads their brightness, the compensation
+    // evens it out.
+    let mut spread = |compensate| {
+        let scene = Scene {
+            kind: SceneKind::Static,
+            count: 5,
             size: 6.0,
-            speed: 300.0,
+            speed: 0.0,
             seed: 1,
-        })
+        };
+        rig.target
+            .start_scene(scene, compensate)
+            .expect("the scene starts");
+        rig.run(3.0, |_| false);
+        let r = rig.target.check().expect("a check").report().clone();
+        r.flux_cv.expect("a spread")
+    };
+    let (raw, even) = (spread(false), spread(true));
+    assert!(raw > 0.1, "uncompensated spread {raw}");
+    assert!(
+        even < 0.05 && even < raw / 4.0,
+        "compensated spread {even} (uncompensated {raw})"
+    );
+
+    rig.target
+        .start_scene(
+            Scene {
+                kind: SceneKind::Lissajous,
+                count: 3,
+                size: 6.0,
+                speed: 300.0,
+                seed: 1,
+            },
+            true,
+        )
         .expect("the scene starts");
     rig.run(8.0, |_| false);
     let r = rig.target.check().expect("a check").report().clone();

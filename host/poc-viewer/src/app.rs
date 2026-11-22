@@ -246,6 +246,8 @@ pub struct App {
     target_listen: SocketAddr,
     scene: Scene,
     show_target: bool,
+    /// Dim the markers against the vignetting the calibration measured.
+    compensate: bool,
     target_refusal: Option<String>,
 }
 
@@ -374,6 +376,7 @@ impl App {
                 seed: 1,
             },
             show_target: true,
+            compensate: true,
             target_refusal: None,
         })
     }
@@ -760,6 +763,14 @@ impl App {
                         &p.rtt_us
                             .map_or("–".into(), |r| format!("{:.1} ms", r / 1e3)),
                     );
+                    if p.stale {
+                        notice(
+                            ui,
+                            Tone::Fault,
+                            "The page is from an older viewer: told to reload. If it does not, \
+                             reload it on the screen (then double tap for full screen).",
+                        );
+                    }
                 }
             }
             ui.add_space(GAP);
@@ -845,6 +856,14 @@ impl App {
                     "Distortion k1, k2",
                     &format!("{:.4}, {:.4}", f.model.k1, f.model.k2),
                 );
+                match &f.vignette {
+                    Some(_) => stat(
+                        ui,
+                        "Vignetting, dots brightest / dimmest",
+                        &format!("{:.2}", f.vignette_ratio),
+                    ),
+                    None => caption(ui, "Too few dots to measure the vignetting."),
+                }
                 if let Some(why) = self.target.fit_stale() {
                     notice(ui, Tone::Caution, &format!("Calibrate again: {why}."));
                 }
@@ -913,7 +932,7 @@ impl App {
                 self.scene.seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(1, |d| d.subsec_nanos());
-                self.target_refusal = self.target.start_scene(self.scene).err();
+                self.target_refusal = self.target.start_scene(self.scene, self.compensate).err();
             }
             if let Some(r) = running {
                 caption(ui, &format!("Running: {}.", r.kind.label()));
@@ -921,6 +940,14 @@ impl App {
                     self.target.stop_scene();
                 }
             }
+            let measured = self.target.fit().is_some_and(|f| f.vignette.is_some());
+            ui.add_enabled_ui(measured, |ui| {
+                switch(ui, "Compensate vignetting", h, &mut self.compensate).on_hover_text(
+                    "The page dims each marker so that every marker comes out on the sensor as \
+                     bright as one where the lens and the screen's angle let the least light \
+                     through (within the calibrated area). Applies at the next start.",
+                );
+            });
             switch(ui, "Show screen target", h, &mut self.show_target);
             if let Some(e) = &self.target_refusal {
                 notice(ui, Tone::Fault, e);
@@ -2063,6 +2090,13 @@ fn target_figures(ui: &mut Ui, r: &Report) {
     }
     if let Some(k) = r.width_ratio {
         stat(ui, "Blob width over drawn", &format!("{k:.2}"));
+    }
+    if let Some(cv) = r.flux_cv {
+        stat(
+            ui,
+            "Blob brightness spread",
+            &format!("{:.1} % (CV of flux / sigma²)", cv * 100.0),
+        );
     }
     stat(
         ui,

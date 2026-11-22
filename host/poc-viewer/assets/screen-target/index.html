@@ -41,6 +41,10 @@
 <script>
 'use strict';
 
+// The viewer's build of this page, put in when it is served; the hello reports it and the
+// viewer answers `reload` when it serves another.
+const BUILD = '__PAGE_BUILD__';
+
 // The viewer's screen target: draws what the viewer asks for (`show`) and reports what it drew.
 // The messages are those of host/poc-viewer/src/target/link.rs; the model mirrors
 // host/poc-viewer/src/target/model.rs. Positions and sizes on the page are CSS pixels, times
@@ -396,7 +400,8 @@ function prepare(c) {
         default:
           throw new Error('scene: unknown kind ' + s.kind);
       }
-      return { kind: 'scene', W, H, model, scene, start: null, last: null };
+      const vignette = c.vignette == null ? null : new Vignette(c.vignette);
+      return { kind: 'scene', W, H, model, vignette, scene, start: null, last: null };
     }
     default:
       throw new Error('content: unknown kind ' + c.kind);
@@ -456,21 +461,43 @@ function drawGray(c) {
 
 const SPOT_STOPS = 24;
 
-// A Gaussian spot, CSS pixels: alpha exp(-r²/2σ²)^(1/2.2), so that the light is Gaussian.
-function drawSpot(x, y, sigma) {
-  if (!(sigma > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+// A Gaussian spot, CSS pixels, of centre brightness `level` (linear light, 0..1): alpha
+// (level·exp(-r²/2σ²))^(1/2.2), so that the light is Gaussian.
+function drawSpot(x, y, sigma, level = 1) {
+  if (!(sigma > 0) || !(level > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return;
   const r = Math.max(3.5 * sigma, 1 / dpr);
   const cx = x * dpr, cy = y * dpr, rd = r * dpr;
   const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rd);
   for (let i = 0; i < SPOT_STOPS; i++) {
     const f = i / (SPOT_STOPS - 1), d = f * r;
-    const a = Math.pow(Math.exp((-d * d) / (2 * sigma * sigma)), 1 / 2.2);
+    const a = Math.pow(level * Math.exp((-d * d) / (2 * sigma * sigma)), 1 / 2.2);
     g.addColorStop(f, 'rgba(255,255,255,' + a.toFixed(5) + ')');
   }
   ctx.fillStyle = g;
   ctx.beginPath();
   ctx.arc(cx, cy, rd, 0, 2 * Math.PI);
   ctx.fill();
+}
+
+// The sensor's brightness falloff measured by the calibration (the Rust `Vignette`):
+// ln(flux) = c · [1, x, y, x², xy, y², r⁴] around (cx, cy) over norm; a marker is dimmed to
+// the brightness at `floor`, never brightened.
+class Vignette {
+  constructor(v) {
+    if (!v || !Array.isArray(v.c) || v.c.length !== 7) throw new Error('vignette: bad terms');
+    this.c = v.c.map((x) => num(x, 'vignette.c'));
+    this.cx = num(v.cx, 'vignette.cx');
+    this.cy = num(v.cy, 'vignette.cy');
+    this.norm = num(v.norm, 'vignette.norm');
+    this.floor = num(v.floor, 'vignette.floor');
+  }
+  level(u, v) {
+    const x = (u - this.cx) / this.norm, y = (v - this.cy) / this.norm, r2 = x * x + y * y;
+    const t = [1, x, y, x * x, x * y, y * y, r2 * r2];
+    let l = 0;
+    for (let i = 0; i < 7; i++) l += this.c[i] * t[i];
+    return Math.min(1, Math.exp(this.floor - l));
+  }
 }
 
 // Draws a scene's frame; gives the markers drawn, CSS pixels.
@@ -493,8 +520,9 @@ function drawScene(s, ts) {
     if (!(x >= 0 && x <= vw && y >= 0 && y <= vh)) continue;
     const sigma = m.size / FWHM_PER_SIGMA / s.model.scaleAt(x, y);
     if (!(sigma > 0) || !Number.isFinite(sigma)) continue;
-    drawSpot(x, y, sigma);
-    drawn.push({ id: m.id, x, y, sigma });
+    const level = s.vignette ? s.vignette.level(m.u, m.v) : 1;
+    drawSpot(x, y, sigma, level);
+    drawn.push({ id: m.id, x, y, sigma, level });
   }
   ctx.globalCompositeOperation = 'source-over';
   return drawn;
@@ -525,7 +553,7 @@ function send(msg) {
 }
 
 function sendHello() {
-  send({ type: 'hello', width: vw, height: vh, dpr, agent: navigator.userAgent });
+  send({ type: 'hello', width: vw, height: vh, dpr, agent: navigator.userAgent, build: BUILD });
 }
 
 function connect() {
@@ -583,6 +611,9 @@ function receive(m) {
       everShown = true;
       break;
     }
+    case 'reload':
+      location.reload();
+      break;
     default:
       break;
   }

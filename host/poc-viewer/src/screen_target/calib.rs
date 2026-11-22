@@ -23,7 +23,7 @@ use std::collections::VecDeque;
 use nalgebra::{SMatrix, SVector, SymmetricEigen};
 
 use super::{
-    link::{Axis, Content, Dot, FWHM_PER_SIGMA},
+    link::{Axis, Content, Dot, FWHM_PER_SIGMA, Vignette},
     model::{self, Model},
 };
 
@@ -91,6 +91,10 @@ pub struct Fit {
     /// Sensor pixels per screen pixel and the screen's rotation, at the sensor's centre.
     pub scale: f64,
     pub rotation: f64,
+    /// How bright a white spot comes out over the sensor (from the dots' flux), when enough
+    /// dots were measured; and the brightest over the dimmest of the fitted dots.
+    pub vignette: Option<Box<Vignette>>,
+    pub vignette_ratio: f64,
 }
 
 /// The Gray code decoder: per sensor pixel, the white and black levels and the bits so far.
@@ -595,6 +599,9 @@ pub enum Action {
     DotDetection,
     /// Put the detection settings back as they were before the calibration.
     RestoreDetection,
+    /// Hold the exposure and gain in use (automatic exposure off), so the dots' flux compares
+    /// from group to group.
+    FreezeExposure,
 }
 
 /// Where the calibration is.
@@ -616,6 +623,8 @@ struct DotPlan {
     css: (f64, f64),
     predicted: (f64, f64),
     sum: (f64, f64),
+    /// The blobs' flux summed.
+    flux: f64,
     found: u32,
 }
 
@@ -880,6 +889,7 @@ impl Calibration {
                             css: (x, y),
                             predicted: (u, v),
                             sum: (0.0, 0.0),
+                            flux: 0.0,
                             found: 0,
                         });
                     }
@@ -923,8 +933,8 @@ impl Calibration {
         }
     }
 
-    /// A detected frame whose exposure started at `start_us`: its blobs' centres.
-    pub fn blobs(&mut self, start_us: f64, blobs: &[(f64, f64)]) {
+    /// A detected frame whose exposure started at `start_us`: its blobs' centres and flux.
+    pub fn blobs(&mut self, start_us: f64, blobs: &[(f64, f64, f64)]) {
         let settle = if self.group == 0 {
             DOTS_SETTLE_US
         } else {
@@ -935,6 +945,12 @@ impl Calibration {
         {
             return;
         }
+        if self.group == 0 && self.dot_frames == 0 {
+            // Automatic exposure settled on the first group: held from here, so the dots'
+            // flux compares across groups.
+            self.exposure_set = true;
+            self.actions.push_back(Action::FreezeExposure);
+        }
         for d in self.dots.iter_mut().skip(self.group).step_by(self.groups) {
             let near = blobs
                 .iter()
@@ -943,6 +959,7 @@ impl Calibration {
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((b, _)) = near {
                 d.sum = (d.sum.0 + b.0, d.sum.1 + b.1);
+                d.flux += b.2;
                 d.found += 1;
             }
         }
@@ -969,13 +986,23 @@ impl Calibration {
     }
 
     fn finish(&mut self) -> Result<(), String> {
-        let pairs: Vec<[f64; 4]> = self
+        let found: Vec<&DotPlan> = self
             .dots
             .iter()
             .filter(|d| d.found >= DOT_FOUND_MIN)
+            .collect();
+        let pairs: Vec<[f64; 4]> = found
+            .iter()
             .map(|d| {
                 let n = f64::from(d.found);
                 [d.css.0, d.css.1, d.sum.0 / n, d.sum.1 / n]
+            })
+            .collect();
+        let fluxes: Vec<(f64, f64, f64)> = found
+            .iter()
+            .map(|d| {
+                let n = f64::from(d.found);
+                (d.sum.0 / n, d.sum.1 / n, d.flux / n)
             })
             .collect();
         if pairs.len() < 6 {
@@ -1008,6 +1035,11 @@ impl Calibration {
             ];
         }
         let (cx, cy) = model.to_screen(model.cx, model.cy);
+        let vignette = fit_vignette(&fluxes, &model, reach, self.sensor).map(Box::new);
+        let vignette_ratio = {
+            let l = fluxes.iter().filter(|f| f.2 > 0.0).map(|f| f.2);
+            l.clone().fold(0.0, f64::max) / l.fold(f64::MAX, f64::min)
+        };
         self.result = Some(Ok(Fit {
             model,
             page: self.page,
@@ -1025,8 +1057,14 @@ impl Calibration {
             seen,
             scale: model.scale_at(cx, cy),
             rotation: model.rotation_at(cx, cy),
+            vignette,
+            vignette_ratio,
         }));
-        // The detection as it was, and the page dark again.
+        // The camera and the detection as they were, and the page dark again.
+        if self.exposure_set {
+            self.exposure_set = false;
+            self.actions.push_back(Action::RestoreExposure);
+        }
         if self.detection_set {
             self.detection_set = false;
             self.actions.push_back(Action::RestoreDetection);
@@ -1034,6 +1072,63 @@ impl Calibration {
         self.actions.push_back(Action::Show(Content::Black));
         Ok(())
     }
+}
+
+/// Dots a vignette is fitted from, at least.
+pub const VIGNETTE_DOTS_MIN: usize = 20;
+/// The level markers are dimmed to: this share of the area within reach is dimmer.
+pub const VIGNETTE_FLOOR_SHARE: f64 = 0.05;
+
+/// How bright a white spot comes out over the sensor: `ln(flux)` of the dots (centres and
+/// mean flux, sensor pixels) fitted by least squares ([`Vignette`]), and the floor markers are
+/// dimmed to, from the fit over the sensor within `reach` of the centre (undistorted pixels)
+/// on a grid. `None` with too few dots.
+pub fn fit_vignette(
+    dots: &[(f64, f64, f64)],
+    model: &Model,
+    reach: f64,
+    sensor: (u16, u16),
+) -> Option<Vignette> {
+    let dots: Vec<_> = dots.iter().filter(|d| d.2 > 0.0).collect();
+    if dots.len() < VIGNETTE_DOTS_MIN {
+        return None;
+    }
+    let (cx, cy, norm) = (model.cx, model.cy, model.norm);
+    let mut ata = SMatrix::<f64, 7, 7>::zeros();
+    let mut atb = SVector::<f64, 7>::zeros();
+    for d in &dots {
+        let t = SVector::<f64, 7>::from(Vignette::terms(cx, cy, norm, d.0, d.1));
+        ata += t * t.transpose();
+        atb += t * d.2.ln();
+    }
+    let c = ata.lu().solve(&atb)?;
+    let mut v = Vignette {
+        c: std::array::from_fn(|i| c[i]),
+        cx,
+        cy,
+        norm,
+        floor: 0.0,
+    };
+    let mut levels = Vec::new();
+    let (w, h) = (f64::from(sensor.0), f64::from(sensor.1));
+    let mut y = 0.0;
+    while y < h {
+        let mut x = 0.0;
+        while x < w {
+            let (u, vv) = model.undistort(x, y);
+            if (u - cx).hypot(vv - cy) <= reach {
+                levels.push(v.log_flux(x, y));
+            }
+            x += 16.0;
+        }
+        y += 16.0;
+    }
+    if levels.is_empty() {
+        return None;
+    }
+    let k = ((levels.len() - 1) as f64 * VIGNETTE_FLOOR_SHARE) as usize;
+    v.floor = *levels.select_nth_unstable_by(k, f64::total_cmp).1;
+    Some(v)
 }
 
 #[cfg(test)]
